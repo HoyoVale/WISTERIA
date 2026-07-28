@@ -1,7 +1,13 @@
+#include "pch.hpp"
+#include "window.hpp"
+
 #include <iostream>
-#include <glad\gl.h>
-#include <glfw\glfw3.h>
+
 
 int main(){
-    std::cout << "Hello FLORA!" << std::endl;
+    Window* win = new Window();
+
+    if(!win->Run())
+        std::cout << "[INFO]Window was closed" << std::endl;
+    return 0;
 }

@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(FLORA LANGUAGES CXX)
+set(CMAKE_MSVC_RUNTIME_LIBRARY
+    "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+project(FLORA LANGUAGES C CXX)
 
 # 不编译 GLFW 自带的文档、测试和示例
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -28,10 +31,19 @@ target_include_directories(glm_headers INTERFACE
 # main
 add_executable(wisteria
     src/main.cpp
+    src/window.cpp
+)
+
+target_include_directories(wisteria PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_features(wisteria PRIVATE
     cxx_std_20
+)
+
+target_precompile_headers(wisteria PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pch.hpp
 )
 
 # 防止 GLFW 自己包含系统 OpenGL 头文件
