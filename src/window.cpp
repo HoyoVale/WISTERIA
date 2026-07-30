@@ -2,6 +2,7 @@
 #include "window.hpp"
 #include "shader.hpp"
 #include "vbo.hpp"
+#include "vao.hpp"
 #include <iostream>
 #include <vector>
 #include <glad/gl.h>
@@ -50,9 +51,11 @@ bool Window::Run()
          0.5f, -0.5f, 0.0f, 1.0f,
          0.0f,  0.5f, 0.0f, 1.0f
     };
+    VAO* vao = new VAO();
+    vao->Bind();
     VBO* vbo = new VBO();
-    vbo->Upload(vertices,12 * sizeof(float), {{4, FLOAT}});
-    vbo->unBind();
+    vbo->Upload(vertices, 12 * sizeof(float));
+    vao->BindBuffer(*vbo, {{"position", 4, FLOAT}});
 
     std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basic.vert";
     std::string strFragmentShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basic.frag";
@@ -65,9 +68,8 @@ bool Window::Run()
         glClear(GL_COLOR_BUFFER_BIT);
 
         program->Use();
-        vbo->Bind();
+        vao->Bind();
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        vbo->unBind();
         program->unUse();
 
         glfwSwapBuffers(this->GetGLFWwindow());

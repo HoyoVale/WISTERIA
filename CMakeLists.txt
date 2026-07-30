@@ -34,6 +34,7 @@ add_executable(wisteria
     src/window.cpp
     src/shader.cpp
     src/vbo.cpp
+    src/vao.cpp
 )
 
 target_include_directories(wisteria PRIVATE 
