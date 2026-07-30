@@ -8,8 +8,8 @@ VAO::VAO()
 
 VAO::~VAO()
 {
-    if(!vao == 0){
-        unBind();
+    if(!this->vao == 0){
+        this->unBind();
         glDeleteVertexArrays(1, &this->vao);
     }
         
@@ -27,7 +27,7 @@ void VAO::unBind()
 
 void VAO::BindBuffer(VBO &vbo, std::vector<Layout> &layout)
 {
-    Bind();
+    this->Bind();
     vbo.Bind();
     unsigned int index = this->index, offset = 0, stride = 0;
     for (Layout l : layout) 
@@ -54,7 +54,7 @@ void VAO::BindBuffer(VBO &vbo, std::vector<Layout> &layout)
 
 void VAO::BindBuffer(VBO &vbo, const std::vector<Layout> &layout)
 {
-    Bind();
+    this->Bind();
     vbo.Bind();
     unsigned int index = this->index, offset = 0, stride = 0;
     for (Layout l : layout) 

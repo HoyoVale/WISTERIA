@@ -9,8 +9,8 @@ VBO::VBO()
 
 VBO::~VBO()
 {
-    if (vbo != 0) {
-        unBind();
+    if (this->vbo != 0) {
+        this->unBind();
         glDeleteBuffers(1, &this->vbo);
     }
 }
