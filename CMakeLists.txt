@@ -28,6 +28,13 @@ target_include_directories(glm_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
 )
 
+#stb_image
+add_library(stb INTERFACE)
+
+target_include_directories(stb INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/stb/include
+)
+
 # main
 add_executable(wisteria
     src/main.cpp
@@ -50,9 +57,9 @@ target_precompile_headers(wisteria PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pch.hpp
 )
 
-# 防止 GLFW 自己包含系统 OpenGL 头文件
 target_compile_definitions(wisteria PRIVATE
     GLFW_INCLUDE_NONE
+    STB_IMAGE_IMPLEMENTATION
 )
 
 target_link_libraries(wisteria PRIVATE

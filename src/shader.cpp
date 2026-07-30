@@ -110,3 +110,46 @@ void Program::unUse()
 {
     glUseProgram(0);
 }
+
+unsigned int Program::GetUniformLocation(std::string valueName)
+{
+    unsigned int location = glGetUniformLocation(this->program, valueName.c_str());
+    if (location == -1) {
+        std::cerr << "can not find uniform: " << valueName << std::endl;
+        exit(1);
+    }
+    return location;
+}
+
+void Program::UniformMat4f(std::string valueName, glm::mat4 value)
+{
+    glUniformMatrix4fv(GetUniformLocation(valueName), 1, GL_FALSE,glm::value_ptr(value));
+}
+void Program::UniformMat3f(std::string valueName, glm::mat3 value)
+{
+    glUniformMatrix3fv(GetUniformLocation(valueName), 1, GL_FALSE,glm::value_ptr(value));
+}
+void Program::UniformMat2f(std::string valueName, glm::mat2 value)
+{
+    glUniformMatrix2fv(GetUniformLocation(valueName), 1, GL_FALSE,glm::value_ptr(value));
+}
+void Program::Uniform1f(std::string valueName, float value)
+{
+    glUniform1f(GetUniformLocation(valueName),value);
+}
+void Program::Uniform2f(std::string valueName, float x, float y)
+{
+    glUniform2f(GetUniformLocation(valueName),x,y);
+}
+void Program::Uniform3f(std::string valueName, float x, float y, float z)
+{
+    glUniform3f(GetUniformLocation(valueName),x,y,z);
+}
+void Program::Uniform1i(std::string valueName, int value)
+{
+    glUniform1i(GetUniformLocation(valueName),value);
+}
+void Program::Uniform1ui(std::string valueName, unsigned int value)
+{
+    glUniform1ui(GetUniformLocation(valueName),value);
+}

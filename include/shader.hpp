@@ -34,8 +34,19 @@ public:
 
     void Use();
     void unUse();
+    void UniformMat4f(std::string valueName, glm::mat4 value);
+    void UniformMat3f(std::string valueName, glm::mat3 value);
+    void UniformMat2f(std::string valueName, glm::mat2 value);
+    void Uniform1f(std::string valueName, float value);
+    void Uniform2f(std::string valueName, float x, float y);
+    void Uniform3f(std::string valueName, float x, float y, float z);
+    void Uniform1i(std::string valueName, int value);
+    void Uniform1ui(std::string valueName, unsigned int value);
 
     inline GLuint GetProgram() const { return program; };
+
+private:
+    unsigned int GetUniformLocation(std::string valueName);
 private:
     GLuint program = 0;
 };
