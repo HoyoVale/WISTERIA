@@ -1,16 +1,54 @@
-$cmake = 'C:\\Program Files\\CMake\\bin\\cmake.exe' # cmake 地址，需要更换成实际地址
-$clear = '.\\script\\clear_build.ps1'               
-$build = '.\\script\\build.ps1'
-$build_path = '.\\build'
-$execute = '.\\build\\Debug\\wisteria.exe'
+[CmdletBinding()]
+param(
+    [ValidateSet('run', 'build', 'compile', 'clean')]
+    [string]$Action = 'run'
+)
 
+$ErrorActionPreference = 'Stop'
 
-& $cmake --version
-& $clear $build_path
-& $build $cmake
-if(Test-Path $execute){
-    & $execute
+$ProjectRoot = $PSScriptRoot
+$BuildScript = Join-Path $ProjectRoot 'script/build.ps1'
+$ClearScript = Join-Path $ProjectRoot 'script/clear_build.ps1'
+$BuildPath = Join-Path $ProjectRoot 'build'
+$Executable = Join-Path $BuildPath 'Debug/wisteria.exe'
+
+function Start-Application {
+    if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+        throw "可执行文件未生成：$Executable"
+    }
+
+    # 让程序的当前工作目录固定为项目根目录，便于使用相对资源路径。
+    Push-Location $ProjectRoot
+    try {
+        & $Executable
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "程序运行失败，退出码：$LASTEXITCODE"
+        }
+    }
+    finally {
+        Pop-Location
+    }
 }
-else{
-    Write-Error '可执行文件未生成'
+
+switch ($Action) {
+    'clean' {
+        & $ClearScript -BuildPath $BuildPath
+    }
+
+    'build' {
+        & $ClearScript -BuildPath $BuildPath
+        & $BuildScript -Action configure
+    }
+
+    'compile' {
+        & $BuildScript -Action compile
+        Start-Application
+    }
+
+    'run' {
+        & $ClearScript -BuildPath $BuildPath
+        & $BuildScript -Action all
+        Start-Application
+    }
 }

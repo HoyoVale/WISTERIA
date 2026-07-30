@@ -56,7 +56,6 @@ bool Window::Run()
     VBO* vbo = new VBO();
     vbo->Upload(vertices, 12 * sizeof(float));
     vao->BindBuffer(*vbo, {{"position", 4, FLOAT}});
-
     std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basic.vert";
     std::string strFragmentShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basic.frag";
     Shader* shader = new Shader(strVertexShader, strFragmentShader);
