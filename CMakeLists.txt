@@ -28,21 +28,16 @@ target_include_directories(glm_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
 )
 
-#stb_image
-add_library(stb INTERFACE)
-
-target_include_directories(stb INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/stb/include
-)
-
 # main
 add_executable(wisteria
     src/main.cpp
+    src/stb_image.cpp
     src/window.cpp
     src/shader.cpp
     src/vbo.cpp
     src/vao.cpp
     src/ebo.cpp
+    src/texture.cpp
 )
 
 target_include_directories(wisteria PRIVATE 
@@ -59,7 +54,6 @@ target_precompile_headers(wisteria PRIVATE
 
 target_compile_definitions(wisteria PRIVATE
     GLFW_INCLUDE_NONE
-    STB_IMAGE_IMPLEMENTATION
 )
 
 target_link_libraries(wisteria PRIVATE

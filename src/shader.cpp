@@ -123,33 +123,55 @@ unsigned int Program::GetUniformLocation(std::string valueName)
 
 void Program::UniformMat4f(std::string valueName, glm::mat4 value)
 {
+    this->Use();
     glUniformMatrix4fv(GetUniformLocation(valueName), 1, GL_FALSE,glm::value_ptr(value));
+    this->unUse();
 }
 void Program::UniformMat3f(std::string valueName, glm::mat3 value)
 {
+    this->Use();
     glUniformMatrix3fv(GetUniformLocation(valueName), 1, GL_FALSE,glm::value_ptr(value));
+    this->unUse();
 }
 void Program::UniformMat2f(std::string valueName, glm::mat2 value)
 {
+    this->Use();
     glUniformMatrix2fv(GetUniformLocation(valueName), 1, GL_FALSE,glm::value_ptr(value));
+    this->unUse();
 }
 void Program::Uniform1f(std::string valueName, float value)
 {
+    this->Use();
     glUniform1f(GetUniformLocation(valueName),value);
+    this->unUse();
 }
 void Program::Uniform2f(std::string valueName, float x, float y)
 {
+    this->Use();
     glUniform2f(GetUniformLocation(valueName),x,y);
+    this->unUse();
 }
 void Program::Uniform3f(std::string valueName, float x, float y, float z)
 {
+    this->Use();
     glUniform3f(GetUniformLocation(valueName),x,y,z);
+    this->unUse();
 }
 void Program::Uniform1i(std::string valueName, int value)
 {
+    this->Use();
     glUniform1i(GetUniformLocation(valueName),value);
+    this->unUse();
 }
 void Program::Uniform1ui(std::string valueName, unsigned int value)
 {
+    this->Use();
     glUniform1ui(GetUniformLocation(valueName),value);
+    this->unUse();
+}
+void Program::UniformTex(Texture &texture, std::string UniformName)
+{
+    this->Use();
+    glUniform1i(GetUniformLocation(UniformName), (int)texture.GetIndex());
+    this->unUse();
 }

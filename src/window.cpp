@@ -4,6 +4,8 @@
 #include "vbo.hpp"
 #include "vao.hpp"
 #include "ebo.hpp"
+#include "texture.hpp"
+#include <stb_image.h>
 #include <iostream>
 #include <vector>
 #include <glad/gl.h>
@@ -48,6 +50,8 @@ bool Window::Run()
     }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     GLint depthBits = 0;
     glGetIntegerv(GL_DEPTH_BITS, &depthBits);
@@ -57,15 +61,15 @@ bool Window::Run()
             << '\n';
             
     float vertices[] = {
-        -0.5f,-0.5f, 0.5f, 0.7f, 0.2f, 0.1f,
-         0.5f,-0.5f, 0.5f, 0.1f, 0.7f, 0.2f,
-         0.5f, 0.5f, 0.5f, 0.2f, 0.1f, 0.7f,
-        -0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.0f,
+        -0.5f,-0.5f, 0.5f, 0.7f, 0.2f, 0.1f, 0.0f, 0.0f, 
+         0.5f,-0.5f, 0.5f, 0.1f, 0.7f, 0.2f, 1.0f, 0.0f,
+         0.5f, 0.5f, 0.5f, 0.2f, 0.1f, 0.7f, 1.0f, 1.0f,
+        -0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f,
 
-        -0.5f,-0.5f,-0.5f, 0.7f, 0.2f, 0.1f,
-         0.5f,-0.5f,-0.5f, 0.1f, 0.7f, 0.2f,
-         0.5f, 0.5f,-0.5f, 0.2f, 0.1f, 0.7f,
-        -0.5f, 0.5f,-0.5f, 0.5f, 0.5f, 0.0f
+        -0.5f,-0.5f,-0.5f, 0.7f, 0.2f, 0.1f, 0.0f, 0.0f,
+         0.5f,-0.5f,-0.5f, 0.1f, 0.7f, 0.2f, 1.0f, 0.0f,
+         0.5f, 0.5f,-0.5f, 0.2f, 0.1f, 0.7f, 1.0f, 1.0f,
+        -0.5f, 0.5f,-0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f
     };
 
     unsigned int indices[] ={
@@ -86,20 +90,26 @@ bool Window::Run()
     VAO* vao = new VAO();
     vao->Bind();
     VBO* vbo = new VBO();
-    vbo->Upload(vertices, 8*6* sizeof(float));
+    vbo->Upload(vertices, 8*8* sizeof(float));
     vao->BindBuffer(*vbo, {
         {"position", 3, FLOAT},
-        {"color", 3, FLOAT}
+        {"color", 3, FLOAT},
+        {"texCoord", 2, FLOAT}
     });
     EBO* ebo = new EBO();
     ebo->Bind();
     ebo->Upload(indices, 12*3*sizeof(unsigned int));
     vao->unBind();
 
-    std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicPlus.vert";
-    std::string strFragmentShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicPlus.frag";
+    std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.vert";
+    std::string strFragmentShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.frag";
     Shader* shader = new Shader(strVertexShader, strFragmentShader);
     Program* program = new Program(shader->GetShaderList());
+
+    Texture* texture = new Texture();
+    texture->Bind();
+    texture->Upload("C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\textures\\icon.png");
+    program->UniformTex(*texture, "texture");
 
     glm::vec3 objectPosition(0.0f, 0.0f, 0.0f);
     glm::vec3 objectScale(1.0f, 1.0f, 1.0f);
@@ -125,12 +135,13 @@ bool Window::Run()
         model = glm::rotate(model,glm::radians(r*r),glm::vec3(0.0f, 1.0f, 0.0f));
         model = glm::rotate(model,glm::radians(r),glm::vec3(0.0f, 0.0f, 1.0f));
         if(x >= PI || x <= -PI) r=-r;
-        program->Use();
         program->UniformMat4f("transform", model);
-
+        
+        // 绘制
+        program->Use();
         vao->Bind();
         //glDrawArrays(GL_TRIANGLES, 0, 3);
-        glDrawElements(GL_TRIANGLES, 12*3, GL_UNSIGNED_INT, nullptr);
+        glDrawElements(GL_TRIANGLES, 12*1, GL_UNSIGNED_INT, nullptr);
         program->unUse();
 
         glfwSwapBuffers(this->GetGLFWwindow());

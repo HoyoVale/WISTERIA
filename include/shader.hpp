@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <glad/gl.h>
 #include <vector>
+#include "texture.hpp"
 
 static std::string shaderRootPath = std::filesystem::current_path().string() + "assets\\shaders\\";
 
@@ -42,6 +43,7 @@ public:
     void Uniform3f(std::string valueName, float x, float y, float z);
     void Uniform1i(std::string valueName, int value);
     void Uniform1ui(std::string valueName, unsigned int value);
+    void UniformTex(Texture &texture, std::string UniformNAme);
 
     inline GLuint GetProgram() const { return program; };
 
