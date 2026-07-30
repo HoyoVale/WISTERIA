@@ -32,6 +32,8 @@ target_include_directories(glm_headers INTERFACE
 add_executable(wisteria
     src/main.cpp
     src/window.cpp
+    src/shader.cpp
+    src/vbo.cpp
 )
 
 target_include_directories(wisteria PRIVATE 
