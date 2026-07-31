@@ -12,10 +12,9 @@ Window::Window(int width, int height)
 {
     this->size = new WindowSize({width, height});
     this->timer = new Timer();
-    this->model = new Cube();
-    this->mesh = new Mesh(this->model->Data());
-    this->material = new Material();
-    this->scene.CreateEntity(*this->mesh, *this->material);
+    Mesh& cubeMesh = this->resources.CreateMesh("cube", cubeData);
+    Material& defaultMaterial = this->resources.CreateMaterial("default");
+    this->scene.CreateEntity(cubeMesh, defaultMaterial);
     this->scene.CreatePointLight(PointLightData{
         .Position = {2.5f, 1.5f, 2.5f},
         .Color = {1.0f, 0.65f, 0.4f},
@@ -61,11 +60,9 @@ Window::~Window(){
     this->scene.ClearPointLights();
     this->scene.ClearDirectionalLights();
     this->scene.ClearSpotLights();
+    this->resources.Clear();
     delete this->size;
     delete this->timer;
-    delete this->material;
-    delete this->mesh;
-    delete this->model;
     glfwDestroyWindow(this->window);
     glfwTerminate();
 }

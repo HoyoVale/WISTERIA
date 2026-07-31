@@ -1,8 +1,7 @@
 #pragma once
 #include "timer.hpp"
 #include "Models/cube.hpp"
-#include "mesh.hpp"
-#include "material.hpp"
+#include "manager.hpp"
 #include "scene.hpp"
 #include "renderer.hpp"
 #include <GLFW/glfw3.h>
@@ -20,6 +19,8 @@ public:
     inline GLFWwindow* GetGLFWwindow() const { return window; };
     inline const WindowSize GetSize() const { return *size; };
     glm::mat4 Projection() const{ return this->projection; };
+    ResourceManager& GetResources() noexcept { return this->resources; };
+    const ResourceManager& GetResources() const noexcept { return this->resources; };
     Scene& GetScene() noexcept { return this->scene; };
     const Scene& GetScene() const noexcept { return this->scene; };
 
@@ -30,9 +31,7 @@ private:
     WindowSize* size = nullptr;  
     GLFWwindow* window = nullptr;
     Timer* timer = nullptr;
-    Model* model = nullptr;
-    Mesh* mesh = nullptr;
-    Material* material = nullptr;
+    ResourceManager resources;
     Scene scene;
     Renderer renderer;
     float aspect = 1.0f;
