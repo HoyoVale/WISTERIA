@@ -16,6 +16,8 @@ struct MaterialData{
     std::unordered_map<std::string, std::string> textureFilePath = {
         {"texture", textureRootPath + "chessboard.png"}
     };
+    glm::vec3 specularColor = {1.0f, 1.0f, 1.0f}; // Specular reflection color.
+    float shininess = 32.0f; // Higher values make a sharper highlight.
 };
 
 class Material{
@@ -29,6 +31,12 @@ public:
 
     Program& GetProgram();
     const Program& GetProgram() const;
+
+    const glm::vec3& SpecularColor() const noexcept;
+    float Shininess() const noexcept;
+
+    void SetSpecularColor(const glm::vec3& color) noexcept;
+    void SetShininess(float shininess) noexcept;
 
 private:
     std::unique_ptr<Shader> shader;

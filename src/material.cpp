@@ -73,3 +73,23 @@ const Program& Material::GetProgram() const
 
     return *this->program;
 }
+
+const glm::vec3& Material::SpecularColor() const noexcept
+{
+    return this->data.specularColor;
+}
+
+float Material::Shininess() const noexcept
+{
+    return this->data.shininess;
+}
+
+void Material::SetSpecularColor(const glm::vec3& color) noexcept
+{
+    this->data.specularColor = glm::max(color, glm::vec3(0.0f));
+}
+
+void Material::SetShininess(float shininess) noexcept
+{
+    this->data.shininess = glm::max(shininess, 1.0f);
+}

@@ -57,6 +57,10 @@ target_compile_features(wisteria PRIVATE
     cxx_std_20
 )
 
+if(MSVC)
+    target_compile_options(wisteria PRIVATE /utf-8)
+endif()
+
 target_precompile_headers(wisteria PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pch.hpp
 )

@@ -131,6 +131,22 @@ bool Window::Run()
             lightRadiance.z
         );
         program.Uniform1f("ambientStrength", 0.15f);
+        program.Uniform3f(
+            "cameraPosition",
+            this->camera->GetParam().Position.x,
+            this->camera->GetParam().Position.y,
+            this->camera->GetParam().Position.z
+        );
+        program.Uniform3f(
+            "materialSpecularColor",
+            this->material->SpecularColor().x,
+            this->material->SpecularColor().y,
+            this->material->SpecularColor().z
+        );
+        program.Uniform1f(
+            "materialShininess",
+            this->material->Shininess()
+        );
         
         // 绘制
         this->entity->GetMesh().Bind();
