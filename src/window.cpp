@@ -6,15 +6,10 @@
 #include "ebo.hpp"
 #include "texture.hpp"
 #include "camera.hpp"
-#include <stb_image.h>
 #include <iostream>
-#include <vector>
 #include <glad/gl.h>
 
-void FramebufferSizeCallback(
-    GLFWwindow* window,
-    int width,
-    int height)
+void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
 {
     glViewport(0, 0, width, height);
 }
@@ -22,16 +17,12 @@ void FramebufferSizeCallback(
 Window::Window(int width, int height)
 {
     this->size = new WindowSize({width, height});
-
-    CameraParam c(
-        glm::vec3(0.0f,0.0f,3.0f),
-        glm::vec3(0.0f,0.0f,0.0f),
-        glm::vec3(0.0f,1.0f,0.0f)
-    );
-    this->camera = new Camera(c);
+    this->camera = new Camera();
+    this->timer = new Timer();
+    this->model = new Model();
+    
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
-    this->timer = new Timer();
     window = glfwCreateWindow(
         this->size->width,
         this->size->height,
@@ -46,22 +37,19 @@ Window::Window(int width, int height)
         std::cerr << "[ERROR]Window initialization failed!" << std::endl;
     }
 
-    if(!this->init()) 
-    {
-        std::cerr << "window init failed!";
-        return;
-    }       
+    this->init();
 }
 
 Window::~Window(){
     delete this->size;
     delete this->camera;
     delete this->timer;
+    delete this->model;
     glfwDestroyWindow(this->window);
     glfwTerminate();
 }
 
-bool Window::init()
+void Window::init()
 {
     glfwMakeContextCurrent(this->GetGLFWwindow());
 
@@ -69,7 +57,6 @@ bool Window::init()
     {
         std::cerr << "Failed to load OpenGL functions\n";
         glfwTerminate();
-        return false;
     }
 
     glfwSetFramebufferSizeCallback(this->window, FramebufferSizeCallback);
@@ -85,7 +72,6 @@ bool Window::init()
     // GLint depthBits = 0;
     // glGetIntegerv(GL_DEPTH_BITS, &depthBits);
     // std::cout << "Depth bits: "<< depthBits<< '\n';
-    return true;
 }
 
 void Window::computeParam()
@@ -174,9 +160,6 @@ bool Window::Run()
     texture->Upload("C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\textures\\chessboard.png");
     program->UniformTex(*texture, "texture");
 
-    glm::vec3 objectPosition(0.0f, 0.0f, 0.0f);
-    glm::vec3 objectScale(1.0f, 1.0f, 1.0f);
-
     float r = 0.0f, speed = 9.0f;
     this->timer->Start();
     while(!glfwWindowShouldClose(this->GetGLFWwindow()))
@@ -185,13 +168,8 @@ bool Window::Run()
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
-        glm::mat4 model(1.0f);
-        model = glm::translate(model, objectPosition);
-        model = glm::scale(model, objectScale);
-        model = glm::rotate(model, glm::radians(r), glm::vec3(1.0f, 0.0f, 0.0f));
-        model = glm::rotate(model, glm::radians(2 * r), glm::vec3(0.0f, 1.0f, 0.0f));
-        model = glm::rotate(model, glm::radians(3 * r), glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 transform = this->Projection() *this->View() *model;
+        this->model->Rotate(r, 2*r, 3*r);
+        glm::mat4 transform = this->Projection() * this->View() * this->model->ModelMat();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
         program->UniformMat4f("transform", transform);

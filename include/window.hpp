@@ -1,6 +1,7 @@
 #pragma once
 #include "camera.hpp"
 #include "timer.hpp"
+#include "model.hpp"
 #include <GLFW/glfw3.h>
 
 struct WindowSize {
@@ -19,13 +20,14 @@ public:
     glm::mat4 Projection() const{ return this->projection; };
 
 private:
-    bool init();
+    void init();
     void computeParam();
 private:
     WindowSize* size = nullptr;  
     GLFWwindow* window = nullptr;
     Camera* camera = nullptr;
     Timer* timer = nullptr;
+    Model* model = nullptr;
     float aspect = 1.0f;
     glm::mat4 projection = glm::mat4(1.0f);
 };
