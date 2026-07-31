@@ -28,48 +28,57 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
         if (!entity.IsVisible())
             continue;
 
-        Mesh& mesh = entity.GetMesh();
-        Material& material = entity.GetMaterial();
-        mesh.Attach();
-        material.Attach();
-        material.Bind();
-
-        Program& program = material.GetProgram();
-        const ShaderInterface& shaderInterface = material.Interface();
-        const glm::mat4 model = entity.GetTransform().Matrix();
-        this->UploadTransforms(
-            program,
-            shaderInterface,
-            model,
-            view,
-            projection
-        );
-
-        if (shaderInterface.lightingEnabled)
+        const glm::mat4 entityTransform = entity.GetTransform().Matrix();
+        for (RenderPart& part : entity.RenderParts())
         {
-            program.Uniform3f(
-                shaderInterface.cameraPosition,
-                camera.Position().x,
-                camera.Position().y,
-                camera.Position().z
-            );
-            program.Uniform3f(
-                shaderInterface.materialSpecularColor,
-                material.SpecularColor().x,
-                material.SpecularColor().y,
-                material.SpecularColor().z
-            );
-            program.Uniform1f(
-                shaderInterface.materialShininess,
-                material.Shininess()
-            );
-            this->UploadSceneUniforms(program, scene, shaderInterface);
-        }
+            Mesh& mesh = part.GetMesh();
+            Material& material = part.GetMaterial();
+            mesh.Attach();
+            material.Attach();
+            material.Bind();
 
-        mesh.Bind();
-        mesh.Draw();
-        mesh.Unbind();
-        material.Unbind();
+            Program& program = material.GetProgram();
+            const ShaderInterface& shaderInterface = material.Interface();
+            const glm::mat4 model =
+                entityTransform * part.LocalTransform();
+            this->UploadTransforms(
+                program,
+                shaderInterface,
+                model,
+                view,
+                projection
+            );
+
+            if (shaderInterface.lightingEnabled)
+            {
+                program.Uniform3f(
+                    shaderInterface.cameraPosition,
+                    camera.Position().x,
+                    camera.Position().y,
+                    camera.Position().z
+                );
+                program.Uniform3f(
+                    shaderInterface.materialSpecularColor,
+                    material.SpecularColor().x,
+                    material.SpecularColor().y,
+                    material.SpecularColor().z
+                );
+                program.Uniform1f(
+                    shaderInterface.materialShininess,
+                    material.Shininess()
+                );
+                this->UploadSceneUniforms(
+                    program,
+                    scene,
+                    shaderInterface
+                );
+            }
+
+            mesh.Bind();
+            mesh.Draw();
+            mesh.Unbind();
+            material.Unbind();
+        }
     }
 }
 

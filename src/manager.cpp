@@ -29,6 +29,17 @@ Material& ResourceManager::CreateMaterial(
     return result;
 }
 
+ModelAsset& ResourceManager::CreateModel(const std::string& name)
+{
+    if (this->models.contains(name))
+        throw std::invalid_argument("Model resource already exists: " + name);
+
+    auto model = std::make_unique<ModelAsset>(name);
+    ModelAsset& result = *model;
+    this->models.emplace(name, std::move(model));
+    return result;
+}
+
 Mesh* ResourceManager::FindMesh(const std::string& name) noexcept
 {
     const auto iterator = this->meshes.find(name);
@@ -53,6 +64,20 @@ const Material* ResourceManager::FindMaterial(
 {
     const auto iterator = this->materials.find(name);
     return iterator != this->materials.end() ? iterator->second.get() : nullptr;
+}
+
+ModelAsset* ResourceManager::FindModel(const std::string& name) noexcept
+{
+    const auto iterator = this->models.find(name);
+    return iterator != this->models.end() ? iterator->second.get() : nullptr;
+}
+
+const ModelAsset* ResourceManager::FindModel(
+    const std::string& name
+) const noexcept
+{
+    const auto iterator = this->models.find(name);
+    return iterator != this->models.end() ? iterator->second.get() : nullptr;
 }
 
 Mesh& ResourceManager::GetMesh(const std::string& name)
@@ -91,8 +116,27 @@ const Material& ResourceManager::GetMaterial(const std::string& name) const
     return *material;
 }
 
+ModelAsset& ResourceManager::GetModel(const std::string& name)
+{
+    ModelAsset* model = this->FindModel(name);
+    if (model == nullptr)
+        throw std::out_of_range("Model resource was not found: " + name);
+
+    return *model;
+}
+
+const ModelAsset& ResourceManager::GetModel(const std::string& name) const
+{
+    const ModelAsset* model = this->FindModel(name);
+    if (model == nullptr)
+        throw std::out_of_range("Model resource was not found: " + name);
+
+    return *model;
+}
+
 void ResourceManager::Clear() noexcept
 {
+    this->models.clear();
     this->materials.clear();
     this->meshes.clear();
 }

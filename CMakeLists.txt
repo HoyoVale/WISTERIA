@@ -28,9 +28,8 @@ target_include_directories(glm_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
 )
 
-# main
-add_executable(wisteria
-    src/main.cpp
+# reusable project code
+set(WISTERIA_CORE_SOURCES
     src/stb_image.cpp
     src/window.cpp
     src/shader.cpp
@@ -43,6 +42,8 @@ add_executable(wisteria
     src/model.cpp
     src/transform.cpp
     src/behaviour.cpp
+    src/render_part.cpp
+    src/model_asset.cpp
     src/entity.cpp
     src/scene.cpp
     src/renderer.cpp
@@ -53,28 +54,48 @@ add_executable(wisteria
     src/material.cpp
 )
 
-target_include_directories(wisteria PRIVATE 
+add_library(wisteria_core STATIC ${WISTERIA_CORE_SOURCES})
+
+target_include_directories(wisteria_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_compile_features(wisteria PRIVATE
+target_compile_features(wisteria_core PUBLIC
     cxx_std_20
 )
 
 if(MSVC)
-    target_compile_options(wisteria PRIVATE /utf-8)
+    target_compile_options(wisteria_core PRIVATE /utf-8)
 endif()
 
-target_precompile_headers(wisteria PRIVATE
+target_precompile_headers(wisteria_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pch.hpp
 )
 
-target_compile_definitions(wisteria PRIVATE
+target_compile_definitions(wisteria_core PUBLIC
     GLFW_INCLUDE_NONE
 )
 
-target_link_libraries(wisteria PRIVATE
+target_link_libraries(wisteria_core PUBLIC
     glfw
     glad
     glm_headers
 )
+
+# application
+add_executable(wisteria src/main.cpp)
+target_link_libraries(wisteria PRIVATE wisteria_core)
+
+# automated tests
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(wisteria_tests tests/core_tests.cpp)
+    target_link_libraries(wisteria_tests PRIVATE wisteria_core)
+
+    if(MSVC)
+        target_compile_options(wisteria_tests PRIVATE /utf-8)
+    endif()
+
+    add_test(NAME wisteria.core COMMAND wisteria_tests)
+endif()

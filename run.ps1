@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('run', 'build', 'compile', 'clean')]
+    [ValidateSet('run', 'build', 'compile', 'test', 'clean')]
     [string]$Action = 'run'
 )
 
@@ -44,6 +44,10 @@ switch ($Action) {
     'compile' {
         & $BuildScript -Action compile
         Start-Application
+    }
+
+    'test' {
+        & $BuildScript -Action test
     }
 
     'run' {

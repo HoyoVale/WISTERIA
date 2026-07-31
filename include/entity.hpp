@@ -3,15 +3,18 @@
 #include "behaviour.hpp"
 #include "material.hpp"
 #include "mesh.hpp"
+#include "render_part.hpp"
 #include "transform.hpp"
 #include <concepts>
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
 class Entity {
 public:
+    explicit Entity(const Transform& transform = {});
     Entity(
         Mesh& mesh,
         Material& material,
@@ -27,13 +30,24 @@ public:
     Transform& GetTransform() noexcept;
     const Transform& GetTransform() const noexcept;
 
-    Mesh& GetMesh() noexcept;
-    const Mesh& GetMesh() const noexcept;
-    void SetMesh(Mesh& mesh) noexcept;
+    Mesh& GetMesh();
+    const Mesh& GetMesh() const;
+    void SetMesh(Mesh& mesh);
 
-    Material& GetMaterial() noexcept;
-    const Material& GetMaterial() const noexcept;
-    void SetMaterial(Material& material) noexcept;
+    Material& GetMaterial();
+    const Material& GetMaterial() const;
+    void SetMaterial(Material& material);
+
+    RenderPart& AddRenderPart(
+        Mesh& mesh,
+        Material& material,
+        const glm::mat4& localTransform = glm::mat4(1.0f)
+    );
+    bool RemoveRenderPart(const RenderPart& part);
+    void ClearRenderParts() noexcept;
+    std::size_t RenderPartCount() const noexcept;
+    std::span<RenderPart> RenderParts() noexcept;
+    std::span<const RenderPart> RenderParts() const noexcept;
 
     bool IsVisible() const noexcept;
     void SetVisible(bool visible) noexcept;
@@ -86,8 +100,7 @@ private:
     void FlushPendingBehaviourRemovals() noexcept;
 
     Transform transform;
-    Mesh* mesh = nullptr;
-    Material* material = nullptr;
+    std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;
     std::vector<Behaviour*> pendingBehaviourRemovals;
     bool processingBehaviours = false;

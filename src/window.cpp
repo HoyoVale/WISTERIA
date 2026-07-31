@@ -30,7 +30,9 @@ Window::Window(int width, int height)
 
         Mesh& cubeMesh = this->resources.CreateMesh("cube", cubeData);
         Material& defaultMaterial = this->resources.CreateMaterial("default");
-        Entity& cubeEntity = this->scene.CreateEntity(cubeMesh, defaultMaterial);
+        ModelAsset& cubeModel = this->resources.CreateModel("cubeModel");
+        cubeModel.AddPart(cubeMesh, defaultMaterial);
+        Entity& cubeEntity = this->scene.InstantiateModel(cubeModel);
         cubeEntity.AddBehaviour<RotateBehaviour>(
             glm::vec3(9.0f, 18.0f, 27.0f)
         );

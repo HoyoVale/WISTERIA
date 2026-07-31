@@ -58,3 +58,20 @@ Scene::Update(deltaTime)。
 Transform 动画：整体平移、旋转、缩放，例如当前旋转立方体。
 骨骼动画：模型内部骨骼、权重、关键帧和蒙皮计算。
 Transform 动画现在就能实现；但骨骼动画依赖外部模型中的节点、骨骼、权重和动画轨道，必须等模型导入结构稳定后再做。
+
+
+第一版的功能范围
+建议第一版只实现：
+OBJ 和外部纹理。
+position、normal、texCoord。
+多 Mesh。
+多 Material。
+节点局部矩阵。
+ResourceManager 路径缓存。
+Scene 自动实例化。
+暂时不处理：
+骨骼和动画。
+GLB 内嵌纹理。
+PBR 金属度、粗糙度。
+法线贴图和切线。
+异步加载。

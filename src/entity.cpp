@@ -4,15 +4,19 @@
 #include <cmath>
 #include <stdexcept>
 
+Entity::Entity(const Transform& transform)
+    : transform(transform)
+{
+}
+
 Entity::Entity(
     Mesh& mesh,
     Material& material,
     const Transform& transform
 )
-    : transform(transform),
-      mesh(&mesh),
-      material(&material)
+    : Entity(transform)
 {
+    this->AddRenderPart(mesh, material);
 }
 
 Entity::~Entity()
@@ -30,34 +34,92 @@ const Transform& Entity::GetTransform() const noexcept
     return this->transform;
 }
 
-Mesh& Entity::GetMesh() noexcept
+Mesh& Entity::GetMesh()
 {
-    return *this->mesh;
+    if (this->renderParts.empty())
+        throw std::logic_error("Entity has no render parts");
+    return this->renderParts.front().GetMesh();
 }
 
-const Mesh& Entity::GetMesh() const noexcept
+const Mesh& Entity::GetMesh() const
 {
-    return *this->mesh;
+    if (this->renderParts.empty())
+        throw std::logic_error("Entity has no render parts");
+    return this->renderParts.front().GetMesh();
 }
 
-void Entity::SetMesh(Mesh& mesh) noexcept
+void Entity::SetMesh(Mesh& mesh)
 {
-    this->mesh = &mesh;
+    if (this->renderParts.empty())
+        throw std::logic_error("Entity has no render parts");
+    this->renderParts.front().SetMesh(mesh);
 }
 
-Material& Entity::GetMaterial() noexcept
+Material& Entity::GetMaterial()
 {
-    return *this->material;
+    if (this->renderParts.empty())
+        throw std::logic_error("Entity has no render parts");
+    return this->renderParts.front().GetMaterial();
 }
 
-const Material& Entity::GetMaterial() const noexcept
+const Material& Entity::GetMaterial() const
 {
-    return *this->material;
+    if (this->renderParts.empty())
+        throw std::logic_error("Entity has no render parts");
+    return this->renderParts.front().GetMaterial();
 }
 
-void Entity::SetMaterial(Material& material) noexcept
+void Entity::SetMaterial(Material& material)
 {
-    this->material = &material;
+    if (this->renderParts.empty())
+        throw std::logic_error("Entity has no render parts");
+    this->renderParts.front().SetMaterial(material);
+}
+
+RenderPart& Entity::AddRenderPart(
+    Mesh& mesh,
+    Material& material,
+    const glm::mat4& localTransform
+)
+{
+    return this->renderParts.emplace_back(mesh, material, localTransform);
+}
+
+bool Entity::RemoveRenderPart(const RenderPart& part)
+{
+    const auto iterator = std::find_if(
+        this->renderParts.begin(),
+        this->renderParts.end(),
+        [&part](const RenderPart& candidate)
+        {
+            return &candidate == &part;
+        }
+    );
+    if (iterator == this->renderParts.end())
+        return false;
+
+    this->renderParts.erase(iterator);
+    return true;
+}
+
+void Entity::ClearRenderParts() noexcept
+{
+    this->renderParts.clear();
+}
+
+std::size_t Entity::RenderPartCount() const noexcept
+{
+    return this->renderParts.size();
+}
+
+std::span<RenderPart> Entity::RenderParts() noexcept
+{
+    return this->renderParts;
+}
+
+std::span<const RenderPart> Entity::RenderParts() const noexcept
+{
+    return this->renderParts;
 }
 
 bool Entity::IsVisible() const noexcept

@@ -43,6 +43,14 @@ void Scene::Update(float deltaTime)
         entity->UpdateBehaviours(deltaTime);
 }
 
+Entity& Scene::CreateEntity(const Transform& transform)
+{
+    auto entity = std::make_unique<Entity>(transform);
+    Entity& result = *entity;
+    this->entities.emplace_back(std::move(entity));
+    return result;
+}
+
 Entity& Scene::CreateEntity(
     Mesh& mesh,
     Material& material,
@@ -53,6 +61,23 @@ Entity& Scene::CreateEntity(
     Entity& result = *entity;
     this->entities.emplace_back(std::move(entity));
     return result;
+}
+
+Entity& Scene::InstantiateModel(
+    const ModelAsset& model,
+    const Transform& transform
+)
+{
+    Entity& entity = this->CreateEntity(transform);
+    for (const RenderPart& part : model.Parts())
+    {
+        entity.AddRenderPart(
+            part.GetMesh(),
+            part.GetMaterial(),
+            part.LocalTransform()
+        );
+    }
+    return entity;
 }
 
 bool Scene::RemoveEntity(const Entity& entity)

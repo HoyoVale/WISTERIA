@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('configure', 'compile', 'all')]
+    [ValidateSet('configure', 'compile', 'test', 'all')]
     [string]$Action = 'all',
 
     [string]$CMakePath
@@ -63,6 +63,27 @@ function Compile-Project {
     )
 }
 
+function Test-Project {
+    Compile-Project
+
+    $CTestPath = Join-Path (Split-Path -Parent $CMakePath) 'ctest.exe'
+    if (-not (Test-Path -LiteralPath $CTestPath -PathType Leaf)) {
+        throw "找不到 CTest：$CTestPath"
+    }
+
+    Write-Host "正在运行自动化测试..." -ForegroundColor Cyan
+    $CTestArguments = @(
+        '--test-dir', $BuildPath,
+        '-C', 'Debug',
+        '--output-on-failure'
+    )
+    & $CTestPath @CTestArguments
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "自动化测试失败，退出码：$LASTEXITCODE"
+    }
+}
+
 switch ($Action) {
     'configure' {
         Configure-Project
@@ -70,6 +91,10 @@ switch ($Action) {
 
     'compile' {
         Compile-Project
+    }
+
+    'test' {
+        Test-Project
     }
 
     'all' {

@@ -3,6 +3,7 @@
 #include "camera.hpp"
 #include "entity.hpp"
 #include "light.hpp"
+#include "model_asset.hpp"
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -24,9 +25,14 @@ public:
 
     void Update(float deltaTime);
 
+    Entity& CreateEntity(const Transform& transform = {});
     Entity& CreateEntity(
         Mesh& mesh,
         Material& material,
+        const Transform& transform = {}
+    );
+    Entity& InstantiateModel(
+        const ModelAsset& model,
         const Transform& transform = {}
     );
     bool RemoveEntity(const Entity& entity);
