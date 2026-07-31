@@ -1,6 +1,5 @@
 #pragma once
 #include "timer.hpp"
-#include "Models/cube.hpp"
 #include "manager.hpp"
 #include "scene.hpp"
 #include "renderer.hpp"

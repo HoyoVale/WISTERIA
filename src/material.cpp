@@ -1,9 +1,50 @@
 #include "pch.hpp"
 #include "material.hpp"
+#include <cmath>
+
+namespace
+{
+MaterialTextureBindings BuildTextureBindings(const MaterialData& data)
+{
+    MaterialTextureBindings bindings;
+    for (const auto& [uniformName, source] : data.textureSources)
+    {
+        bindings.emplace(
+            uniformName,
+            std::make_shared<Texture>(source)
+        );
+    }
+    return bindings;
+}
+}
 
 Material::Material(const MaterialData &_data)
-    :data(_data)
+    : Material(_data, BuildTextureBindings(_data))
 {
+}
+
+Material::Material(
+    const MaterialData& data,
+    MaterialTextureBindings textureBindings
+)
+    : textures(std::move(textureBindings)),
+      data(data)
+{
+    for (const auto& [uniformName, texture] : this->textures)
+    {
+        if (uniformName.empty())
+            throw std::invalid_argument("Texture uniform name must not be empty");
+        if (texture == nullptr)
+            throw std::invalid_argument("Material texture binding must not be null");
+    }
+    if (!std::isfinite(this->data.alphaCutoff))
+        throw std::invalid_argument("Material alpha cutoff must be finite");
+    this->data.alphaCutoff = glm::clamp(this->data.alphaCutoff, 0.0f, 1.0f);
+    this->data.baseColorFactor = glm::clamp(
+        this->data.baseColorFactor,
+        glm::vec4(0.0f),
+        glm::vec4(1.0f)
+    );
 }
 
 void Material::Attach()
@@ -18,20 +59,10 @@ void Material::Attach()
     auto nextProgram = std::make_unique<Program>(
         nextShader->GetShaderList()
     );
-    std::unordered_map<std::string, std::unique_ptr<Texture>> nextTextures;
-
-    unsigned int unit = 0;
-    for (const auto& [uniformName, filePath] : this->data.textureFilePath)
-    {
-        auto texture = std::make_unique<Texture>();
-        texture->Upload(filePath, unit);
-        nextTextures.emplace(uniformName, std::move(texture));
-        ++unit;
-    }
+    for (const auto& [uniformName, texture] : this->textures)
+        texture->Attach();
 
     // Commit only after every resource has been created successfully.
-    // Swap the container first; unique_ptr swaps below are noexcept.
-    this->textures.swap(nextTextures);
     this->program.swap(nextProgram);
     this->shader.swap(nextShader);
 }
@@ -89,6 +120,31 @@ const glm::vec3& Material::SpecularColor() const noexcept
 float Material::Shininess() const noexcept
 {
     return this->data.shininess;
+}
+
+const glm::vec4& Material::BaseColorFactor() const noexcept
+{
+    return this->data.baseColorFactor;
+}
+
+MaterialAlphaMode Material::AlphaMode() const noexcept
+{
+    return this->data.alphaMode;
+}
+
+float Material::AlphaCutoff() const noexcept
+{
+    return this->data.alphaCutoff;
+}
+
+bool Material::IsDoubleSided() const noexcept
+{
+    return this->data.doubleSided;
+}
+
+bool Material::HasTexture(const std::string& uniformName) const noexcept
+{
+    return this->textures.contains(uniformName);
 }
 
 const ShaderInterface& Material::Interface() const noexcept

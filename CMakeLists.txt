@@ -28,6 +28,28 @@ target_include_directories(glm_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
 )
 
+# Assimp 5.2.5 is the newest release compatible with the project's current
+# CMake 3.21 toolchain. Build only the glTF importer needed by ModelImporter.
+include(FetchContent)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
+set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    assimp
+    URL https://github.com/assimp/assimp/archive/refs/tags/v5.2.5.tar.gz
+    URL_HASH SHA256=b5219e63ae31d895d60d98001ee5bb809fb2c7b2de1e7f78ceeb600063641e1a
+)
+FetchContent_MakeAvailable(assimp)
+
 # reusable project code
 set(WISTERIA_CORE_SOURCES
     src/stb_image.cpp
@@ -44,6 +66,7 @@ set(WISTERIA_CORE_SOURCES
     src/behaviour.cpp
     src/render_part.cpp
     src/model_asset.cpp
+    src/importer.cpp
     src/entity.cpp
     src/scene.cpp
     src/renderer.cpp
@@ -80,6 +103,7 @@ target_link_libraries(wisteria_core PUBLIC
     glfw
     glad
     glm_headers
+    assimp
 )
 
 # application
@@ -92,6 +116,9 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(wisteria_tests tests/core_tests.cpp)
     target_link_libraries(wisteria_tests PRIVATE wisteria_core)
+    target_compile_definitions(wisteria_tests PRIVATE
+        WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
+    )
 
     if(MSVC)
         target_compile_options(wisteria_tests PRIVATE /utf-8)

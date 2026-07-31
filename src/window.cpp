@@ -1,7 +1,17 @@
 #include "pch.hpp"
 #include "window.hpp"
+#include <filesystem>
 #include <iostream>
 #include <glad/gl.h>
+
+namespace
+{
+std::filesystem::path DemoModelPath()
+{
+    return std::filesystem::current_path() /
+        "tests" / "assets" / "models" / u8"仪玄" / u8"仪玄.glb";
+}
+}
 
 void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
 {
@@ -28,34 +38,35 @@ Window::Window(int width, int height)
 
         this->init();
 
-        Mesh& cubeMesh = this->resources.CreateMesh("cube", cubeData);
-        Material& defaultMaterial = this->resources.CreateMaterial("default");
-        ModelAsset& cubeModel = this->resources.CreateModel("cubeModel");
-        cubeModel.AddPart(cubeMesh, defaultMaterial);
-        Entity& cubeEntity = this->scene.InstantiateModel(cubeModel);
-        cubeEntity.AddBehaviour<RotateBehaviour>(
-            glm::vec3(9.0f, 18.0f, 27.0f)
-        );
+        ModelAsset& yixuanModel = this->resources.LoadModel("yixuan",DemoModelPath());
+        Entity& yixuanEntity = this->scene.InstantiateModel(yixuanModel);
+        yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 12.0f, 0.0f));
+
+        this->scene.ActiveCamera().SetParam(CameraParam{
+            .Position = {0.0f, 0.4f, 4.0f},
+            .Target = {0.0f, 0.4f, 0.0f},
+            .Up = {0.0f, 1.0f, 0.0f}
+        });
         this->scene.CreatePointLight(PointLightData{
             .Position = {2.5f, 1.5f, 2.5f},
-            .Color = {1.0f, 0.65f, 0.4f},
+            .Color = {1.0f, 1.0f, 1.0f},
             .Intensity = 1.6f,
             .Range = 8.0f
         });
-        this->scene.CreateDirectionalLight(DirectionalLightData{
-            .Direction = {-0.2f, -1.0f, -0.3f},
-            .Color = {1.0f, 0.92f, 0.8f},
-            .Intensity = 0.35f
-        });
-        this->scene.CreateSpotLight(SpotLightData{
-            .Position = {2.5f, 2.5f, 3.0f},
-            .Direction = {-0.55f, -0.55f, -0.65f},
-            .Color = {1.0f, 0.35f, 0.65f},
-            .Intensity = 2.0f,
-            .Range = 8.0f,
-            .InnerCutoffDegrees = 12.5f,
-            .OuterCutoffDegrees = 22.0f
-        });
+        // this->scene.CreateDirectionalLight(DirectionalLightData{
+        //     .Direction = {-0.2f, -1.0f, -0.3f},
+        //     .Color = {1.0f, 0.92f, 0.8f},
+        //     .Intensity = 0.35f
+        // });
+        // this->scene.CreateSpotLight(SpotLightData{
+        //     .Position = {2.5f, 2.5f, 3.0f},
+        //     .Direction = {-0.55f, -0.55f, -0.65f},
+        //     .Color = {1.0f, 0.35f, 0.65f},
+        //     .Intensity = 2.0f,
+        //     .Range = 8.0f,
+        //     .InnerCutoffDegrees = 12.5f,
+        //     .OuterCutoffDegrees = 22.0f
+        // });
     }
     catch (...)
     {

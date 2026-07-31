@@ -204,6 +204,16 @@ void Program::Uniform3f(const std::string& valueName, float x, float y, float z)
 {
     glUniform3f(GetUniformLocation(valueName),x,y,z);
 }
+void Program::Uniform4f(
+    const std::string& valueName,
+    float x,
+    float y,
+    float z,
+    float w
+)
+{
+    glUniform4f(GetUniformLocation(valueName),x,y,z,w);
+}
 void Program::Uniform1i(const std::string& valueName, int value)
 {
     glUniform1i(GetUniformLocation(valueName),value);

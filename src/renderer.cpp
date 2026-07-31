@@ -35,6 +35,20 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
             Material& material = part.GetMaterial();
             mesh.Attach();
             material.Attach();
+
+            if (material.AlphaMode() == MaterialAlphaMode::Blend)
+                glEnable(GL_BLEND);
+            else
+                glDisable(GL_BLEND);
+
+            if (material.IsDoubleSided())
+                glDisable(GL_CULL_FACE);
+            else
+            {
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_BACK);
+            }
+
             material.Bind();
 
             Program& program = material.GetProgram();
@@ -47,6 +61,27 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
                 model,
                 view,
                 projection
+            );
+
+            const glm::vec4& baseColor = material.BaseColorFactor();
+            program.Uniform4f(
+                shaderInterface.materialBaseColorFactor,
+                baseColor.r,
+                baseColor.g,
+                baseColor.b,
+                baseColor.a
+            );
+            program.Uniform1i(
+                shaderInterface.materialAlphaMode,
+                static_cast<int>(material.AlphaMode())
+            );
+            program.Uniform1f(
+                shaderInterface.materialAlphaCutoff,
+                material.AlphaCutoff()
+            );
+            program.Uniform1i(
+                shaderInterface.hasBaseTexture,
+                material.HasTexture(shaderInterface.baseColorTexture) ? 1 : 0
             );
 
             if (shaderInterface.lightingEnabled)

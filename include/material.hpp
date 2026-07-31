@@ -16,6 +16,13 @@ enum class TransformUniformMode
     CombinedTransform
 };
 
+enum class MaterialAlphaMode
+{
+    Opaque = 0,
+    Mask = 1,
+    Blend = 2
+};
+
 // Describes the uniform contract implemented by a material's shader.
 // Custom shaders can change names, capacities, or disable lighting entirely.
 struct ShaderInterface
@@ -32,6 +39,11 @@ struct ShaderInterface
     std::string cameraPosition = "cameraPosition";
     std::string materialSpecularColor = "materialSpecularColor";
     std::string materialShininess = "materialShininess";
+    std::string materialBaseColorFactor = "materialBaseColorFactor";
+    std::string materialAlphaMode = "materialAlphaMode";
+    std::string materialAlphaCutoff = "materialAlphaCutoff";
+    std::string hasBaseTexture = "hasBaseTexture";
+    std::string baseColorTexture = "texture";
     std::string ambientStrength = "ambientStrength";
 
     std::string pointLights = "pointLights";
@@ -59,17 +71,28 @@ struct ShaderInterface
 
 struct MaterialData{
     Path shaderFilePath;
-    std::unordered_map<std::string, std::string> textureFilePath = {
-        {"texture", textureRootPath + "chessboard.png"}
+    std::unordered_map<std::string, TextureData> textureSources = {
+        {"texture", TextureData::FromFile(textureRootPath + "chessboard.png")}
     };
+    glm::vec4 baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     glm::vec3 specularColor = {1.0f, 1.0f, 1.0f}; // Specular reflection color.
     float shininess = 32.0f; // Higher values make a sharper highlight.
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
     ShaderInterface shaderInterface;
 };
+
+using MaterialTextureBindings =
+    std::unordered_map<std::string, std::shared_ptr<Texture>>;
 
 class Material{
 public:
     explicit Material(const MaterialData &_data = {});
+    Material(
+        const MaterialData& data,
+        MaterialTextureBindings textureBindings
+    );
     ~Material() = default;
 
     void Attach();
@@ -81,6 +104,11 @@ public:
 
     const glm::vec3& SpecularColor() const noexcept;
     float Shininess() const noexcept;
+    const glm::vec4& BaseColorFactor() const noexcept;
+    MaterialAlphaMode AlphaMode() const noexcept;
+    float AlphaCutoff() const noexcept;
+    bool IsDoubleSided() const noexcept;
+    bool HasTexture(const std::string& uniformName) const noexcept;
     const ShaderInterface& Interface() const noexcept;
 
     void SetSpecularColor(const glm::vec3& color) noexcept;
@@ -89,6 +117,6 @@ public:
 private:
     std::unique_ptr<Shader> shader;
     std::unique_ptr<Program> program;
-    std::unordered_map<std::string, std::unique_ptr<Texture>> textures;
+    MaterialTextureBindings textures;
     MaterialData data;
 };
