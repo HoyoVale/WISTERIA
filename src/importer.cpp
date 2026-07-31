@@ -8,10 +8,12 @@
 #include <assimp/scene.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -34,11 +36,35 @@ std::string ToString(const aiString& value)
     return std::string(value.C_Str(), value.length);
 }
 
+std::string ToUtf8(const std::filesystem::path& path)
+{
+    const std::u8string value = path.u8string();
+    return std::string(value.begin(), value.end());
+}
+
+std::filesystem::path FromUtf8(std::string_view value)
+{
+    std::u8string utf8;
+    utf8.reserve(value.size());
+    for (const unsigned char byte : value)
+        utf8.push_back(static_cast<char8_t>(byte));
+    return std::filesystem::path(utf8);
+}
+
 std::string PathExtensionHint(const std::filesystem::path& path)
 {
     std::string extension = path.extension().string();
     if (!extension.empty() && extension.front() == '.')
         extension.erase(extension.begin());
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char value)
+        {
+            return static_cast<char>(std::tolower(value));
+        }
+    );
     return extension;
 }
 
@@ -220,8 +246,12 @@ std::size_t ImportTexture(
     }
     else
     {
-        const std::filesystem::path externalPath =
-            (modelDirectory / std::filesystem::path(key)).lexically_normal();
+        std::string normalizedKey = key;
+        std::replace(normalizedKey.begin(), normalizedKey.end(), '\\', '/');
+        std::filesystem::path externalPath = FromUtf8(normalizedKey);
+        if (externalPath.is_relative())
+            externalPath = modelDirectory / externalPath;
+        externalPath = externalPath.lexically_normal();
         if (!std::filesystem::is_regular_file(externalPath))
             throw std::runtime_error("External model texture was not found: " + externalPath.string());
         imported.source = TextureData::FromFile(externalPath);
@@ -312,6 +342,10 @@ ImportedMaterialData ImportMaterial(
     {
         imported.alphaMode = MaterialAlphaMode::Blend;
     }
+    else if (material.GetTextureCount(aiTextureType_OPACITY) > 0)
+    {
+        imported.alphaMode = MaterialAlphaMode::Blend;
+    }
 
     float alphaCutoff = imported.alphaCutoff;
     if (material.Get(AI_MATKEY_GLTF_ALPHACUTOFF, alphaCutoff) == AI_SUCCESS &&
@@ -374,18 +408,34 @@ ImportedModelData ModelImporter::Import(
     const std::filesystem::path& filePath
 ) const
 {
-    if (!std::filesystem::is_regular_file(filePath))
+    const std::filesystem::path absolutePath =
+        std::filesystem::absolute(filePath).lexically_normal();
+    if (!std::filesystem::is_regular_file(absolutePath))
         throw std::invalid_argument("Model file does not exist: " + filePath.string());
 
-    const std::vector<std::uint8_t> fileBytes = ReadBinaryFile(filePath);
-    const std::string extensionHint = PathExtensionHint(filePath);
+    const std::string extensionHint = PathExtensionHint(absolutePath);
     Assimp::Importer importer;
-    const aiScene* scene = importer.ReadFileFromMemory(
-        fileBytes.data(),
-        fileBytes.size(),
-        ImportFlags,
-        extensionHint.empty() ? nullptr : extensionHint.c_str()
-    );
+    const aiScene* scene = nullptr;
+    std::vector<std::uint8_t> fileBytes;
+    if (extensionHint == "glb")
+    {
+        // A GLB is self-contained. Reading it through std::filesystem keeps
+        // Chinese Windows paths independent of the active system code page.
+        fileBytes = ReadBinaryFile(absolutePath);
+        scene = importer.ReadFileFromMemory(
+            fileBytes.data(),
+            fileBytes.size(),
+            ImportFlags,
+            extensionHint.c_str()
+        );
+    }
+    else
+    {
+        // OBJ and textual glTF can reference MTL, buffers and images beside
+        // the model, so Assimp must receive the real UTF-8 file path.
+        const std::string utf8Path = ToUtf8(absolutePath);
+        scene = importer.ReadFile(utf8Path.c_str(), ImportFlags);
+    }
     if (scene == nullptr)
     {
         throw std::runtime_error(
@@ -425,7 +475,7 @@ ImportedModelData ModelImporter::Import(
                 *scene,
                 *scene->mMaterials[sourceMaterialIndex],
                 sourceMaterialIndex,
-                filePath.parent_path(),
+                absolutePath.parent_path(),
                 result,
                 textureIndices
             ));

@@ -37,7 +37,10 @@ public:
     void Attach();
     void Bind(unsigned int unit = 0);
     void Unbind(unsigned int unit = 0);
-    void Upload(const std::string& filePath, unsigned int unit = 0);
+    void Upload(
+        const std::filesystem::path& filePath,
+        unsigned int unit = 0
+    );
     void UploadEncoded(
         std::span<const std::uint8_t> encodedData,
         unsigned int unit = 0

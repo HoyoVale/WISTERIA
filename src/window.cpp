@@ -8,7 +8,7 @@ namespace
 {
 std::filesystem::path DemoModelPath()
 {
-    return std::filesystem::current_path() / "assets" / "models" / u8"仪玄" / u8"仪玄.glb";
+    return std::filesystem::current_path() / "assets" / "models" / u8"仪玄_obj" / u8"仪玄.obj";
 }
 }
 
@@ -54,8 +54,8 @@ Window::Window(int width, int height)
         });
         // this->scene.CreateDirectionalLight(DirectionalLightData{
         //     .Direction = {-0.2f, -1.0f, -0.3f},
-        //     .Color = {1.0f, 0.92f, 0.8f},
-        //     .Intensity = 0.35f
+        //     .Color = {1.0f, 1.0f, 1.0f},
+        //     .Intensity = 2.0f
         // });
         // this->scene.CreateSpotLight(SpotLightData{
         //     .Position = {2.5f, 2.5f, 3.0f},

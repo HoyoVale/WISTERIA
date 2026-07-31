@@ -30,7 +30,10 @@ public:
     );
     Texture& CreateTexture(const std::string& name, TextureData data);
     ModelAsset& CreateModel(const std::string& name);
-    ModelAsset& LoadModel(const std::string& name,const std::filesystem::path& filePath);
+    ModelAsset& LoadModel(
+        const std::string& name,
+        const std::filesystem::path& filePath
+    );
 
     Mesh* FindMesh(const std::string& name) noexcept;
     const Mesh* FindMesh(const std::string& name) const noexcept;
@@ -38,8 +41,16 @@ public:
     const Material* FindMaterial(const std::string& name) const noexcept;
     Texture* FindTexture(const std::string& name) noexcept;
     const Texture* FindTexture(const std::string& name) const noexcept;
+    Texture* FindTextureByPath(const std::filesystem::path& filePath);
+    const Texture* FindTextureByPath(
+        const std::filesystem::path& filePath
+    ) const;
     ModelAsset* FindModel(const std::string& name) noexcept;
     const ModelAsset* FindModel(const std::string& name) const noexcept;
+    ModelAsset* FindModelByPath(const std::filesystem::path& filePath);
+    const ModelAsset* FindModelByPath(
+        const std::filesystem::path& filePath
+    ) const;
 
     Mesh& GetMesh(const std::string& name);
     const Mesh& GetMesh(const std::string& name) const;
@@ -60,6 +71,11 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Material>> materials;
     std::unordered_map<std::string, std::shared_ptr<Texture>> textures;
     std::unordered_map<std::string, std::unique_ptr<ModelAsset>> models;
+    std::unordered_map<
+        std::filesystem::path,
+        std::weak_ptr<Texture>
+    > texturePathCache;
+    std::unordered_map<std::filesystem::path, ModelAsset*> modelPathCache;
 
     // Resources may only be released during Window shutdown, after Scene is clear.
     void Clear() noexcept;

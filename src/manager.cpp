@@ -1,7 +1,23 @@
 #include "pch.hpp"
 #include "manager.hpp"
 #include "importer.hpp"
+#include <optional>
 #include <utility>
+
+namespace
+{
+std::filesystem::path NormalizeResourcePath(
+    const std::filesystem::path& filePath
+)
+{
+    if (filePath.empty())
+        throw std::invalid_argument("Resource file path must not be empty");
+
+    return std::filesystem::weakly_canonical(
+        std::filesystem::absolute(filePath)
+    );
+}
+}
 
 Mesh& ResourceManager::CreateMesh(
     const std::string& name,
@@ -39,9 +55,46 @@ Texture& ResourceManager::CreateTexture(
     if (this->textures.contains(name))
         throw std::invalid_argument("Texture resource already exists: " + name);
 
-    auto texture = std::make_shared<Texture>(std::move(data));
+    std::optional<std::filesystem::path> normalizedPath;
+    std::shared_ptr<Texture> texture;
+    bool createdTexture = false;
+
+    if (data.IsFile())
+    {
+        normalizedPath = NormalizeResourcePath(data.filePath);
+        data.filePath = *normalizedPath;
+
+        const auto cached = this->texturePathCache.find(*normalizedPath);
+        if (cached != this->texturePathCache.end())
+        {
+            texture = cached->second.lock();
+            if (texture == nullptr)
+                this->texturePathCache.erase(cached);
+        }
+    }
+
+    if (texture == nullptr)
+    {
+        texture = std::make_shared<Texture>(std::move(data));
+        createdTexture = true;
+    }
+
     Texture& result = *texture;
-    this->textures.emplace(name, std::move(texture));
+    this->textures.emplace(name, texture);
+
+    if (normalizedPath.has_value() && createdTexture)
+    {
+        try
+        {
+            this->texturePathCache.emplace(*normalizedPath, texture);
+        }
+        catch (...)
+        {
+            this->textures.erase(name);
+            throw;
+        }
+    }
+
     return result;
 }
 
@@ -63,10 +116,26 @@ ModelAsset& ResourceManager::LoadModel(
 {
     if (name.empty())
         throw std::invalid_argument("Model resource name must not be empty");
+
+    const std::filesystem::path normalizedModelPath =
+        NormalizeResourcePath(filePath);
+    const auto cachedModel = this->modelPathCache.find(normalizedModelPath);
+    if (cachedModel != this->modelPathCache.end())
+    {
+        if (cachedModel->second->Name() != name)
+        {
+            throw std::invalid_argument(
+                "Model file is already loaded as resource: " +
+                cachedModel->second->Name()
+            );
+        }
+        return *cachedModel->second;
+    }
+
     if (this->models.contains(name))
         throw std::invalid_argument("Model resource already exists: " + name);
 
-    ImportedModelData imported = ModelImporter().Import(filePath);
+    ImportedModelData imported = ModelImporter().Import(normalizedModelPath);
 
     std::vector<std::string> textureNames;
     std::vector<std::string> materialNames;
@@ -113,12 +182,50 @@ ModelAsset& ResourceManager::LoadModel(
     }
 
     std::vector<std::shared_ptr<Texture>> importedTextures;
+    std::unordered_map<
+        std::filesystem::path,
+        std::shared_ptr<Texture>
+    > newExternalTextures;
     importedTextures.reserve(imported.textures.size());
     for (std::size_t index = 0; index < imported.textures.size(); ++index)
     {
-        auto texture = std::make_shared<Texture>(
-            std::move(imported.textures[index].source)
-        );
+        TextureData source = std::move(imported.textures[index].source);
+        std::shared_ptr<Texture> texture;
+
+        if (source.IsFile())
+        {
+            const std::filesystem::path normalizedTexturePath =
+                NormalizeResourcePath(source.filePath);
+            source.filePath = normalizedTexturePath;
+
+            const auto cached =
+                this->texturePathCache.find(normalizedTexturePath);
+            if (cached != this->texturePathCache.end())
+            {
+                texture = cached->second.lock();
+                if (texture == nullptr)
+                    this->texturePathCache.erase(cached);
+            }
+
+            if (texture == nullptr)
+            {
+                const auto pending =
+                    newExternalTextures.find(normalizedTexturePath);
+                if (pending != newExternalTextures.end())
+                    texture = pending->second;
+            }
+
+            if (texture == nullptr)
+            {
+                texture = std::make_shared<Texture>(std::move(source));
+                newExternalTextures.emplace(normalizedTexturePath, texture);
+            }
+        }
+        else
+        {
+            texture = std::make_shared<Texture>(std::move(source));
+        }
+
         importedTextures.push_back(std::move(texture));
     }
 
@@ -179,10 +286,15 @@ ModelAsset& ResourceManager::LoadModel(
     this->materials.reserve(this->materials.size() + importedMaterials.size());
     this->meshes.reserve(this->meshes.size() + importedMeshes.size());
     this->models.reserve(this->models.size() + 1);
+    this->texturePathCache.reserve(
+        this->texturePathCache.size() + newExternalTextures.size()
+    );
+    this->modelPathCache.reserve(this->modelPathCache.size() + 1);
 
     std::size_t textureCommitCount = 0;
     std::size_t materialCommitCount = 0;
     std::size_t meshCommitCount = 0;
+    bool modelPathCommitted = false;
     try
     {
         for (std::size_t index = 0; index < importedTextures.size(); ++index)
@@ -204,12 +316,40 @@ ModelAsset& ResourceManager::LoadModel(
             ++meshCommitCount;
         }
 
-        ModelAsset& result = *model;
+        ModelAsset* result = model.get();
         this->models.emplace(name, std::move(model));
-        return result;
+
+        const bool modelPathInserted =
+            this->modelPathCache.emplace(normalizedModelPath, result).second;
+        if (!modelPathInserted)
+            throw std::logic_error("Model path cache changed during import");
+        modelPathCommitted = true;
+
+        for (const auto& [path, texture] : newExternalTextures)
+        {
+            const bool texturePathInserted =
+                this->texturePathCache.emplace(path, texture).second;
+            if (!texturePathInserted)
+                throw std::logic_error("Texture path cache changed during import");
+        }
+
+        return *result;
     }
     catch (...)
     {
+        if (modelPathCommitted)
+            this->modelPathCache.erase(normalizedModelPath);
+        for (const auto& [path, texture] : newExternalTextures)
+        {
+            const auto cached = this->texturePathCache.find(path);
+            if (
+                cached != this->texturePathCache.end() &&
+                cached->second.lock() == texture
+            )
+            {
+                this->texturePathCache.erase(cached);
+            }
+        }
         this->models.erase(name);
         for (std::size_t index = 0; index < materialCommitCount; ++index)
             this->materials.erase(materialNames[index]);
@@ -259,6 +399,39 @@ const Texture* ResourceManager::FindTexture(const std::string& name) const noexc
     return iterator != this->textures.end() ? iterator->second.get() : nullptr;
 }
 
+Texture* ResourceManager::FindTextureByPath(
+    const std::filesystem::path& filePath
+)
+{
+    const std::filesystem::path normalizedPath =
+        NormalizeResourcePath(filePath);
+    const auto iterator = this->texturePathCache.find(normalizedPath);
+    if (iterator == this->texturePathCache.end())
+        return nullptr;
+
+    const std::shared_ptr<Texture> texture = iterator->second.lock();
+    if (texture == nullptr)
+    {
+        this->texturePathCache.erase(iterator);
+        return nullptr;
+    }
+    return texture.get();
+}
+
+const Texture* ResourceManager::FindTextureByPath(
+    const std::filesystem::path& filePath
+) const
+{
+    const std::filesystem::path normalizedPath =
+        NormalizeResourcePath(filePath);
+    const auto iterator = this->texturePathCache.find(normalizedPath);
+    if (iterator == this->texturePathCache.end())
+        return nullptr;
+
+    const std::shared_ptr<Texture> texture = iterator->second.lock();
+    return texture != nullptr ? texture.get() : nullptr;
+}
+
 ModelAsset* ResourceManager::FindModel(const std::string& name) noexcept
 {
     const auto iterator = this->models.find(name);
@@ -271,6 +444,26 @@ const ModelAsset* ResourceManager::FindModel(
 {
     const auto iterator = this->models.find(name);
     return iterator != this->models.end() ? iterator->second.get() : nullptr;
+}
+
+ModelAsset* ResourceManager::FindModelByPath(
+    const std::filesystem::path& filePath
+)
+{
+    const std::filesystem::path normalizedPath =
+        NormalizeResourcePath(filePath);
+    const auto iterator = this->modelPathCache.find(normalizedPath);
+    return iterator != this->modelPathCache.end() ? iterator->second : nullptr;
+}
+
+const ModelAsset* ResourceManager::FindModelByPath(
+    const std::filesystem::path& filePath
+) const
+{
+    const std::filesystem::path normalizedPath =
+        NormalizeResourcePath(filePath);
+    const auto iterator = this->modelPathCache.find(normalizedPath);
+    return iterator != this->modelPathCache.end() ? iterator->second : nullptr;
 }
 
 Mesh& ResourceManager::GetMesh(const std::string& name)
@@ -365,6 +558,8 @@ std::size_t ResourceManager::ModelCount() const noexcept
 
 void ResourceManager::Clear() noexcept
 {
+    this->modelPathCache.clear();
+    this->texturePathCache.clear();
     this->models.clear();
     this->materials.clear();
     this->textures.clear();

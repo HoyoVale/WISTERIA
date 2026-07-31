@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "texture.hpp"
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -81,25 +82,34 @@ void Texture::Unbind(unsigned int unit)
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Texture::Upload(const std::string& filePath, unsigned int unit)
+void Texture::Upload(
+    const std::filesystem::path& filePath,
+    unsigned int unit
+)
 {
-    int width, height, channels;
+    std::ifstream stream(filePath, std::ios::binary | std::ios::ate);
+    if (!stream)
+        throw std::runtime_error("Cannot open texture file: " + filePath.string());
 
-    std::unique_ptr<unsigned char, decltype(&stbi_image_free)> pixels(
-        stbi_load(filePath.c_str(), &width, &height, &channels, 4),
-        stbi_image_free
-    );
-
-    if (pixels == nullptr) {
-        const char* failureReason = stbi_failure_reason();
-        throw std::runtime_error(
-            "Cannot load texture: " + filePath + " (" +
-            (failureReason != nullptr ? failureReason : "unknown stb_image error") +
-            ")"
-        );
+    const std::streampos end = stream.tellg();
+    if (end <= 0)
+        throw std::runtime_error("Texture file is empty: " + filePath.string());
+    if (static_cast<std::uintmax_t>(end) >
+        static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max()))
+    {
+        throw std::length_error("Texture file is too large: " + filePath.string());
     }
 
-    this->UploadDecodedPixels(pixels.get(), width, height, unit);
+    std::vector<std::uint8_t> encodedData(static_cast<std::size_t>(end));
+    stream.seekg(0, std::ios::beg);
+    stream.read(
+        reinterpret_cast<char*>(encodedData.data()),
+        static_cast<std::streamsize>(encodedData.size())
+    );
+    if (!stream)
+        throw std::runtime_error("Cannot read texture file: " + filePath.string());
+
+    this->UploadEncoded(encodedData, unit);
 }
 
 void Texture::UploadEncoded(
@@ -164,7 +174,7 @@ void Texture::Attach()
         return;
 
     if (this->data.IsFile())
-        this->Upload(this->data.filePath.string());
+        this->Upload(this->data.filePath);
     else if (this->data.IsEncoded())
         this->UploadEncoded(this->data.data);
     else if (this->data.IsRgba8())

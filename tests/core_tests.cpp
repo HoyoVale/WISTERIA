@@ -184,9 +184,11 @@ void TestStaticModelImporter()
 void TestImportedResourceCreation()
 {
     ResourceManager resources;
+    const std::filesystem::path modelPath =
+        TestAssetDirectory / "models" / "embedded_triangle.gltf";
     ModelAsset& model = resources.LoadModel(
         "embeddedTriangle",
-        TestAssetDirectory / "models" / "embedded_triangle.gltf"
+        modelPath
     );
 
     Require(model.PartCount() == 2, "Loaded ModelAsset part count is incorrect");
@@ -207,19 +209,53 @@ void TestImportedResourceCreation()
         "CPU import unexpectedly created an OpenGL texture"
     );
 
-    bool duplicateRejected = false;
+    const std::filesystem::path equivalentPath =
+        modelPath.parent_path() / "." / modelPath.filename();
+    ModelAsset& cachedModel = resources.LoadModel(
+        "embeddedTriangle",
+        equivalentPath
+    );
+    Require(&cachedModel == &model, "Equivalent model path was imported twice");
+    Require(
+        resources.FindModelByPath(equivalentPath) == &model,
+        "FindModelByPath did not use normalized paths"
+    );
+    Require(resources.ModelCount() == 1, "Model path cache added a duplicate model");
+    Require(resources.MeshCount() == 1, "Model path cache added duplicate meshes");
+    Require(resources.MaterialCount() == 1, "Model path cache added duplicate materials");
+    Require(resources.TextureCount() == 1, "Model path cache added duplicate textures");
+
+    bool aliasRejected = false;
     try
     {
         resources.LoadModel(
-            "embeddedTriangle",
-            TestAssetDirectory / "models" / "embedded_triangle.gltf"
+            "triangleAlias",
+            equivalentPath
         );
     }
     catch (const std::invalid_argument&)
     {
-        duplicateRejected = true;
+        aliasRejected = true;
     }
-    Require(duplicateRejected, "Duplicate imported model name was accepted");
+    Require(aliasRejected, "One model file was accepted under two resource names");
+
+    bool nameCollisionRejected = false;
+    try
+    {
+        resources.LoadModel(
+            "embeddedTriangle",
+            TestAssetDirectory / "models" / "Box.glb"
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        nameCollisionRejected = true;
+    }
+    Require(
+        nameCollisionRejected,
+        "One resource name was accepted for two different model files"
+    );
+    Require(resources.ModelCount() == 1, "Rejected model changed the model registry");
 }
 
 void TestImporterRejectsMissingFile()
@@ -303,6 +339,74 @@ void TestConvertedMmdGlbWhenAvailable()
     Require(instance.RenderPartCount() == 21, "Converted MMD Entity parts changed");
 }
 
+void TestConvertedMmdObjWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        TestAssetDirectory / "models" / u8"仪玄_obj" / u8"仪玄.obj";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(imported.meshes.size() == 21, "Converted OBJ mesh count changed");
+    Require(imported.materials.size() == 21, "Converted OBJ material count changed");
+    Require(imported.textures.size() == 6, "Converted OBJ external texture count changed");
+    Require(imported.parts.size() == 21, "Converted OBJ render-part count changed");
+
+    for (const ImportedTextureData& texture : imported.textures)
+    {
+        Require(texture.source.IsFile(), "OBJ texture was not kept as an external file");
+        Require(
+            std::filesystem::is_regular_file(texture.source.filePath),
+            "OBJ external texture file was not resolved"
+        );
+        Require(
+            texture.source.filePath.parent_path() == modelPath.parent_path(),
+            "OBJ texture path was not resolved relative to its MTL"
+        );
+    }
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("yixuanObj", modelPath);
+    Scene scene;
+    Entity& instance = scene.InstantiateModel(model);
+
+    Require(resources.ModelCount() == 1, "Converted OBJ model was not registered");
+    Require(resources.MeshCount() == 21, "Converted OBJ mesh resources changed");
+    Require(resources.MaterialCount() == 21, "Converted OBJ material resources changed");
+    Require(resources.TextureCount() == 6, "Converted OBJ texture resources changed");
+    Require(model.PartCount() == 21, "Converted OBJ ModelAsset parts changed");
+    Require(instance.RenderPartCount() == 21, "Converted OBJ Entity parts changed");
+
+    for (std::size_t index = 0; index < imported.textures.size(); ++index)
+    {
+        Texture& namedTexture = resources.GetTexture(
+            "yixuanObj::texture::" + std::to_string(index)
+        );
+        Require(
+            resources.FindTextureByPath(imported.textures[index].source.filePath) ==
+                &namedTexture,
+            "External texture path cache points to the wrong resource"
+        );
+    }
+
+    const std::filesystem::path firstTexturePath =
+        imported.textures[0].source.filePath;
+    Texture& textureAlias = resources.CreateTexture(
+        "yixuanObjTextureAlias",
+        TextureData::FromFile(
+            firstTexturePath.parent_path() / "." / firstTexturePath.filename()
+        )
+    );
+    Require(
+        &textureAlias == &resources.GetTexture("yixuanObj::texture::0"),
+        "Equivalent external texture path created a second Texture object"
+    );
+    Require(
+        resources.TextureCount() == 7,
+        "Texture alias was not registered as a named resource"
+    );
+}
+
 template<typename Function>
 bool RunTest(const char* name, Function&& function)
 {
@@ -335,5 +439,6 @@ int main()
         TestImportResourceCollisionIsTransactional
     );
     failures += !RunTest("Converted MMD GLB integration", TestConvertedMmdGlbWhenAvailable);
+    failures += !RunTest("Converted MMD OBJ integration", TestConvertedMmdObjWhenAvailable);
     return failures == 0 ? 0 : 1;
 }

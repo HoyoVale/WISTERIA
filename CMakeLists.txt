@@ -29,7 +29,7 @@ target_include_directories(glm_headers INTERFACE
 )
 
 # Assimp 5.2.5 is the newest release compatible with the project's current
-# CMake 3.21 toolchain. Build only the glTF importer needed by ModelImporter.
+# CMake 3.21 toolchain. Build only the static-model importers used here.
 include(FetchContent)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -41,6 +41,7 @@ set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
