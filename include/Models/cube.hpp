@@ -59,3 +59,4 @@ public:
     explicit Cube(const ModelParam& param = {});
     ~Cube() override = default;
 };
+

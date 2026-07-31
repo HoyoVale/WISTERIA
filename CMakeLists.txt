@@ -42,6 +42,7 @@ add_executable(wisteria
     src/timer.cpp
     src/model.cpp
     src/Models/cube.cpp
+    src/mesh.cpp
 )
 
 target_include_directories(wisteria PRIVATE 

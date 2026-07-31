@@ -20,6 +20,7 @@ Window::Window(int width, int height)
     this->camera = new Camera();
     this->timer = new Timer();
     this->model = new Cube();
+    this->mesh = new Mesh(*this->model);
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -44,6 +45,7 @@ Window::~Window(){
     delete this->size;
     delete this->camera;
     delete this->timer;
+    delete this->mesh;
     delete this->model;
     glfwDestroyWindow(this->window);
     glfwTerminate();
@@ -87,21 +89,7 @@ void Window::computeParam()
 
 bool Window::Run()
 {
-    VAO* vao = new VAO();
-    vao->Bind();
-    VBO* vbo = new VBO();
-    vbo->Upload(
-        this->model->data->vertices.data(),
-        static_cast<unsigned int>(this->model->data->VertexBytes())
-    );
-    vao->BindBuffer(*vbo, this->model->data->layout);
-    EBO* ebo = new EBO();
-    ebo->Bind();
-    ebo->Upload(
-        this->model->data->indices.data(),
-        static_cast<unsigned int>(this->model->data->IndexBytes())
-    );
-    vao->unBind();
+    this->mesh->Attach();
 
     std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.vert";
     std::string strFragmentShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.frag";
@@ -129,16 +117,7 @@ bool Window::Run()
         
         // 绘制
         program->Use();
-        vao->Bind();
-        //glDrawArrays(GL_TRIANGLES, 0, 3);
-        //glDepthMask(GL_FALSE);
-        glDrawElements(
-            GL_TRIANGLES,
-            static_cast<GLsizei>(this->model->data->IndexCount()),
-            GL_UNSIGNED_INT,
-            nullptr
-        );
-        //glDepthMask(GL_TRUE);
+        this->mesh->Draw();
         program->unUse();
 
         glfwSwapBuffers(this->GetGLFWwindow());

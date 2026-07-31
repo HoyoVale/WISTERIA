@@ -19,7 +19,6 @@ glm::mat4 Model::ModelMat() const
     return modelMat;
 }
 
-
 void Model::Translate(glm::vec3 translation)
 {
     this->Param().Position = translation;

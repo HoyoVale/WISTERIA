@@ -1,7 +1,10 @@
 #pragma once
 #include <glm/glm.hpp>
-#include "vbo.hpp"
 #include <vector>
+#include "vao.hpp"
+#include "vbo.hpp"
+#include "ebo.hpp"
+
 
 struct ModelParam{
     glm::vec3 Position = glm::vec3(0.0f, 0.0f, 0.0f);
