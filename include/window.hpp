@@ -1,4 +1,5 @@
 #pragma once
+#include "camera.hpp"
 #include <GLFW/glfw3.h>
 
 struct WindowSize {
@@ -13,8 +14,16 @@ public:
     bool Run();
     inline GLFWwindow* GetGLFWwindow() const { return window; };
     inline const WindowSize GetSize() const { return *size; };
+    glm::mat4 View() const { return this->camera->GetView(); };
+    glm::mat4 Projection() const{ return this->projection; };
 
+private:
+    bool init();
+    void computeParam();
 private:
     WindowSize* size = nullptr;  
     GLFWwindow* window = nullptr;
+    Camera* camera = nullptr;
+    float aspect = 1.0f;
+    glm::mat4 projection = glm::mat4(1.0f);
 };

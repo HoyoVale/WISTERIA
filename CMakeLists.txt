@@ -38,6 +38,7 @@ add_executable(wisteria
     src/vao.cpp
     src/ebo.cpp
     src/texture.cpp
+    src/camera.cpp
 )
 
 target_include_directories(wisteria PRIVATE 

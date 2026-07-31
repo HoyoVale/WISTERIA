@@ -1,11 +1,13 @@
 #include "pch.hpp"
 #include "texture.hpp"
+#include <iostream>
 
 
 GLint GetMaxUnits()
 {
     GLint maxUnits;
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,&maxUnits);
+    //std::cout << "maxUnits: " << maxUnits << std::endl;
     return maxUnits;
 }
 
@@ -13,7 +15,7 @@ Texture::Texture()
 {
     glGenTextures(1, &this->texture);
     Textureindex++;
-    if(Textureindex > GetMaxUnits()) 
+    if(Textureindex >= GetMaxUnits()) 
     {
         std::cerr << "Texture slots are full!" << std::endl;
         Textureindex--;
@@ -33,7 +35,7 @@ Texture::~Texture()
 
 void Texture::Bind()
 {
-    if(index > GetMaxUnits()) {
+    if(index >= GetMaxUnits()) {
         std::cerr << "Texture slots are full!" << std::endl;
         exit(1);
     }
@@ -47,7 +49,7 @@ void Texture::Bind()
 
 void Texture::Bind(unsigned int index)
 {
-    if(index > GetMaxUnits()) {
+    if(index >= GetMaxUnits()) {
         std::cerr << "Texture slots are full!" << std::endl;
         exit(1);
     }
