@@ -4,7 +4,6 @@
 #include "vao.hpp"
 #include "vbo.hpp"
 #include "ebo.hpp"
-#include "transform.hpp"
 
 template<
     typename VertexType = float,
@@ -32,19 +31,12 @@ using DefaultModelData = ModelData<>;
 
 class Model{
 public:
-    explicit Model(
-        const DefaultModelData& data,
-        const Transform& transform = {}
-    );
+    explicit Model(const DefaultModelData& data);
     virtual ~Model() = default;
 
     const DefaultModelData& Data() const;
 
-    Transform& GetTransform() noexcept;
-    const Transform& GetTransform() const noexcept;
-
 private:
     const DefaultModelData* data = nullptr;
-    Transform transform;
 };
 

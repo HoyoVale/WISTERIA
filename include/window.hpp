@@ -4,6 +4,7 @@
 #include "Models/cube.hpp"
 #include "mesh.hpp"
 #include "material.hpp"
+#include "entity.hpp"
 #include <GLFW/glfw3.h>
 
 struct WindowSize {
@@ -32,6 +33,7 @@ private:
     Model* model = nullptr;
     Mesh* mesh = nullptr;
     Material* material = nullptr;
+    Entity* entity = nullptr;
     float aspect = 1.0f;
     glm::mat4 projection = glm::mat4(1.0f);
 };

@@ -18,6 +18,7 @@ Window::Window(int width, int height)
     this->model = new Cube();
     this->mesh = new Mesh(this->model->Data());
     this->material = new Material();
+    this->entity = new Entity(*this->mesh, *this->material);
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -42,6 +43,7 @@ Window::~Window(){
     delete this->size;
     delete this->camera;
     delete this->timer;
+    delete this->entity;
     delete this->material;
     delete this->mesh;
     delete this->model;
@@ -87,8 +89,8 @@ void Window::computeParam()
 
 bool Window::Run()
 {
-    this->mesh->Attach();
-    this->material->Attach();
+    this->entity->GetMesh().Attach();
+    this->entity->GetMaterial().Attach();
 
     float r = 0.0f, speed = 9.0f;
     
@@ -99,21 +101,21 @@ bool Window::Run()
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
-        this->model->GetTransform().SetRotation({r, 2 * r, 3 * r});
+        this->entity->GetTransform().SetRotation({r, 2 * r, 3 * r});
         glm::mat4 transform =
             this->Projection() *
             this->View() *
-            this->model->GetTransform().Matrix();
+            this->entity->GetTransform().Matrix();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
-        this->material->Bind();
-        this->material->GetProgram().UniformMat4f("transform", transform);
+        this->entity->GetMaterial().Bind();
+        this->entity->GetMaterial().GetProgram().UniformMat4f("transform", transform);
         
         // 绘制
-        this->mesh->Bind();
-        this->mesh->Draw();
-        this->mesh->Unbind();
-        this->material->Unbind();
+        this->entity->GetMesh().Bind();
+        this->entity->GetMesh().Draw();
+        this->entity->GetMesh().Unbind();
+        this->entity->GetMaterial().Unbind();
 
         glfwSwapBuffers(this->GetGLFWwindow());
         glfwPollEvents();

@@ -42,6 +42,7 @@ add_executable(wisteria
     src/timer.cpp
     src/model.cpp
     src/transform.cpp
+    src/entity.cpp
     src/Models/cube.cpp
     src/mesh.cpp
     src/material.cpp
