@@ -30,7 +30,10 @@ Window::Window(int width, int height)
 
         Mesh& cubeMesh = this->resources.CreateMesh("cube", cubeData);
         Material& defaultMaterial = this->resources.CreateMaterial("default");
-        this->scene.CreateEntity(cubeMesh, defaultMaterial);
+        Entity& cubeEntity = this->scene.CreateEntity(cubeMesh, defaultMaterial);
+        cubeEntity.AddBehaviour<RotateBehaviour>(
+            glm::vec3(9.0f, 18.0f, 27.0f)
+        );
         this->scene.CreatePointLight(PointLightData{
             .Position = {2.5f, 1.5f, 2.5f},
             .Color = {1.0f, 0.65f, 0.4f},
@@ -116,8 +119,6 @@ bool Window::Run()
     if (this->scene.EntityCount() == 0)
         throw std::logic_error("Window requires at least one Scene entity");
 
-    float r = 0.0f, speed = 9.0f;
-    
     this->timer.Start();
     while(!glfwWindowShouldClose(this->GetGLFWwindow()))
     {
@@ -125,12 +126,7 @@ bool Window::Run()
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
-        // Resolve the object each frame so Scene removal cannot leave a cached
-        // dangling reference in the update loop.
-        if (Entity* entity = this->scene.EntityAt(0); entity != nullptr)
-            entity->GetTransform().SetRotation({r, 2 * r, 3 * r});
-        r += speed * this->timer.GetDeltaTime();
-        if(r<=-180 or r>=180) speed *= -1.0f;
+        this->scene.Update(this->timer.GetDeltaTime());
         this->renderer.Render(this->scene, this->Projection());
 
         glfwSwapBuffers(this->GetGLFWwindow());

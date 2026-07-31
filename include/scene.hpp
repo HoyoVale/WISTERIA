@@ -22,6 +22,8 @@ public:
     Camera& ActiveCamera() noexcept;
     const Camera& ActiveCamera() const noexcept;
 
+    void Update(float deltaTime);
+
     Entity& CreateEntity(
         Mesh& mesh,
         Material& material,

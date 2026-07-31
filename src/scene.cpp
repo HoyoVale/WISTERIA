@@ -37,6 +37,12 @@ const Camera& Scene::ActiveCamera() const noexcept
     return this->activeCamera;
 }
 
+void Scene::Update(float deltaTime)
+{
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+        entity->UpdateBehaviours(deltaTime);
+}
+
 Entity& Scene::CreateEntity(
     Mesh& mesh,
     Material& material,
