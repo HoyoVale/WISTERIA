@@ -21,26 +21,23 @@ void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
 Window::Window(int width, int height)
 {
     this->size = new WindowSize({width, height});
-    this->camera = new Camera();
     this->timer = new Timer();
     this->model = new Cube();
     this->mesh = new Mesh(this->model->Data());
     this->material = new Material();
-    this->entity = new Entity(*this->mesh, *this->material);
-    this->pointLights.emplace_back(std::make_unique<PointLight>(PointLightData{
+    this->scene.CreateEntity(*this->mesh, *this->material);
+    this->scene.CreatePointLight(PointLightData{
         .Position = {2.5f, 1.5f, 2.5f},
         .Color = {1.0f, 0.65f, 0.4f},
         .Intensity = 1.6f,
         .Range = 8.0f
-    }));
-    this->directionalLights.emplace_back(
-        std::make_unique<DirectionalLight>(DirectionalLightData{
-            .Direction = {-0.2f, -1.0f, -0.3f},
-            .Color = {1.0f, 0.92f, 0.8f},
-            .Intensity = 0.35f
-        })
-    );
-    this->spotLights.emplace_back(std::make_unique<SpotLight>(SpotLightData{
+    });
+    this->scene.CreateDirectionalLight(DirectionalLightData{
+        .Direction = {-0.2f, -1.0f, -0.3f},
+        .Color = {1.0f, 0.92f, 0.8f},
+        .Intensity = 0.35f
+    });
+    this->scene.CreateSpotLight(SpotLightData{
         .Position = {2.5f, 2.5f, 3.0f},
         .Direction = {-0.55f, -0.55f, -0.65f},
         .Color = {1.0f, 0.35f, 0.65f},
@@ -48,7 +45,7 @@ Window::Window(int width, int height)
         .Range = 8.0f,
         .InnerCutoffDegrees = 12.5f,
         .OuterCutoffDegrees = 22.0f
-    }));
+    });
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -70,10 +67,12 @@ Window::Window(int width, int height)
 }
 
 Window::~Window(){
+    this->scene.ClearEntities();
+    this->scene.ClearPointLights();
+    this->scene.ClearDirectionalLights();
+    this->scene.ClearSpotLights();
     delete this->size;
-    delete this->camera;
     delete this->timer;
-    delete this->entity;
     delete this->material;
     delete this->mesh;
     delete this->model;
@@ -119,8 +118,12 @@ void Window::computeParam()
 
 bool Window::Run()
 {
-    this->entity->GetMesh().Attach();
-    this->entity->GetMaterial().Attach();
+    if (this->scene.Entities().empty())
+        throw std::logic_error("Window requires at least one Scene entity");
+
+    Entity& entity = *this->scene.Entities().front();
+    entity.GetMesh().Attach();
+    entity.GetMaterial().Attach();
 
     float r = 0.0f, speed = 9.0f;
     
@@ -131,23 +134,23 @@ bool Window::Run()
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
-        this->entity->GetTransform().SetRotation({r, 2 * r, 3 * r});
-        const glm::mat4 model = this->entity->GetTransform().Matrix();
+        entity.GetTransform().SetRotation({r, 2 * r, 3 * r});
+        const glm::mat4 model = entity.GetTransform().Matrix();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
-        this->entity->GetMaterial().Bind();
-        Program& program = this->entity->GetMaterial().GetProgram();
+        entity.GetMaterial().Bind();
+        Program& program = entity.GetMaterial().GetProgram();
         program.UniformMat4f("model", model);
         program.UniformMat4f("view", this->View());
         program.UniformMat4f("projection", this->Projection());
         const int pointLightCount = static_cast<int>(std::min(
-            this->pointLights.size(),
+            this->scene.PointLights().size(),
             MaxPointLights
         ));
         program.Uniform1i("pointLightCount", pointLightCount);
         for (int index = 0; index < pointLightCount; ++index)
         {
-            const PointLight& pointLight = *this->pointLights[index];
+            const PointLight& pointLight = *this->scene.PointLights()[index];
             const glm::vec3 radiance = pointLight.Radiance();
             const std::string uniformPrefix =
                 "pointLights[" + std::to_string(index) + "].";
@@ -176,14 +179,14 @@ bool Window::Run()
             );
         }
         const int directionalLightCount = static_cast<int>(std::min(
-            this->directionalLights.size(),
+            this->scene.DirectionalLights().size(),
             MaxDirectionalLights
         ));
         program.Uniform1i("directionalLightCount", directionalLightCount);
         for (int index = 0; index < directionalLightCount; ++index)
         {
             const DirectionalLight& directionalLight =
-                *this->directionalLights[index];
+                *this->scene.DirectionalLights()[index];
             const glm::vec3 radiance = directionalLight.Radiance();
             const std::string uniformPrefix =
                 "directionalLights[" + std::to_string(index) + "].";
@@ -202,13 +205,13 @@ bool Window::Run()
             );
         }
         const int spotLightCount = static_cast<int>(std::min(
-            this->spotLights.size(),
+            this->scene.SpotLights().size(),
             MaxSpotLights
         ));
         program.Uniform1i("spotLightCount", spotLightCount);
         for (int index = 0; index < spotLightCount; ++index)
         {
-            const SpotLight& spotLight = *this->spotLights[index];
+            const SpotLight& spotLight = *this->scene.SpotLights()[index];
             const glm::vec3 radiance = spotLight.Radiance();
             const std::string uniformPrefix =
                 "spotLights[" + std::to_string(index) + "].";
@@ -253,26 +256,26 @@ bool Window::Run()
         program.Uniform1f("ambientStrength", 0.15f);
         program.Uniform3f(
             "cameraPosition",
-            this->camera->GetParam().Position.x,
-            this->camera->GetParam().Position.y,
-            this->camera->GetParam().Position.z
+            this->scene.ActiveCamera().GetParam().Position.x,
+            this->scene.ActiveCamera().GetParam().Position.y,
+            this->scene.ActiveCamera().GetParam().Position.z
         );
         program.Uniform3f(
             "materialSpecularColor",
-            this->material->SpecularColor().x,
-            this->material->SpecularColor().y,
-            this->material->SpecularColor().z
+            entity.GetMaterial().SpecularColor().x,
+            entity.GetMaterial().SpecularColor().y,
+            entity.GetMaterial().SpecularColor().z
         );
         program.Uniform1f(
             "materialShininess",
-            this->material->Shininess()
+            entity.GetMaterial().Shininess()
         );
         
         // 绘制
-        this->entity->GetMesh().Bind();
-        this->entity->GetMesh().Draw();
-        this->entity->GetMesh().Unbind();
-        this->entity->GetMaterial().Unbind();
+        entity.GetMesh().Bind();
+        entity.GetMesh().Draw();
+        entity.GetMesh().Unbind();
+        entity.GetMaterial().Unbind();
 
         glfwSwapBuffers(this->GetGLFWwindow());
         glfwPollEvents();

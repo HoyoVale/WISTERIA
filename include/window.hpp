@@ -1,13 +1,9 @@
 #pragma once
-#include "camera.hpp"
 #include "timer.hpp"
 #include "Models/cube.hpp"
 #include "mesh.hpp"
 #include "material.hpp"
-#include "entity.hpp"
-#include "light.hpp"
-#include <memory>
-#include <vector>
+#include "scene.hpp"
 #include <GLFW/glfw3.h>
 
 struct WindowSize {
@@ -22,8 +18,10 @@ public:
     bool Run();
     inline GLFWwindow* GetGLFWwindow() const { return window; };
     inline const WindowSize GetSize() const { return *size; };
-    glm::mat4 View() const { return this->camera->GetView(); };
+    glm::mat4 View() const { return this->scene.ActiveCamera().GetView(); };
     glm::mat4 Projection() const{ return this->projection; };
+    Scene& GetScene() noexcept { return this->scene; };
+    const Scene& GetScene() const noexcept { return this->scene; };
 
 private:
     void init();
@@ -31,15 +29,11 @@ private:
 private:
     WindowSize* size = nullptr;  
     GLFWwindow* window = nullptr;
-    Camera* camera = nullptr;
     Timer* timer = nullptr;
     Model* model = nullptr;
     Mesh* mesh = nullptr;
     Material* material = nullptr;
-    Entity* entity = nullptr;
-    std::vector<std::unique_ptr<PointLight>> pointLights;
-    std::vector<std::unique_ptr<DirectionalLight>> directionalLights;
-    std::vector<std::unique_ptr<SpotLight>> spotLights;
+    Scene scene;
     float aspect = 1.0f;
     glm::mat4 projection = glm::mat4(1.0f);
 };

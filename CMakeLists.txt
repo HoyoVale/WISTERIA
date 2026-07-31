@@ -43,6 +43,7 @@ add_executable(wisteria
     src/model.cpp
     src/transform.cpp
     src/entity.cpp
+    src/scene.cpp
     src/light.cpp
     src/Models/cube.cpp
     src/mesh.cpp

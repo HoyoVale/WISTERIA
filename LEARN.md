@@ -36,3 +36,8 @@ Shader       → 编译着色器
 Program      → 链接和使用 Shader Program
 Renderer      → 组织绑定和绘制流程
 ```
+
+实现 Scene：添加／移除／遍历 Entity 和三类光源。
+将 Window 当前直接持有的 entity、光源、camera 逐步迁移到 Scene。
+实现 Renderer::Render(const Scene&)，把 Window::Run() 中的 uniform 上传和 Draw 逻辑迁移进去。
+最后实现 ResourceManager，解决 Mesh、Material、Texture 的共享与加载。
