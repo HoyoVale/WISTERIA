@@ -39,6 +39,7 @@ add_executable(wisteria
     src/ebo.cpp
     src/texture.cpp
     src/camera.cpp
+    src/timer.cpp
 )
 
 target_include_directories(wisteria PRIVATE 

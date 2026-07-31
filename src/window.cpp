@@ -31,7 +31,7 @@ Window::Window(int width, int height)
     this->camera = new Camera(c);
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
-
+    this->timer = new Timer();
     window = glfwCreateWindow(
         this->size->width,
         this->size->height,
@@ -56,6 +56,7 @@ Window::Window(int width, int height)
 Window::~Window(){
     delete this->size;
     delete this->camera;
+    delete this->timer;
     glfwDestroyWindow(this->window);
     glfwTerminate();
 }
@@ -170,15 +171,17 @@ bool Window::Run()
 
     Texture* texture = new Texture();
     texture->Bind();
-    texture->Upload("C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\textures\\icon.png");
+    texture->Upload("C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\textures\\chessboard.png");
     program->UniformTex(*texture, "texture");
 
     glm::vec3 objectPosition(0.0f, 0.0f, 0.0f);
     glm::vec3 objectScale(1.0f, 1.0f, 1.0f);
 
-    float r = 0.0f, t=0.01f;
+    float r = 0.0f, speed = 9.0f;
+    this->timer->Start();
     while(!glfwWindowShouldClose(this->GetGLFWwindow()))
     {
+        this->timer->Now();
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
@@ -186,12 +189,11 @@ bool Window::Run()
         model = glm::translate(model, objectPosition);
         model = glm::scale(model, objectScale);
         model = glm::rotate(model, glm::radians(r), glm::vec3(1.0f, 0.0f, 0.0f));
-        model = glm::rotate(model, glm::radians(2*r), glm::vec3(0.0f, 1.0f, 0.0f));
-        model = glm::rotate(model, glm::radians(3*r), glm::vec3(0.0f, 0.0f, 1.0f));
-        r+=t;
-        if(r<=-180.0 or r>= 180.0) t=-t;
+        model = glm::rotate(model, glm::radians(2 * r), glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(3 * r), glm::vec3(0.0f, 0.0f, 1.0f));
         glm::mat4 transform = this->Projection() *this->View() *model;
-
+        r += speed * this->timer->GetDeltaTime();
+        if(r<=-180 or r>=180) speed *= -1.0f;
         program->UniformMat4f("transform", transform);
         
         // 绘制
