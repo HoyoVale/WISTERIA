@@ -6,6 +6,8 @@
 #include "material.hpp"
 #include "entity.hpp"
 #include "light.hpp"
+#include <memory>
+#include <vector>
 #include <GLFW/glfw3.h>
 
 struct WindowSize {
@@ -35,7 +37,9 @@ private:
     Mesh* mesh = nullptr;
     Material* material = nullptr;
     Entity* entity = nullptr;
-    PointLight* light = nullptr;
+    std::vector<std::unique_ptr<PointLight>> pointLights;
+    std::vector<std::unique_ptr<DirectionalLight>> directionalLights;
+    std::vector<std::unique_ptr<SpotLight>> spotLights;
     float aspect = 1.0f;
     glm::mat4 projection = glm::mat4(1.0f);
 };

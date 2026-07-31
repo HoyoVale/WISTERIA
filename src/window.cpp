@@ -2,8 +2,16 @@
 #include "window.hpp"
 #include "shader.hpp"
 #include "texture.hpp"
+#include <algorithm>
 #include <iostream>
 #include <glad/gl.h>
+
+namespace
+{
+constexpr std::size_t MaxPointLights = 8;
+constexpr std::size_t MaxDirectionalLights = 4;
+constexpr std::size_t MaxSpotLights = 4;
+}
 
 void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
 {
@@ -19,12 +27,28 @@ Window::Window(int width, int height)
     this->mesh = new Mesh(this->model->Data());
     this->material = new Material();
     this->entity = new Entity(*this->mesh, *this->material);
-    this->light = new PointLight({
-        .Position = {2.0f, 2.0f, 2.0f},
-        .Color = {1.0f, 0.85f, 0.65f},
-        .Intensity = 1.2f,
-        .Range = 10.0f
-    });
+    this->pointLights.emplace_back(std::make_unique<PointLight>(PointLightData{
+        .Position = {2.5f, 1.5f, 2.5f},
+        .Color = {1.0f, 0.65f, 0.4f},
+        .Intensity = 1.6f,
+        .Range = 8.0f
+    }));
+    this->directionalLights.emplace_back(
+        std::make_unique<DirectionalLight>(DirectionalLightData{
+            .Direction = {-0.2f, -1.0f, -0.3f},
+            .Color = {1.0f, 0.92f, 0.8f},
+            .Intensity = 0.35f
+        })
+    );
+    this->spotLights.emplace_back(std::make_unique<SpotLight>(SpotLightData{
+        .Position = {2.5f, 2.5f, 3.0f},
+        .Direction = {-0.55f, -0.55f, -0.65f},
+        .Color = {1.0f, 0.35f, 0.65f},
+        .Intensity = 2.0f,
+        .Range = 8.0f,
+        .InnerCutoffDegrees = 12.5f,
+        .OuterCutoffDegrees = 22.0f
+    }));
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -50,7 +74,6 @@ Window::~Window(){
     delete this->camera;
     delete this->timer;
     delete this->entity;
-    delete this->light;
     delete this->material;
     delete this->mesh;
     delete this->model;
@@ -110,7 +133,6 @@ bool Window::Run()
         this->computeParam();
         this->entity->GetTransform().SetRotation({r, 2 * r, 3 * r});
         const glm::mat4 model = this->entity->GetTransform().Matrix();
-        const glm::vec3 lightRadiance = this->light->Radiance();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
         this->entity->GetMaterial().Bind();
@@ -118,18 +140,116 @@ bool Window::Run()
         program.UniformMat4f("model", model);
         program.UniformMat4f("view", this->View());
         program.UniformMat4f("projection", this->Projection());
-        program.Uniform3f(
-            "lightPosition",
-            this->light->Position().x,
-            this->light->Position().y,
-            this->light->Position().z
-        );
-        program.Uniform3f(
-            "lightRadiance",
-            lightRadiance.x,
-            lightRadiance.y,
-            lightRadiance.z
-        );
+        const int pointLightCount = static_cast<int>(std::min(
+            this->pointLights.size(),
+            MaxPointLights
+        ));
+        program.Uniform1i("pointLightCount", pointLightCount);
+        for (int index = 0; index < pointLightCount; ++index)
+        {
+            const PointLight& pointLight = *this->pointLights[index];
+            const glm::vec3 radiance = pointLight.Radiance();
+            const std::string uniformPrefix =
+                "pointLights[" + std::to_string(index) + "].";
+
+            program.Uniform3f(
+                uniformPrefix + "position",
+                pointLight.Position().x,
+                pointLight.Position().y,
+                pointLight.Position().z
+            );
+            program.Uniform3f(
+                uniformPrefix + "radiance",
+                radiance.x,
+                radiance.y,
+                radiance.z
+            );
+            program.Uniform1f(uniformPrefix + "range", pointLight.Range());
+            program.Uniform1f(
+                uniformPrefix + "constant",
+                pointLight.Constant()
+            );
+            program.Uniform1f(uniformPrefix + "linear", pointLight.Linear());
+            program.Uniform1f(
+                uniformPrefix + "quadratic",
+                pointLight.Quadratic()
+            );
+        }
+        const int directionalLightCount = static_cast<int>(std::min(
+            this->directionalLights.size(),
+            MaxDirectionalLights
+        ));
+        program.Uniform1i("directionalLightCount", directionalLightCount);
+        for (int index = 0; index < directionalLightCount; ++index)
+        {
+            const DirectionalLight& directionalLight =
+                *this->directionalLights[index];
+            const glm::vec3 radiance = directionalLight.Radiance();
+            const std::string uniformPrefix =
+                "directionalLights[" + std::to_string(index) + "].";
+
+            program.Uniform3f(
+                uniformPrefix + "direction",
+                directionalLight.Direction().x,
+                directionalLight.Direction().y,
+                directionalLight.Direction().z
+            );
+            program.Uniform3f(
+                uniformPrefix + "radiance",
+                radiance.x,
+                radiance.y,
+                radiance.z
+            );
+        }
+        const int spotLightCount = static_cast<int>(std::min(
+            this->spotLights.size(),
+            MaxSpotLights
+        ));
+        program.Uniform1i("spotLightCount", spotLightCount);
+        for (int index = 0; index < spotLightCount; ++index)
+        {
+            const SpotLight& spotLight = *this->spotLights[index];
+            const glm::vec3 radiance = spotLight.Radiance();
+            const std::string uniformPrefix =
+                "spotLights[" + std::to_string(index) + "].";
+
+            program.Uniform3f(
+                uniformPrefix + "position",
+                spotLight.Position().x,
+                spotLight.Position().y,
+                spotLight.Position().z
+            );
+            program.Uniform3f(
+                uniformPrefix + "direction",
+                spotLight.Direction().x,
+                spotLight.Direction().y,
+                spotLight.Direction().z
+            );
+            program.Uniform3f(
+                uniformPrefix + "radiance",
+                radiance.x,
+                radiance.y,
+                radiance.z
+            );
+            program.Uniform1f(uniformPrefix + "range", spotLight.Range());
+            program.Uniform1f(
+                uniformPrefix + "constant",
+                spotLight.Constant()
+            );
+            program.Uniform1f(uniformPrefix + "linear", spotLight.Linear());
+            program.Uniform1f(
+                uniformPrefix + "quadratic",
+                spotLight.Quadratic()
+            );
+            program.Uniform1f(
+                uniformPrefix + "innerCutoff",
+                spotLight.InnerCutoffCos()
+            );
+            program.Uniform1f(
+                uniformPrefix + "outerCutoff",
+                spotLight.OuterCutoffCos()
+            );
+        }
         program.Uniform1f("ambientStrength", 0.15f);
         program.Uniform3f(
             "cameraPosition",
