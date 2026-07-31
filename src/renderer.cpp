@@ -83,6 +83,14 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
                 shaderInterface.hasBaseTexture,
                 material.HasTexture(shaderInterface.baseColorTexture) ? 1 : 0
             );
+            program.Uniform1i(
+                shaderInterface.hasNormalTexture,
+                material.HasTexture(shaderInterface.normalTexture) ? 1 : 0
+            );
+            program.Uniform1f(
+                shaderInterface.materialNormalScale,
+                material.NormalScale()
+            );
 
             if (shaderInterface.lightingEnabled)
             {

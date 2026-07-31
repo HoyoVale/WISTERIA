@@ -44,6 +44,9 @@ struct ShaderInterface
     std::string materialAlphaCutoff = "materialAlphaCutoff";
     std::string hasBaseTexture = "hasBaseTexture";
     std::string baseColorTexture = "texture";
+    std::string hasNormalTexture = "hasNormalTexture";
+    std::string normalTexture = "normalTexture";
+    std::string materialNormalScale = "materialNormalScale";
     std::string ambientStrength = "ambientStrength";
 
     std::string pointLights = "pointLights";
@@ -77,6 +80,7 @@ struct MaterialData{
     glm::vec4 baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     glm::vec3 specularColor = {1.0f, 1.0f, 1.0f}; // Specular reflection color.
     float shininess = 32.0f; // Higher values make a sharper highlight.
+    float normalScale = 1.0f;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
@@ -104,6 +108,7 @@ public:
 
     const glm::vec3& SpecularColor() const noexcept;
     float Shininess() const noexcept;
+    float NormalScale() const noexcept;
     const glm::vec4& BaseColorFactor() const noexcept;
     MaterialAlphaMode AlphaMode() const noexcept;
     float AlphaCutoff() const noexcept;
@@ -113,6 +118,7 @@ public:
 
     void SetSpecularColor(const glm::vec3& color) noexcept;
     void SetShininess(float shininess) noexcept;
+    void SetNormalScale(float normalScale) noexcept;
 
 private:
     std::unique_ptr<Shader> shader;

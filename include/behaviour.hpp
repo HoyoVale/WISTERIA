@@ -1,9 +1,11 @@
 #pragma once
 
+#include "camera.hpp"
 #include <glm/glm.hpp>
 
 class Entity;
 class Event;
+class Input;
 
 // A unit of per-entity update logic. Entity will own Behaviour instances and
 // invoke these lifecycle methods when the update/event systems are connected.
@@ -72,4 +74,47 @@ public:
 
 private:
     glm::vec3 multiplierPerSecond{1.0f};
+};
+
+struct FreeCameraControllerSettings
+{
+    float moveSpeed = 2.5f;
+    float sprintMultiplier = 3.0f;
+    float mouseSensitivity = 0.1f;
+    float scrollSensitivity = 2.0f;
+    float minimumFovDegrees = 15.0f;
+    float maximumFovDegrees = 90.0f;
+    float minimumPitchDegrees = -89.0f;
+    float maximumPitchDegrees = 89.0f;
+};
+
+// Camera-level update behaviour. It intentionally does not derive from the
+// Entity Behaviour base because a Camera is not an Entity.
+class FreeCameraControllerBehaviour final
+{
+public:
+    FreeCameraControllerBehaviour(
+        Camera& camera,
+        Input& input,
+        const FreeCameraControllerSettings& settings = {}
+    );
+
+    void Update(float deltaTime);
+    void Reset();
+
+    const FreeCameraControllerSettings& Settings() const noexcept;
+    void SetSettings(const FreeCameraControllerSettings& settings);
+
+private:
+    void SynchronizeDirection();
+    glm::vec3 Forward() const;
+
+private:
+    Camera& camera;
+    Input& input;
+    CameraParam initialCameraParam;
+    FreeCameraControllerSettings settings;
+    float yawDegrees = -90.0f;
+    float pitchDegrees = 0.0f;
+    float targetDistance = 1.0f;
 };

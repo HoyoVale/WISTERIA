@@ -1,6 +1,8 @@
 #include "behaviour.hpp"
+#include "Models/cube.hpp"
 #include "entity.hpp"
 #include "importer.hpp"
+#include "input.hpp"
 #include "manager.hpp"
 #include "model_asset.hpp"
 #include "scene.hpp"
@@ -55,6 +57,38 @@ void TestRenderPartAndModelAsset()
     );
 }
 
+void TestBuiltInCubeTangents()
+{
+    constexpr std::size_t VertexCount = 24;
+    constexpr std::size_t VertexStride = 15;
+    Require(cubeData.layout.size() == 5, "Cube tangent layout is missing");
+    Require(
+        cubeData.vertices.size() == VertexCount * VertexStride,
+        "Cube vertex stride does not match its layout"
+    );
+
+    for (std::size_t vertex = 0; vertex < VertexCount; ++vertex)
+    {
+        const std::size_t offset = vertex * VertexStride;
+        const glm::vec3 normal(
+            cubeData.vertices[offset + 8],
+            cubeData.vertices[offset + 9],
+            cubeData.vertices[offset + 10]
+        );
+        const glm::vec3 tangent(
+            cubeData.vertices[offset + 11],
+            cubeData.vertices[offset + 12],
+            cubeData.vertices[offset + 13]
+        );
+        Require(NearlyEqual(glm::length(tangent), 1.0f), "Cube tangent is not normalized");
+        Require(NearlyEqual(glm::dot(normal, tangent), 0.0f), "Cube tangent is not orthogonal");
+        Require(
+            NearlyEqual(std::abs(cubeData.vertices[offset + 14]), 1.0f),
+            "Cube tangent handedness is invalid"
+        );
+    }
+}
+
 void TestModelInstantiation()
 {
     Mesh firstMesh(DefaultModelData{});
@@ -107,6 +141,98 @@ void TestFrameRateIndependentBehaviours()
     Require(NearlyEqual(entity.GetTransform().Scale().z, 0.5f), "ScaleBehaviour Z result is incorrect");
 }
 
+void TestInputFrameTransitions()
+{
+    Input input;
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::W, true);
+    Require(input.IsKeyDown(InputKey::W), "Pressed key was not held");
+    Require(input.WasKeyPressed(InputKey::W), "Key press transition was lost");
+    Require(!input.WasKeyReleased(InputKey::W), "Pressed key was reported released");
+
+    input.BeginFrame();
+    Require(input.IsKeyDown(InputKey::W), "BeginFrame cleared held key state");
+    Require(!input.WasKeyPressed(InputKey::W), "Key press leaked into the next frame");
+
+    input.HandleKey(InputKey::W, false);
+    Require(!input.IsKeyDown(InputKey::W), "Released key remained held");
+    Require(input.WasKeyReleased(InputKey::W), "Key release transition was lost");
+
+    input.HandleCursorPosition(10.0, 20.0);
+    input.HandleCursorPosition(14.0, 17.0);
+    input.HandleScroll(2.0);
+    Require(NearlyEqual(static_cast<float>(input.CursorDelta().x), 4.0f), "Mouse X delta is incorrect");
+    Require(NearlyEqual(static_cast<float>(input.CursorDelta().y), -3.0f), "Mouse Y delta is incorrect");
+    Require(NearlyEqual(static_cast<float>(input.ScrollDeltaY()), 2.0f), "Scroll delta is incorrect");
+
+    input.BeginFrame();
+    Require(NearlyEqual(static_cast<float>(input.CursorDelta().x), 0.0f), "Mouse delta was not cleared");
+    Require(NearlyEqual(static_cast<float>(input.ScrollDeltaY()), 0.0f), "Scroll delta was not cleared");
+}
+
+void TestFreeCameraController()
+{
+    Camera camera(CameraParam{
+        .Position = {0.0f, 0.0f, 3.0f},
+        .Target = {0.0f, 0.0f, 0.0f},
+        .Up = {0.0f, 1.0f, 0.0f},
+        .VerticalFovDegrees = 45.0f
+    });
+    Input input;
+    FreeCameraControllerBehaviour controller(
+        camera,
+        input,
+        FreeCameraControllerSettings{
+            .moveSpeed = 2.0f,
+            .sprintMultiplier = 2.0f,
+            .mouseSensitivity = 1.0f,
+            .scrollSensitivity = 5.0f
+        }
+    );
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::W, true);
+    controller.Update(0.5f);
+    Require(NearlyEqual(camera.Position().z, 2.0f), "Free camera forward movement is incorrect");
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::LeftShift, true);
+    controller.Update(0.5f);
+    Require(NearlyEqual(camera.Position().z, 0.0f), "Free camera sprint movement is incorrect");
+    input.HandleKey(InputKey::W, false);
+    input.HandleKey(InputKey::LeftShift, false);
+
+    input.BeginFrame();
+    input.HandleScroll(2.0);
+    controller.Update(0.0f);
+    Require(NearlyEqual(camera.VerticalFovDegrees(), 35.0f), "Free camera zoom is incorrect");
+
+    input.BeginFrame();
+    input.HandleMouseButton(InputMouseButton::Right, true);
+    controller.Update(0.0f);
+    Require(input.IsCursorCaptured(), "Right mouse button did not capture the cursor");
+
+    input.BeginFrame();
+    input.HandleMouseButton(InputMouseButton::Right, false);
+    input.HandleCursorPosition(100.0, 100.0);
+    input.HandleCursorPosition(110.0, 100.0);
+    controller.Update(0.0f);
+    Require(camera.Target().x > camera.Position().x, "Mouse movement did not rotate the camera");
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::Escape, true);
+    controller.Update(0.0f);
+    Require(!input.IsCursorCaptured(), "Escape did not release the cursor");
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::R, true);
+    controller.Update(0.0f);
+    Require(NearlyEqual(camera.Position().z, 3.0f), "Camera reset did not restore position");
+    Require(NearlyEqual(camera.Target().x, 0.0f), "Camera reset did not restore direction");
+    Require(NearlyEqual(camera.VerticalFovDegrees(), 45.0f), "Camera reset did not restore FOV");
+}
+
 void TestResourceManagerModelRegistry()
 {
     ResourceManager resources;
@@ -135,40 +261,66 @@ void TestStaticModelImporter()
 
     Require(imported.meshes.size() == 1, "Importer mesh count is incorrect");
     Require(imported.materials.size() == 1, "Importer material count is incorrect");
-    Require(imported.textures.size() == 1, "Importer did not deduplicate embedded texture");
+    Require(
+        imported.textures.size() == 2,
+        "Importer embedded texture count is incorrect: " +
+            std::to_string(imported.textures.size())
+    );
     Require(imported.parts.size() == 2, "Importer did not preserve both node instances");
 
     const ImportedMeshData& mesh = imported.meshes[0];
-    Require(mesh.data.vertices.size() == 33, "Importer vertex layout is incorrect");
+    Require(mesh.data.vertices.size() == 45, "Importer vertex layout is incorrect");
     Require(mesh.data.indices.size() == 3, "Importer index count is incorrect");
-    Require(mesh.data.layout.size() == 4, "Importer layout field count is incorrect");
+    Require(mesh.data.layout.size() == 5, "Importer layout field count is incorrect");
     Require(mesh.materialIndex == 0, "Importer mesh material index is incorrect");
     Require(
         NearlyEqual(mesh.data.vertices[6], 0.0f) &&
         NearlyEqual(mesh.data.vertices[7], 0.0f) &&
-        NearlyEqual(mesh.data.vertices[17], 1.0f) &&
-        NearlyEqual(mesh.data.vertices[18], 0.0f) &&
-        NearlyEqual(mesh.data.vertices[28], 0.0f) &&
-        NearlyEqual(mesh.data.vertices[29], 1.0f),
+        NearlyEqual(mesh.data.vertices[21], 1.0f) &&
+        NearlyEqual(mesh.data.vertices[22], 0.0f) &&
+        NearlyEqual(mesh.data.vertices[36], 0.0f) &&
+        NearlyEqual(mesh.data.vertices[37], 1.0f),
         "Importer vertically flipped glTF texture coordinates"
     );
+    for (std::size_t vertex = 0; vertex < 3; ++vertex)
+    {
+        const std::size_t tangentOffset = vertex * 15 + 11;
+        const glm::vec3 tangent(
+            mesh.data.vertices[tangentOffset],
+            mesh.data.vertices[tangentOffset + 1],
+            mesh.data.vertices[tangentOffset + 2]
+        );
+        Require(
+            NearlyEqual(glm::length(tangent), 1.0f),
+            "Importer produced a non-unit tangent"
+        );
+        Require(
+            NearlyEqual(std::abs(mesh.data.vertices[tangentOffset + 3]), 1.0f),
+            "Importer produced invalid tangent handedness"
+        );
+    }
 
     const ImportedMaterialData& material = imported.materials[0];
     Require(material.baseColorTexture == 0, "Importer lost base-color texture binding");
+    Require(material.normalTexture == 1, "Importer lost normal texture binding");
+    Require(NearlyEqual(material.normalScale, 0.75f), "Importer changed normal scale");
     Require(material.alphaMode == MaterialAlphaMode::Blend, "Importer lost alpha mode");
     Require(material.doubleSided, "Importer lost double-sided material state");
     Require(NearlyEqual(material.alphaCutoff, 0.35f), "Importer alpha cutoff changed");
     Require(NearlyEqual(material.baseColorFactor.r, 0.25f), "Importer base color changed");
     Require(NearlyEqual(material.baseColorFactor.a, 0.8f), "Importer base alpha changed");
 
-    Require(
-        imported.textures[0].source.IsEncoded(),
-        "Importer did not preserve embedded compressed texture bytes"
-    );
-    Require(
-        !imported.textures[0].source.data.empty(),
-        "Importer produced an empty embedded texture"
-    );
+    for (const ImportedTextureData& texture : imported.textures)
+    {
+        Require(
+            texture.source.IsEncoded(),
+            "Importer did not preserve embedded compressed texture bytes"
+        );
+        Require(
+            !texture.source.data.empty(),
+            "Importer produced an empty embedded texture"
+        );
+    }
     Require(
         NearlyEqual(imported.parts[0].localTransform[3].x, 1.0f) &&
         NearlyEqual(imported.parts[0].localTransform[3].y, 2.0f) &&
@@ -195,7 +347,11 @@ void TestImportedResourceCreation()
     Require(resources.ModelCount() == 1, "Imported model was not registered");
     Require(resources.MeshCount() == 1, "Imported shared mesh was duplicated");
     Require(resources.MaterialCount() == 1, "Imported material count is incorrect");
-    Require(resources.TextureCount() == 1, "Imported texture count is incorrect");
+    Require(
+        resources.TextureCount() == 2,
+        "Imported texture count is incorrect: " +
+            std::to_string(resources.TextureCount())
+    );
     Require(
         &model.Parts()[0].GetMesh() == &model.Parts()[1].GetMesh(),
         "Node instances do not share their Mesh resource"
@@ -207,6 +363,16 @@ void TestImportedResourceCreation()
     Require(
         !resources.GetTexture("embeddedTriangle::texture::0").IsAttached(),
         "CPU import unexpectedly created an OpenGL texture"
+    );
+    const Material& importedMaterial =
+        resources.GetMaterial("embeddedTriangle::material::0");
+    Require(
+        importedMaterial.HasTexture(importedMaterial.Interface().normalTexture),
+        "ResourceManager lost imported normal texture binding"
+    );
+    Require(
+        NearlyEqual(importedMaterial.NormalScale(), 0.75f),
+        "ResourceManager changed imported normal scale"
     );
 
     const std::filesystem::path equivalentPath =
@@ -223,7 +389,7 @@ void TestImportedResourceCreation()
     Require(resources.ModelCount() == 1, "Model path cache added a duplicate model");
     Require(resources.MeshCount() == 1, "Model path cache added duplicate meshes");
     Require(resources.MaterialCount() == 1, "Model path cache added duplicate materials");
-    Require(resources.TextureCount() == 1, "Model path cache added duplicate textures");
+    Require(resources.TextureCount() == 2, "Model path cache added duplicate textures");
 
     bool aliasRejected = false;
     try
@@ -317,10 +483,10 @@ void TestConvertedMmdGlbWhenAvailable()
     std::size_t indexCount = 0;
     for (const ImportedMeshData& mesh : imported.meshes)
     {
-        Require(mesh.data.layout.size() == 4, "Converted MMD mesh layout is invalid");
+        Require(mesh.data.layout.size() == 5, "Converted MMD mesh layout is invalid");
         Require(!mesh.data.vertices.empty(), "Converted MMD mesh has no vertices");
         Require(!mesh.data.indices.empty(), "Converted MMD mesh has no indices");
-        vertexCount += mesh.data.vertices.size() / 11;
+        vertexCount += mesh.data.vertices.size() / 15;
         indexCount += mesh.data.indices.size();
     }
     Require(vertexCount >= 40000, "Converted MMD model lost too many vertices");
@@ -428,8 +594,11 @@ int main()
 {
     int failures = 0;
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
+    failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Model instantiation", TestModelInstantiation);
     failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
+    failures += !RunTest("Input frame transitions", TestInputFrameTransitions);
+    failures += !RunTest("Free camera controller", TestFreeCameraController);
     failures += !RunTest("ResourceManager model registry", TestResourceManagerModelRegistry);
     failures += !RunTest("Static model importer", TestStaticModelImporter);
     failures += !RunTest("Imported resource creation", TestImportedResourceCreation);

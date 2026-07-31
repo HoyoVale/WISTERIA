@@ -16,7 +16,10 @@ CameraParam ValidateCameraParam(const CameraParam& cameraParam)
 {
     if (!IsFinite(cameraParam.Position) ||
         !IsFinite(cameraParam.Target) ||
-        !IsFinite(cameraParam.Up))
+        !IsFinite(cameraParam.Up) ||
+        !std::isfinite(cameraParam.VerticalFovDegrees) ||
+        !std::isfinite(cameraParam.NearClip) ||
+        !std::isfinite(cameraParam.FarClip))
     {
         throw std::invalid_argument("Camera parameters must contain finite values");
     }
@@ -32,6 +35,16 @@ CameraParam ValidateCameraParam(const CameraParam& cameraParam)
     const glm::vec3 side = glm::cross(forward, cameraParam.Up);
     if (glm::dot(side, side) <= 0.000001f)
         throw std::invalid_argument("Camera up vector must not be parallel to its view direction");
+    if (cameraParam.VerticalFovDegrees <= 1.0f ||
+        cameraParam.VerticalFovDegrees >= 179.0f)
+    {
+        throw std::invalid_argument("Camera vertical FOV must be between 1 and 179 degrees");
+    }
+    if (cameraParam.NearClip <= 0.0f ||
+        cameraParam.FarClip <= cameraParam.NearClip)
+    {
+        throw std::invalid_argument("Camera clip planes must satisfy 0 < near < far");
+    }
 
     CameraParam result = cameraParam;
     result.Up = glm::normalize(result.Up);
@@ -50,6 +63,19 @@ glm::mat4 Camera::GetView() const
         this->param.Position,
         this->param.Target,
         this->param.Up
+    );
+}
+
+glm::mat4 Camera::GetProjection(float aspect) const
+{
+    if (!std::isfinite(aspect) || aspect <= 0.0f)
+        throw std::invalid_argument("Camera aspect ratio must be finite and positive");
+
+    return glm::perspective(
+        glm::radians(this->param.VerticalFovDegrees),
+        aspect,
+        this->param.NearClip,
+        this->param.FarClip
     );
 }
 
@@ -76,5 +102,20 @@ void Camera::SetUp(const glm::vec3& up)
 {
     CameraParam next = this->param;
     next.Up = up;
+    this->SetParam(next);
+}
+
+void Camera::SetVerticalFovDegrees(float verticalFovDegrees)
+{
+    CameraParam next = this->param;
+    next.VerticalFovDegrees = verticalFovDegrees;
+    this->SetParam(next);
+}
+
+void Camera::SetClipPlanes(float nearClip, float farClip)
+{
+    CameraParam next = this->param;
+    next.NearClip = nearClip;
+    next.FarClip = farClip;
     this->SetParam(next);
 }

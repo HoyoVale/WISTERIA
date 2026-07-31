@@ -18,9 +18,11 @@ struct ImportedMaterialData
 {
     std::string name;
     std::optional<std::size_t> baseColorTexture;
+    std::optional<std::size_t> normalTexture;
     glm::vec4 baseColorFactor{1.0f};
     glm::vec3 specularColor{1.0f};
     float shininess = 32.0f;
+    float normalScale = 1.0f;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;

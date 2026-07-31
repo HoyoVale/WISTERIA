@@ -164,6 +164,15 @@ ModelAsset& ResourceManager::LoadModel(
             imported.materials[index].baseColorTexture;
         if (textureIndex.has_value() && *textureIndex >= imported.textures.size())
             throw std::runtime_error("Imported material references an invalid texture index");
+        const std::optional<std::size_t> normalTextureIndex =
+            imported.materials[index].normalTexture;
+        if (normalTextureIndex.has_value() &&
+            *normalTextureIndex >= imported.textures.size())
+        {
+            throw std::runtime_error(
+                "Imported material references an invalid normal texture index"
+            );
+        }
     }
     for (std::size_t index = 0; index < imported.meshes.size(); ++index)
     {
@@ -239,6 +248,7 @@ ModelAsset& ResourceManager::LoadModel(
         data.baseColorFactor = source.baseColorFactor;
         data.specularColor = source.specularColor;
         data.shininess = source.shininess;
+        data.normalScale = source.normalScale;
         data.alphaMode = source.alphaMode;
         data.alphaCutoff = source.alphaCutoff;
         data.doubleSided = source.doubleSided;
@@ -249,6 +259,14 @@ ModelAsset& ResourceManager::LoadModel(
             const std::size_t textureIndex = *source.baseColorTexture;
             bindings.emplace(
                 data.shaderInterface.baseColorTexture,
+                importedTextures[textureIndex]
+            );
+        }
+        if (source.normalTexture.has_value())
+        {
+            const std::size_t textureIndex = *source.normalTexture;
+            bindings.emplace(
+                data.shaderInterface.normalTexture,
                 importedTextures[textureIndex]
             );
         }

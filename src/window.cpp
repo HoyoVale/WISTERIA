@@ -46,6 +46,11 @@ Window::Window(int width, int height)
             .Target = {0.0f, 1.0f, 0.0f},
             .Up = {0.0f, 1.0f, 0.0f}
         });
+        this->cameraController =
+            std::make_unique<FreeCameraControllerBehaviour>(
+                this->scene.ActiveCamera(),
+                this->input
+            );
         this->scene.CreatePointLight(PointLightData{
             .Position = {2.5f, 1.5f, 2.5f},
             .Color = {1.0f, 1.0f, 1.0f},
@@ -69,6 +74,7 @@ Window::Window(int width, int height)
     }
     catch (...)
     {
+        this->input.Detach();
         if (this->window != nullptr)
             glfwDestroyWindow(this->window);
         glfwTerminate();
@@ -77,6 +83,8 @@ Window::Window(int width, int height)
 }
 
 Window::~Window(){
+    this->cameraController.reset();
+    this->input.Detach();
     this->scene.ClearEntities();
     this->scene.ClearPointLights();
     this->scene.ClearDirectionalLights();
@@ -95,6 +103,7 @@ void Window::init()
         throw std::runtime_error("Failed to load OpenGL functions");
 
     glfwSetFramebufferSizeCallback(this->window, FramebufferSizeCallback);
+    this->input.Attach(*this->window);
     this->computeParam();
     // TODO renderer init
     glEnable(GL_DEPTH_TEST);
@@ -123,7 +132,7 @@ void Window::computeParam()
         return;
 
     this->aspect = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
-    this->projection = glm::perspective(glm::radians(45.0f),this->aspect, 0.1f, 1000.0f);
+    this->projection = this->scene.ActiveCamera().GetProjection(this->aspect);
 }
 
 bool Window::Run()
@@ -135,6 +144,14 @@ bool Window::Run()
     while(!glfwWindowShouldClose(this->GetGLFWwindow()))
     {
         this->timer.Now();
+        this->input.BeginFrame();
+        glfwPollEvents();
+        if (glfwWindowShouldClose(this->GetGLFWwindow()))
+            break;
+
+        if (this->cameraController != nullptr)
+            this->cameraController->Update(this->timer.GetDeltaTime());
+
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
@@ -142,7 +159,6 @@ bool Window::Run()
         this->renderer.Render(this->scene, this->Projection());
 
         glfwSwapBuffers(this->GetGLFWwindow());
-        glfwPollEvents();
     }
     
     return false;

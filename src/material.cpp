@@ -39,12 +39,15 @@ Material::Material(
     }
     if (!std::isfinite(this->data.alphaCutoff))
         throw std::invalid_argument("Material alpha cutoff must be finite");
+    if (!std::isfinite(this->data.normalScale))
+        throw std::invalid_argument("Material normal scale must be finite");
     this->data.alphaCutoff = glm::clamp(this->data.alphaCutoff, 0.0f, 1.0f);
     this->data.baseColorFactor = glm::clamp(
         this->data.baseColorFactor,
         glm::vec4(0.0f),
         glm::vec4(1.0f)
     );
+    this->data.normalScale = glm::max(this->data.normalScale, 0.0f);
 }
 
 void Material::Attach()
@@ -122,6 +125,11 @@ float Material::Shininess() const noexcept
     return this->data.shininess;
 }
 
+float Material::NormalScale() const noexcept
+{
+    return this->data.normalScale;
+}
+
 const glm::vec4& Material::BaseColorFactor() const noexcept
 {
     return this->data.baseColorFactor;
@@ -160,4 +168,10 @@ void Material::SetSpecularColor(const glm::vec3& color) noexcept
 void Material::SetShininess(float shininess) noexcept
 {
     this->data.shininess = glm::max(shininess, 1.0f);
+}
+
+void Material::SetNormalScale(float normalScale) noexcept
+{
+    if (std::isfinite(normalScale))
+        this->data.normalScale = glm::max(normalScale, 0.0f);
 }

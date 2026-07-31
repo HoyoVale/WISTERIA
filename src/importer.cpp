@@ -23,6 +23,7 @@ constexpr unsigned int ImportFlags =
     aiProcess_Triangulate |
     aiProcess_JoinIdenticalVertices |
     aiProcess_GenSmoothNormals |
+    aiProcess_CalcTangentSpace |
     // Texture decoders keep the first image row at the top. Normalize Assimp's
     // UV output to the same top-left convention used by glTF and our uploader.
     aiProcess_FlipUVs |
@@ -129,6 +130,21 @@ bool IsFinite(const glm::mat4& matrix)
     return true;
 }
 
+bool IsFinite(const glm::vec3& vector)
+{
+    return std::isfinite(vector.x) &&
+           std::isfinite(vector.y) &&
+           std::isfinite(vector.z);
+}
+
+glm::vec3 FallbackTangent(const glm::vec3& normal)
+{
+    const glm::vec3 reference = std::abs(normal.y) < 0.999f
+        ? glm::vec3(0.0f, 1.0f, 0.0f)
+        : glm::vec3(1.0f, 0.0f, 0.0f);
+    return glm::normalize(glm::cross(reference, normal));
+}
+
 std::string ResourceName(const aiString& name, const char* prefix, std::size_t index)
 {
     std::string result = ToString(name);
@@ -151,9 +167,10 @@ ImportedMeshData ImportMesh(const aiMesh& mesh, std::size_t index)
         {"position", 3, FLOAT},
         {"color", 3, FLOAT},
         {"texCoord", 2, FLOAT},
-        {"normal", 3, FLOAT}
+        {"normal", 3, FLOAT},
+        {"tangent", 4, FLOAT}
     };
-    result.data.vertices.reserve(static_cast<std::size_t>(mesh.mNumVertices) * 11);
+    result.data.vertices.reserve(static_cast<std::size_t>(mesh.mNumVertices) * 15);
 
     for (unsigned int vertexIndex = 0;
          vertexIndex < mesh.mNumVertices;
@@ -168,11 +185,55 @@ ImportedMeshData ImportMesh(const aiMesh& mesh, std::size_t index)
             ? mesh.mTextureCoords[0][vertexIndex]
             : aiVector3D(0.0f, 0.0f, 0.0f);
 
+        const glm::vec3 normalizedNormal = glm::normalize(glm::vec3(
+            normal.x,
+            normal.y,
+            normal.z
+        ));
+        if (!IsFinite(normalizedNormal))
+            throw std::runtime_error("Imported mesh contains an invalid normal");
+
+        glm::vec3 tangent = FallbackTangent(normalizedNormal);
+        float tangentHandedness = 1.0f;
+        if (mesh.HasTangentsAndBitangents())
+        {
+            const aiVector3D& sourceTangent = mesh.mTangents[vertexIndex];
+            const aiVector3D& sourceBitangent = mesh.mBitangents[vertexIndex];
+            glm::vec3 candidate(
+                sourceTangent.x,
+                sourceTangent.y,
+                sourceTangent.z
+            );
+            candidate -= normalizedNormal *
+                glm::dot(normalizedNormal, candidate);
+            const float candidateLengthSquared = glm::dot(candidate, candidate);
+            if (IsFinite(candidate) && candidateLengthSquared > 0.000001f)
+            {
+                tangent = candidate / std::sqrt(candidateLengthSquared);
+                const glm::vec3 bitangent(
+                    sourceBitangent.x,
+                    sourceBitangent.y,
+                    sourceBitangent.z
+                );
+                if (IsFinite(bitangent))
+                {
+                    tangentHandedness =
+                        glm::dot(
+                            glm::cross(normalizedNormal, tangent),
+                            bitangent
+                        ) < 0.0f
+                            ? -1.0f
+                            : 1.0f;
+                }
+            }
+        }
+
         const float values[] = {
             position.x, position.y, position.z,
             color.r, color.g, color.b,
             texCoord.x, texCoord.y,
-            normal.x, normal.y, normal.z
+            normal.x, normal.y, normal.z,
+            tangent.x, tangent.y, tangent.z, tangentHandedness
         };
         result.data.vertices.insert(
             result.data.vertices.end(),
@@ -279,6 +340,17 @@ std::optional<aiString> BaseColorTexturePath(const aiMaterial& material)
     return std::nullopt;
 }
 
+std::optional<aiString> NormalTexturePath(const aiMaterial& material)
+{
+    aiString path;
+    if (material.GetTextureCount(aiTextureType_NORMALS) > 0 &&
+        material.GetTexture(aiTextureType_NORMALS, 0, &path) == AI_SUCCESS)
+    {
+        return path;
+    }
+    return std::nullopt;
+}
+
 ImportedMaterialData ImportMaterial(
     const aiScene& scene,
     const aiMaterial& material,
@@ -367,6 +439,25 @@ ImportedMaterialData ImportMaterial(
             result,
             textureIndices
         );
+    }
+    if (const std::optional<aiString> path = NormalTexturePath(material))
+    {
+        imported.normalTexture = ImportTexture(
+            scene,
+            *path,
+            modelDirectory,
+            result,
+            textureIndices
+        );
+
+        float normalScale = imported.normalScale;
+        if (material.Get(
+                AI_MATKEY_GLTF_TEXTURE_SCALE(aiTextureType_NORMALS, 0),
+                normalScale
+            ) == AI_SUCCESS && std::isfinite(normalScale))
+        {
+            imported.normalScale = std::max(normalScale, 0.0f);
+        }
     }
     return imported;
 }

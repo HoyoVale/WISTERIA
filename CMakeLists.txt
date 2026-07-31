@@ -61,6 +61,7 @@ set(WISTERIA_CORE_SOURCES
     src/ebo.cpp
     src/texture.cpp
     src/camera.cpp
+    src/input.cpp
     src/timer.cpp
     src/model.cpp
     src/transform.cpp
