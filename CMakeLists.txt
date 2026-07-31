@@ -43,6 +43,7 @@ add_executable(wisteria
     src/model.cpp
     src/Models/cube.cpp
     src/mesh.cpp
+    src/material.cpp
 )
 
 target_include_directories(wisteria PRIVATE 

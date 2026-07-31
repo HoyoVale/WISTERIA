@@ -45,6 +45,7 @@ public:
     virtual ~Model() = default;
 
     glm::mat4 ModelMat() const;
+    const DefaultModelData& Data() const;
     ModelParam &Param(){ return this->modelParam; };
     const ModelParam &Param() const { return this->modelParam; };
     template<typename T>

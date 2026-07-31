@@ -3,19 +3,19 @@
 #include <filesystem>
 #include <glad/gl.h>
 #include <vector>
-#include "texture.hpp"
 
-static std::string shaderRootPath = std::filesystem::current_path().string() + "assets\\shaders\\";
+inline const std::string shaderRootPath =
+    (std::filesystem::current_path() / "assets" / "shaders").string() + "\\";
 
 struct Path{
-    std::string VertexPath = shaderRootPath + "basic.vert"; 
-    std::string FragmentPath = shaderRootPath + "basic.frag";
+    std::string VertexPath = shaderRootPath + "basicTex.vert"; 
+    std::string FragmentPath = shaderRootPath + "basicTex.frag";
 };
 
 class Shader{
 public:
-    Shader(std::string VertexPath = shaderRootPath + "basic.vert", 
-        std::string FragmrntPath = shaderRootPath + "basic.frag");
+    Shader(std::string VertexPath = shaderRootPath + "basicTex.vert", 
+        std::string FragmrntPath = shaderRootPath + "basicTex.frag");
     ~Shader();
     inline std::vector<GLuint> GetShaderList() const { return shaderList; };
 private:
@@ -43,7 +43,7 @@ public:
     void Uniform3f(std::string valueName, float x, float y, float z);
     void Uniform1i(std::string valueName, int value);
     void Uniform1ui(std::string valueName, unsigned int value);
-    void UniformTex(Texture &texture, std::string UniformNAme);
+    void UniformTex(std::string uniformName, unsigned int textureUnit);
 
     inline GLuint GetProgram() const { return program; };
 

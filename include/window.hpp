@@ -3,6 +3,7 @@
 #include "timer.hpp"
 #include "Models/cube.hpp"
 #include "mesh.hpp"
+#include "material.hpp"
 #include <GLFW/glfw3.h>
 
 struct WindowSize {
@@ -30,6 +31,7 @@ private:
     Timer* timer = nullptr;
     Model* model = nullptr;
     Mesh* mesh = nullptr;
+    Material* material = nullptr;
     float aspect = 1.0f;
     glm::mat4 projection = glm::mat4(1.0f);
 };

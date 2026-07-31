@@ -1,11 +1,7 @@
 #include "pch.hpp"
 #include "window.hpp"
 #include "shader.hpp"
-#include "vbo.hpp"
-#include "vao.hpp"
-#include "ebo.hpp"
 #include "texture.hpp"
-#include "camera.hpp"
 #include <iostream>
 #include <glad/gl.h>
 
@@ -20,7 +16,8 @@ Window::Window(int width, int height)
     this->camera = new Camera();
     this->timer = new Timer();
     this->model = new Cube();
-    this->mesh = new Mesh(*this->model);
+    this->mesh = new Mesh(this->model->Data());
+    this->material = new Material();
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -45,6 +42,7 @@ Window::~Window(){
     delete this->size;
     delete this->camera;
     delete this->timer;
+    delete this->material;
     delete this->mesh;
     delete this->model;
     glfwDestroyWindow(this->window);
@@ -90,18 +88,10 @@ void Window::computeParam()
 bool Window::Run()
 {
     this->mesh->Attach();
-
-    std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.vert";
-    std::string strFragmentShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.frag";
-    Shader* shader = new Shader(strVertexShader, strFragmentShader);
-    Program* program = new Program(shader->GetShaderList());
-
-    Texture* texture = new Texture();
-    texture->Bind();
-    texture->Upload("C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\textures\\chessboard.png");
-    program->UniformTex(*texture, "texture");
+    this->material->Attach();
 
     float r = 0.0f, speed = 9.0f;
+    
     this->timer->Start();
     while(!glfwWindowShouldClose(this->GetGLFWwindow()))
     {
@@ -113,12 +103,14 @@ bool Window::Run()
         glm::mat4 transform = this->Projection() * this->View() * this->model->ModelMat();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
-        program->UniformMat4f("transform", transform);
+        this->material->Bind();
+        this->material->GetProgram().UniformMat4f("transform", transform);
         
         // 绘制
-        program->Use();
+        this->material->GetProgram().Use();
         this->mesh->Draw();
-        program->unUse();
+        this->mesh->Unbind();
+        this->material->Unbind();
 
         glfwSwapBuffers(this->GetGLFWwindow());
         glfwPollEvents();

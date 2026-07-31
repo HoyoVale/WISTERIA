@@ -25,18 +25,7 @@ void VBO::unBind()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void VBO::Upload(const void* data,unsigned int &dataSize)
-{
-    this->Bind();
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        dataSize,
-        data,
-        GL_STATIC_DRAW
-    );
-}
-
-void VBO::Upload(const void* data,const unsigned int &dataSize)
+void VBO::Upload(const void* data, std::size_t dataSize)
 {
     this->Bind();
     glBufferData(

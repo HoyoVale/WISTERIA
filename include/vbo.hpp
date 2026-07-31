@@ -2,6 +2,7 @@
 #include <glad/gl.h>
 #include <string>
 #include <vector>
+#include <cstddef>
 
 enum DataType{
     FLOAT, INT, UINT, UCHAR
@@ -21,8 +22,7 @@ public:
 
     void Bind();
     void unBind();
-    void Upload(const void* data,const unsigned int &dataSize);
-    void Upload(const void* data,unsigned int &dataSize);
+    void Upload(const void* data, std::size_t dataSize);
     inline GLuint GetVBO() { return this->vbo; };
 private:
     GLuint vbo = 0;

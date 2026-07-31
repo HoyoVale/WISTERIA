@@ -4,8 +4,6 @@
 #include <glad/gl.h>
 #include <stb_image.h>
 
-static unsigned int Textureindex = 0;
-
 GLint GetMaxUnits();
 
 class Texture{
@@ -13,15 +11,16 @@ public:
     Texture();
     ~Texture();
 
-    void Bind();
-    void Bind(unsigned int index);
-    void unBind();
-    void Upload(std::string FilePath);
+    Texture(const Texture&) = delete;
+    Texture& operator=(const Texture&) = delete;
 
-    inline unsigned int GetIndex() { return this->index; };
+    void Bind(unsigned int unit = 0);
+    void Unbind(unsigned int unit = 0);
+    void Upload(const std::string& filePath, unsigned int unit = 0);
+
+    inline GLuint GetTexture() const { return this->texture; }
 private:
-    void ActiveTexture(unsigned int &index);
+    void ActiveTexture(unsigned int unit);
 private:
-    GLuint texture;
-    unsigned int index;
+    GLuint texture = 0;
 };

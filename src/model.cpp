@@ -19,6 +19,14 @@ glm::mat4 Model::ModelMat() const
     return modelMat;
 }
 
+const DefaultModelData& Model::Data() const
+{
+    if (this->data == nullptr)
+        throw std::logic_error("Model has no model data");
+
+    return *this->data;
+}
+
 void Model::Translate(glm::vec3 translation)
 {
     this->Param().Position = translation;

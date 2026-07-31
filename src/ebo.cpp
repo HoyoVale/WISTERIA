@@ -24,18 +24,7 @@ void EBO::unBind()
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
-void EBO::Upload(const void* data,unsigned int &dataSize)
-{
-    this->Bind();
-    glBufferData(
-        GL_ELEMENT_ARRAY_BUFFER,
-        dataSize,
-        data,
-        GL_STATIC_DRAW
-    );
-}
-
-void EBO::Upload(const void* data, const unsigned int &dataSize)
+void EBO::Upload(const void* data, std::size_t dataSize)
 {
     this->Bind();
     glBufferData(

@@ -169,9 +169,7 @@ void Program::Uniform1ui(std::string valueName, unsigned int value)
     glUniform1ui(GetUniformLocation(valueName),value);
     this->unUse();
 }
-void Program::UniformTex(Texture &texture, std::string UniformName)
+void Program::UniformTex(std::string UniformName, unsigned int textureUnit)
 {
-    this->Use();
-    glUniform1i(GetUniformLocation(UniformName), (int)texture.GetIndex());
-    this->unUse();
+    this->Uniform1i(UniformName, static_cast<int>(textureUnit));
 }

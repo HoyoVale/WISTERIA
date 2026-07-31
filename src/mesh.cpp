@@ -1,48 +1,69 @@
 #include "pch.hpp"
 #include "mesh.hpp"
 
-Mesh::Mesh(const Model &_model)
-    :model(&_model)
+Mesh::Mesh(const DefaultModelData& data)
+    :data(&data)
 {
-}
-
-Mesh::~Mesh()
-{
-    // model 由外部管理，Mesh 只保存非拥有指针。
-    delete this->vao;
-    delete this->vbo;
-    delete this->ebo;
 }
 
 void Mesh::Attach()
 {
-    this->vao = new VAO();
+    if (this->data == nullptr)
+        throw std::logic_error("Mesh has no model data");
+
+    if (this->attached)
+        return;
+
+    this->vao = std::make_unique<VAO>();
     this->vao->Bind();
-    this->vbo = new VBO();
+    this->vbo = std::make_unique<VBO>();
     this->vbo->Upload(
-        this->model->data->vertices.data(),
-        static_cast<unsigned int>(this->model->data->VertexBytes())
+        this->data->vertices.data(),
+        this->data->VertexBytes()
     );
-    this->vao->BindBuffer(*this->vbo, this->model->data->layout);
-    this->ebo = new EBO();
+    this->vao->BindBuffer(*this->vbo, this->data->layout);
+    this->ebo = std::make_unique<EBO>();
     this->ebo->Bind();
     this->ebo->Upload(
-        this->model->data->indices.data(),
-        static_cast<unsigned int>(this->model->data->IndexBytes())
+        this->data->indices.data(),
+        this->data->IndexBytes()
     );
     this->vao->unBind();
+    this->attached = true;
+}
+
+void Mesh::Bind()
+{
+    if (!this->attached)
+        throw std::logic_error("Mesh must be attached before binding");
+
+    this->vao->Bind();
 }
 
 void Mesh::Draw()
 {
-    this->vao->Bind();
-    //glDrawArrays(GL_TRIANGLES, 0, 3);
-    //glDepthMask(GL_FALSE);
+    this->Bind();
+
     glDrawElements(
         GL_TRIANGLES,
-        static_cast<GLsizei>(this->model->data->IndexCount()),
+        static_cast<GLsizei>(this->data->IndexCount()),
         GL_UNSIGNED_INT,
         nullptr
     );
-    //glDepthMask(GL_TRUE);
+}
+
+void Mesh::Unbind()
+{
+    if (this->attached)
+        this->vao->unBind();
+}
+
+bool Mesh::IsAttached() const noexcept
+{
+    return this->attached;
+}
+
+std::size_t Mesh::IndexCount() const noexcept
+{
+    return this->data != nullptr ? this->data->IndexCount() : 0;
 }
