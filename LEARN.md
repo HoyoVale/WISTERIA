@@ -19,11 +19,11 @@ Texture Object
 按照这个顺序实现：
 
 ```text
-Lambert 漫反射
-Phong 光照
-Blinn-Phong 光照
-多个光源
-材质结构体
+法线 + 环境光
+漫反射 Lambert
+镜面反射 Blinn-Phong
+点光源距离衰减
+平行光、聚光灯
 ```
 
 你当前的类设计建议保持这样的职责：

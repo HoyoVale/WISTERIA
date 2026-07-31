@@ -19,6 +19,12 @@ Window::Window(int width, int height)
     this->mesh = new Mesh(this->model->Data());
     this->material = new Material();
     this->entity = new Entity(*this->mesh, *this->material);
+    this->light = new PointLight({
+        .Position = {2.0f, 2.0f, 2.0f},
+        .Color = {1.0f, 0.85f, 0.65f},
+        .Intensity = 1.2f,
+        .Range = 10.0f
+    });
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -44,6 +50,7 @@ Window::~Window(){
     delete this->camera;
     delete this->timer;
     delete this->entity;
+    delete this->light;
     delete this->material;
     delete this->mesh;
     delete this->model;
@@ -102,14 +109,28 @@ bool Window::Run()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
         this->entity->GetTransform().SetRotation({r, 2 * r, 3 * r});
-        glm::mat4 transform =
-            this->Projection() *
-            this->View() *
-            this->entity->GetTransform().Matrix();
+        const glm::mat4 model = this->entity->GetTransform().Matrix();
+        const glm::vec3 lightRadiance = this->light->Radiance();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
         this->entity->GetMaterial().Bind();
-        this->entity->GetMaterial().GetProgram().UniformMat4f("transform", transform);
+        Program& program = this->entity->GetMaterial().GetProgram();
+        program.UniformMat4f("model", model);
+        program.UniformMat4f("view", this->View());
+        program.UniformMat4f("projection", this->Projection());
+        program.Uniform3f(
+            "lightPosition",
+            this->light->Position().x,
+            this->light->Position().y,
+            this->light->Position().z
+        );
+        program.Uniform3f(
+            "lightRadiance",
+            lightRadiance.x,
+            lightRadiance.y,
+            lightRadiance.z
+        );
+        program.Uniform1f("ambientStrength", 0.15f);
         
         // 绘制
         this->entity->GetMesh().Bind();
