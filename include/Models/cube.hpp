@@ -56,7 +56,7 @@ inline const DefaultModelData cubeData({
 
 class Cube : public Model {
 public:
-    explicit Cube(const ModelParam& param = {});
+    explicit Cube(const Transform& transform = {});
     ~Cube() override = default;
 };
 

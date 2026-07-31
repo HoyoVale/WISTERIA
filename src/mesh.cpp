@@ -42,7 +42,8 @@ void Mesh::Bind()
 
 void Mesh::Draw()
 {
-    this->Bind();
+    if (!this->attached)
+        throw std::logic_error("Mesh must be attached before drawing");
 
     glDrawElements(
         GL_TRIANGLES,

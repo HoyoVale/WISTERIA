@@ -99,15 +99,18 @@ bool Window::Run()
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
-        this->model->Rotate(r, 2*r, 3*r);
-        glm::mat4 transform = this->Projection() * this->View() * this->model->ModelMat();
+        this->model->GetTransform().SetRotation({r, 2 * r, 3 * r});
+        glm::mat4 transform =
+            this->Projection() *
+            this->View() *
+            this->model->GetTransform().Matrix();
         r += speed * this->timer->GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
         this->material->Bind();
         this->material->GetProgram().UniformMat4f("transform", transform);
         
         // 绘制
-        this->material->GetProgram().Use();
+        this->mesh->Bind();
         this->mesh->Draw();
         this->mesh->Unbind();
         this->material->Unbind();

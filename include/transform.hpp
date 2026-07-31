@@ -1,0 +1,31 @@
+#pragma once
+
+#include <glm/glm.hpp>
+
+class Transform {
+public:
+    Transform(
+        const glm::vec3& position = {},
+        const glm::vec3& rotationDegrees = {},
+        const glm::vec3& scale = glm::vec3(1.0f)
+    );
+
+    glm::mat4 Matrix() const;
+
+    const glm::vec3& Position() const noexcept;
+    const glm::vec3& Rotation() const noexcept;
+    const glm::vec3& Scale() const noexcept;
+
+    void SetPosition(const glm::vec3& position);
+    void SetRotation(const glm::vec3& rotationDegrees);
+    void SetScale(const glm::vec3& scale);
+
+    void Translate(const glm::vec3& offset);
+    void Rotate(const glm::vec3& offsetDegrees);
+    void ScaleBy(const glm::vec3& factor);
+
+private:
+    glm::vec3 position{0.0f};
+    glm::vec3 rotationDegrees{0.0f};
+    glm::vec3 scale{1.0f};
+};

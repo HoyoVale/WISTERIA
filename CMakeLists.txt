@@ -41,6 +41,7 @@ add_executable(wisteria
     src/camera.cpp
     src/timer.cpp
     src/model.cpp
+    src/transform.cpp
     src/Models/cube.cpp
     src/mesh.cpp
     src/material.cpp

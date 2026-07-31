@@ -35,6 +35,8 @@ public:
 
     void Use();
     void unUse();
+
+    // The program must be active before setting uniforms.
     void UniformMat4f(std::string valueName, glm::mat4 value);
     void UniformMat3f(std::string valueName, glm::mat3 value);
     void UniformMat2f(std::string valueName, glm::mat2 value);

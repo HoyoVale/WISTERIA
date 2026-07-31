@@ -34,6 +34,8 @@ void Material::Bind()
     if (this->program == nullptr)
         throw std::logic_error("Material must be attached before binding");
 
+    this->program->Use();
+
     unsigned int unit = 0;
     for (const auto& [uniformName, texture] : this->textures)
     {
@@ -45,6 +47,13 @@ void Material::Bind()
 
 void Material::Unbind()
 {
+    unsigned int unit = 0;
+    for (const auto& [uniformName, texture] : this->textures)
+    {
+        texture->Unbind(unit);
+        ++unit;
+    }
+
     if (this->program != nullptr)
         this->program->unUse();
 }
