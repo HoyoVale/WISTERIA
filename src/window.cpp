@@ -19,7 +19,7 @@ Window::Window(int width, int height)
     this->size = new WindowSize({width, height});
     this->camera = new Camera();
     this->timer = new Timer();
-    this->model = new Model();
+    this->model = new Cube();
     
     if(!glfwInit())
         std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
@@ -87,67 +87,20 @@ void Window::computeParam()
 
 bool Window::Run()
 {
-    // 每个顶点：position(3) + color(3) + texCoord(2) = 8 个 float。
-    // 每个面使用独立顶点，保证六个面的纹理坐标互不冲突。
-    float vertices[] = {
-        // front (+Z)
-        -0.5f, -0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-         0.5f, -0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-         0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-        -0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-
-        // back (-Z)
-        -0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-        -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-         0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-         0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-
-        // left (-X)
-        -0.5f, -0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-        -0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-        -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-        -0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-
-        // right (+X)
-         0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-         0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-         0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-         0.5f, -0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-
-        // top (+Y)
-        -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-        -0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-         0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-         0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-
-        // bottom (-Y)
-        -0.5f, -0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-        -0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-         0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-         0.5f, -0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f
-    };
-
-    unsigned int indices[] = {
-         0,  1,  2,   2,  3,  0, // front
-         4,  5,  6,   6,  7,  4, // back
-         8,  9, 10,  10, 11,  8, // left
-        12, 13, 14,  14, 15, 12, // right
-        16, 17, 18,  18, 19, 16, // top
-        20, 21, 22,  22, 23, 20  // bottom
-    };
-
     VAO* vao = new VAO();
     vao->Bind();
     VBO* vbo = new VBO();
-    vbo->Upload(vertices, sizeof(vertices));
-    vao->BindBuffer(*vbo, {
-        {"position", 3, FLOAT},
-        {"color", 3, FLOAT},
-        {"texCoord", 2, FLOAT}
-    });
+    vbo->Upload(
+        this->model->data->vertices.data(),
+        static_cast<unsigned int>(this->model->data->VertexBytes())
+    );
+    vao->BindBuffer(*vbo, this->model->data->layout);
     EBO* ebo = new EBO();
     ebo->Bind();
-    ebo->Upload(indices, sizeof(indices));
+    ebo->Upload(
+        this->model->data->indices.data(),
+        static_cast<unsigned int>(this->model->data->IndexBytes())
+    );
     vao->unBind();
 
     std::string strVertexShader = "C:\\Users\\hoyo\\Desktop\\temp\\learn\\FGGP\\assets\\shaders\\basicTex.vert";
@@ -181,7 +134,7 @@ bool Window::Run()
         //glDepthMask(GL_FALSE);
         glDrawElements(
             GL_TRIANGLES,
-            static_cast<GLsizei>(sizeof(indices) / sizeof(indices[0])),
+            static_cast<GLsizei>(this->model->data->IndexCount()),
             GL_UNSIGNED_INT,
             nullptr
         );

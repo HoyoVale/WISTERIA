@@ -41,6 +41,7 @@ add_executable(wisteria
     src/camera.cpp
     src/timer.cpp
     src/model.cpp
+    src/Models/cube.cpp
 )
 
 target_include_directories(wisteria PRIVATE 

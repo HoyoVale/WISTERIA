@@ -1,7 +1,7 @@
 #pragma once
 #include "camera.hpp"
 #include "timer.hpp"
-#include "model.hpp"
+#include "Models/cube.hpp"
 #include <GLFW/glfw3.h>
 
 struct WindowSize {

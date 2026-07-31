@@ -2,27 +2,23 @@
 #include "model.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 
-Model::Model(const ModelParam &modelparam)
-:modelParam(modelparam)
+Model::Model(const DefaultModelData &data, const ModelParam &modelparam)
+:modelParam(modelparam),data(&data)
 {
 }
 
-Model::~Model()
-{
-
-}
-
-glm::mat4 Model::ModelMat()
+glm::mat4 Model::ModelMat() const
 {
 
     glm::mat4 modelMat = glm::mat4(1.0f);
     modelMat = glm::translate(modelMat, this->modelParam.Position);
     modelMat = glm::scale(modelMat, this->modelParam.Scale);
     modelMat = glm::rotate(modelMat, glm::radians(this->modelParam.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-    modelMat = glm::rotate(modelMat, glm::radians(this->modelParam.Rotation.x), glm::vec3(0.0f, 1.0f, 0.0f));
-    modelMat = glm::rotate(modelMat, glm::radians(this->modelParam.Rotation.x), glm::vec3(0.0f, 0.0f, 1.0f));
+    modelMat = glm::rotate(modelMat, glm::radians(this->modelParam.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+    modelMat = glm::rotate(modelMat, glm::radians(this->modelParam.Rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
     return modelMat;
 }
+
 
 void Model::Translate(glm::vec3 translation)
 {
