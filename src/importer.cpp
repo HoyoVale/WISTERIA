@@ -21,6 +21,9 @@ constexpr unsigned int ImportFlags =
     aiProcess_Triangulate |
     aiProcess_JoinIdenticalVertices |
     aiProcess_GenSmoothNormals |
+    // Texture decoders keep the first image row at the top. Normalize Assimp's
+    // UV output to the same top-left convention used by glTF and our uploader.
+    aiProcess_FlipUVs |
     aiProcess_ImproveCacheLocality |
     aiProcess_SortByPType |
     aiProcess_FindInvalidData |

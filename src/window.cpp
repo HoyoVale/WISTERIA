@@ -8,8 +8,7 @@ namespace
 {
 std::filesystem::path DemoModelPath()
 {
-    return std::filesystem::current_path() /
-        "tests" / "assets" / "models" / u8"仪玄" / u8"仪玄.glb";
+    return std::filesystem::current_path() / "assets" / "models" / u8"仪玄" / u8"仪玄.glb";
 }
 }
 
@@ -43,8 +42,8 @@ Window::Window(int width, int height)
         yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 12.0f, 0.0f));
 
         this->scene.ActiveCamera().SetParam(CameraParam{
-            .Position = {0.0f, 0.4f, 4.0f},
-            .Target = {0.0f, 0.4f, 0.0f},
+            .Position = {0.0f, 1.0f, 2.5f},
+            .Target = {0.0f, 1.0f, 0.0f},
             .Up = {0.0f, 1.0f, 0.0f}
         });
         this->scene.CreatePointLight(PointLightData{

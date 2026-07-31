@@ -143,6 +143,15 @@ void TestStaticModelImporter()
     Require(mesh.data.indices.size() == 3, "Importer index count is incorrect");
     Require(mesh.data.layout.size() == 4, "Importer layout field count is incorrect");
     Require(mesh.materialIndex == 0, "Importer mesh material index is incorrect");
+    Require(
+        NearlyEqual(mesh.data.vertices[6], 0.0f) &&
+        NearlyEqual(mesh.data.vertices[7], 0.0f) &&
+        NearlyEqual(mesh.data.vertices[17], 1.0f) &&
+        NearlyEqual(mesh.data.vertices[18], 0.0f) &&
+        NearlyEqual(mesh.data.vertices[28], 0.0f) &&
+        NearlyEqual(mesh.data.vertices[29], 1.0f),
+        "Importer vertically flipped glTF texture coordinates"
+    );
 
     const ImportedMaterialData& material = imported.materials[0];
     Require(material.baseColorTexture == 0, "Importer lost base-color texture binding");
