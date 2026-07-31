@@ -3,6 +3,7 @@
 #include "camera.hpp"
 #include "entity.hpp"
 #include "light.hpp"
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -43,16 +44,15 @@ public:
     bool RemoveSpotLight(const SpotLight& light);
     void ClearSpotLights() noexcept;
 
-    std::vector<std::unique_ptr<Entity>>& Entities() noexcept;
+    std::size_t EntityCount() const noexcept;
+    Entity* EntityAt(std::size_t index) noexcept;
+    const Entity* EntityAt(std::size_t index) const noexcept;
     const std::vector<std::unique_ptr<Entity>>& Entities() const noexcept;
 
-    std::vector<std::unique_ptr<PointLight>>& PointLights() noexcept;
     const std::vector<std::unique_ptr<PointLight>>& PointLights() const noexcept;
 
-    std::vector<std::unique_ptr<DirectionalLight>>& DirectionalLights() noexcept;
     const std::vector<std::unique_ptr<DirectionalLight>>& DirectionalLights() const noexcept;
 
-    std::vector<std::unique_ptr<SpotLight>>& SpotLights() noexcept;
     const std::vector<std::unique_ptr<SpotLight>>& SpotLights() const noexcept;
 
 private:

@@ -17,7 +17,7 @@ public:
 
     bool Run();
     inline GLFWwindow* GetGLFWwindow() const { return window; };
-    inline const WindowSize GetSize() const { return *size; };
+    const WindowSize& GetSize() const noexcept { return this->size; };
     glm::mat4 Projection() const{ return this->projection; };
     ResourceManager& GetResources() noexcept { return this->resources; };
     const ResourceManager& GetResources() const noexcept { return this->resources; };
@@ -28,9 +28,9 @@ private:
     void init();
     void computeParam();
 private:
-    WindowSize* size = nullptr;  
+    WindowSize size;
     GLFWwindow* window = nullptr;
-    Timer* timer = nullptr;
+    Timer timer;
     ResourceManager resources;
     Scene scene;
     Renderer renderer;

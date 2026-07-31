@@ -115,9 +115,19 @@ void Scene::ClearSpotLights() noexcept
     this->spotLights.clear();
 }
 
-std::vector<std::unique_ptr<Entity>>& Scene::Entities() noexcept
+std::size_t Scene::EntityCount() const noexcept
 {
-    return this->entities;
+    return this->entities.size();
+}
+
+Entity* Scene::EntityAt(std::size_t index) noexcept
+{
+    return index < this->entities.size() ? this->entities[index].get() : nullptr;
+}
+
+const Entity* Scene::EntityAt(std::size_t index) const noexcept
+{
+    return index < this->entities.size() ? this->entities[index].get() : nullptr;
 }
 
 const std::vector<std::unique_ptr<Entity>>& Scene::Entities() const noexcept
@@ -125,29 +135,14 @@ const std::vector<std::unique_ptr<Entity>>& Scene::Entities() const noexcept
     return this->entities;
 }
 
-std::vector<std::unique_ptr<PointLight>>& Scene::PointLights() noexcept
-{
-    return this->pointLights;
-}
-
 const std::vector<std::unique_ptr<PointLight>>& Scene::PointLights() const noexcept
 {
     return this->pointLights;
 }
 
-std::vector<std::unique_ptr<DirectionalLight>>& Scene::DirectionalLights() noexcept
-{
-    return this->directionalLights;
-}
-
 const std::vector<std::unique_ptr<DirectionalLight>>& Scene::DirectionalLights() const noexcept
 {
     return this->directionalLights;
-}
-
-std::vector<std::unique_ptr<SpotLight>>& Scene::SpotLights() noexcept
-{
-    return this->spotLights;
 }
 
 const std::vector<std::unique_ptr<SpotLight>>& Scene::SpotLights() const noexcept

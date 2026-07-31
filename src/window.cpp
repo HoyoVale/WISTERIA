@@ -9,50 +9,56 @@ void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
 }
 
 Window::Window(int width, int height)
+    : size{width, height}
 {
-    this->size = new WindowSize({width, height});
-    this->timer = new Timer();
-    Mesh& cubeMesh = this->resources.CreateMesh("cube", cubeData);
-    Material& defaultMaterial = this->resources.CreateMaterial("default");
-    this->scene.CreateEntity(cubeMesh, defaultMaterial);
-    this->scene.CreatePointLight(PointLightData{
-        .Position = {2.5f, 1.5f, 2.5f},
-        .Color = {1.0f, 0.65f, 0.4f},
-        .Intensity = 1.6f,
-        .Range = 8.0f
-    });
-    this->scene.CreateDirectionalLight(DirectionalLightData{
-        .Direction = {-0.2f, -1.0f, -0.3f},
-        .Color = {1.0f, 0.92f, 0.8f},
-        .Intensity = 0.35f
-    });
-    this->scene.CreateSpotLight(SpotLightData{
-        .Position = {2.5f, 2.5f, 3.0f},
-        .Direction = {-0.55f, -0.55f, -0.65f},
-        .Color = {1.0f, 0.35f, 0.65f},
-        .Intensity = 2.0f,
-        .Range = 8.0f,
-        .InnerCutoffDegrees = 12.5f,
-        .OuterCutoffDegrees = 22.0f
-    });
-    
-    if(!glfwInit())
-        std::cerr << "[ERROR]GLFW initialization failed!" << std::endl;
-    window = glfwCreateWindow(
-        this->size->width,
-        this->size->height,
-        "FLORAL WISTERIA",
-        NULL,
-        NULL
-    );
+    if (!glfwInit())
+        throw std::runtime_error("GLFW initialization failed");
 
-    if(!window)
+    try
     {
-        glfwTerminate();
-        std::cerr << "[ERROR]Window initialization failed!" << std::endl;
-    }
+        this->window = glfwCreateWindow(
+            this->size.width,
+            this->size.height,
+            "FLORAL WISTERIA",
+            nullptr,
+            nullptr
+        );
+        if (this->window == nullptr)
+            throw std::runtime_error("GLFW window creation failed");
 
-    this->init();
+        this->init();
+
+        Mesh& cubeMesh = this->resources.CreateMesh("cube", cubeData);
+        Material& defaultMaterial = this->resources.CreateMaterial("default");
+        this->scene.CreateEntity(cubeMesh, defaultMaterial);
+        this->scene.CreatePointLight(PointLightData{
+            .Position = {2.5f, 1.5f, 2.5f},
+            .Color = {1.0f, 0.65f, 0.4f},
+            .Intensity = 1.6f,
+            .Range = 8.0f
+        });
+        this->scene.CreateDirectionalLight(DirectionalLightData{
+            .Direction = {-0.2f, -1.0f, -0.3f},
+            .Color = {1.0f, 0.92f, 0.8f},
+            .Intensity = 0.35f
+        });
+        this->scene.CreateSpotLight(SpotLightData{
+            .Position = {2.5f, 2.5f, 3.0f},
+            .Direction = {-0.55f, -0.55f, -0.65f},
+            .Color = {1.0f, 0.35f, 0.65f},
+            .Intensity = 2.0f,
+            .Range = 8.0f,
+            .InnerCutoffDegrees = 12.5f,
+            .OuterCutoffDegrees = 22.0f
+        });
+    }
+    catch (...)
+    {
+        if (this->window != nullptr)
+            glfwDestroyWindow(this->window);
+        glfwTerminate();
+        throw;
+    }
 }
 
 Window::~Window(){
@@ -61,9 +67,8 @@ Window::~Window(){
     this->scene.ClearDirectionalLights();
     this->scene.ClearSpotLights();
     this->resources.Clear();
-    delete this->size;
-    delete this->timer;
-    glfwDestroyWindow(this->window);
+    if (this->window != nullptr)
+        glfwDestroyWindow(this->window);
     glfwTerminate();
 }
 
@@ -72,10 +77,7 @@ void Window::init()
     glfwMakeContextCurrent(this->GetGLFWwindow());
 
     if (!gladLoadGL(glfwGetProcAddress))
-    {
-        std::cerr << "Failed to load OpenGL functions\n";
-        glfwTerminate();
-    }
+        throw std::runtime_error("Failed to load OpenGL functions");
 
     glfwSetFramebufferSizeCallback(this->window, FramebufferSizeCallback);
     this->computeParam();
@@ -99,28 +101,35 @@ void Window::computeParam()
 
     glfwGetFramebufferSize(this->window,&framebufferWidth,&framebufferHeight);
     glViewport(0, 0, framebufferWidth,framebufferHeight);
+
+    // A minimized window may temporarily have a zero-sized framebuffer.
+    // Keep the last valid projection until the framebuffer becomes drawable.
+    if (framebufferWidth <= 0 || framebufferHeight <= 0)
+        return;
+
     this->aspect = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
     this->projection = glm::perspective(glm::radians(45.0f),this->aspect, 0.1f, 1000.0f);
 }
 
 bool Window::Run()
 {
-    if (this->scene.Entities().empty())
+    if (this->scene.EntityCount() == 0)
         throw std::logic_error("Window requires at least one Scene entity");
-
-    Entity& entity = *this->scene.Entities().front();
 
     float r = 0.0f, speed = 9.0f;
     
-    this->timer->Start();
+    this->timer.Start();
     while(!glfwWindowShouldClose(this->GetGLFWwindow()))
     {
-        this->timer->Now();
+        this->timer.Now();
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
-        entity.GetTransform().SetRotation({r, 2 * r, 3 * r});
-        r += speed * this->timer->GetDeltaTime();
+        // Resolve the object each frame so Scene removal cannot leave a cached
+        // dangling reference in the update loop.
+        if (Entity* entity = this->scene.EntityAt(0); entity != nullptr)
+            entity->GetTransform().SetRotation({r, 2 * r, 3 * r});
+        r += speed * this->timer.GetDeltaTime();
         if(r<=-180 or r>=180) speed *= -1.0f;
         this->renderer.Render(this->scene, this->Projection());
 

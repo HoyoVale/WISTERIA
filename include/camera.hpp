@@ -13,9 +13,15 @@ public:
     explicit Camera(const CameraParam& cameraParam = {});
 
     glm::mat4 GetView() const;
-    CameraParam& GetParam() { return this->param; }; 
-    const CameraParam& GetParam() const{ return this->param; };
+    const CameraParam& GetParam() const noexcept { return this->param; }
+    const glm::vec3& Position() const noexcept { return this->param.Position; }
+    const glm::vec3& Target() const noexcept { return this->param.Target; }
+    const glm::vec3& Up() const noexcept { return this->param.Up; }
+
+    void SetParam(const CameraParam& cameraParam);
+    void SetPosition(const glm::vec3& position);
+    void SetTarget(const glm::vec3& target);
+    void SetUp(const glm::vec3& up);
 private:
     CameraParam param;
 };
-

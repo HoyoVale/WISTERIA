@@ -1,17 +1,9 @@
 #include "pch.hpp"
 #include "timer.hpp"
+#include <algorithm>
 #include <GLFW/glfw3.h>
 
-Timer::Timer()
-{
-}
-
-Timer::~Timer()
-{
-
-}
-
-double Timer::GetCurrentTime()
+double Timer::GetCurrentTime() const
 {
     return glfwGetTime();
 }
@@ -26,5 +18,5 @@ void Timer::Now()
     this->currentTime = GetCurrentTime();
     this->deltaTime = static_cast<float>(this->currentTime - this->lastTime);
     this->lastTime = this->currentTime;
-    this->deltaTime = glm::min(this->deltaTime, 0.1f);
+    this->deltaTime = std::clamp(this->deltaTime, 0.0f, 0.1f);
 }

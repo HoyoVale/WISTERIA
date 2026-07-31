@@ -11,22 +11,29 @@ void Material::Attach()
     if (this->program != nullptr)
         return;
 
-    this->shader = std::make_unique<Shader>(
+    auto nextShader = std::make_unique<Shader>(
         this->data.shaderFilePath.VertexPath,
         this->data.shaderFilePath.FragmentPath
     );
-    this->program = std::make_unique<Program>(
-        this->shader->GetShaderList()
+    auto nextProgram = std::make_unique<Program>(
+        nextShader->GetShaderList()
     );
+    std::unordered_map<std::string, std::unique_ptr<Texture>> nextTextures;
 
     unsigned int unit = 0;
     for (const auto& [uniformName, filePath] : this->data.textureFilePath)
     {
         auto texture = std::make_unique<Texture>();
         texture->Upload(filePath, unit);
-        this->textures.emplace(uniformName, std::move(texture));
+        nextTextures.emplace(uniformName, std::move(texture));
         ++unit;
     }
+
+    // Commit only after every resource has been created successfully.
+    // Swap the container first; unique_ptr swaps below are noexcept.
+    this->textures.swap(nextTextures);
+    this->program.swap(nextProgram);
+    this->shader.swap(nextShader);
 }
 
 void Material::Bind()
@@ -82,6 +89,11 @@ const glm::vec3& Material::SpecularColor() const noexcept
 float Material::Shininess() const noexcept
 {
     return this->data.shininess;
+}
+
+const ShaderInterface& Material::Interface() const noexcept
+{
+    return this->data.shaderInterface;
 }
 
 void Material::SetSpecularColor(const glm::vec3& color) noexcept

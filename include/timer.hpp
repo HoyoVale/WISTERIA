@@ -2,11 +2,11 @@
 
 class Timer{
 public:
-    Timer();
-    ~Timer();
+    Timer() = default;
+    ~Timer() = default;
 
-    inline float GetDeltaTime() const { return  this->deltaTime; };
-    double GetCurrentTime();
+    inline float GetDeltaTime() const noexcept { return this->deltaTime; }
+    double GetCurrentTime() const;
     void Start();
     void Now();
 private:

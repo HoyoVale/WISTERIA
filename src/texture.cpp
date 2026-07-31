@@ -1,15 +1,7 @@
 #include "pch.hpp"
 #include "texture.hpp"
-#include <iostream>
-
-
-GLint GetMaxUnits()
-{
-    GLint maxUnits;
-    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,&maxUnits);
-    //std::cout << "maxUnits: " << maxUnits << std::endl;
-    return maxUnits;
-}
+#include <stdexcept>
+#include <stb_image.h>
 
 Texture::Texture()
 {
@@ -18,33 +10,23 @@ Texture::Texture()
 
 Texture::~Texture()
 {
-    if(this->texture != 0)
+    if (this->texture != 0)
     {
-        this->Unbind();
         glDeleteTextures(1, &this->texture);
+        this->texture = 0;
     }
 }
 
 void Texture::Bind(unsigned int unit)
 {
-    if(unit >= static_cast<unsigned int>(GetMaxUnits())) {
-        std::cerr << "Texture slots are full!" << std::endl;
-        exit(1);
-    }
+    ValidateUnit(unit);
     ActiveTexture(unit);
     glBindTexture(GL_TEXTURE_2D, this->texture);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
 }
 
 void Texture::Unbind(unsigned int unit)
 {
-    if(unit >= static_cast<unsigned int>(GetMaxUnits())) {
-        std::cerr << "Texture slots are full!" << std::endl;
-        exit(1);
-    }
+    ValidateUnit(unit);
     ActiveTexture(unit);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
@@ -52,14 +34,17 @@ void Texture::Unbind(unsigned int unit)
 void Texture::Upload(const std::string& filePath, unsigned int unit)
 {
     this->Bind(unit);
+    this->Configure();
     int width, height, channels;
 
     unsigned char* pixels = stbi_load(filePath.c_str(), &width, &height, &channels, 4);
 
     if (pixels == nullptr) {
+        const char* failureReason = stbi_failure_reason();
         throw std::runtime_error(
             "Cannot load texture: " + filePath + " (" +
-            stbi_failure_reason() + ")"
+            (failureReason != nullptr ? failureReason : "unknown stb_image error") +
+            ")"
         );
     }
 
@@ -83,4 +68,48 @@ void Texture::Upload(const std::string& filePath, unsigned int unit)
 void Texture::ActiveTexture(unsigned int unit)
 {
     glActiveTexture(GL_TEXTURE0 + unit);
+}
+
+GLint Texture::MaxUnits()
+{
+    // This application uses one OpenGL context, so the limit is stable.
+    static const GLint maxUnits = []
+    {
+        GLint value = 0;
+        glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &value);
+        return value;
+    }();
+    return maxUnits;
+}
+
+void Texture::ValidateUnit(unsigned int unit)
+{
+    const GLint maxUnits = MaxUnits();
+    if (maxUnits <= 0)
+        throw std::runtime_error("OpenGL reported no available texture units");
+
+    if (unit >= static_cast<unsigned int>(maxUnits))
+    {
+        throw std::out_of_range(
+            "Texture unit " + std::to_string(unit) +
+            " is out of range; maximum unit count is " +
+            std::to_string(maxUnits)
+        );
+    }
+}
+
+void Texture::Configure()
+{
+    if (this->configured)
+        return;
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(
+        GL_TEXTURE_2D,
+        GL_TEXTURE_MIN_FILTER,
+        GL_LINEAR_MIPMAP_LINEAR
+    );
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    this->configured = true;
 }

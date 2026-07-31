@@ -8,9 +8,10 @@ EBO::EBO()
 
 EBO::~EBO()
 {
-    if(!this->ebo == 0){
-        this->unBind();
+    if (this->ebo != 0)
+    {
         glDeleteBuffers(1, &this->ebo);
+        this->ebo = 0;
     }
 }
 

@@ -6,6 +6,8 @@
 #include <string>
 #include <unordered_map>
 
+class Window;
+
 class ResourceManager
 {
 public:
@@ -33,19 +35,12 @@ public:
     Material& GetMaterial(const std::string& name);
     const Material& GetMaterial(const std::string& name) const;
 
-    bool RemoveMesh(const std::string& name);
-    bool RemoveMaterial(const std::string& name);
+private:
+    std::unordered_map<std::string, std::unique_ptr<Mesh>> meshes;
+    std::unordered_map<std::string, std::unique_ptr<Material>> materials;
+
+    // Resources may only be released during Window shutdown, after Scene is clear.
     void Clear() noexcept;
 
-private:
-    struct ManagedMesh
-    {
-        explicit ManagedMesh(const DefaultModelData& source);
-
-        DefaultModelData data;
-        Mesh mesh;
-    };
-
-    std::unordered_map<std::string, std::unique_ptr<ManagedMesh>> meshes;
-    std::unordered_map<std::string, std::unique_ptr<Material>> materials;
+    friend class Window;
 };

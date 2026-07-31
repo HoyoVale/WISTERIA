@@ -7,19 +7,23 @@
 class VAO{
 public:
     VAO();
-
     ~VAO();
+
+    VAO(const VAO&) = delete;
+    VAO& operator=(const VAO&) = delete;
 
     void Bind();
     void unBind();
 
-    void BindBuffer(VBO &vbo, std::vector<Layout> &layout);
-    void BindBuffer(VBO &vbo, const std::vector<Layout> &layout);
-    inline GLuint GetVAO() { return this->vao; };
-    inline std::unordered_map<unsigned int, std::string> GetAttribList() { return this->attribList; };
+    void BindBuffer(VBO& vbo, const std::vector<Layout>& layout);
+    inline GLuint GetVAO() const noexcept { return this->vao; };
+    const std::unordered_map<unsigned int, std::string>& GetAttribList() const noexcept
+    {
+        return this->attribList;
+    }
 private:
-    GLenum ParseType(DataType &type);
-    size_t ParseTypeSize(DataType &type);
+    static GLenum ParseType(DataType type);
+    static std::size_t ParseTypeSize(DataType type);
 private:
     GLuint vao = 0;
     std::unordered_map<unsigned int, std::string> attribList;

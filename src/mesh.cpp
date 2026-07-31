@@ -1,34 +1,36 @@
 #include "pch.hpp"
 #include "mesh.hpp"
+#include <utility>
 
-Mesh::Mesh(const DefaultModelData& data)
-    :data(&data)
+Mesh::Mesh(DefaultModelData data)
+    : data(std::move(data))
 {
 }
 
 void Mesh::Attach()
 {
-    if (this->data == nullptr)
-        throw std::logic_error("Mesh has no model data");
-
     if (this->attached)
         return;
 
-    this->vao = std::make_unique<VAO>();
-    this->vao->Bind();
-    this->vbo = std::make_unique<VBO>();
-    this->vbo->Upload(
-        this->data->vertices.data(),
-        this->data->VertexBytes()
+    auto nextVao = std::make_unique<VAO>();
+    auto nextVbo = std::make_unique<VBO>();
+    auto nextEbo = std::make_unique<EBO>();
+
+    nextVao->Bind();
+    nextVbo->Upload(
+        this->data.vertices.data(),
+        this->data.VertexBytes()
     );
-    this->vao->BindBuffer(*this->vbo, this->data->layout);
-    this->ebo = std::make_unique<EBO>();
-    this->ebo->Bind();
-    this->ebo->Upload(
-        this->data->indices.data(),
-        this->data->IndexBytes()
+    nextVao->BindBuffer(*nextVbo, this->data.layout);
+    nextEbo->Upload(
+        this->data.indices.data(),
+        this->data.IndexBytes()
     );
-    this->vao->unBind();
+    nextVao->unBind();
+
+    this->vao.swap(nextVao);
+    this->vbo.swap(nextVbo);
+    this->ebo.swap(nextEbo);
     this->attached = true;
 }
 
@@ -47,8 +49,8 @@ void Mesh::Draw()
 
     glDrawElements(
         GL_TRIANGLES,
-        static_cast<GLsizei>(this->data->IndexCount()),
-        GL_UNSIGNED_INT,
+        static_cast<GLsizei>(this->data.IndexCount()),
+        this->data.IndexGLType(),
         nullptr
     );
 }
@@ -66,5 +68,5 @@ bool Mesh::IsAttached() const noexcept
 
 std::size_t Mesh::IndexCount() const noexcept
 {
-    return this->data != nullptr ? this->data->IndexCount() : 0;
+    return this->data.IndexCount();
 }

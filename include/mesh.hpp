@@ -7,8 +7,13 @@
 
 class Mesh{
 public:
-    explicit Mesh(const DefaultModelData& data);
+    explicit Mesh(DefaultModelData data);
     ~Mesh() = default;
+
+    Mesh(const Mesh&) = delete;
+    Mesh& operator=(const Mesh&) = delete;
+    Mesh(Mesh&&) = delete;
+    Mesh& operator=(Mesh&&) = delete;
 
     void Attach();
     void Bind();
@@ -19,7 +24,7 @@ public:
     std::size_t IndexCount() const noexcept;
 
 private:
-    const DefaultModelData* data = nullptr;
+    DefaultModelData data;
     std::unique_ptr<VAO> vao;
     std::unique_ptr<VBO> vbo;
     std::unique_ptr<EBO> ebo;

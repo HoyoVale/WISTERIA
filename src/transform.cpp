@@ -1,17 +1,48 @@
 #include "pch.hpp"
 #include "transform.hpp"
 
+#include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
+#include <stdexcept>
+#include <string>
+
+namespace
+{
+bool IsFinite(const glm::vec3& value)
+{
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
+void ValidateFinite(const glm::vec3& value, const char* name)
+{
+    if (!IsFinite(value))
+        throw std::invalid_argument(std::string(name) + " must contain finite values");
+}
+
+void ValidateScale(const glm::vec3& scale)
+{
+    ValidateFinite(scale, "Transform scale");
+    constexpr float MinimumMagnitude = 0.000001f;
+    if (std::abs(scale.x) <= MinimumMagnitude ||
+        std::abs(scale.y) <= MinimumMagnitude ||
+        std::abs(scale.z) <= MinimumMagnitude)
+    {
+        throw std::invalid_argument("Transform scale components must be non-zero");
+    }
+}
+}
 
 Transform::Transform(
     const glm::vec3& position,
     const glm::vec3& rotationDegrees,
     const glm::vec3& scale
 )
-    : position(position),
-      rotationDegrees(rotationDegrees),
-      scale(scale)
 {
+    this->SetPosition(position);
+    this->SetRotation(rotationDegrees);
+    this->SetScale(scale);
 }
 
 glm::mat4 Transform::Matrix() const
@@ -56,30 +87,33 @@ const glm::vec3& Transform::Scale() const noexcept
 
 void Transform::SetPosition(const glm::vec3& position)
 {
+    ValidateFinite(position, "Transform position");
     this->position = position;
 }
 
 void Transform::SetRotation(const glm::vec3& rotationDegrees)
 {
+    ValidateFinite(rotationDegrees, "Transform rotation");
     this->rotationDegrees = rotationDegrees;
 }
 
 void Transform::SetScale(const glm::vec3& scale)
 {
+    ValidateScale(scale);
     this->scale = scale;
 }
 
 void Transform::Translate(const glm::vec3& offset)
 {
-    this->position += offset;
+    this->SetPosition(this->position + offset);
 }
 
 void Transform::Rotate(const glm::vec3& offsetDegrees)
 {
-    this->rotationDegrees += offsetDegrees;
+    this->SetRotation(this->rotationDegrees + offsetDegrees);
 }
 
 void Transform::ScaleBy(const glm::vec3& factor)
 {
-    this->scale *= factor;
+    this->SetScale(this->scale * factor);
 }

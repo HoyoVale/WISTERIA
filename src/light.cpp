@@ -1,5 +1,19 @@
 #include "pch.hpp"
 #include "light.hpp"
+#include <cmath>
+#include <stdexcept>
+
+namespace
+{
+glm::vec3 NormalizeLightDirection(const glm::vec3& direction)
+{
+    const float lengthSquared = glm::dot(direction, direction);
+    if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
+        throw std::invalid_argument("Light direction must be a finite non-zero vector");
+
+    return glm::normalize(direction);
+}
+}
 
 PointLight::PointLight(const PointLightData &_data)
     :data(_data)
@@ -106,8 +120,7 @@ float DirectionalLight::Intensity() const noexcept
 
 void DirectionalLight::SetDirection(const glm::vec3& direction)
 {
-    if (glm::dot(direction, direction) > 0.000001f)
-        this->data.Direction = glm::normalize(direction);
+    this->data.Direction = NormalizeLightDirection(direction);
 }
 
 void DirectionalLight::SetColor(const glm::vec3& color)
@@ -203,8 +216,7 @@ void SpotLight::SetPosition(const glm::vec3& position)
 
 void SpotLight::SetDirection(const glm::vec3& direction)
 {
-    if (glm::dot(direction, direction) > 0.000001f)
-        this->data.Direction = glm::normalize(direction);
+    this->data.Direction = NormalizeLightDirection(direction);
 }
 
 void SpotLight::SetColor(const glm::vec3& color)

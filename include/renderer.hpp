@@ -1,22 +1,41 @@
 #pragma once
 
 #include "scene.hpp"
-#include <cstddef>
 
 class Program;
+struct ShaderInterface;
 
 class Renderer
 {
 public:
-    static constexpr std::size_t MaxPointLights = 8;
-    static constexpr std::size_t MaxDirectionalLights = 4;
-    static constexpr std::size_t MaxSpotLights = 4;
-
     void Render(Scene& scene, const glm::mat4& projection);
 
 private:
-    void UploadSceneUniforms(Program& program, const Scene& scene);
-    void UploadPointLights(Program& program, const Scene& scene);
-    void UploadDirectionalLights(Program& program, const Scene& scene);
-    void UploadSpotLights(Program& program, const Scene& scene);
+    void UploadTransforms(
+        Program& program,
+        const ShaderInterface& shaderInterface,
+        const glm::mat4& model,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
+    void UploadSceneUniforms(
+        Program& program,
+        const Scene& scene,
+        const ShaderInterface& shaderInterface
+    );
+    void UploadPointLights(
+        Program& program,
+        const Scene& scene,
+        const ShaderInterface& shaderInterface
+    );
+    void UploadDirectionalLights(
+        Program& program,
+        const Scene& scene,
+        const ShaderInterface& shaderInterface
+    );
+    void UploadSpotLights(
+        Program& program,
+        const Scene& scene,
+        const ShaderInterface& shaderInterface
+    );
 };

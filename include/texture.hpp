@@ -1,10 +1,6 @@
 #pragma once
 #include <string>
-#include <iostream>
 #include <glad/gl.h>
-#include <stb_image.h>
-
-GLint GetMaxUnits();
 
 class Texture{
 public:
@@ -18,9 +14,13 @@ public:
     void Unbind(unsigned int unit = 0);
     void Upload(const std::string& filePath, unsigned int unit = 0);
 
-    inline GLuint GetTexture() const { return this->texture; }
+    inline GLuint GetTexture() const noexcept { return this->texture; }
 private:
+    static GLint MaxUnits();
+    static void ValidateUnit(unsigned int unit);
     void ActiveTexture(unsigned int unit);
+    void Configure();
 private:
     GLuint texture = 0;
+    bool configured = false;
 };

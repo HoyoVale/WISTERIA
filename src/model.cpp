@@ -1,15 +1,13 @@
 #include "pch.hpp"
 #include "model.hpp"
+#include <utility>
 
-Model::Model(const DefaultModelData& data)
-    : data(&data)
+Model::Model(DefaultModelData data)
+    : data(std::move(data))
 {
 }
 
-const DefaultModelData& Model::Data() const
+const DefaultModelData& Model::Data() const noexcept
 {
-    if (this->data == nullptr)
-        throw std::logic_error("Model has no model data");
-
-    return *this->data;
+    return this->data;
 }
