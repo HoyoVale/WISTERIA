@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <iostream>
 #include <glad/gl.h>
+#include <utility>
 
 namespace
 {
@@ -18,25 +19,22 @@ std::filesystem::path Demo2ModelPath()
 }
 }
 
-void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
+Window::Window(
+    int width,
+    int height,
+    std::string title,
+    GLFWwindow* sharedContext
+)
+    : size{width, height}, title(std::move(title))
 {
-    glViewport(0, 0, width, height);
-}
-
-Window::Window(int width, int height)
-    : size{width, height}
-{
-    if (!glfwInit())
-        throw std::runtime_error("GLFW initialization failed");
-
     try
     {
         this->window = glfwCreateWindow(
             this->size.width,
             this->size.height,
-            "FLORAL WISTERIA",
+            this->title.c_str(),
             nullptr,
-            nullptr
+            sharedContext
         );
         if (this->window == nullptr)
             throw std::runtime_error("GLFW window creation failed");
@@ -92,21 +90,22 @@ Window::Window(int width, int height)
     }
     catch (...)
     {
-        this->input.Detach();
-        this->renderer.Release();
-        this->sceneFramebuffer.Release();
-        if (this->window != nullptr)
-            glfwDestroyWindow(this->window);
-        glfwTerminate();
+        this->Release();
         throw;
     }
 }
 
-Window::~Window(){
+Window::~Window()
+{
+    this->Release();
+}
+
+void Window::Release() noexcept
+{
+    if (this->window != nullptr)
+        glfwMakeContextCurrent(this->window);
     this->cameraController.reset();
     this->input.Detach();
-    this->renderer.Release();
-    this->sceneFramebuffer.Release();
     this->scene.ClearEntities();
     this->scene.ClearPointLights();
     this->scene.ClearDirectionalLights();
@@ -114,8 +113,10 @@ Window::~Window(){
     this->scene.ClearEnvironment();
     this->resources.Clear();
     if (this->window != nullptr)
+    {
         glfwDestroyWindow(this->window);
-    glfwTerminate();
+        this->window = nullptr;
+    }
 }
 
 void Window::init()
@@ -125,10 +126,7 @@ void Window::init()
     if (!gladLoadGL(glfwGetProcAddress))
         throw std::runtime_error("Failed to load OpenGL functions");
 
-    glfwSetFramebufferSizeCallback(this->window, FramebufferSizeCallback);
     this->input.Attach(*this->window);
-    this->computeParam();
-    // TODO renderer init
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_BLEND);
@@ -141,63 +139,50 @@ void Window::init()
     // std::cout << "Depth bits: "<< depthBits<< '\n';
 }
 
-void Window::computeParam()
+WindowSize Window::GetFramebufferSize() const noexcept
 {
-    int framebufferWidth = 0;
-    int framebufferHeight = 0;
-
-    glfwGetFramebufferSize(this->window,&framebufferWidth,&framebufferHeight);
-    this->framebufferSize = {framebufferWidth, framebufferHeight};
-
-    // A minimized window may temporarily have a zero-sized framebuffer.
-    // Keep the last valid projection until the framebuffer becomes drawable.
-    if (framebufferWidth <= 0 || framebufferHeight <= 0)
-        return;
-
-    this->sceneFramebuffer.Resize(framebufferWidth, framebufferHeight);
-    this->aspect = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
-    this->projection = this->scene.ActiveCamera().GetProjection(this->aspect);
+    WindowSize result{0, 0};
+    if (this->window != nullptr)
+        glfwGetFramebufferSize(this->window, &result.width, &result.height);
+    return result;
 }
 
-bool Window::Run()
+glm::mat4 Window::Projection(float aspect) const
+{
+    if (aspect <= 0.0f)
+        throw std::invalid_argument("Projection aspect ratio must be positive");
+    return this->scene.ActiveCamera().GetProjection(aspect);
+}
+
+bool Window::ShouldClose() const noexcept
+{
+    return this->window == nullptr || glfwWindowShouldClose(this->window);
+}
+
+void Window::MakeContextCurrent() const
+{
+    if (this->window == nullptr)
+        throw std::logic_error("Cannot activate a destroyed window");
+    glfwMakeContextCurrent(this->window);
+}
+
+void Window::SwapBuffers() const
+{
+    if (this->window == nullptr)
+        throw std::logic_error("Cannot swap a destroyed window");
+    glfwSwapBuffers(this->window);
+}
+
+void Window::BeginInputFrame() noexcept
+{
+    this->input.BeginFrame();
+}
+
+void Window::Update(float deltaTime)
 {
     if (this->scene.EntityCount() == 0)
         throw std::logic_error("Window requires at least one Scene entity");
-
-    this->timer.Start();
-    while(!glfwWindowShouldClose(this->GetGLFWwindow()))
-    {
-        this->timer.Now();
-        this->input.BeginFrame();
-        glfwPollEvents();
-        if (glfwWindowShouldClose(this->GetGLFWwindow()))
-            break;
-
-        if (this->cameraController != nullptr)
-            this->cameraController->Update(this->timer.GetDeltaTime());
-
-        this->computeParam();
-        if (this->framebufferSize.width <= 0 ||
-            this->framebufferSize.height <= 0)
-        {
-            continue;
-        }
-
-        this->scene.Update(this->timer.GetDeltaTime());
-        this->sceneFramebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
-        this->renderer.Render(
-            this->scene,
-            this->Projection(),
-            this->sceneFramebuffer
-        );
-        this->renderer.Present(
-            this->sceneFramebuffer,
-            this->framebufferSize.width,
-            this->framebufferSize.height
-        );
-
-        glfwSwapBuffers(this->GetGLFWwindow());
-    }
-    
-    return false;
+    if (this->cameraController != nullptr)
+        this->cameraController->Update(deltaTime);
+    this->scene.Update(deltaTime);
 }

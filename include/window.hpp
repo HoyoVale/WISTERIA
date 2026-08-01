@@ -1,13 +1,13 @@
 #pragma once
 #include "behaviour.hpp"
 #include "input.hpp"
-#include "timer.hpp"
 #include "manager.hpp"
 #include "scene.hpp"
-#include "renderer.hpp"
-#include "framebuffer.hpp"
 #include <GLFW/glfw3.h>
 #include <memory>
+#include <string>
+
+class Application;
 
 struct WindowSize {
         int width  = 640, height = 480;
@@ -15,44 +15,45 @@ struct WindowSize {
 
 class Window {
 public:
-    Window(int width = 640, int height = 480);
     ~Window();
 
-    bool Run();
+    Window(const Window&) = delete;
+    Window& operator=(const Window&) = delete;
+    Window(Window&&) = delete;
+    Window& operator=(Window&&) = delete;
+
     inline GLFWwindow* GetGLFWwindow() const { return window; };
     const WindowSize& GetSize() const noexcept { return this->size; };
-    glm::mat4 Projection() const{ return this->projection; };
+    WindowSize GetFramebufferSize() const noexcept;
+    glm::mat4 Projection(float aspect) const;
+    bool ShouldClose() const noexcept;
+    void MakeContextCurrent() const;
+    void SwapBuffers() const;
+    void BeginInputFrame() noexcept;
+    void Update(float deltaTime);
     ResourceManager& GetResources() noexcept { return this->resources; };
     const ResourceManager& GetResources() const noexcept { return this->resources; };
     Scene& GetScene() noexcept { return this->scene; };
     const Scene& GetScene() const noexcept { return this->scene; };
     Input& GetInput() noexcept { return this->input; };
     const Input& GetInput() const noexcept { return this->input; };
-    Renderer& GetRenderer() noexcept { return this->renderer; }
-    const Renderer& GetRenderer() const noexcept { return this->renderer; }
-    SceneFramebuffer& GetSceneFramebuffer() noexcept
-    {
-        return this->sceneFramebuffer;
-    }
-    const SceneFramebuffer& GetSceneFramebuffer() const noexcept
-    {
-        return this->sceneFramebuffer;
-    }
 
 private:
+    friend class Application;
+    Window(
+        int width,
+        int height,
+        std::string title,
+        GLFWwindow* sharedContext = nullptr
+    );
     void init();
-    void computeParam();
+    void Release() noexcept;
 private:
     WindowSize size;
+    std::string title;
     GLFWwindow* window = nullptr;
     Input input;
-    Timer timer;
     ResourceManager resources;
     Scene scene;
-    Renderer renderer;
-    SceneFramebuffer sceneFramebuffer;
     std::unique_ptr<FreeCameraControllerBehaviour> cameraController;
-    WindowSize framebufferSize{0, 0};
-    float aspect = 1.0f;
-    glm::mat4 projection = glm::mat4(1.0f);
 };

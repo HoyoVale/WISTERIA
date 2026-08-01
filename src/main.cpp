@@ -1,4 +1,5 @@
 #include "pch.hpp"
+#include "application.hpp"
 #include "window.hpp"
 
 #include <iostream>
@@ -8,10 +9,15 @@ int main()
 {
     try
     {
-        Window win(600, 600);
-        if (!win.Run())
-            std::cout << "[INFO]Window was closed" << std::endl;
-        return 0;
+        Application application;
+        application.CreateWindow(WindowConfig{
+            .width = 600,
+            .height = 600,
+            .title = "FLORAL WISTERIA"
+        });
+        const int result = application.Run();
+        std::cout << "[INFO] Application was closed" << std::endl;
+        return result;
     }
     catch (const std::exception& error)
     {

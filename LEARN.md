@@ -266,3 +266,47 @@ PostProcess
   └─ 未来 Bloom
        ↓
 Window 默认 framebuffer
+
+
+多窗口则需要这层结构：
+Application / WindowManager
+├─ Window A
+│  ├─ OpenGL Context A
+│  ├─ Renderer A
+│  └─ Context-local Framebuffers / VAOs
+├─ Window B
+│  ├─ OpenGL Context B
+│  ├─ Renderer B
+│  └─ Context-local Framebuffers / VAOs
+└─ Shared ResourceManager
+   ├─ Texture
+   ├─ Buffer
+   ├─ Shader / Program
+   └─ ModelAsset
+当前需要先拆开的地方有：
+Window 不再独自调用 glfwInit() 和 glfwTerminate()，改由 Application 管理 GLFW 生命周期。
+将阻塞式 Window::Run() 拆成：BeginFrame()
+RenderFrame()
+EndFrame()
+ShouldClose()
+
+Application 每帧只调用一次 glfwPollEvents()，然后逐个窗口：切换 Context。
+更新 viewport。
+调用对应 Renderer。
+交换缓冲区。
+
+创建第二个窗口时，通过 GLFW 的 share 参数共享 Texture、Buffer、Shader 和 Program。
+VAO、FBO 等上下文相关状态仍由各窗口自己的 Renderer 管理。
+第一批实现建议包括：
+framebuffer.hpp/.cpp创建和销毁 FBO。
+添加颜色纹理和深度附件。
+完整性检查。
+Resize。
+Bind/Unbind。
+
+RenderTarget保存宽高、颜色附件和深度附件。
+
+将现有 OIT framebuffer 重构到统一 Framebuffer 抽象。
+增加 SceneFramebuffer。
+增加最终 Present/FXAA Pass。
+然后再实现 Application 与 WindowManager。

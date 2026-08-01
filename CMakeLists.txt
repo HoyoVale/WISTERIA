@@ -61,6 +61,7 @@ FetchContent_MakeAvailable(assimp)
 # reusable project code
 set(WISTERIA_CORE_SOURCES
     src/stb_image.cpp
+    src/application.cpp
     src/window.cpp
     src/shader.cpp
     src/vbo.cpp
