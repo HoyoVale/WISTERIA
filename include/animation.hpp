@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pose.hpp"
+#include "pose_buffer.hpp"
 #include <cstddef>
 #include <span>
 #include <string>
@@ -65,6 +65,7 @@ public:
     std::size_t TrackCount() const noexcept;
     std::span<const AnimationTrack> Tracks() const noexcept;
     const AnimationTrack* FindTrack(BoneIndex boneIndex) const noexcept;
+    void Sample(float time, PoseBuffer& output) const;
 
 private:
     std::string name;

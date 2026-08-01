@@ -6,18 +6,9 @@
 #include <stdexcept>
 
 Animator::Animator(Pose& pose)
-    : pose(&pose)
+    : pose(&pose),
+      sampledPose(pose.GetSkeleton())
 {
-    const Skeleton& skeleton = pose.GetSkeleton();
-    this->bindTransforms.reserve(skeleton.BoneCount());
-    this->sampledLocalMatrices.reserve(skeleton.BoneCount());
-    for (std::size_t index = 0; index < skeleton.BoneCount(); ++index)
-    {
-        const glm::mat4& bindMatrix =
-            skeleton.BoneAt(static_cast<BoneIndex>(index)).bindLocalMatrix;
-        this->bindTransforms.push_back(BoneTransform::FromMatrix(bindMatrix));
-        this->sampledLocalMatrices.push_back(bindMatrix);
-    }
 }
 
 void Animator::Play(const AnimationClip& clip, bool restart)
@@ -87,19 +78,8 @@ void Animator::Evaluate()
     if (this->currentClip == nullptr)
         return;
 
-    const Skeleton& skeleton = this->pose->GetSkeleton();
-    for (std::size_t index = 0; index < skeleton.BoneCount(); ++index)
-    {
-        this->sampledLocalMatrices[index] =
-            skeleton.BoneAt(static_cast<BoneIndex>(index)).bindLocalMatrix;
-    }
-    for (const AnimationTrack& track : this->currentClip->Tracks())
-    {
-        const std::size_t index = static_cast<std::size_t>(track.Bone());
-        this->sampledLocalMatrices[index] =
-            track.Sample(this->currentTime, this->bindTransforms[index]).Matrix();
-    }
-    this->pose->SetLocalMatrices(this->sampledLocalMatrices);
+    this->currentClip->Sample(this->currentTime, this->sampledPose);
+    this->sampledPose.ApplyTo(*this->pose);
 }
 
 bool Animator::IsPlaying() const noexcept

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "animation.hpp"
-#include <vector>
 
 // Per-entity playback state. AnimationClip and Skeleton remain shared model
 // resources; only time and the sampled Pose are instance-local.
@@ -36,8 +35,7 @@ private:
 
     Pose* pose = nullptr;
     const AnimationClip* currentClip = nullptr;
-    std::vector<BoneTransform> bindTransforms;
-    std::vector<glm::mat4> sampledLocalMatrices;
+    PoseBuffer sampledPose;
     float currentTime = 0.0f;
     float speed = 1.0f;
     bool playing = false;

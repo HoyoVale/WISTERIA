@@ -3,7 +3,9 @@
 #include "behaviour.hpp"
 #include "manager.hpp"
 #include "scene.hpp"
+#include <array>
 #include <filesystem>
+#include <string_view>
 
 namespace
 {
@@ -17,6 +19,69 @@ std::filesystem::path DemoModelPath2()
 {
     return std::filesystem::current_path() / "assets" / "models" /
         "mmd" / u8"仪玄皮肤_pmx" / u8"仪玄.pmx";
+}
+
+BoneIndex FindDemoAnimationBone(const Skeleton& skeleton)
+{
+    // Prefer a small, unmistakable articulated movement. These are standard
+    // MMD bone names; the root fallback keeps the demo useful for other rigs.
+    constexpr std::array<std::string_view, 6> Candidates{
+        "頭",
+        "首",
+        "上半身2",
+        "上半身",
+        "全ての親",
+        "センター"
+    };
+    for (std::string_view name : Candidates)
+    {
+        if (const std::optional<BoneIndex> index = skeleton.FindBone(name))
+            return *index;
+    }
+
+    if (skeleton.BoneCount() == 0)
+        throw std::logic_error("Demo animation requires a non-empty Skeleton");
+    return 0U;
+}
+
+void EnsureDemoAnimation(ModelAsset& model)
+{
+    if (!model.HasSkeleton() || model.AnimationClipCount() != 0)
+        return;
+
+    const Skeleton& skeleton = model.GetSkeleton();
+    const BoneIndex boneIndex = FindDemoAnimationBone(skeleton);
+    const BoneTransform bindTransform = BoneTransform::FromMatrix(
+        skeleton.BoneAt(boneIndex).bindLocalMatrix
+    );
+    const auto rotated = [&bindTransform](float degrees)
+    {
+        return glm::normalize(
+            bindTransform.rotation * glm::angleAxis(
+                glm::radians(degrees),
+                glm::vec3(0.0f, 1.0f, 0.0f)
+            )
+        );
+    };
+
+    model.AddAnimationClip(AnimationClip(
+        "demoHeadTurn",
+        4.0f,
+        {AnimationTrack(
+            boneIndex,
+            {},
+            {
+                QuaternionKeyframe{0.0f, bindTransform.rotation},
+                QuaternionKeyframe{1.0f, rotated(25.0f)},
+                QuaternionKeyframe{2.0f, bindTransform.rotation},
+                QuaternionKeyframe{3.0f, rotated(-25.0f)},
+                QuaternionKeyframe{4.0f, bindTransform.rotation}
+            }
+        )}
+    ));
+
+    std::cout << "[INFO] Demo animation uses bone: "
+              << skeleton.BoneAt(boneIndex).name << std::endl;
 }
 }
 
@@ -33,6 +98,7 @@ void SetupDemoScene1(Scene& scene, ResourceManager& resources)
     scene.SetEnvironment(&environment);
 
     ModelAsset& Model = resources.LoadModel("yixuan1",DemoModelPath1());
+    EnsureDemoAnimation(Model);
     Entity& Entity = scene.InstantiateModel(
         Model,
         Transform(
@@ -70,6 +136,7 @@ void SetupDemoScene2(Scene& scene, ResourceManager& resources)
     scene.SetEnvironment(&environment);
 
     ModelAsset& Model = resources.LoadModel("yixuan2",DemoModelPath2());
+    EnsureDemoAnimation(Model);
     Entity& Entity = scene.InstantiateModel(
         Model,
         Transform(
@@ -93,4 +160,3 @@ void SetupDemoScene2(Scene& scene, ResourceManager& resources)
         .Range = 8.0f
     });
 }
-

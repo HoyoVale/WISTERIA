@@ -245,6 +245,27 @@ void TestAnimationSamplingAndAnimator()
         "ModelAsset did not retain its animation clip"
     );
 
+    PoseBuffer startPose(model.GetSkeleton());
+    PoseBuffer endPose(model.GetSkeleton());
+    PoseBuffer blendedPose(model.GetSkeleton());
+    firstClip.Sample(0.0f, startPose);
+    firstClip.Sample(2.0f, endPose);
+    BlendPoseBuffers(startPose, endPose, 0.25f, blendedPose);
+    Require(
+        NearlyEqual(blendedPose.TransformAt(0U).translation.x, 1.0f),
+        "PoseBuffer did not blend sampled translations"
+    );
+    Require(
+        NearlyEqual(blendedPose.LocalMatrices()[1], childBind),
+        "AnimationClip::Sample changed an unanimated bind-pose bone"
+    );
+    Pose sampledPose(model.GetSkeleton());
+    blendedPose.ApplyTo(sampledPose);
+    Require(
+        NearlyEqual(sampledPose.LocalMatrix(0U)[3].x, 1.0f),
+        "PoseBuffer did not apply its local pose to Pose"
+    );
+
     Scene scene;
     Entity& entity = scene.InstantiateModel(model);
     Require(entity.HasAnimator(), "Animated model instance has no Animator");

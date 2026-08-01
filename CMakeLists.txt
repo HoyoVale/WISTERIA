@@ -80,6 +80,7 @@ set(WISTERIA_CORE_SOURCES
     src/model_asset.cpp
     src/skeleton.cpp
     src/pose.cpp
+    src/pose_buffer.cpp
     src/animation.cpp
     src/animator.cpp
     src/importer.cpp

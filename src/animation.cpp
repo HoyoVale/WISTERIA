@@ -284,3 +284,28 @@ const AnimationTrack* AnimationClip::FindTrack(BoneIndex boneIndex) const noexce
         ? nullptr
         : &this->tracks[iterator->second];
 }
+
+void AnimationClip::Sample(float time, PoseBuffer& output) const
+{
+    if (!std::isfinite(time))
+        throw std::invalid_argument("Animation clip sample time must be finite");
+
+    const float clampedTime = std::clamp(time, 0.0f, this->duration);
+    output.ResetToBindPose();
+    for (const AnimationTrack& track : this->tracks)
+    {
+        if (static_cast<std::size_t>(track.Bone()) >= output.BoneCount())
+        {
+            throw std::invalid_argument(
+                "Animation clip references a bone outside the PoseBuffer Skeleton"
+            );
+        }
+        output.SetTransform(
+            track.Bone(),
+            track.Sample(
+                clampedTime,
+                output.TransformAt(track.Bone())
+            )
+        );
+    }
+}
