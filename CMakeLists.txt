@@ -64,6 +64,7 @@ set(WISTERIA_CORE_SOURCES
     src/application.cpp
     src/demo_scene.cpp
     src/window.cpp
+    src/window_manager.cpp
     src/shader.cpp
     src/vbo.cpp
     src/vao.cpp

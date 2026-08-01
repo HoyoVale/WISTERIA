@@ -2,9 +2,9 @@
 
 Run through Blender rather than the system Python:
 
-    blender --background --python script/convert_glb_to_obj.py -- \
-        --input /path/to/model.glb \
-        --output /path/to/model.obj
+blender --background --python script/convert_glb_to_obj.py -- \
+    --input ./assets/models/仪玄皮肤_glb/仪玄皮肤.glb \
+    --output ./assets/models/obj/仪玄皮肤_obj/仪玄皮肤.obj
 """
 
 from __future__ import annotations

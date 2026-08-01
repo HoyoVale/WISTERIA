@@ -1,29 +1,13 @@
 #pragma once
 
-#include "behaviour.hpp"
-#include "framebuffer.hpp"
 #include "manager.hpp"
-#include "renderer.hpp"
 #include "timer.hpp"
+#include "window_manager.hpp"
 #include <cstddef>
 #include <memory>
-#include <string>
-#include <thread>
-#include <vector>
 
-class Window;
-
-struct WindowConfig
-{
-    int width = 640;
-    int height = 480;
-    std::string title = "FLORAL WISTERIA";
-    bool shareOpenGlResources = true;
-};
-
-// Owns process-wide GLFW state, the shared resource manager, and schedules
-// every window from one event loop. A window binds a Scene/Camera render view;
-// framebuffers, renderers and VAOs remain context-local.
+// Owns process-wide GLFW state, the frame clock and shared resources.
+// WindowManager owns native windows and context-local rendering state.
 class Application
 {
 public:
@@ -35,9 +19,7 @@ public:
     Application(Application&&) = delete;
     Application& operator=(Application&&) = delete;
 
-    // These window operations must be called on the Application/GLFW thread.
-    // During Run, newly created windows are committed at a frame boundary and
-    // destruction is deferred until it is safe to release context-local state.
+    // Compatibility facade. New code may use GetWindowManager() directly.
     Window& CreateWindow(const WindowConfig& config = {});
     void DestroyWindow(Window& window);
     std::shared_ptr<Scene> CreateScene();
@@ -60,45 +42,26 @@ public:
         const FreeCameraControllerSettings& settings = {}
     );
     void DisableFreeCameraController(Window& window) noexcept;
+
     int Run();
     void RequestClose() noexcept;
-
     std::size_t WindowCount() const noexcept;
     bool IsRunning() const noexcept;
+
     Renderer& GetRenderer(Window& window);
     SceneFramebuffer& GetFramebuffer(Window& window);
+    WindowManager& GetWindowManager() noexcept;
+    const WindowManager& GetWindowManager() const noexcept;
     ResourceManager& GetResources() noexcept;
     const ResourceManager& GetResources() const noexcept;
 
 private:
-    struct ManagedWindow
-    {
-        explicit ManagedWindow(std::unique_ptr<Window> nextWindow);
-
-        // Destruction order is framebuffer -> renderer -> window. Application
-        // makes this window's context current before destroying the record.
-        std::unique_ptr<Window> window;
-        Renderer renderer;
-        SceneFramebuffer framebuffer;
-    };
-
-    ManagedWindow& Find(Window& window);
-    const ManagedWindow& Find(const Window& window) const;
-    void RenderWindow(ManagedWindow& managedWindow);
-    void CommitPendingWindows();
-    void DestroyClosedWindows();
-    void TrackScene(const std::shared_ptr<Scene>& scene);
-    void ClearTrackedScenes() noexcept;
-    void RequireOwnerThread() const;
     void Shutdown() noexcept;
 
 private:
     ResourceManager resources;
-    std::vector<std::unique_ptr<ManagedWindow>> windows;
-    std::vector<std::unique_ptr<ManagedWindow>> pendingWindows;
-    std::vector<std::weak_ptr<Scene>> trackedScenes;
+    WindowManager windowManager;
     Timer timer;
-    std::thread::id ownerThread;
     bool glfwInitialized = false;
     bool running = false;
     bool closeRequested = false;

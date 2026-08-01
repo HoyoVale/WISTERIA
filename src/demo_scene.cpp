@@ -10,13 +10,13 @@ namespace
 std::filesystem::path DemoModelPath()
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        u8"今汐_pmx" / u8"今汐.pmx";
+        u8"仪玄_pmx" / u8"仪玄.pmx";
 }
 
 std::filesystem::path DemoSecondModelPath()
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        u8"爱弥斯_pmx" / u8"爱弥斯.pmx";
+        u8"今汐_pmx" / u8"今汐.pmx";
 }
 }
 
@@ -39,9 +39,9 @@ void SetupDemoScene(Scene& scene, ResourceManager& resources)
     Entity& firstEntity = scene.InstantiateModel(
         firstModel,
         Transform(
-            glm::vec3(0.8f, 0.0f, 0.0f),
+            glm::vec3(2.0f, 0.0f, 0.0f),
             glm::vec3(0.0f),
-            glm::vec3(0.1f)
+            glm::vec3(0.3f)
         )
     );
 
@@ -52,9 +52,9 @@ void SetupDemoScene(Scene& scene, ResourceManager& resources)
     Entity& secondEntity = scene.InstantiateModel(
         secondModel,
         Transform(
-            glm::vec3(-0.8f, 0.0f, 0.0f),
+            glm::vec3(-2.0f, 0.0f, 0.0f),
             glm::vec3(0.0f),
-            glm::vec3(0.1f)
+            glm::vec3(0.3f)
         )
     );
 

@@ -7,6 +7,7 @@
 #include <string>
 
 class Application;
+class WindowManager;
 
 using SceneHandle = std::shared_ptr<Scene>;
 using CameraHandle = std::shared_ptr<Camera>;
@@ -48,6 +49,7 @@ public:
 
 private:
     friend class Application;
+    friend class WindowManager;
     Window(
         int width,
         int height,

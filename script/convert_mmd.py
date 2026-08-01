@@ -2,9 +2,11 @@
 
 Run through Blender rather than the system Python:
 
-blender --background --python script/convert_mmd.py -- \
-    --input /path/to/model.pmx \
-    --output /path/to/model.glb
+blender --background \
+  --python script/convert_mmd.py -- \
+  --input "./assets/models/仪玄_pmx/鸟.pmx" \
+  --output "./assets/models/仪玄_glb/鸟.glb" \
+  --rigged
 
 The vendored MMD Tools package in third-party/blender_mmd_tools is used by
 default. Pass --addon-dir only when testing another checkout.
@@ -57,15 +59,44 @@ def parse_arguments() -> argparse.Namespace:
 
 def register_mmd_tools(addon_dir: Path) -> None:
     addon_dir = addon_dir.resolve()
-    if not (addon_dir / "mmd_tools" / "__init__.py").is_file():
+    package_dir = addon_dir / "mmd_tools"
+    if not (package_dir / "__init__.py").is_file():
         raise FileNotFoundError(
             f"MMD Tools package not found below addon directory: {addon_dir}"
+        )
+    shared_toon_folder = package_dir / "externals" / "MikuMikuDance"
+    missing_shared_toons = [
+        shared_toon_folder / f"toon{index:02d}.bmp"
+        for index in range(1, 11)
+        if not (shared_toon_folder / f"toon{index:02d}.bmp").is_file()
+    ]
+    if missing_shared_toons:
+        raise FileNotFoundError(
+            "MMD Tools shared Toon textures are incomplete: "
+            + ", ".join(str(path) for path in missing_shared_toons)
         )
 
     sys.path.insert(0, str(addon_dir))
     import mmd_tools  # pylint: disable=import-outside-toplevel
+    from mmd_tools import bpyutils  # pylint: disable=import-outside-toplevel
+    from mmd_tools.core import material  # pylint: disable=import-outside-toplevel
 
     mmd_tools.register()
+
+    # Loading a vendored addon directly from sys.path does not add an entry to
+    # bpy.context.preferences.addons in Blender 3.0. MMD Tools consequently
+    # falls back to an empty shared Toon directory. Override that one project
+    # preference while preserving every other upstream preference lookup.
+    upstream_addon_preferences = bpyutils.addon_preferences
+
+    def project_addon_preferences(name: str, default=None):
+        if name == "shared_toon_folder":
+            return str(shared_toon_folder)
+        return upstream_addon_preferences(name, default)
+
+    bpyutils.addon_preferences = project_addon_preferences
+    material.addon_preferences = project_addon_preferences
+    print(f"Using MMD shared Toon textures from {shared_toon_folder}")
 
 
 def clear_scene() -> None:
