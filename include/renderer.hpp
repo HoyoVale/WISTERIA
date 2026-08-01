@@ -4,14 +4,17 @@
 #include "scene.hpp"
 #include <glad/gl.h>
 #include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 class Program;
 class Shader;
 struct ShaderInterface;
 class EnvironmentMap;
 class Mesh;
+class MorphState;
 class Pose;
 class VAO;
 
@@ -48,6 +51,17 @@ public:
     void Release() noexcept;
 
 private:
+    struct MorphCacheEntry
+    {
+        GLuint buffer = 0;
+        std::uint64_t revision = 0;
+        std::uint64_t lastUsedFrame = 0;
+        std::size_t capacityBytes = 0;
+        bool initialized = false;
+        bool active = false;
+        std::vector<glm::vec3> offsets;
+    };
+
     void DrawPart(
         RenderPart& part,
         const glm::mat4& model,
@@ -56,6 +70,7 @@ private:
         const Camera& camera,
         const Scene& scene,
         const Pose* pose,
+        const MorphState* morphState,
         int oitPass
     );
     void EnsureOitResources(const SceneFramebuffer& target);
@@ -78,6 +93,14 @@ private:
         const Pose* pose
     );
     void EnsureSkinningResources();
+    void UploadMorphing(
+        VAO& vertexArray,
+        const ShaderInterface& shaderInterface,
+        const Mesh& mesh,
+        const MorphState* morphState
+    );
+    void BeginMorphingFrame();
+    void ReleaseMorphingCache() noexcept;
     void UploadSceneUniforms(
         Program& program,
         const Scene& scene,
@@ -118,6 +141,11 @@ private:
     std::size_t maximumSkinningMatrices = 0;
     const Pose* uploadedPose = nullptr;
     std::uint64_t uploadedPoseRevision = 0;
+    std::unordered_map<
+        const MorphState*,
+        std::unordered_map<const Mesh*, MorphCacheEntry>
+    > morphingCache;
+    std::uint64_t morphingFrame = 0;
     std::unique_ptr<Shader> oitCompositeShader;
     std::unique_ptr<Program> oitCompositeProgram;
     std::unique_ptr<Shader> presentShader;

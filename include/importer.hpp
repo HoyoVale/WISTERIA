@@ -3,6 +3,7 @@
 #include "animation.hpp"
 #include "material.hpp"
 #include "model.hpp"
+#include "morph.hpp"
 #include "skeleton.hpp"
 #include <cstddef>
 #include <filesystem>
@@ -53,6 +54,7 @@ struct ImportedMeshData
     DefaultModelData data;
     std::size_t materialIndex = 0;
     std::size_t requiredBoneCount = 0;
+    std::vector<MeshMorphTarget> morphTargets;
 };
 
 struct ImportedPartData
@@ -69,6 +71,7 @@ struct ImportedModelData
     std::vector<ImportedMeshData> meshes;
     std::vector<ImportedPartData> parts;
     std::optional<Skeleton> skeleton;
+    std::vector<MorphDefinition> morphs;
     std::vector<AnimationClip> animations;
 };
 

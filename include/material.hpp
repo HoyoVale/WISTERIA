@@ -52,6 +52,7 @@ struct ShaderInterface
     bool skinningSupported = true;
     std::string skinningEnabled = "skinningEnabled";
     std::string boneMatrixPalette = "boneMatrixPalette";
+    bool morphingSupported = true;
 
     bool lightingEnabled = true;
     std::string cameraPosition = "cameraPosition";

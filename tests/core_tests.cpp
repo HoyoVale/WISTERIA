@@ -109,6 +109,14 @@ void TestSkeletonAndPose()
         "Skeleton evaluation order is not parent-before-child"
     );
     Require(
+        skeleton.Children(2U).size() == 1U &&
+        skeleton.Children(2U)[0] == 0U &&
+        skeleton.Children(0U).size() == 1U &&
+        skeleton.Children(0U)[0] == 1U &&
+        skeleton.Children(1U).empty(),
+        "Skeleton child lookup does not match its hierarchy"
+    );
+    Require(
         NearlyEqual(skeleton.BindGlobalMatrices()[1], leafGlobal),
         "Skeleton bind global matrix is incorrect"
     );
@@ -668,6 +676,133 @@ void TestRootMotion()
     );
 }
 
+void TestMmdBoneConstraints()
+{
+    Bone appendSource{"appendSource"};
+    appendSource.sourceOrder = 0U;
+    Bone appendedBone{"appendedBone"};
+    appendedBone.deformLayer = 1;
+    appendedBone.sourceOrder = 1U;
+    appendedBone.appendTransform = MmdAppendTransform{
+        0U,
+        0.5f,
+        true,
+        true
+    };
+    Skeleton appendSkeleton({appendSource, appendedBone});
+    Require(
+        appendSkeleton.HasMmdConstraints() &&
+        appendSkeleton.MmdConstraintOrder().size() == 1U &&
+        appendSkeleton.MmdConstraintOrder()[0] == 1U,
+        "Skeleton did not retain its MMD append evaluation order"
+    );
+
+    AnimationClip appendClip(
+        "append",
+        1.0f,
+        {AnimationTrack(
+            0U,
+            {
+                VectorKeyframe{0.0f, glm::vec3(0.0f)},
+                VectorKeyframe{1.0f, glm::vec3(2.0f, 0.0f, 0.0f)}
+            },
+            {
+                QuaternionKeyframe{
+                    0.0f,
+                    glm::quat(1.0f, 0.0f, 0.0f, 0.0f)
+                },
+                QuaternionKeyframe{
+                    1.0f,
+                    glm::angleAxis(
+                        glm::radians(90.0f),
+                        glm::vec3(0.0f, 0.0f, 1.0f)
+                    )
+                }
+            }
+        )}
+    );
+    Pose appendPose(appendSkeleton);
+    Animator appendAnimator(appendPose);
+    appendAnimator.Play(appendClip);
+    appendAnimator.SetLooping(false);
+    appendAnimator.SetTime(1.0f);
+    const BoneTransform appended = BoneTransform::FromMatrix(
+        appendPose.LocalMatrix(1U)
+    );
+    const glm::vec3 rotatedAxis =
+        appended.rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+    Require(
+        NearlyEqual(appended.translation.x, 1.0f) &&
+        NearlyEqual(rotatedAxis.x, std::sqrt(0.5f)) &&
+        NearlyEqual(rotatedAxis.y, std::sqrt(0.5f)),
+        "MMD append translation or rotation weight was not applied"
+    );
+
+    Bone ikLink{"ikLink"};
+    ikLink.sourceOrder = 0U;
+    Bone ikEffector{"ikEffector"};
+    ikEffector.parentIndex = 0U;
+    ikEffector.bindLocalMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    ikEffector.inverseBindMatrix = glm::inverse(
+        ikEffector.bindLocalMatrix
+    );
+    ikEffector.sourceOrder = 1U;
+    Bone ikController{"ikController"};
+    ikController.bindLocalMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    ikController.inverseBindMatrix = glm::inverse(
+        ikController.bindLocalMatrix
+    );
+    ikController.deformLayer = 1;
+    ikController.sourceOrder = 2U;
+    ikController.ikConstraint = MmdIkConstraint{
+        1U,
+        8U,
+        glm::radians(45.0f),
+        {MmdIkLink{0U}}
+    };
+    Skeleton ikSkeleton({ikLink, ikEffector, ikController});
+    AnimationClip ikClip(
+        "ik",
+        1.0f,
+        {AnimationTrack(
+            2U,
+            {VectorKeyframe{0.0f, glm::vec3(0.0f, 1.0f, 0.0f)}}
+        )}
+    );
+    Pose ikPose(ikSkeleton);
+    Animator ikAnimator(ikPose);
+    ikAnimator.Play(ikClip);
+    glm::vec3 effectorPosition(ikPose.GlobalMatrix(1U)[3]);
+    Require(
+        glm::length(effectorPosition - glm::vec3(0.0f, 1.0f, 0.0f)) <
+            0.001f,
+        "MMD CCD IK did not move its effector to the controller"
+    );
+
+    ikAnimator.SetMmdIkEnabled(2U, false);
+    effectorPosition = glm::vec3(ikPose.GlobalMatrix(1U)[3]);
+    Require(
+        !ikAnimator.IsMmdIkEnabled(2U) &&
+        glm::length(effectorPosition - glm::vec3(1.0f, 0.0f, 0.0f)) <
+            0.001f,
+        "Disabling one MMD IK controller did not restore the sampled pose"
+    );
+    ikAnimator.SetMmdIkEnabled(2U, true);
+    effectorPosition = glm::vec3(ikPose.GlobalMatrix(1U)[3]);
+    Require(
+        ikAnimator.IsMmdIkEnabled(2U) &&
+        glm::length(effectorPosition - glm::vec3(0.0f, 1.0f, 0.0f)) <
+            0.001f,
+        "Re-enabling one MMD IK controller did not re-evaluate the pose"
+    );
+}
+
 void TestAnimatedModelImporter()
 {
     const std::filesystem::path modelPath =
@@ -807,21 +942,96 @@ void TestVmdImporter()
         linearInterpolation()
     );
 
+    // Morph frames are followed by empty camera/light/self-shadow sections
+    // and VMD model frames containing per-controller IK switches.
+    appendValue(std::uint32_t{3U});
+    const auto appendMorphFrame = [
+        &appendValue,
+        &appendFixed
+    ](std::string_view name, std::uint32_t frame, float weight)
+    {
+        appendFixed(name, 15U);
+        appendValue(frame);
+        appendValue(weight);
+    };
+    appendMorphFrame("smile", 0U, 0.0f);
+    appendMorphFrame("smile", 30U, 1.0f);
+    appendMorphFrame("unknownMorph", 15U, 0.5f);
+    appendValue(std::uint32_t{0U});
+    appendValue(std::uint32_t{0U});
+    appendValue(std::uint32_t{0U});
+    appendValue(std::uint32_t{3U});
+    const auto appendIkModelFrame = [
+        &appendValue,
+        &appendFixed
+    ](
+        std::uint32_t frame,
+        bool enabled,
+        bool includeUnknown
+    )
+    {
+        appendValue(frame);
+        appendValue(std::uint8_t{1U});
+        appendValue(std::uint32_t{includeUnknown ? 2U : 1U});
+        appendFixed("ikController", 20U);
+        appendValue(static_cast<std::uint8_t>(enabled));
+        if (includeUnknown)
+        {
+            appendFixed("unknownIk", 20U);
+            appendValue(std::uint8_t{0U});
+        }
+    };
+    appendIkModelFrame(0U, true, false);
+    appendIkModelFrame(15U, false, true);
+    appendIkModelFrame(30U, true, false);
+
     const glm::mat4 headBind = glm::translate(
         glm::mat4(1.0f),
         glm::vec3(1.0f, 2.0f, 3.0f)
     );
-    Skeleton skeleton({Bone{
+    Bone head{
         "\xE9\xA0\xAD",
         InvalidBoneIndex,
         headBind,
         glm::inverse(headBind)
-    }});
+    };
+    Bone ikLink{"ikLink"};
+    Bone ikEffector{"ikEffector"};
+    ikEffector.parentIndex = 1U;
+    ikEffector.bindLocalMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    ikEffector.inverseBindMatrix = glm::inverse(
+        ikEffector.bindLocalMatrix
+    );
+    Bone ikController{"ikController"};
+    ikController.bindLocalMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    ikController.inverseBindMatrix = glm::inverse(
+        ikController.bindLocalMatrix
+    );
+    ikController.ikConstraint = MmdIkConstraint{
+        2U,
+        8U,
+        glm::radians(45.0f),
+        {MmdIkLink{1U}}
+    };
+    Skeleton skeleton({
+        std::move(head),
+        std::move(ikLink),
+        std::move(ikEffector),
+        std::move(ikController)
+    });
+    MorphSet morphSet({MorphDefinition{"smile", MorphCategory::Mouth}});
     const ImportedVmdAnimationData imported = VmdImporter().Import(
         bytes,
         skeleton,
         "memoryMotion",
-        VmdImportOptions{.clipName = "walk"}
+        VmdImportOptions{.clipName = "walk"},
+        &morphSet
     );
 
     Require(imported.modelName == "testModel", "VMD model name was not decoded");
@@ -829,6 +1039,18 @@ void TestVmdImporter()
         imported.sourceBoneTrackCount == 2U &&
         imported.unmatchedBoneNames.size() == 1U,
         "VMD unmatched-bone reporting is incorrect"
+    );
+    Require(
+        imported.sourceMorphTrackCount == 2U &&
+        imported.unmatchedMorphNames.size() == 1U &&
+        imported.clip.MorphWeightTrackCount() == 1U,
+        "VMD morph reporting or name mapping is incorrect"
+    );
+    Require(
+        imported.sourceIkStateTrackCount == 2U &&
+        imported.unmatchedIkNames.size() == 1U &&
+        imported.clip.MmdIkStateTrackCount() == 1U,
+        "VMD IK-state reporting or controller mapping is incorrect"
     );
     Require(
         imported.clip.Name() == "walk" &&
@@ -855,6 +1077,104 @@ void TestVmdImporter()
     Require(
         endPose.rotation.y < -0.7f,
         "VMD quaternion handedness conversion is incorrect"
+    );
+
+    const MmdIkStateTrack* ikTrack =
+        imported.clip.FindMmdIkStateTrack(3U);
+    Require(
+        ikTrack != nullptr && ikTrack->Sample(0.0f) &&
+        !ikTrack->Sample(0.5f) && ikTrack->Sample(1.0f),
+        "VMD IK switches were not imported as discrete keyframes"
+    );
+    const MorphWeightTrack* morphTrack =
+        imported.clip.FindMorphWeightTrack(0U);
+    Require(
+        morphTrack != nullptr &&
+        NearlyEqual(morphTrack->Sample(0.5f), 0.5f) &&
+        NearlyEqual(morphTrack->Sample(1.0f), 1.0f),
+        "VMD morph weights were not imported with linear interpolation"
+    );
+
+    Pose pose(skeleton);
+    MorphState morphState(morphSet);
+    Animator animator(pose, &morphState);
+    animator.Play(imported.clip);
+    animator.SetTime(0.5f);
+    Require(
+        !animator.IsMmdIkEnabled(3U) &&
+        NearlyEqual(morphState.Weight(0U), 0.5f) &&
+        glm::length(
+            glm::vec3(pose.GlobalMatrix(2U)[3]) -
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        ) < 0.001f,
+        "Animator did not apply a disabled VMD IK state"
+    );
+    animator.SetTime(1.0f);
+    Require(
+        animator.IsMmdIkEnabled(3U) &&
+        NearlyEqual(morphState.Weight("smile"), 1.0f) &&
+        glm::length(
+            glm::vec3(pose.GlobalMatrix(2U)[3]) -
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        ) < 0.001f,
+        "Animator did not re-enable IK at the next VMD keyframe"
+    );
+    animator.SetMmdIkEnabled(3U, false);
+    Require(
+        !animator.IsMmdIkEnabled(3U),
+        "Manual IK override did not take priority over VMD"
+    );
+    animator.ClearMmdIkOverride(3U);
+    Require(
+        animator.IsMmdIkEnabled(3U),
+        "Clearing a manual IK override did not restore VMD control"
+    );
+
+    AnimationClip alwaysEnabled(
+        "alwaysEnabled",
+        1.0f,
+        {},
+        {MmdIkStateTrack(3U, {BoolKeyframe{0.0f, true}})}
+    );
+    AnimationClip alwaysDisabled(
+        "alwaysDisabled",
+        1.0f,
+        {},
+        {MmdIkStateTrack(3U, {BoolKeyframe{0.0f, false}})}
+    );
+    animator.Play(alwaysEnabled);
+    animator.CrossFade(alwaysDisabled, 1.0f);
+    animator.Update(0.49f);
+    Require(
+        animator.IsMmdIkEnabled(3U),
+        "Cross Fade switched its discrete IK state too early"
+    );
+    animator.Update(0.02f);
+    Require(
+        !animator.IsMmdIkEnabled(3U),
+        "Cross Fade did not switch to the destination IK state"
+    );
+
+    AnimationClip neutralExpression(
+        "neutralExpression",
+        1.0f,
+        {},
+        {},
+        {MorphWeightTrack(0U, {FloatKeyframe{0.0f, 0.0f}})}
+    );
+    AnimationClip smileExpression(
+        "smileExpression",
+        1.0f,
+        {},
+        {},
+        {MorphWeightTrack(0U, {FloatKeyframe{0.0f, 1.0f}})}
+    );
+    animator.Play(neutralExpression);
+    animator.CrossFade(smileExpression, 1.0f);
+    animator.Update(0.5f);
+    Require(
+        NearlyEqual(morphState.Weight("smile"), 0.5f),
+        "Cross Fade did not blend source and destination morph weights"
     );
 
     bool invalidSignatureRejected = false;
@@ -889,9 +1209,14 @@ void TestVmdAssetWhenAvailable()
 
     const ImportedModelData model = ModelImporter().Import(modelPath);
     Require(model.skeleton.has_value(), "VMD test PMX has no Skeleton");
+    std::optional<MorphSet> morphSet;
+    if (!model.morphs.empty())
+        morphSet.emplace(model.morphs);
     const ImportedVmdAnimationData motion = VmdImporter().Import(
         motionPath,
-        *model.skeleton
+        *model.skeleton,
+        {},
+        morphSet.has_value() ? &*morphSet : nullptr
     );
     Require(
         motion.modelName == "Adelie Tomori_arm" &&
@@ -902,6 +1227,12 @@ void TestVmdAssetWhenAvailable()
         motion.clip.TrackCount() >= 20U &&
         NearlyEqual(motion.clip.Duration(), 0.6f),
         "Real VMD motion did not bind to the PMX Skeleton"
+    );
+    Require(
+        motion.clip.MorphWeightTrackCount() +
+            motion.unmatchedMorphNames.size() ==
+            motion.sourceMorphTrackCount,
+        "Real VMD morph tracks were not completely mapped or reported"
     );
 }
 
@@ -940,6 +1271,149 @@ void TestModelAssetSkeleton()
         replacementRejected = true;
     }
     Require(replacementRejected, "ModelAsset allowed its skeleton to be replaced");
+}
+
+void TestMorphRuntime()
+{
+    MorphSet morphSet({
+        MorphDefinition{"smile", MorphCategory::Mouth},
+        MorphDefinition{"blink", MorphCategory::Eye}
+    });
+    Require(
+        morphSet.MorphCount() == 2U &&
+        morphSet.FindMorph("blink") == std::optional<MorphIndex>(1U),
+        "MorphSet name/index mapping is incorrect"
+    );
+
+    MorphState firstState(morphSet);
+    MorphState secondState(morphSet);
+    firstState.SetWeight("smile", 0.75f);
+    Require(
+        NearlyEqual(firstState.Weight(0U), 0.75f) &&
+        NearlyEqual(secondState.Weight(0U), 0.0f) &&
+        firstState.Revision() == 1U,
+        "MorphState weights are not instance-local"
+    );
+
+    DefaultModelData data{
+        {
+            0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f
+        },
+        {0U, 1U, 2U},
+        {{"position", 3, FLOAT}}
+    };
+    Mesh mesh(
+        std::move(data),
+        0U,
+        {
+            MeshMorphTarget{
+                0U,
+                {
+                    VertexMorphOffset{1U, glm::vec3(2.0f, 0.0f, 0.0f)},
+                    VertexMorphOffset{2U, glm::vec3(0.0f, 2.0f, 0.0f)}
+                }
+            }
+        }
+    );
+    std::vector<glm::vec3> offsets;
+    Require(
+        mesh.HasMorphTargets() && mesh.VertexCount() == 3U &&
+        mesh.CalculateMorphOffsets(firstState.Weights(), offsets) &&
+        offsets.size() == 3U &&
+        NearlyEqual(offsets[1].x, 1.5f) &&
+        NearlyEqual(offsets[2].y, 1.5f),
+        "Mesh did not combine sparse morph offsets with instance weights"
+    );
+
+    ModelAsset model("morphModel");
+    model.SetMorphs({
+        MorphDefinition{"smile", MorphCategory::Mouth},
+        MorphDefinition{"blink", MorphCategory::Eye}
+    });
+    Require(
+        model.HasMorphs() &&
+        model.GetMorphSet().FindMorph("smile").has_value(),
+        "ModelAsset did not retain its MorphSet"
+    );
+    Entity firstEntity;
+    Entity secondEntity;
+    firstEntity.SetMorphSet(model.GetMorphSet());
+    secondEntity.SetMorphSet(model.GetMorphSet());
+    firstEntity.GetMorphState().SetWeight("blink", 1.0f);
+    Require(
+        NearlyEqual(firstEntity.GetMorphState().Weight("blink"), 1.0f) &&
+        NearlyEqual(secondEntity.GetMorphState().Weight("blink"), 0.0f),
+        "Entities unexpectedly share mutable MorphState weights"
+    );
+
+    MorphSet groupedMorphSet({
+        MorphDefinition{"smile", MorphCategory::Mouth},
+        MorphDefinition{"blink", MorphCategory::Eye},
+        MorphDefinition{
+            "expression",
+            MorphCategory::Mouth,
+            MorphKind::Group,
+            {
+                GroupMorphMember{0U, 0.5f},
+                GroupMorphMember{1U, 1.0f}
+            }
+        },
+        MorphDefinition{
+            "nested",
+            MorphCategory::Other,
+            MorphKind::Group,
+            {
+                GroupMorphMember{2U, 0.5f},
+                GroupMorphMember{0U, 0.25f}
+            }
+        }
+    });
+    MorphState groupedState(groupedMorphSet);
+    groupedState.SetWeight("smile", 0.1f);
+    groupedState.SetWeight("expression", 0.8f);
+    std::span<const float> effective = groupedState.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[0U], 0.5f) &&
+        NearlyEqual(effective[1U], 0.8f) &&
+        NearlyEqual(effective[2U], 0.0f) &&
+        NearlyEqual(effective[3U], 0.0f),
+        "Group Morph did not accumulate direct and grouped weights"
+    );
+    groupedState.Reset();
+    groupedState.SetWeight("nested", 1.0f);
+    effective = groupedState.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[0U], 0.5f) &&
+        NearlyEqual(effective[1U], 0.5f),
+        "Nested Group Morph did not recursively expand its weights"
+    );
+
+    bool cycleRejected = false;
+    try
+    {
+        MorphSet cyclic({
+            MorphDefinition{
+                "first",
+                MorphCategory::Other,
+                MorphKind::Group,
+                {GroupMorphMember{1U, 1.0f}}
+            },
+            MorphDefinition{
+                "second",
+                MorphCategory::Other,
+                MorphKind::Group,
+                {GroupMorphMember{0U, 1.0f}}
+            }
+        });
+        (void)cyclic;
+    }
+    catch (const std::invalid_argument&)
+    {
+        cycleRejected = true;
+    }
+    Require(cycleRejected, "MorphSet accepted a cyclic Group Morph graph");
 }
 
 void TestRenderPartAndModelAsset()
@@ -1782,6 +2256,27 @@ void TestDirectPmxMaterialImportWhenAvailable()
     Require(imported.materials.size() == 21, "Direct PMX material count changed");
     Require(imported.parts.size() == 21, "Direct PMX part count changed");
     Require(imported.skeleton.has_value(), "Direct PMX lost its Skeleton");
+    Require(!imported.morphs.empty(), "Direct PMX lost its morph definitions");
+    std::size_t meshMorphTargetCount = 0U;
+    for (const ImportedMeshData& mesh : imported.meshes)
+        meshMorphTargetCount += mesh.morphTargets.size();
+    Require(
+        meshMorphTargetCount > 0U,
+        "Direct PMX vertex morphs were not mapped to imported Mesh vertices"
+    );
+    std::size_t appendConstraintCount = 0U;
+    std::size_t ikConstraintCount = 0U;
+    for (const Bone& bone : imported.skeleton->Bones())
+    {
+        appendConstraintCount += bone.appendTransform.has_value() ? 1U : 0U;
+        ikConstraintCount += bone.ikConstraint.has_value() ? 1U : 0U;
+    }
+    Require(
+        imported.skeleton->HasMmdConstraints() &&
+        appendConstraintCount > 0U &&
+        ikConstraintCount > 0U,
+        "Direct PMX lost its Append/Grant or IK constraints"
+    );
     const Pose pmxBindPose(*imported.skeleton);
     for (const glm::mat4& skinMatrix : pmxBindPose.SkinningMatrices())
     {
@@ -1863,6 +2358,19 @@ void TestDirectPmxMaterialImportWhenAvailable()
     ModelAsset& model = resources.LoadModel("directPmx", modelPath);
     Require(model.PartCount() == 21, "Direct PMX ModelAsset part count changed");
     Require(model.HasSkeleton(), "ResourceManager lost the PMX Skeleton");
+    Require(
+        model.HasMorphs() &&
+        model.GetMorphSet().MorphCount() == imported.morphs.size(),
+        "ResourceManager lost the PMX MorphSet"
+    );
+    Scene morphScene;
+    Entity& morphInstance = morphScene.InstantiateModel(model);
+    Require(
+        morphInstance.HasMorphState() &&
+        morphInstance.GetMorphState().MorphCount() ==
+            model.GetMorphSet().MorphCount(),
+        "Scene did not create per-instance PMX MorphState"
+    );
     for (std::size_t index = 0; index < resources.MaterialCount(); ++index)
     {
         const Material& material = resources.GetMaterial(
@@ -1877,6 +2385,61 @@ void TestDirectPmxMaterialImportWhenAvailable()
             "MMD Toon material unexpectedly enabled PBR IBL uniforms"
         );
     }
+}
+
+void TestDirectPmxGroupMorphImportWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"爱弥斯_pmx" / u8"爱弥斯.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    const auto group = std::find_if(
+        imported.morphs.begin(),
+        imported.morphs.end(),
+        [](const MorphDefinition& morph)
+        {
+            return morph.kind == MorphKind::Group &&
+                !morph.groupMembers.empty();
+        }
+    );
+    Require(
+        group != imported.morphs.end(),
+        "PMX importer lost real Group Morph definitions"
+    );
+
+    const MorphSet morphSet(imported.morphs);
+    const MorphIndex groupIndex = static_cast<MorphIndex>(
+        std::distance(imported.morphs.begin(), group)
+    );
+    MorphState state(morphSet);
+    state.SetWeight(groupIndex, 0.75f);
+    const std::span<const float> effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[groupIndex], 0.0f),
+        "Group Morph incorrectly remained a vertex deformation weight"
+    );
+
+    bool drivesImportedVertexTarget = false;
+    for (const ImportedMeshData& mesh : imported.meshes)
+    {
+        for (const MeshMorphTarget& target : mesh.morphTargets)
+        {
+            if (std::abs(effective[target.morphIndex]) > Epsilon)
+            {
+                drivesImportedVertexTarget = true;
+                break;
+            }
+        }
+        if (drivesImportedVertexTarget)
+            break;
+    }
+    Require(
+        drivesImportedVertexTarget,
+        "Imported Group Morph did not resolve to a Mesh vertex target"
+    );
 }
 
 template<typename Function>
@@ -1906,10 +2469,12 @@ int main()
         TestAnimationSamplingAndAnimator
     );
     failures += !RunTest("Root motion", TestRootMotion);
+    failures += !RunTest("MMD append and IK constraints", TestMmdBoneConstraints);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
     failures += !RunTest("VMD importer", TestVmdImporter);
     failures += !RunTest("VMD asset integration", TestVmdAssetWhenAvailable);
     failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
+    failures += !RunTest("Morph runtime", TestMorphRuntime);
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);
@@ -1936,6 +2501,10 @@ int main()
     failures += !RunTest(
         "Direct PMX material integration",
         TestDirectPmxMaterialImportWhenAvailable
+    );
+    failures += !RunTest(
+        "Direct PMX Group Morph integration",
+        TestDirectPmxGroupMorphImportWhenAvailable
     );
     return failures == 0 ? 0 : 1;
 }

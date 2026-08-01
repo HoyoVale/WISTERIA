@@ -293,14 +293,142 @@ BoneTransform AnimationTrack::Sample(
     return result;
 }
 
+MmdIkStateTrack::MmdIkStateTrack(
+    BoneIndex controllerBone,
+    std::vector<BoolKeyframe> keys
+)
+    : controllerBone(controllerBone),
+      keys(std::move(keys))
+{
+    if (this->controllerBone == InvalidBoneIndex)
+        throw std::invalid_argument("MMD IK state track bone index is invalid");
+    if (this->keys.empty())
+        throw std::invalid_argument("MMD IK state track must contain keys");
+
+    float previousTime = -1.0f;
+    for (const BoolKeyframe& key : this->keys)
+    {
+        if (!std::isfinite(key.time) || key.time < 0.0f ||
+            key.time <= previousTime)
+        {
+            throw std::invalid_argument(
+                "MMD IK state key times must be finite, non-negative and increasing"
+            );
+        }
+        previousTime = key.time;
+    }
+}
+
+MorphWeightTrack::MorphWeightTrack(
+    MorphIndex morphIndex,
+    std::vector<FloatKeyframe> keys
+)
+    : morphIndex(morphIndex),
+      keys(std::move(keys))
+{
+    if (this->morphIndex == InvalidMorphIndex)
+        throw std::invalid_argument("Morph weight track index is invalid");
+    if (this->keys.empty())
+        throw std::invalid_argument("Morph weight track must contain keys");
+    float previousTime = -1.0f;
+    for (const FloatKeyframe& key : this->keys)
+    {
+        if (!std::isfinite(key.time) || key.time < 0.0f ||
+            key.time <= previousTime || !std::isfinite(key.value))
+        {
+            throw std::invalid_argument(
+                "Morph weight keys must be finite with increasing non-negative times"
+            );
+        }
+        previousTime = key.time;
+    }
+}
+
+MorphIndex MorphWeightTrack::Morph() const noexcept
+{
+    return this->morphIndex;
+}
+
+std::span<const FloatKeyframe> MorphWeightTrack::Keys() const noexcept
+{
+    return this->keys;
+}
+
+float MorphWeightTrack::EndTime() const noexcept
+{
+    return this->keys.back().time;
+}
+
+float MorphWeightTrack::Sample(float time, float fallback) const
+{
+    if (!std::isfinite(time) || !std::isfinite(fallback))
+        throw std::invalid_argument("Morph weight sample values must be finite");
+    if (time < this->keys.front().time)
+        return fallback;
+    if (this->keys.size() == 1U || time >= this->keys.back().time)
+        return this->keys.back().value;
+    const auto upper = std::upper_bound(
+        this->keys.begin(),
+        this->keys.end(),
+        time,
+        [](float sampleTime, const FloatKeyframe& key)
+        {
+            return sampleTime < key.time;
+        }
+    );
+    const FloatKeyframe& next = *upper;
+    const FloatKeyframe& previous = *(upper - 1);
+    const float factor = (time - previous.time) /
+        (next.time - previous.time);
+    return previous.value + (next.value - previous.value) * factor;
+}
+
+BoneIndex MmdIkStateTrack::ControllerBone() const noexcept
+{
+    return this->controllerBone;
+}
+
+std::span<const BoolKeyframe> MmdIkStateTrack::Keys() const noexcept
+{
+    return this->keys;
+}
+
+float MmdIkStateTrack::EndTime() const noexcept
+{
+    return this->keys.back().time;
+}
+
+bool MmdIkStateTrack::Sample(float time, bool fallback) const
+{
+    if (!std::isfinite(time))
+        throw std::invalid_argument("MMD IK state sample time must be finite");
+    if (time < this->keys.front().time)
+        return fallback;
+
+    const auto upper = std::upper_bound(
+        this->keys.begin(),
+        this->keys.end(),
+        time,
+        [](float sampleTime, const BoolKeyframe& key)
+        {
+            return sampleTime < key.time;
+        }
+    );
+    return (upper - 1)->value;
+}
+
 AnimationClip::AnimationClip(
     std::string name,
     float durationSeconds,
-    std::vector<AnimationTrack> tracks
+    std::vector<AnimationTrack> tracks,
+    std::vector<MmdIkStateTrack> mmdIkStateTracks,
+    std::vector<MorphWeightTrack> morphWeightTracks
 )
     : name(std::move(name)),
       duration(durationSeconds),
-      tracks(std::move(tracks))
+      tracks(std::move(tracks)),
+      mmdIkStateTracks(std::move(mmdIkStateTracks)),
+      morphWeightTracks(std::move(morphWeightTracks))
 {
     if (this->name.empty())
         throw std::invalid_argument("Animation clip name must not be empty");
@@ -310,7 +438,8 @@ AnimationClip::AnimationClip(
             "Animation clip duration must be finite and positive"
         );
     }
-    if (this->tracks.empty())
+    if (this->tracks.empty() && this->mmdIkStateTracks.empty() &&
+        this->morphWeightTracks.empty())
         throw std::invalid_argument("Animation clip must contain tracks");
 
     this->trackLookup.reserve(this->tracks.size());
@@ -327,6 +456,45 @@ AnimationClip::AnimationClip(
         {
             throw std::invalid_argument(
                 "Animation clip contains duplicate tracks for one bone"
+            );
+        }
+    }
+
+    this->morphWeightTrackLookup.reserve(this->morphWeightTracks.size());
+    for (std::size_t index = 0; index < this->morphWeightTracks.size(); ++index)
+    {
+        const MorphWeightTrack& track = this->morphWeightTracks[index];
+        if (track.EndTime() > this->duration + 0.0001f)
+        {
+            throw std::invalid_argument(
+                "Morph weight track extends beyond clip duration"
+            );
+        }
+        if (!this->morphWeightTrackLookup.emplace(track.Morph(), index).second)
+        {
+            throw std::invalid_argument(
+                "Animation clip contains duplicate tracks for one morph"
+            );
+        }
+    }
+
+    this->mmdIkStateTrackLookup.reserve(this->mmdIkStateTracks.size());
+    for (std::size_t index = 0; index < this->mmdIkStateTracks.size(); ++index)
+    {
+        const MmdIkStateTrack& track = this->mmdIkStateTracks[index];
+        if (track.EndTime() > this->duration + 0.0001f)
+        {
+            throw std::invalid_argument(
+                "MMD IK state track extends beyond clip duration"
+            );
+        }
+        if (!this->mmdIkStateTrackLookup.emplace(
+                track.ControllerBone(),
+                index
+            ).second)
+        {
+            throw std::invalid_argument(
+                "Animation clip contains duplicate MMD IK state tracks"
             );
         }
     }
@@ -358,6 +526,81 @@ const AnimationTrack* AnimationClip::FindTrack(BoneIndex boneIndex) const noexce
     return iterator == this->trackLookup.end()
         ? nullptr
         : &this->tracks[iterator->second];
+}
+
+std::size_t AnimationClip::MmdIkStateTrackCount() const noexcept
+{
+    return this->mmdIkStateTracks.size();
+}
+
+std::span<const MmdIkStateTrack> AnimationClip::MmdIkStateTracks() const noexcept
+{
+    return this->mmdIkStateTracks;
+}
+
+const MmdIkStateTrack* AnimationClip::FindMmdIkStateTrack(
+    BoneIndex controllerBone
+) const noexcept
+{
+    const auto iterator = this->mmdIkStateTrackLookup.find(controllerBone);
+    return iterator == this->mmdIkStateTrackLookup.end()
+        ? nullptr
+        : &this->mmdIkStateTracks[iterator->second];
+}
+
+bool AnimationClip::SampleMmdIkState(
+    BoneIndex controllerBone,
+    float time,
+    bool fallback
+) const
+{
+    if (!std::isfinite(time))
+        throw std::invalid_argument("MMD IK state sample time must be finite");
+    const MmdIkStateTrack* track = this->FindMmdIkStateTrack(controllerBone);
+    return track == nullptr
+        ? fallback
+        : track->Sample(std::clamp(time, 0.0f, this->duration), fallback);
+}
+
+std::size_t AnimationClip::MorphWeightTrackCount() const noexcept
+{
+    return this->morphWeightTracks.size();
+}
+
+std::span<const MorphWeightTrack> AnimationClip::MorphWeightTracks() const noexcept
+{
+    return this->morphWeightTracks;
+}
+
+const MorphWeightTrack* AnimationClip::FindMorphWeightTrack(
+    MorphIndex morphIndex
+) const noexcept
+{
+    const auto iterator = this->morphWeightTrackLookup.find(morphIndex);
+    return iterator == this->morphWeightTrackLookup.end()
+        ? nullptr
+        : &this->morphWeightTracks[iterator->second];
+}
+
+void AnimationClip::SampleMorphWeights(
+    float time,
+    std::span<float> output
+) const
+{
+    if (!std::isfinite(time))
+        throw std::invalid_argument("Morph weight sample time must be finite");
+    std::fill(output.begin(), output.end(), 0.0f);
+    const float clampedTime = std::clamp(time, 0.0f, this->duration);
+    for (const MorphWeightTrack& track : this->morphWeightTracks)
+    {
+        if (static_cast<std::size_t>(track.Morph()) >= output.size())
+        {
+            throw std::invalid_argument(
+                "Animation clip references a morph outside its MorphState"
+            );
+        }
+        output[track.Morph()] = track.Sample(clampedTime);
+    }
 }
 
 void AnimationClip::Sample(float time, PoseBuffer& output) const

@@ -363,7 +363,8 @@ ModelAsset& ResourceManager::LoadModel(
         importedMeshes.push_back(
             std::make_unique<Mesh>(
                 std::move(imported.meshes[index].data),
-                imported.meshes[index].requiredBoneCount
+                imported.meshes[index].requiredBoneCount,
+                std::move(imported.meshes[index].morphTargets)
             )
         );
     }
@@ -371,6 +372,8 @@ ModelAsset& ResourceManager::LoadModel(
     auto model = std::make_unique<ModelAsset>(name);
     if (imported.skeleton.has_value())
         model->SetSkeleton(std::move(*imported.skeleton));
+    if (!imported.morphs.empty())
+        model->SetMorphs(std::move(imported.morphs));
     for (AnimationClip& clip : imported.animations)
         model->AddAnimationClip(std::move(clip));
     for (const ImportedPartData& part : imported.parts)
@@ -481,7 +484,8 @@ AnimationClip& ResourceManager::LoadVmdAnimation(
     ImportedVmdAnimationData imported = VmdImporter().Import(
         filePath,
         model.GetSkeleton(),
-        options
+        options,
+        model.TryGetMorphSet()
     );
     return model.AddAnimationClip(std::move(imported.clip));
 }

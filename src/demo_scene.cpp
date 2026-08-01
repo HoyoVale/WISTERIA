@@ -68,6 +68,55 @@ private:
     float elapsed = 0.0f;
 };
 
+class DemoBlinkBehaviour final : public Behaviour
+{
+public:
+    explicit DemoBlinkBehaviour(MorphIndex morphIndex)
+        : morphIndex(morphIndex)
+    {
+    }
+
+    void Update(Entity& entity, float deltaTime) override
+    {
+        this->elapsed = std::fmod(this->elapsed + deltaTime, 4.0f);
+        float weight = 0.0f;
+        if (this->elapsed < 0.12f)
+            weight = this->elapsed / 0.12f;
+        else if (this->elapsed < 0.24f)
+            weight = 1.0f - (this->elapsed - 0.12f) / 0.12f;
+        entity.GetMorphState().SetWeight(this->morphIndex, weight);
+    }
+
+private:
+    MorphIndex morphIndex = InvalidMorphIndex;
+    float elapsed = 0.0f;
+};
+
+void EnableDemoBlink(Entity& entity, const ModelAsset& model)
+{
+    if (!entity.HasMorphState() || !model.HasMorphs())
+        return;
+    constexpr std::array<std::string_view, 5> Candidates{
+        "まばたき",
+        "瞬き",
+        "眨眼",
+        "blink",
+        "Blink"
+    };
+    for (std::string_view name : Candidates)
+    {
+        if (const std::optional<MorphIndex> index =
+                model.GetMorphSet().FindMorph(name))
+        {
+            entity.AddBehaviour<DemoBlinkBehaviour>(*index);
+            std::cout << "[INFO] Demo blink uses morph: "
+                      << model.GetMorphSet().DefinitionAt(*index).name
+                      << std::endl;
+            return;
+        }
+    }
+}
+
 void EnsureDemoAnimation(ModelAsset& model)
 {
     if (!model.HasSkeleton() || model.AnimationClipCount() != 0)
@@ -210,11 +259,12 @@ void SetupDemoScene1(Scene& scene, ResourceManager& resources)
     );
 
     EnableDemoStateMachine(Entity, Model);
+    EnableDemoBlink(Entity, Model);
     Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
 
     scene.ActiveCamera().SetParam(CameraParam{
-        .Position = {0.0f, 2.1f, 3.5f},
-        .Target = {0.0f, 2.1f, 0.25f},
+        .Position = {0.0f, 16.1f, 10.5f},
+        .Target = {0.0f, 16.1f, 0.25f},
         .Up = {0.0f, 1.0f, 0.0f}
     });
     scene.CreatePointLight(PointLightData{
@@ -249,11 +299,12 @@ void SetupDemoScene2(Scene& scene, ResourceManager& resources)
     );
 
     EnableDemoStateMachine(Entity, Model);
+    EnableDemoBlink(Entity, Model);
     Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
 
     scene.ActiveCamera().SetParam(CameraParam{
-        .Position = {0.0f, 2.1f, 3.5f},
-        .Target = {0.0f, 2.1f, 0.25f},
+        .Position = {0.0f, 16.1f, 10.5f},
+        .Target = {0.0f, 16.1f, 0.25f},
         .Up = {0.0f, 1.0f, 0.0f}
     });
     scene.CreatePointLight(PointLightData{

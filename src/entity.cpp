@@ -166,7 +166,10 @@ void Entity::SetSkeleton(const Skeleton& skeleton)
     if (this->pose != nullptr)
         throw std::logic_error("Entity skeleton is already set");
     auto nextPose = std::make_unique<Pose>(skeleton);
-    auto nextAnimator = std::make_unique<Animator>(*nextPose);
+    auto nextAnimator = std::make_unique<Animator>(
+        *nextPose,
+        this->morphState.get()
+    );
     this->pose = std::move(nextPose);
     this->animator = std::move(nextAnimator);
 }
@@ -198,6 +201,44 @@ const Animator& Entity::GetAnimator() const
     if (this->animator == nullptr)
         throw std::logic_error("Entity has no skeleton animator");
     return *this->animator;
+}
+
+bool Entity::HasMorphState() const noexcept
+{
+    return this->morphState != nullptr;
+}
+
+MorphState* Entity::TryGetMorphState() noexcept
+{
+    return this->morphState.get();
+}
+
+const MorphState* Entity::TryGetMorphState() const noexcept
+{
+    return this->morphState.get();
+}
+
+MorphState& Entity::GetMorphState()
+{
+    if (this->morphState == nullptr)
+        throw std::logic_error("Entity has no morph state");
+    return *this->morphState;
+}
+
+const MorphState& Entity::GetMorphState() const
+{
+    if (this->morphState == nullptr)
+        throw std::logic_error("Entity has no morph state");
+    return *this->morphState;
+}
+
+void Entity::SetMorphSet(const MorphSet& morphSet)
+{
+    if (this->morphState != nullptr)
+        throw std::logic_error("Entity morph state is already set");
+    this->morphState = std::make_unique<MorphState>(morphSet);
+    if (this->animator != nullptr)
+        this->animator->SetMorphState(*this->morphState);
 }
 
 bool Entity::RemoveBehaviour(Behaviour& behaviour)

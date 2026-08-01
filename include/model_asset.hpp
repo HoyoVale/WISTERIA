@@ -1,6 +1,7 @@
 #pragma once
 
 #include "animation.hpp"
+#include "morph.hpp"
 #include "render_part.hpp"
 #include "skeleton.hpp"
 #include <cstddef>
@@ -32,6 +33,11 @@ public:
     const Skeleton& GetSkeleton() const;
     void SetSkeleton(Skeleton skeleton);
 
+    bool HasMorphs() const noexcept;
+    const MorphSet* TryGetMorphSet() const noexcept;
+    const MorphSet& GetMorphSet() const;
+    void SetMorphs(std::vector<MorphDefinition> definitions);
+
     std::size_t AnimationClipCount() const noexcept;
     const AnimationClip& AnimationClipAt(std::size_t index) const;
     const AnimationClip* FindAnimationClip(std::string_view name) const noexcept;
@@ -47,6 +53,7 @@ private:
     std::string name;
     std::vector<RenderPart> parts;
     std::optional<Skeleton> skeleton;
+    std::optional<MorphSet> morphSet;
     // Stable clip addresses are required because Animator stores a pointer to
     // its current shared clip while more clips may still be added.
     std::vector<std::unique_ptr<AnimationClip>> animationClips;

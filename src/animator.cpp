@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "animator.hpp"
+#include "mmd_pose_solver.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -75,13 +76,21 @@ RootMotionDelta RootMotionFromMatrix(const glm::mat4& matrix)
 }
 }
 
-Animator::Animator(Pose& pose)
+Animator::Animator(Pose& pose, MorphState* morphState)
     : pose(&pose),
+      morphState(morphState),
       sampledPose(pose.GetSkeleton()),
       transitionSourcePose(pose.GetSkeleton()),
       blendedPose(pose.GetSkeleton()),
       outputPose(pose.GetSkeleton())
 {
+    if (this->morphState != nullptr)
+    {
+        const std::size_t count = this->morphState->MorphCount();
+        this->sampledMorphWeights.resize(count, 0.0f);
+        this->transitionSourceMorphWeights.resize(count, 0.0f);
+        this->blendedMorphWeights.resize(count, 0.0f);
+    }
 }
 
 void Animator::Play(const AnimationClip& clip, bool restart)
@@ -121,7 +130,19 @@ void Animator::CrossFade(
         // Preserve the exact currently displayed mixed pose. This avoids a
         // visual pop when a new transition interrupts an unfinished one.
         this->transitionSourcePose = this->blendedPose;
+        this->transitionSourceMorphWeights = this->blendedMorphWeights;
         nextTransition.sourceFrozen = true;
+        const Skeleton& skeleton = this->pose->GetSkeleton();
+        for (BoneIndex boneIndex : skeleton.MmdConstraintOrder())
+        {
+            if (skeleton.BoneAt(boneIndex).ikConstraint.has_value())
+            {
+                nextTransition.frozenMmdIkStates.emplace(
+                    boneIndex,
+                    this->EvaluateMmdIkState(boneIndex)
+                );
+            }
+        }
     }
     else
     {
@@ -150,7 +171,11 @@ void Animator::Stop(bool resetPose)
     this->paused = false;
     this->ResetRootMotion();
     if (resetPose)
+    {
         this->pose->ResetToBindPose();
+        if (this->morphState != nullptr)
+            this->morphState->Reset();
+    }
 }
 
 void Animator::Pause() noexcept
@@ -275,9 +300,18 @@ void Animator::Evaluate()
         return;
 
     this->currentClip->Sample(this->currentTime, this->sampledPose);
+    if (this->morphState != nullptr)
+    {
+        this->SampleMorphWeights(
+            *this->currentClip,
+            this->currentTime,
+            this->sampledMorphWeights
+        );
+    }
     if (!this->transition.has_value())
     {
         this->ApplyEvaluatedPose(this->sampledPose);
+        this->ApplyEvaluatedMorphWeights(this->sampledMorphWeights);
         return;
     }
 
@@ -288,6 +322,14 @@ void Animator::Evaluate()
             activeTransition.sourceTime,
             this->transitionSourcePose
         );
+        if (this->morphState != nullptr)
+        {
+            this->SampleMorphWeights(
+                *activeTransition.sourceClip,
+                activeTransition.sourceTime,
+                this->transitionSourceMorphWeights
+            );
+        }
     }
     const float weight = std::clamp(
         activeTransition.elapsed / activeTransition.duration,
@@ -301,6 +343,20 @@ void Animator::Evaluate()
         this->blendedPose
     );
     this->ApplyEvaluatedPose(this->blendedPose);
+    if (this->morphState != nullptr)
+    {
+        for (std::size_t index = 0;
+             index < this->blendedMorphWeights.size();
+             ++index)
+        {
+            this->blendedMorphWeights[index] = glm::mix(
+                this->transitionSourceMorphWeights[index],
+                this->sampledMorphWeights[index],
+                weight
+            );
+        }
+        this->ApplyEvaluatedMorphWeights(this->blendedMorphWeights);
+    }
 }
 
 bool Animator::IsPlaying() const noexcept
@@ -405,6 +461,80 @@ RootMotionDelta Animator::ConsumeRootMotion() noexcept
     const RootMotionDelta result = this->pendingRootMotion;
     this->pendingRootMotion = {};
     return result;
+}
+
+void Animator::SetMmdIkEnabled(BoneIndex controllerBone, bool enabled)
+{
+    if (static_cast<std::size_t>(controllerBone) >= this->pose->BoneCount())
+        throw std::out_of_range("MMD IK controller bone is out of range");
+    if (!this->pose->GetSkeleton().BoneAt(controllerBone)
+            .ikConstraint.has_value())
+    {
+        throw std::invalid_argument(
+            "Selected bone does not own an MMD IK constraint"
+        );
+    }
+    this->mmdIkOverrides[controllerBone] = enabled;
+    this->Evaluate();
+}
+
+void Animator::ClearMmdIkOverride(BoneIndex controllerBone)
+{
+    if (static_cast<std::size_t>(controllerBone) >= this->pose->BoneCount())
+        throw std::out_of_range("MMD IK controller bone is out of range");
+    if (!this->pose->GetSkeleton().BoneAt(controllerBone)
+            .ikConstraint.has_value())
+    {
+        throw std::invalid_argument(
+            "Selected bone does not own an MMD IK constraint"
+        );
+    }
+    this->mmdIkOverrides.erase(controllerBone);
+    this->Evaluate();
+}
+
+void Animator::ClearMmdIkOverrides()
+{
+    this->mmdIkOverrides.clear();
+    this->Evaluate();
+}
+
+bool Animator::IsMmdIkEnabled(BoneIndex controllerBone) const
+{
+    if (static_cast<std::size_t>(controllerBone) >= this->pose->BoneCount())
+        throw std::out_of_range("MMD IK controller bone is out of range");
+    if (!this->pose->GetSkeleton().BoneAt(controllerBone)
+            .ikConstraint.has_value())
+    {
+        throw std::invalid_argument(
+            "Selected bone does not own an MMD IK constraint"
+        );
+    }
+    return this->EvaluateMmdIkState(controllerBone);
+}
+
+void Animator::SetMorphState(MorphState& morphState)
+{
+    if (this->morphState != nullptr && this->morphState != &morphState)
+        throw std::logic_error("Animator morph state is already set");
+    this->morphState = &morphState;
+    const std::size_t count = morphState.MorphCount();
+    this->sampledMorphWeights.assign(count, 0.0f);
+    this->transitionSourceMorphWeights.assign(count, 0.0f);
+    this->blendedMorphWeights.assign(count, 0.0f);
+    if (this->currentClip != nullptr)
+        this->ValidateClip(*this->currentClip);
+    this->Evaluate();
+}
+
+MorphState* Animator::TryGetMorphState() noexcept
+{
+    return this->morphState;
+}
+
+const MorphState* Animator::TryGetMorphState() const noexcept
+{
+    return this->morphState;
 }
 
 const AnimationClip* Animator::CurrentClip() const noexcept
@@ -612,22 +742,102 @@ void Animator::AccumulateRootMotion(const RootMotionDelta& delta)
 
 void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
 {
-    if (!this->rootMotionEnabled || !this->rootMotionBone.has_value())
+    const Skeleton& skeleton = this->pose->GetSkeleton();
+    const bool needsRootMotionRemoval =
+        this->rootMotionEnabled && this->rootMotionBone.has_value();
+    if (!skeleton.HasMmdConstraints() && !needsRootMotionRemoval)
     {
         evaluatedPose.ApplyTo(*this->pose);
         return;
     }
 
     this->outputPose = evaluatedPose;
-    const BoneIndex boneIndex = *this->rootMotionBone;
-    BoneTransform transform = this->outputPose.TransformAt(boneIndex);
-    const BoneTransform bindTransform = BoneTransform::FromMatrix(
-        this->pose->GetSkeleton().BoneAt(boneIndex).bindLocalMatrix
-    );
-    transform.translation = bindTransform.translation;
-    transform.rotation = bindTransform.rotation;
-    this->outputPose.SetTransform(boneIndex, transform);
+    if (skeleton.HasMmdConstraints())
+    {
+        this->mmdPoseSolver.Solve(
+            this->outputPose,
+            [this](BoneIndex controllerBone)
+            {
+                return this->IsMmdIkEnabled(controllerBone);
+            }
+        );
+    }
+    if (needsRootMotionRemoval)
+    {
+        const BoneIndex boneIndex = *this->rootMotionBone;
+        BoneTransform transform = this->outputPose.TransformAt(boneIndex);
+        const BoneTransform bindTransform = BoneTransform::FromMatrix(
+            skeleton.BoneAt(boneIndex).bindLocalMatrix
+        );
+        transform.translation = bindTransform.translation;
+        transform.rotation = bindTransform.rotation;
+        this->outputPose.SetTransform(boneIndex, transform);
+    }
     this->outputPose.ApplyTo(*this->pose);
+}
+
+void Animator::SampleMorphWeights(
+    const AnimationClip& clip,
+    float time,
+    std::vector<float>& output
+) const
+{
+    if (this->morphState == nullptr)
+    {
+        if (clip.MorphWeightTrackCount() != 0U)
+            throw std::logic_error("Animator has no MorphState");
+        output.clear();
+        return;
+    }
+    if (output.size() != this->morphState->MorphCount())
+        output.resize(this->morphState->MorphCount(), 0.0f);
+    clip.SampleMorphWeights(time, output);
+}
+
+void Animator::ApplyEvaluatedMorphWeights(std::span<const float> weights)
+{
+    if (this->morphState != nullptr)
+        this->morphState->SetWeights(weights);
+}
+
+bool Animator::EvaluateMmdIkState(BoneIndex controllerBone) const
+{
+    const auto override = this->mmdIkOverrides.find(controllerBone);
+    if (override != this->mmdIkOverrides.end())
+        return override->second;
+    if (this->currentClip == nullptr)
+        return true;
+
+    if (this->transition.has_value())
+    {
+        const TransitionState& activeTransition = *this->transition;
+        const float weight = std::clamp(
+            activeTransition.elapsed / activeTransition.duration,
+            0.0f,
+            1.0f
+        );
+        if (weight < 0.5f)
+        {
+            if (activeTransition.sourceFrozen)
+            {
+                const auto state =
+                    activeTransition.frozenMmdIkStates.find(controllerBone);
+                return state == activeTransition.frozenMmdIkStates.end()
+                    ? true
+                    : state->second;
+            }
+            return activeTransition.sourceClip->SampleMmdIkState(
+                controllerBone,
+                activeTransition.sourceTime,
+                true
+            );
+        }
+    }
+    return this->currentClip->SampleMmdIkState(
+        controllerBone,
+        this->currentTime,
+        true
+    );
 }
 
 void Animator::ResetRootMotion() noexcept
@@ -643,6 +853,29 @@ void Animator::ValidateClip(const AnimationClip& clip) const
         {
             throw std::invalid_argument(
                 "Animation clip references a bone outside this skeleton"
+            );
+        }
+    }
+    for (const MmdIkStateTrack& track : clip.MmdIkStateTracks())
+    {
+        if (static_cast<std::size_t>(track.ControllerBone()) >=
+            this->pose->BoneCount() ||
+            !this->pose->GetSkeleton().BoneAt(track.ControllerBone())
+                .ikConstraint.has_value())
+        {
+            throw std::invalid_argument(
+                "Animation clip references an invalid MMD IK controller"
+            );
+        }
+    }
+    for (const MorphWeightTrack& track : clip.MorphWeightTracks())
+    {
+        if (this->morphState == nullptr ||
+            static_cast<std::size_t>(track.Morph()) >=
+                this->morphState->MorphCount())
+        {
+            throw std::invalid_argument(
+                "Animation clip references a morph outside this Animator"
             );
         }
     }

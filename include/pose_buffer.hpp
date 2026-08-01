@@ -17,6 +17,7 @@ public:
 
     void ResetToBindPose();
     const BoneTransform& TransformAt(BoneIndex boneIndex) const;
+    std::span<const BoneTransform> BindTransforms() const noexcept;
     void SetTransform(BoneIndex boneIndex, const BoneTransform& transform);
 
     std::span<const BoneTransform> Transforms() const noexcept;

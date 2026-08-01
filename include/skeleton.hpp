@@ -26,14 +26,19 @@ public:
     std::optional<BoneIndex> FindBone(std::string_view name) const;
 
     std::span<const BoneIndex> EvaluationOrder() const noexcept;
+    std::span<const BoneIndex> Children(BoneIndex boneIndex) const;
     std::span<const glm::mat4> BindGlobalMatrices() const noexcept;
     const glm::mat4& InverseRootMatrix() const noexcept;
+    bool HasMmdConstraints() const noexcept;
+    std::span<const BoneIndex> MmdConstraintOrder() const noexcept;
 
 private:
     std::vector<Bone> bones;
     std::unordered_map<std::string, BoneIndex> boneIndices;
     std::vector<BoneIndex> evaluationOrder;
+    std::vector<std::vector<BoneIndex>> children;
     std::vector<glm::mat4> bindGlobalMatrices;
+    std::vector<BoneIndex> mmdConstraintOrder;
     glm::mat4 inverseRootMatrix{1.0f};
     std::size_t rootCount = 0;
 };

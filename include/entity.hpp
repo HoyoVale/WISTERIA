@@ -4,6 +4,7 @@
 #include "behaviour.hpp"
 #include "material.hpp"
 #include "mesh.hpp"
+#include "morph.hpp"
 #include "render_part.hpp"
 #include "pose.hpp"
 #include "transform.hpp"
@@ -67,6 +68,13 @@ public:
     Animator& GetAnimator();
     const Animator& GetAnimator() const;
 
+    bool HasMorphState() const noexcept;
+    MorphState* TryGetMorphState() noexcept;
+    const MorphState* TryGetMorphState() const noexcept;
+    MorphState& GetMorphState();
+    const MorphState& GetMorphState() const;
+    void SetMorphSet(const MorphSet& morphSet);
+
     template<typename T, typename... Arguments>
         requires std::derived_from<T, Behaviour>
     T& AddBehaviour(Arguments&&... arguments)
@@ -117,6 +125,7 @@ private:
 
     Transform transform;
     std::unique_ptr<Pose> pose;
+    std::unique_ptr<MorphState> morphState;
     std::unique_ptr<Animator> animator;
     std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;

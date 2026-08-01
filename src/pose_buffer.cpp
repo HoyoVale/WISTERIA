@@ -50,6 +50,11 @@ const BoneTransform& PoseBuffer::TransformAt(BoneIndex boneIndex) const
     return this->transforms[this->CheckedIndex(boneIndex)];
 }
 
+std::span<const BoneTransform> PoseBuffer::BindTransforms() const noexcept
+{
+    return this->bindTransforms;
+}
+
 void PoseBuffer::SetTransform(
     BoneIndex boneIndex,
     const BoneTransform& transform

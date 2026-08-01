@@ -1,9 +1,11 @@
 #include "pch.hpp"
 #include "skeleton.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 namespace
@@ -54,6 +56,62 @@ Skeleton::Skeleton(
         }
         if (bone.parentIndex == static_cast<BoneIndex>(index))
             throw std::invalid_argument("Bone cannot be its own parent");
+        if (bone.appendTransform.has_value())
+        {
+            const MmdAppendTransform& append = *bone.appendTransform;
+            if (append.sourceBone == InvalidBoneIndex ||
+                static_cast<std::size_t>(append.sourceBone) >=
+                    this->bones.size() ||
+                append.sourceBone == static_cast<BoneIndex>(index))
+            {
+                throw std::invalid_argument(
+                    "MMD append transform references an invalid source bone"
+                );
+            }
+            if (!std::isfinite(append.weight) ||
+                (!append.affectRotation && !append.affectTranslation))
+            {
+                throw std::invalid_argument(
+                    "MMD append transform parameters are invalid"
+                );
+            }
+        }
+        if (bone.ikConstraint.has_value())
+        {
+            const MmdIkConstraint& ik = *bone.ikConstraint;
+            if (ik.targetBone == InvalidBoneIndex ||
+                static_cast<std::size_t>(ik.targetBone) >= this->bones.size() ||
+                ik.targetBone == static_cast<BoneIndex>(index) ||
+                ik.iterations == 0U || !std::isfinite(ik.angleLimit) ||
+                ik.angleLimit <= 0.0f || ik.links.empty())
+            {
+                throw std::invalid_argument("MMD IK constraint is invalid");
+            }
+            std::unordered_set<BoneIndex> linkBones;
+            for (const MmdIkLink& link : ik.links)
+            {
+                if (link.bone == InvalidBoneIndex ||
+                    static_cast<std::size_t>(link.bone) >= this->bones.size() ||
+                    !linkBones.emplace(link.bone).second)
+                {
+                    throw std::invalid_argument("MMD IK link is invalid");
+                }
+                if (link.hasLimits)
+                {
+                    for (glm::length_t axis = 0; axis < 3; ++axis)
+                    {
+                        if (!std::isfinite(link.minimumAngle[axis]) ||
+                            !std::isfinite(link.maximumAngle[axis]) ||
+                            link.minimumAngle[axis] > link.maximumAngle[axis])
+                        {
+                            throw std::invalid_argument(
+                                "MMD IK angle limits are invalid"
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         const bool inserted = this->boneIndices.emplace(
             bone.name,
@@ -86,6 +144,37 @@ Skeleton::Skeleton(
 
     for (std::size_t index = 0; index < this->bones.size(); ++index)
         visit(static_cast<BoneIndex>(index));
+
+    this->children.resize(this->bones.size());
+    for (std::size_t index = 0; index < this->bones.size(); ++index)
+    {
+        const BoneIndex parentIndex = this->bones[index].parentIndex;
+        if (parentIndex != InvalidBoneIndex)
+        {
+            this->children[parentIndex].push_back(
+                static_cast<BoneIndex>(index)
+            );
+        }
+    }
+
+    for (std::size_t index = 0; index < this->bones.size(); ++index)
+    {
+        const Bone& bone = this->bones[index];
+        if (bone.appendTransform.has_value() || bone.ikConstraint.has_value())
+            this->mmdConstraintOrder.push_back(static_cast<BoneIndex>(index));
+    }
+    std::stable_sort(
+        this->mmdConstraintOrder.begin(),
+        this->mmdConstraintOrder.end(),
+        [this](BoneIndex left, BoneIndex right)
+        {
+            const Bone& leftBone = this->bones[left];
+            const Bone& rightBone = this->bones[right];
+            if (leftBone.deformLayer != rightBone.deformLayer)
+                return leftBone.deformLayer < rightBone.deformLayer;
+            return leftBone.sourceOrder < rightBone.sourceOrder;
+        }
+    );
 
     if (this->rootCount == 0)
         throw std::invalid_argument("Skeleton must contain a root bone");
@@ -139,6 +228,13 @@ std::span<const BoneIndex> Skeleton::EvaluationOrder() const noexcept
     return this->evaluationOrder;
 }
 
+std::span<const BoneIndex> Skeleton::Children(BoneIndex boneIndex) const
+{
+    if (static_cast<std::size_t>(boneIndex) >= this->children.size())
+        throw std::out_of_range("Bone index is out of range");
+    return this->children[boneIndex];
+}
+
 std::span<const glm::mat4> Skeleton::BindGlobalMatrices() const noexcept
 {
     return this->bindGlobalMatrices;
@@ -147,4 +243,14 @@ std::span<const glm::mat4> Skeleton::BindGlobalMatrices() const noexcept
 const glm::mat4& Skeleton::InverseRootMatrix() const noexcept
 {
     return this->inverseRootMatrix;
+}
+
+bool Skeleton::HasMmdConstraints() const noexcept
+{
+    return !this->mmdConstraintOrder.empty();
+}
+
+std::span<const BoneIndex> Skeleton::MmdConstraintOrder() const noexcept
+{
+    return this->mmdConstraintOrder;
 }

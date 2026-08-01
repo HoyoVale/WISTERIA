@@ -32,6 +32,13 @@ constexpr std::size_t BoneNameSize = 15U;
 constexpr std::size_t BoneRecordSize =
     BoneNameSize + sizeof(std::uint32_t) + 3U * sizeof(float) +
     4U * sizeof(float) + 64U;
+constexpr std::size_t MorphRecordSize = 15U + sizeof(std::uint32_t) +
+    sizeof(float);
+constexpr std::size_t CameraRecordSize = 61U;
+constexpr std::size_t LightRecordSize = 28U;
+constexpr std::size_t SelfShadowRecordSize = 9U;
+constexpr std::size_t IkNameSize = 20U;
+constexpr std::size_t IkStateRecordSize = IkNameSize + 1U;
 
 class VmdReader
 {
@@ -75,6 +82,25 @@ private:
     std::span<const std::uint8_t> bytes;
     std::size_t offset = 0;
 };
+
+bool SkipFixedRecordSection(
+    VmdReader& reader,
+    std::size_t recordSize,
+    const char* sectionName
+)
+{
+    if (reader.Remaining() == 0U)
+        return false;
+    const std::uint32_t count = reader.Read<std::uint32_t>();
+    if (recordSize == 0U || count > reader.Remaining() / recordSize)
+    {
+        throw std::runtime_error(
+            std::string("VMD ") + sectionName + " section is truncated"
+        );
+    }
+    reader.ReadBytes(static_cast<std::size_t>(count) * recordSize);
+    return true;
+}
 
 std::vector<std::uint8_t> ReadBinaryFile(
     const std::filesystem::path& filePath
@@ -226,6 +252,18 @@ struct VmdBoneFrame
     std::array<std::uint8_t, 64> interpolation{};
 };
 
+struct VmdIkStateFrame
+{
+    std::uint32_t frame = 0U;
+    bool enabled = true;
+};
+
+struct VmdMorphFrame
+{
+    std::uint32_t frame = 0U;
+    float weight = 0.0f;
+};
+
 bool IsFinite(const glm::vec3& value) noexcept
 {
     return std::isfinite(value.x) && std::isfinite(value.y) &&
@@ -282,7 +320,8 @@ std::string ValidatedClipName(
 ImportedVmdAnimationData VmdImporter::Import(
     const std::filesystem::path& filePath,
     const Skeleton& skeleton,
-    const VmdImportOptions& options
+    const VmdImportOptions& options,
+    const MorphSet* morphSet
 ) const
 {
     const std::filesystem::path absolutePath =
@@ -295,7 +334,8 @@ ImportedVmdAnimationData VmdImporter::Import(
         bytes,
         skeleton,
         Utf8Stem(absolutePath),
-        options
+        options,
+        morphSet
     );
 }
 
@@ -303,7 +343,8 @@ ImportedVmdAnimationData VmdImporter::Import(
     std::span<const std::uint8_t> bytes,
     const Skeleton& skeleton,
     std::string sourceName,
-    const VmdImportOptions& options
+    const VmdImportOptions& options,
+    const MorphSet* morphSet
 ) const
 {
     if (!std::isfinite(options.framesPerSecond) ||
@@ -376,10 +417,98 @@ ImportedVmdAnimationData VmdImporter::Import(
         framesByBone[boneName].push_back(std::move(frame));
     }
 
+    std::unordered_map<std::string, std::vector<VmdMorphFrame>>
+        morphFramesByName;
+    bool hasMorphSection = false;
+    if (reader.Remaining() != 0U)
+    {
+        hasMorphSection = true;
+        const std::uint32_t morphFrameCount = reader.Read<std::uint32_t>();
+        if (morphFrameCount > reader.Remaining() / MorphRecordSize)
+            throw std::runtime_error("VMD morph section is truncated");
+        morphFramesByName.reserve(std::min<std::size_t>(
+            morphFrameCount,
+            1024U
+        ));
+        for (std::uint32_t index = 0U; index < morphFrameCount; ++index)
+        {
+            const std::string morphName = DecodeShiftJis(
+                reader.ReadBytes(15U)
+            );
+            VmdMorphFrame frame;
+            frame.frame = reader.Read<std::uint32_t>();
+            frame.weight = reader.Read<float>();
+            if (morphName.empty())
+                throw std::runtime_error("VMD contains an empty morph name");
+            if (!std::isfinite(frame.weight))
+                throw std::runtime_error("VMD contains a non-finite morph weight");
+            morphFramesByName[morphName].push_back(frame);
+        }
+    }
+
+    std::unordered_map<std::string, std::vector<VmdIkStateFrame>>
+        ikFramesByBone;
+    if (hasMorphSection &&
+        SkipFixedRecordSection(reader, CameraRecordSize, "camera") &&
+        SkipFixedRecordSection(reader, LightRecordSize, "light") &&
+        SkipFixedRecordSection(reader, SelfShadowRecordSize, "self-shadow") &&
+        reader.Remaining() != 0U)
+    {
+        const std::uint32_t modelFrameCount = reader.Read<std::uint32_t>();
+        constexpr std::size_t MinimumModelFrameSize =
+            sizeof(std::uint32_t) + sizeof(std::uint8_t) +
+            sizeof(std::uint32_t);
+        if (modelFrameCount > reader.Remaining() / MinimumModelFrameSize)
+        {
+            throw std::runtime_error(
+                "VMD model/IK-state section is truncated"
+            );
+        }
+        for (std::uint32_t modelFrameIndex = 0U;
+             modelFrameIndex < modelFrameCount;
+             ++modelFrameIndex)
+        {
+            const std::uint32_t frame = reader.Read<std::uint32_t>();
+            reader.Read<std::uint8_t>(); // Model visibility is a future track.
+            const std::uint32_t ikStateCount = reader.Read<std::uint32_t>();
+            if (ikStateCount > reader.Remaining() / IkStateRecordSize)
+            {
+                throw std::runtime_error(
+                    "VMD model/IK-state section is truncated"
+                );
+            }
+            for (std::uint32_t stateIndex = 0U;
+                 stateIndex < ikStateCount;
+                 ++stateIndex)
+            {
+                const std::string ikName = DecodeShiftJis(
+                    reader.ReadBytes(IkNameSize)
+                );
+                const std::uint8_t enabled = reader.Read<std::uint8_t>();
+                if (ikName.empty())
+                    throw std::runtime_error("VMD contains an empty IK name");
+                if (enabled > 1U)
+                    throw std::runtime_error("VMD IK state is invalid");
+                ikFramesByBone[ikName].push_back(VmdIkStateFrame{
+                    frame,
+                    enabled != 0U
+                });
+            }
+        }
+    }
+
     std::vector<AnimationTrack> tracks;
+    std::vector<MmdIkStateTrack> ikStateTracks;
+    std::vector<MorphWeightTrack> morphWeightTracks;
     std::vector<std::string> unmatchedBoneNames;
+    std::vector<std::string> unmatchedIkNames;
+    std::vector<std::string> unmatchedMorphNames;
     tracks.reserve(framesByBone.size());
+    ikStateTracks.reserve(ikFramesByBone.size());
+    morphWeightTracks.reserve(morphFramesByName.size());
     unmatchedBoneNames.reserve(framesByBone.size());
+    unmatchedIkNames.reserve(ikFramesByBone.size());
+    unmatchedMorphNames.reserve(morphFramesByName.size());
     float duration = 0.0f;
 
     for (auto& [boneName, sourceFrames] : framesByBone)
@@ -473,23 +602,124 @@ ImportedVmdAnimationData VmdImporter::Import(
         );
     }
 
-    if (tracks.empty())
+    for (auto& [boneName, sourceFrames] : ikFramesByBone)
+    {
+        const std::optional<BoneIndex> boneIndex = skeleton.FindBone(boneName);
+        if (!boneIndex.has_value() ||
+            !skeleton.BoneAt(*boneIndex).ikConstraint.has_value())
+        {
+            unmatchedIkNames.push_back(boneName);
+            continue;
+        }
+
+        std::stable_sort(
+            sourceFrames.begin(),
+            sourceFrames.end(),
+            [](const VmdIkStateFrame& left, const VmdIkStateFrame& right)
+            {
+                return left.frame < right.frame;
+            }
+        );
+        std::vector<VmdIkStateFrame> uniqueFrames;
+        uniqueFrames.reserve(sourceFrames.size());
+        for (const VmdIkStateFrame& frame : sourceFrames)
+        {
+            if (!uniqueFrames.empty() &&
+                uniqueFrames.back().frame == frame.frame)
+            {
+                uniqueFrames.back() = frame;
+            }
+            else
+            {
+                uniqueFrames.push_back(frame);
+            }
+        }
+
+        std::vector<BoolKeyframe> keys;
+        keys.reserve(uniqueFrames.size());
+        for (const VmdIkStateFrame& frame : uniqueFrames)
+        {
+            const float time = static_cast<float>(frame.frame) /
+                options.framesPerSecond;
+            if (!std::isfinite(time))
+                throw std::runtime_error("VMD IK keyframe time is out of range");
+            keys.push_back(BoolKeyframe{time, frame.enabled});
+            duration = std::max(duration, time);
+        }
+        ikStateTracks.emplace_back(*boneIndex, std::move(keys));
+    }
+
+    for (auto& [morphName, sourceFrames] : morphFramesByName)
+    {
+        const std::optional<MorphIndex> morphIndex = morphSet == nullptr
+            ? std::nullopt
+            : morphSet->FindMorph(morphName);
+        if (!morphIndex.has_value())
+        {
+            unmatchedMorphNames.push_back(morphName);
+            continue;
+        }
+        std::stable_sort(
+            sourceFrames.begin(),
+            sourceFrames.end(),
+            [](const VmdMorphFrame& left, const VmdMorphFrame& right)
+            {
+                return left.frame < right.frame;
+            }
+        );
+        std::vector<VmdMorphFrame> uniqueFrames;
+        uniqueFrames.reserve(sourceFrames.size());
+        for (const VmdMorphFrame& frame : sourceFrames)
+        {
+            if (!uniqueFrames.empty() &&
+                uniqueFrames.back().frame == frame.frame)
+            {
+                uniqueFrames.back() = frame;
+            }
+            else
+            {
+                uniqueFrames.push_back(frame);
+            }
+        }
+        std::vector<FloatKeyframe> keys;
+        keys.reserve(uniqueFrames.size());
+        for (const VmdMorphFrame& frame : uniqueFrames)
+        {
+            const float time = static_cast<float>(frame.frame) /
+                options.framesPerSecond;
+            if (!std::isfinite(time))
+                throw std::runtime_error("VMD morph keyframe time is out of range");
+            keys.push_back(FloatKeyframe{time, frame.weight});
+            duration = std::max(duration, time);
+        }
+        morphWeightTracks.emplace_back(*morphIndex, std::move(keys));
+    }
+
+    if (tracks.empty() && ikStateTracks.empty() && morphWeightTracks.empty())
     {
         throw std::runtime_error(
             "VMD animation has no bone tracks matching the target Skeleton"
         );
     }
     std::sort(unmatchedBoneNames.begin(), unmatchedBoneNames.end());
+    std::sort(unmatchedIkNames.begin(), unmatchedIkNames.end());
+    std::sort(unmatchedMorphNames.begin(), unmatchedMorphNames.end());
     duration = std::max(duration, 1.0f / options.framesPerSecond);
 
     return ImportedVmdAnimationData{
         modelName,
         framesByBone.size(),
+        morphFramesByName.size(),
+        ikFramesByBone.size(),
         std::move(unmatchedBoneNames),
+        std::move(unmatchedMorphNames),
+        std::move(unmatchedIkNames),
         AnimationClip(
             ValidatedClipName(std::move(sourceName), options),
             duration,
-            std::move(tracks)
+            std::move(tracks),
+            std::move(ikStateTracks),
+            std::move(morphWeightTracks)
         )
     };
 }

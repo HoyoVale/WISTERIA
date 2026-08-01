@@ -50,6 +50,30 @@ void ModelAsset::SetSkeleton(Skeleton skeleton)
     this->skeleton.emplace(std::move(skeleton));
 }
 
+bool ModelAsset::HasMorphs() const noexcept
+{
+    return this->morphSet.has_value();
+}
+
+const MorphSet* ModelAsset::TryGetMorphSet() const noexcept
+{
+    return this->morphSet.has_value() ? &*this->morphSet : nullptr;
+}
+
+const MorphSet& ModelAsset::GetMorphSet() const
+{
+    if (!this->morphSet.has_value())
+        throw std::logic_error("ModelAsset has no morph definitions");
+    return *this->morphSet;
+}
+
+void ModelAsset::SetMorphs(std::vector<MorphDefinition> definitions)
+{
+    if (this->morphSet.has_value())
+        throw std::logic_error("ModelAsset morph definitions are already set");
+    this->morphSet.emplace(std::move(definitions));
+}
+
 std::size_t ModelAsset::AnimationClipCount() const noexcept
 {
     return this->animationClips.size();
@@ -98,6 +122,29 @@ AnimationClip& ModelAsset::AddAnimationClip(AnimationClip clip)
         {
             throw std::invalid_argument(
                 "ModelAsset animation references an invalid skeleton bone"
+            );
+        }
+    }
+    for (const MmdIkStateTrack& track : clip.MmdIkStateTracks())
+    {
+        if (static_cast<std::size_t>(track.ControllerBone()) >=
+            this->skeleton->BoneCount() ||
+            !this->skeleton->BoneAt(track.ControllerBone())
+                .ikConstraint.has_value())
+        {
+            throw std::invalid_argument(
+                "ModelAsset animation references an invalid MMD IK controller"
+            );
+        }
+    }
+    for (const MorphWeightTrack& track : clip.MorphWeightTracks())
+    {
+        if (!this->morphSet.has_value() ||
+            static_cast<std::size_t>(track.Morph()) >=
+                this->morphSet->MorphCount())
+        {
+            throw std::invalid_argument(
+                "ModelAsset animation references an invalid morph"
             );
         }
     }

@@ -19,20 +19,25 @@ struct ImportedVmdAnimationData
 {
     std::string modelName;
     std::size_t sourceBoneTrackCount = 0;
+    std::size_t sourceMorphTrackCount = 0;
+    std::size_t sourceIkStateTrackCount = 0;
     std::vector<std::string> unmatchedBoneNames;
+    std::vector<std::string> unmatchedMorphNames;
+    std::vector<std::string> unmatchedIkNames;
     AnimationClip clip;
 };
 
-// Imports the skeletal portion of a Vocaloid Motion Data 0002 file. Morph,
-// camera, light, self-shadow and IK-state tracks remain separate future
-// systems and are intentionally not folded into AnimationClip.
+// Imports bone motion, vertex-morph weights and per-frame IK switches from a
+// Vocaloid Motion Data 0002 file. Camera, light and self-shadow data remain
+// separate future systems and are skipped without losing the following data.
 class VmdImporter
 {
 public:
     ImportedVmdAnimationData Import(
         const std::filesystem::path& filePath,
         const Skeleton& skeleton,
-        const VmdImportOptions& options = {}
+        const VmdImportOptions& options = {},
+        const MorphSet* morphSet = nullptr
     ) const;
 
     // Memory overload keeps parsing testable and is useful for packed assets.
@@ -40,6 +45,7 @@ public:
         std::span<const std::uint8_t> bytes,
         const Skeleton& skeleton,
         std::string sourceName,
-        const VmdImportOptions& options = {}
+        const VmdImportOptions& options = {},
+        const MorphSet* morphSet = nullptr
     ) const;
 };

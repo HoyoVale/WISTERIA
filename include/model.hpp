@@ -1,16 +1,19 @@
 #pragma once
+
 #include <glm/glm.hpp>
+
 #include <type_traits>
 #include <vector>
+
+#include "ebo.hpp"
 #include "vao.hpp"
 #include "vbo.hpp"
-#include "ebo.hpp"
 
 template<
     typename VertexType = float,
     typename IndexType = unsigned int
 >
-struct ModelData{
+struct ModelData {
     static_assert(
         std::is_integral_v<IndexType> &&
         std::is_unsigned_v<IndexType> &&
@@ -47,7 +50,7 @@ struct ModelData{
 
 using DefaultModelData = ModelData<>;
 
-class Model{
+class Model {
 public:
     explicit Model(DefaultModelData data);
     virtual ~Model() = default;
@@ -57,4 +60,3 @@ public:
 private:
     DefaultModelData data;
 };
-

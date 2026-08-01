@@ -2,6 +2,7 @@
 #include "renderer.hpp"
 #include "shader.hpp"
 #include "environment.hpp"
+#include "morph.hpp"
 #include "vao.hpp"
 #include <algorithm>
 #include <cmath>
@@ -21,6 +22,7 @@ struct RenderCommand
     RenderPart* part = nullptr;
     glm::mat4 model{1.0f};
     const Pose* pose = nullptr;
+    const MorphState* morphState = nullptr;
 };
 
 class ScopedDepthState
@@ -75,6 +77,7 @@ void Renderer::Render(
     // retain a raw Pose identity across scene mutations or frame boundaries.
     this->uploadedPose = nullptr;
     this->uploadedPoseRevision = 0;
+    this->BeginMorphingFrame();
     target.Bind();
 
     const glm::mat4 view = camera.GetView();
@@ -95,7 +98,12 @@ void Renderer::Render(
         {
             const glm::mat4 model =
                 entityTransform * part.LocalTransform();
-            RenderCommand command{&part, model, entity.TryGetPose()};
+            RenderCommand command{
+                &part,
+                model,
+                entity.TryGetPose(),
+                entity.TryGetMorphState()
+            };
             if (part.GetMaterial().AlphaMode() == MaterialAlphaMode::Blend)
                 transparentCommands.push_back(command);
             else
@@ -116,6 +124,7 @@ void Renderer::Render(
             camera,
             scene,
             command.pose,
+            command.morphState,
             0
         );
     }
@@ -158,6 +167,7 @@ void Renderer::Render(
                 camera,
                 scene,
                 command.pose,
+                command.morphState,
                 1
             );
         }
@@ -179,6 +189,7 @@ void Renderer::Render(
                 camera,
                 scene,
                 command.pose,
+                command.morphState,
                 1
             );
         }
@@ -195,6 +206,7 @@ void Renderer::Render(
                 camera,
                 scene,
                 command.pose,
+                command.morphState,
                 2
             );
         }
@@ -287,6 +299,7 @@ void Renderer::DrawPart(
     const Camera& camera,
     const Scene& scene,
     const Pose* pose,
+    const MorphState* morphState,
     int oitPass
 )
 {
@@ -312,6 +325,12 @@ void Renderer::DrawPart(
     material.Bind();
     Program& program = material.GetProgram();
     const ShaderInterface& shaderInterface = material.Interface();
+    this->UploadMorphing(
+        vertexArray,
+        shaderInterface,
+        mesh,
+        morphState
+    );
     this->UploadTransforms(
         program,
         shaderInterface,
@@ -709,6 +728,7 @@ void Renderer::Release() noexcept
         glDeleteTextures(1, &this->skinningTexture);
     if (this->skinningBuffer != 0)
         glDeleteBuffers(1, &this->skinningBuffer);
+    this->ReleaseMorphingCache();
     this->oitFramebuffer.Release();
 
     this->fullscreenVao = 0;
@@ -723,6 +743,155 @@ void Renderer::Release() noexcept
     this->maximumSkinningMatrices = 0;
     this->uploadedPose = nullptr;
     this->uploadedPoseRevision = 0;
+    this->morphingFrame = 0;
+}
+
+void Renderer::BeginMorphingFrame()
+{
+    if (this->morphingFrame == std::numeric_limits<std::uint64_t>::max())
+    {
+        this->ReleaseMorphingCache();
+        this->morphingFrame = 1U;
+        return;
+    }
+    ++this->morphingFrame;
+
+    for (auto stateIterator = this->morphingCache.begin();
+         stateIterator != this->morphingCache.end();)
+    {
+        auto& meshes = stateIterator->second;
+        for (auto meshIterator = meshes.begin();
+             meshIterator != meshes.end();)
+        {
+            MorphCacheEntry& entry = meshIterator->second;
+            if (entry.lastUsedFrame + 1U < this->morphingFrame)
+            {
+                if (entry.buffer != 0)
+                    glDeleteBuffers(1, &entry.buffer);
+                meshIterator = meshes.erase(meshIterator);
+            }
+            else
+            {
+                ++meshIterator;
+            }
+        }
+        if (meshes.empty())
+            stateIterator = this->morphingCache.erase(stateIterator);
+        else
+            ++stateIterator;
+    }
+}
+
+void Renderer::ReleaseMorphingCache() noexcept
+{
+    for (auto& [morphState, meshes] : this->morphingCache)
+    {
+        (void)morphState;
+        for (auto& [mesh, entry] : meshes)
+        {
+            (void)mesh;
+            if (entry.buffer != 0)
+                glDeleteBuffers(1, &entry.buffer);
+        }
+    }
+    this->morphingCache.clear();
+}
+
+void Renderer::UploadMorphing(
+    VAO& vertexArray,
+    const ShaderInterface& shaderInterface,
+    const Mesh& mesh,
+    const MorphState* morphState
+)
+{
+    constexpr GLuint MorphAttributeLocation = 9U;
+    if (!shaderInterface.morphingSupported ||
+        !mesh.HasMorphTargets() || morphState == nullptr)
+    {
+        vertexArray.Bind();
+        glDisableVertexAttribArray(MorphAttributeLocation);
+        glVertexAttrib3f(MorphAttributeLocation, 0.0f, 0.0f, 0.0f);
+        vertexArray.unBind();
+        return;
+    }
+
+    MorphCacheEntry& entry = this->morphingCache[morphState][&mesh];
+    entry.lastUsedFrame = this->morphingFrame;
+    if (!entry.initialized || entry.revision != morphState->Revision())
+    {
+        entry.active = mesh.CalculateMorphOffsets(
+            morphState->EffectiveWeights(),
+            entry.offsets
+        );
+        if (entry.active)
+        {
+            if (entry.offsets.size() >
+                static_cast<std::size_t>(
+                    std::numeric_limits<GLsizeiptr>::max()
+                ) / sizeof(glm::vec3))
+            {
+                throw std::overflow_error("Morph vertex buffer is too large");
+            }
+            if (entry.buffer == 0)
+            {
+                glGenBuffers(1, &entry.buffer);
+                if (entry.buffer == 0)
+                {
+                    throw std::runtime_error(
+                        "Cannot create dynamic morph vertex buffer"
+                    );
+                }
+            }
+
+            const std::size_t byteCount =
+                entry.offsets.size() * sizeof(glm::vec3);
+            glBindBuffer(GL_ARRAY_BUFFER, entry.buffer);
+            if (byteCount > entry.capacityBytes)
+            {
+                glBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<GLsizeiptr>(byteCount),
+                    entry.offsets.data(),
+                    GL_DYNAMIC_DRAW
+                );
+                entry.capacityBytes = byteCount;
+            }
+            else
+            {
+                glBufferSubData(
+                    GL_ARRAY_BUFFER,
+                    0,
+                    static_cast<GLsizeiptr>(byteCount),
+                    entry.offsets.data()
+                );
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+        entry.revision = morphState->Revision();
+        entry.initialized = true;
+    }
+
+    vertexArray.Bind();
+    if (entry.active)
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, entry.buffer);
+        glEnableVertexAttribArray(MorphAttributeLocation);
+        glVertexAttribPointer(
+            MorphAttributeLocation,
+            3,
+            GL_FLOAT,
+            GL_FALSE,
+            static_cast<GLsizei>(sizeof(glm::vec3)),
+            nullptr
+        );
+    }
+    else
+    {
+        glDisableVertexAttribArray(MorphAttributeLocation);
+        glVertexAttrib3f(MorphAttributeLocation, 0.0f, 0.0f, 0.0f);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    vertexArray.unBind();
 }
 
 void Renderer::EnsureSkinningResources()

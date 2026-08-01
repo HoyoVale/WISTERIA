@@ -73,9 +73,11 @@ set(WISTERIA_CORE_SOURCES
     src/behaviour.cpp
     src/render_part.cpp
     src/model_asset.cpp
+    src/morph.cpp
     src/skeleton.cpp
     src/pose.cpp
     src/pose_buffer.cpp
+    src/mmd_pose_solver.cpp
     src/animation.cpp
     src/animation_state_machine.cpp
     src/animator.cpp

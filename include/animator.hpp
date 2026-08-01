@@ -2,6 +2,7 @@
 
 #include "animation.hpp"
 #include "animation_state_machine.hpp"
+#include "mmd_pose_solver.hpp"
 #include "root_motion.hpp"
 #include <cstdint>
 #include <optional>
@@ -15,7 +16,7 @@
 class Animator
 {
 public:
-    explicit Animator(Pose& pose);
+    explicit Animator(Pose& pose, MorphState* morphState = nullptr);
 
     void Play(const AnimationClip& clip, bool restart = true);
     void CrossFade(const AnimationClip& destination, float duration);
@@ -41,6 +42,13 @@ public:
     void SetRootMotionEnabled(bool enabled);
     bool IsRootMotionEnabled() const noexcept;
     RootMotionDelta ConsumeRootMotion() noexcept;
+    void SetMmdIkEnabled(BoneIndex controllerBone, bool enabled);
+    void ClearMmdIkOverride(BoneIndex controllerBone);
+    void ClearMmdIkOverrides();
+    bool IsMmdIkEnabled(BoneIndex controllerBone) const;
+    void SetMorphState(MorphState& morphState);
+    MorphState* TryGetMorphState() noexcept;
+    const MorphState* TryGetMorphState() const noexcept;
 
     const AnimationClip* CurrentClip() const noexcept;
     bool IsTransitioning() const noexcept;
@@ -69,6 +77,7 @@ private:
         float duration = 0.0f;
         bool sourceLooping = true;
         bool sourceFrozen = false;
+        std::unordered_map<BoneIndex, bool> frozenMmdIkStates;
     };
 
     struct PlaybackAdvance
@@ -93,14 +102,26 @@ private:
     ) const;
     void AccumulateRootMotion(const RootMotionDelta& delta);
     void ApplyEvaluatedPose(const PoseBuffer& evaluatedPose);
+    void SampleMorphWeights(
+        const AnimationClip& clip,
+        float time,
+        std::vector<float>& output
+    ) const;
+    void ApplyEvaluatedMorphWeights(std::span<const float> weights);
+    bool EvaluateMmdIkState(BoneIndex controllerBone) const;
     void ResetRootMotion() noexcept;
 
     Pose* pose = nullptr;
+    MorphState* morphState = nullptr;
     const AnimationClip* currentClip = nullptr;
     PoseBuffer sampledPose;
     PoseBuffer transitionSourcePose;
     PoseBuffer blendedPose;
     PoseBuffer outputPose;
+    MmdPoseSolver mmdPoseSolver;
+    std::vector<float> sampledMorphWeights;
+    std::vector<float> transitionSourceMorphWeights;
+    std::vector<float> blendedMorphWeights;
     AnimationStateMachine stateMachine;
     std::optional<TransitionState> transition;
     std::unordered_map<std::string, float> floatParameters;
@@ -109,6 +130,7 @@ private:
     std::unordered_set<std::string> activeTriggers;
     std::optional<BoneIndex> rootMotionBone;
     RootMotionDelta pendingRootMotion;
+    std::unordered_map<BoneIndex, bool> mmdIkOverrides;
     float currentTime = 0.0f;
     float speed = 1.0f;
     bool playing = false;

@@ -3,7 +3,9 @@
 #include "vao.hpp"
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <limits>
+#include <unordered_set>
 #include <utility>
 
 namespace
@@ -74,10 +76,27 @@ glm::vec3 CalculateBoundsCenter(const DefaultModelData& data)
     return (minimum + maximum) * 0.5f;
 }
 
+std::size_t CalculateVertexCount(const DefaultModelData& data)
+{
+    if (data.vertices.empty())
+        return 0U;
+    std::size_t strideBytes = 0U;
+    for (const Layout& attribute : data.layout)
+        strideBytes += attribute.size * DataTypeSize(attribute.type);
+    if (strideBytes == 0U || data.VertexBytes() % strideBytes != 0U)
+        throw std::invalid_argument("Mesh vertex data does not match its layout");
+    return data.VertexBytes() / strideBytes;
 }
 
-Mesh::Mesh(DefaultModelData data, std::size_t requiredBoneCount)
+}
+
+Mesh::Mesh(
+    DefaultModelData data,
+    std::size_t requiredBoneCount,
+    std::vector<MeshMorphTarget> morphTargets
+)
     : data(std::move(data)),
+      morphTargets(std::move(morphTargets)),
       requiredBoneCount(requiredBoneCount)
 {
     const auto hasAttribute = [this](const char* name)
@@ -101,7 +120,32 @@ Mesh::Mesh(DefaultModelData data, std::size_t requiredBoneCount)
             "Mesh skinning metadata does not match its vertex layout"
         );
     }
+    this->vertexCount = CalculateVertexCount(this->data);
     this->localBoundsCenter = CalculateBoundsCenter(this->data);
+
+    std::unordered_set<MorphIndex> targetIndices;
+    for (const MeshMorphTarget& target : this->morphTargets)
+    {
+        if (target.morphIndex == InvalidMorphIndex || target.offsets.empty() ||
+            !targetIndices.emplace(target.morphIndex).second)
+        {
+            throw std::invalid_argument("Mesh morph target metadata is invalid");
+        }
+        std::unordered_set<std::uint32_t> affectedVertices;
+        for (const VertexMorphOffset& offset : target.offsets)
+        {
+            if (offset.vertexIndex >= this->vertexCount ||
+                !std::isfinite(offset.offset.x) ||
+                !std::isfinite(offset.offset.y) ||
+                !std::isfinite(offset.offset.z) ||
+                !affectedVertices.emplace(offset.vertexIndex).second)
+            {
+                throw std::invalid_argument(
+                    "Mesh morph target contains an invalid vertex offset"
+                );
+            }
+        }
+    }
 }
 
 void Mesh::Attach()
@@ -177,4 +221,54 @@ bool Mesh::IsSkinned() const noexcept
 std::size_t Mesh::RequiredBoneCount() const noexcept
 {
     return this->requiredBoneCount;
+}
+
+std::size_t Mesh::VertexCount() const noexcept
+{
+    return this->vertexCount;
+}
+
+bool Mesh::HasMorphTargets() const noexcept
+{
+    return !this->morphTargets.empty();
+}
+
+std::size_t Mesh::MorphTargetCount() const noexcept
+{
+    return this->morphTargets.size();
+}
+
+bool Mesh::CalculateMorphOffsets(
+    std::span<const float> weights,
+    std::vector<glm::vec3>& output
+) const
+{
+    bool active = false;
+    for (const MeshMorphTarget& target : this->morphTargets)
+    {
+        if (static_cast<std::size_t>(target.morphIndex) >= weights.size())
+            throw std::invalid_argument("Mesh morph target has no matching weight");
+        const float weight = weights[target.morphIndex];
+        if (!std::isfinite(weight))
+            throw std::invalid_argument("Mesh morph weight must be finite");
+        if (weight == 0.0f)
+            continue;
+        active = true;
+    }
+    if (!active)
+    {
+        output.clear();
+        return false;
+    }
+
+    output.assign(this->vertexCount, glm::vec3(0.0f));
+    for (const MeshMorphTarget& target : this->morphTargets)
+    {
+        const float weight = weights[target.morphIndex];
+        if (weight == 0.0f)
+            continue;
+        for (const VertexMorphOffset& offset : target.offsets)
+            output[offset.vertexIndex] += offset.offset * weight;
+    }
+    return true;
 }

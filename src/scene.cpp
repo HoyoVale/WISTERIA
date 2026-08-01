@@ -78,6 +78,8 @@ Entity& Scene::InstantiateModel(
 )
 {
     Entity& entity = this->CreateEntity(transform);
+    if (model.HasMorphs())
+        entity.SetMorphSet(model.GetMorphSet());
     if (model.HasSkeleton())
     {
         entity.SetSkeleton(model.GetSkeleton());
