@@ -187,6 +187,8 @@ ModelAsset& ResourceManager::LoadModel(
         );
         validateTextureIndex(material.emissiveTexture, "emissive");
         validateTextureIndex(material.occlusionTexture, "occlusion");
+        validateTextureIndex(material.sphereTexture, "MMD sphere-map");
+        validateTextureIndex(material.toonTexture, "MMD Toon");
     }
     for (std::size_t index = 0; index < imported.meshes.size(); ++index)
     {
@@ -268,13 +270,29 @@ ModelAsset& ResourceManager::LoadModel(
         data.specularColor = source.specularColor;
         data.shininess = source.shininess;
         data.normalScale = source.normalScale;
+        data.shadingModel = source.shadingModel;
         data.metallicFactor = source.metallicFactor;
         data.roughnessFactor = source.roughnessFactor;
         data.emissiveFactor = source.emissiveFactor;
         data.occlusionStrength = source.occlusionStrength;
+        data.ambientColor = source.ambientColor;
+        data.sphereMapMode = source.sphereMapMode;
+        data.edgeColor = source.edgeColor;
+        data.edgeSize = source.edgeSize;
+        data.edgeEnabled = source.edgeEnabled;
         data.alphaMode = source.alphaMode;
         data.alphaCutoff = source.alphaCutoff;
         data.doubleSided = source.doubleSided;
+        if (source.shadingModel == MaterialShadingModel::MmdToon)
+        {
+            const std::filesystem::path shaderDirectory =
+                std::filesystem::current_path() / "assets" / "shaders";
+            data.shaderFilePath.VertexPath =
+                (shaderDirectory / "mmd.vert").string();
+            data.shaderFilePath.FragmentPath =
+                (shaderDirectory / "mmd.frag").string();
+            data.shaderInterface.imageBasedLightingEnabled = false;
+        }
 
         MaterialTextureBindings bindings;
         if (source.baseColorTexture.has_value())
@@ -316,6 +334,20 @@ ModelAsset& ResourceManager::LoadModel(
             bindings.emplace(
                 data.shaderInterface.occlusionTexture,
                 importedTextures[textureIndex]
+            );
+        }
+        if (source.sphereTexture.has_value())
+        {
+            bindings.emplace(
+                data.shaderInterface.sphereTexture,
+                importedTextures[*source.sphereTexture]
+            );
+        }
+        if (source.toonTexture.has_value())
+        {
+            bindings.emplace(
+                data.shaderInterface.toonTexture,
+                importedTextures[*source.toonTexture]
             );
         }
 

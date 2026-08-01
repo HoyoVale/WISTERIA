@@ -23,6 +23,20 @@ enum class MaterialAlphaMode
     Blend = 2
 };
 
+enum class MaterialShadingModel
+{
+    PbrMetallicRoughness,
+    MmdToon
+};
+
+enum class MmdSphereMapMode
+{
+    Disabled = 0,
+    Multiply = 1,
+    Add = 2,
+    SubTexture = 3
+};
+
 // Describes the uniform contract implemented by a material's shader.
 // Custom shaders can change names, capacities, or disable lighting entirely.
 struct ShaderInterface
@@ -42,6 +56,7 @@ struct ShaderInterface
     std::string materialBaseColorFactor = "materialBaseColorFactor";
     std::string materialAlphaMode = "materialAlphaMode";
     std::string materialAlphaCutoff = "materialAlphaCutoff";
+    std::string oitPass = "oitPass";
     std::string hasBaseTexture = "hasBaseTexture";
     std::string baseColorTexture = "texture";
     std::string hasNormalTexture = "hasNormalTexture";
@@ -66,6 +81,15 @@ struct ShaderInterface
     std::string brdfLut = "brdfLut";
     std::string environmentIntensity = "environmentIntensity";
     std::string maxReflectionLod = "maxReflectionLod";
+    std::string materialAmbientColor = "materialAmbientColor";
+    std::string hasSphereTexture = "hasSphereTexture";
+    std::string sphereTexture = "sphereTexture";
+    std::string sphereMapMode = "sphereMapMode";
+    std::string hasToonTexture = "hasToonTexture";
+    std::string toonTexture = "toonTexture";
+    std::string outlinePass = "outlinePass";
+    std::string materialEdgeColor = "materialEdgeColor";
+    std::string materialEdgeSize = "materialEdgeSize";
 
     std::string pointLights = "pointLights";
     std::string pointLightCount = "pointLightCount";
@@ -92,6 +116,8 @@ struct ShaderInterface
 
 struct MaterialData{
     Path shaderFilePath;
+    MaterialShadingModel shadingModel =
+        MaterialShadingModel::PbrMetallicRoughness;
     std::unordered_map<std::string, TextureData> textureSources = {
         {"texture", TextureData::FromFile(textureRootPath + "chessboard.png")}
     };
@@ -103,6 +129,11 @@ struct MaterialData{
     float roughnessFactor = 1.0f;
     glm::vec3 emissiveFactor = {0.0f, 0.0f, 0.0f};
     float occlusionStrength = 1.0f;
+    glm::vec3 ambientColor = {0.0f, 0.0f, 0.0f};
+    MmdSphereMapMode sphereMapMode = MmdSphereMapMode::Disabled;
+    glm::vec4 edgeColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    float edgeSize = 0.0f;
+    bool edgeEnabled = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
@@ -135,6 +166,12 @@ public:
     float RoughnessFactor() const noexcept;
     const glm::vec3& EmissiveFactor() const noexcept;
     float OcclusionStrength() const noexcept;
+    MaterialShadingModel ShadingModel() const noexcept;
+    const glm::vec3& AmbientColor() const noexcept;
+    MmdSphereMapMode SphereMapMode() const noexcept;
+    const glm::vec4& EdgeColor() const noexcept;
+    float EdgeSize() const noexcept;
+    bool IsEdgeEnabled() const noexcept;
     const glm::vec4& BaseColorFactor() const noexcept;
     MaterialAlphaMode AlphaMode() const noexcept;
     float AlphaCutoff() const noexcept;

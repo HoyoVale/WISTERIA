@@ -6,19 +6,382 @@
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <stb_image.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
 namespace
 {
+struct PmxMaterialMetadata
+{
+    std::string name;
+    glm::vec4 diffuse{1.0f};
+    glm::vec3 specular{0.0f};
+    float specularPower = 1.0f;
+    glm::vec3 ambient{0.0f};
+    bool doubleSided = false;
+    bool edgeEnabled = false;
+    glm::vec4 edgeColor{0.0f, 0.0f, 0.0f, 1.0f};
+    float edgeSize = 0.0f;
+    std::optional<std::string> diffuseTexture;
+    std::optional<std::string> sphereTexture;
+    MmdSphereMapMode sphereMode = MmdSphereMapMode::Disabled;
+    std::optional<std::string> toonTexture;
+    std::optional<unsigned int> commonToonIndex;
+};
+
+struct PmxMetadata
+{
+    std::vector<PmxMaterialMetadata> materials;
+    std::vector<std::vector<float>> materialVertexEdgeScales;
+};
+
+void AppendUtf8(std::string& output, std::uint32_t codePoint)
+{
+    if (codePoint <= 0x7FU)
+        output.push_back(static_cast<char>(codePoint));
+    else if (codePoint <= 0x7FFU)
+    {
+        output.push_back(static_cast<char>(0xC0U | (codePoint >> 6U)));
+        output.push_back(static_cast<char>(0x80U | (codePoint & 0x3FU)));
+    }
+    else if (codePoint <= 0xFFFFU)
+    {
+        output.push_back(static_cast<char>(0xE0U | (codePoint >> 12U)));
+        output.push_back(static_cast<char>(0x80U | ((codePoint >> 6U) & 0x3FU)));
+        output.push_back(static_cast<char>(0x80U | (codePoint & 0x3FU)));
+    }
+    else
+    {
+        output.push_back(static_cast<char>(0xF0U | (codePoint >> 18U)));
+        output.push_back(static_cast<char>(0x80U | ((codePoint >> 12U) & 0x3FU)));
+        output.push_back(static_cast<char>(0x80U | ((codePoint >> 6U) & 0x3FU)));
+        output.push_back(static_cast<char>(0x80U | (codePoint & 0x3FU)));
+    }
+}
+
+class PmxReader
+{
+public:
+    explicit PmxReader(const std::vector<std::uint8_t>& bytes)
+        : bytes(bytes)
+    {
+    }
+
+    template<typename T>
+    T Read()
+    {
+        static_assert(std::is_trivially_copyable_v<T>);
+        this->Require(sizeof(T));
+        T value{};
+        std::memcpy(&value, this->bytes.data() + this->offset, sizeof(T));
+        this->offset += sizeof(T);
+        return value;
+    }
+
+    void Skip(std::size_t count)
+    {
+        this->Require(count);
+        this->offset += count;
+    }
+
+    int ReadIndex(unsigned int size)
+    {
+        switch (size)
+        {
+        case 1: return static_cast<int>(this->Read<std::int8_t>());
+        case 2: return static_cast<int>(this->Read<std::int16_t>());
+        case 4: return this->Read<std::int32_t>();
+        default: throw std::runtime_error("PMX contains an invalid index size");
+        }
+    }
+
+    std::uint32_t ReadUnsignedIndex(unsigned int size)
+    {
+        switch (size)
+        {
+        case 1: return this->Read<std::uint8_t>();
+        case 2: return this->Read<std::uint16_t>();
+        case 4: return this->Read<std::uint32_t>();
+        default: throw std::runtime_error("PMX contains an invalid index size");
+        }
+    }
+
+    std::string ReadText(unsigned int encoding)
+    {
+        const std::int32_t byteCount = this->Read<std::int32_t>();
+        if (byteCount < 0)
+            throw std::runtime_error("PMX contains a negative text length");
+        this->Require(static_cast<std::size_t>(byteCount));
+
+        const std::uint8_t* begin = this->bytes.data() + this->offset;
+        this->offset += static_cast<std::size_t>(byteCount);
+        if (encoding == 1)
+        {
+            return std::string(
+                reinterpret_cast<const char*>(begin),
+                static_cast<std::size_t>(byteCount)
+            );
+        }
+        if (encoding != 0 || (byteCount % 2) != 0)
+            throw std::runtime_error("PMX contains invalid text encoding");
+
+        std::string result;
+        result.reserve(static_cast<std::size_t>(byteCount));
+        for (std::size_t index = 0;
+             index < static_cast<std::size_t>(byteCount);
+             index += 2)
+        {
+            std::uint32_t codePoint = static_cast<std::uint32_t>(begin[index]) |
+                (static_cast<std::uint32_t>(begin[index + 1]) << 8U);
+            if (codePoint >= 0xD800U && codePoint <= 0xDBFFU)
+            {
+                if (index + 3 >= static_cast<std::size_t>(byteCount))
+                    throw std::runtime_error("PMX contains an incomplete UTF-16 surrogate");
+                const std::uint32_t low =
+                    static_cast<std::uint32_t>(begin[index + 2]) |
+                    (static_cast<std::uint32_t>(begin[index + 3]) << 8U);
+                if (low < 0xDC00U || low > 0xDFFFU)
+                    throw std::runtime_error("PMX contains an invalid UTF-16 surrogate");
+                codePoint = 0x10000U +
+                    ((codePoint - 0xD800U) << 10U) +
+                    (low - 0xDC00U);
+                index += 2;
+            }
+            else if (codePoint >= 0xDC00U && codePoint <= 0xDFFFU)
+            {
+                throw std::runtime_error("PMX contains an unmatched UTF-16 surrogate");
+            }
+            AppendUtf8(result, codePoint);
+        }
+        return result;
+    }
+
+private:
+    void Require(std::size_t count) const
+    {
+        if (count > this->bytes.size() - std::min(this->offset, this->bytes.size()))
+            throw std::runtime_error("PMX file ended unexpectedly");
+    }
+
+    const std::vector<std::uint8_t>& bytes;
+    std::size_t offset = 0;
+};
+
+template<typename T>
+std::vector<T> ReadPmxVector(PmxReader& reader, std::size_t count)
+{
+    std::vector<T> result;
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+        result.push_back(reader.Read<T>());
+    return result;
+}
+
+glm::vec3 ReadPmxVec3(PmxReader& reader)
+{
+    const float x = reader.Read<float>();
+    const float y = reader.Read<float>();
+    const float z = reader.Read<float>();
+    return glm::vec3(x, y, z);
+}
+
+glm::vec4 ReadPmxVec4(PmxReader& reader)
+{
+    const float x = reader.Read<float>();
+    const float y = reader.Read<float>();
+    const float z = reader.Read<float>();
+    const float w = reader.Read<float>();
+    return glm::vec4(x, y, z, w);
+}
+
+std::optional<std::string> PmxTexturePath(
+    const std::vector<std::string>& textures,
+    int index
+)
+{
+    if (index < 0)
+        return std::nullopt;
+    if (static_cast<std::size_t>(index) >= textures.size())
+        throw std::runtime_error("PMX material references an invalid texture index");
+    return textures[static_cast<std::size_t>(index)];
+}
+
+PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
+{
+    if (bytes.size() < 9 || std::memcmp(bytes.data(), "PMX ", 4) != 0)
+        throw std::runtime_error("PMX header is invalid");
+
+    PmxReader reader(bytes);
+    reader.Skip(4);
+    const float version = reader.Read<float>();
+    if (!std::isfinite(version) || version < 2.0f || version >= 2.2f)
+        throw std::runtime_error("Only PMX 2.0 and 2.1 are supported");
+
+    const std::uint8_t settingCount = reader.Read<std::uint8_t>();
+    if (settingCount < 8)
+        throw std::runtime_error("PMX global settings are incomplete");
+    std::vector<std::uint8_t> settings =
+        ReadPmxVector<std::uint8_t>(reader, settingCount);
+    const unsigned int encoding = settings[0];
+    const unsigned int additionalUvCount = settings[1];
+    const unsigned int vertexIndexSize = settings[2];
+    const unsigned int textureIndexSize = settings[3];
+    const unsigned int boneIndexSize = settings[5];
+    const auto validIndexSize = [](unsigned int size)
+    {
+        return size == 1U || size == 2U || size == 4U;
+    };
+    if (additionalUvCount > 4U ||
+        !validIndexSize(vertexIndexSize) ||
+        !validIndexSize(textureIndexSize) ||
+        !validIndexSize(boneIndexSize))
+    {
+        throw std::runtime_error("PMX global settings contain invalid sizes");
+    }
+
+    for (int index = 0; index < 4; ++index)
+        reader.ReadText(encoding);
+
+    const std::int32_t vertexCount = reader.Read<std::int32_t>();
+    if (vertexCount < 0)
+        throw std::runtime_error("PMX contains a negative vertex count");
+    std::vector<float> vertexEdgeScales;
+    vertexEdgeScales.reserve(static_cast<std::size_t>(vertexCount));
+    for (std::int32_t vertex = 0; vertex < vertexCount; ++vertex)
+    {
+        reader.Skip(
+            (3U + 3U + 2U + additionalUvCount * 4U) * sizeof(float)
+        );
+        const std::uint8_t skinning = reader.Read<std::uint8_t>();
+        switch (skinning)
+        {
+        case 0: // BDEF1
+            reader.Skip(boneIndexSize);
+            break;
+        case 1: // BDEF2
+            reader.Skip(2U * boneIndexSize + sizeof(float));
+            break;
+        case 2: // BDEF4
+        case 4: // QDEF
+            reader.Skip(4U * boneIndexSize + 4U * sizeof(float));
+            break;
+        case 3: // SDEF
+            reader.Skip(2U * boneIndexSize + 10U * sizeof(float));
+            break;
+        default:
+            throw std::runtime_error("PMX contains an unsupported skinning type");
+        }
+        vertexEdgeScales.push_back(reader.Read<float>());
+    }
+
+    const std::int32_t indexCount = reader.Read<std::int32_t>();
+    if (indexCount < 0)
+        throw std::runtime_error("PMX contains a negative surface index count");
+    std::vector<std::uint32_t> surfaceIndices;
+    surfaceIndices.reserve(static_cast<std::size_t>(indexCount));
+    for (std::int32_t index = 0; index < indexCount; ++index)
+        surfaceIndices.push_back(reader.ReadUnsignedIndex(vertexIndexSize));
+
+    const std::int32_t textureCount = reader.Read<std::int32_t>();
+    if (textureCount < 0)
+        throw std::runtime_error("PMX contains a negative texture count");
+    std::vector<std::string> textures;
+    textures.reserve(static_cast<std::size_t>(textureCount));
+    for (std::int32_t index = 0; index < textureCount; ++index)
+        textures.push_back(reader.ReadText(encoding));
+
+    const std::int32_t materialCount = reader.Read<std::int32_t>();
+    if (materialCount < 0)
+        throw std::runtime_error("PMX contains a negative material count");
+
+    PmxMetadata result;
+    result.materials.reserve(static_cast<std::size_t>(materialCount));
+    result.materialVertexEdgeScales.reserve(
+        static_cast<std::size_t>(materialCount)
+    );
+    std::size_t surfaceOffset = 0;
+    for (std::int32_t index = 0; index < materialCount; ++index)
+    {
+        PmxMaterialMetadata material;
+        const std::string localName = reader.ReadText(encoding);
+        const std::string englishName = reader.ReadText(encoding);
+        material.name = !localName.empty() ? localName : englishName;
+        material.diffuse = ReadPmxVec4(reader);
+        material.specular = ReadPmxVec3(reader);
+        material.specularPower = reader.Read<float>();
+        material.ambient = ReadPmxVec3(reader);
+        const std::uint8_t flags = reader.Read<std::uint8_t>();
+        material.doubleSided = (flags & 0x01U) != 0;
+        material.edgeEnabled = (flags & 0x10U) != 0;
+        material.edgeColor = ReadPmxVec4(reader);
+        material.edgeSize = reader.Read<float>();
+        material.diffuseTexture = PmxTexturePath(
+            textures,
+            reader.ReadIndex(textureIndexSize)
+        );
+        material.sphereTexture = PmxTexturePath(
+            textures,
+            reader.ReadIndex(textureIndexSize)
+        );
+        const std::uint8_t sphereMode = reader.Read<std::uint8_t>();
+        if (sphereMode <= static_cast<std::uint8_t>(MmdSphereMapMode::SubTexture))
+        {
+            material.sphereMode = static_cast<MmdSphereMapMode>(sphereMode);
+        }
+        const std::uint8_t commonToon = reader.Read<std::uint8_t>();
+        if (commonToon != 0)
+        {
+            material.commonToonIndex = reader.Read<std::uint8_t>();
+        }
+        else
+        {
+            material.toonTexture = PmxTexturePath(
+                textures,
+                reader.ReadIndex(textureIndexSize)
+            );
+        }
+        reader.ReadText(encoding); // Material memo.
+        const std::int32_t materialIndexCount = reader.Read<std::int32_t>();
+        if (materialIndexCount < 0)
+            throw std::runtime_error("PMX material has a negative index count");
+        if (static_cast<std::size_t>(materialIndexCount) >
+            surfaceIndices.size() - std::min(surfaceOffset, surfaceIndices.size()))
+        {
+            throw std::runtime_error("PMX material index ranges exceed the surface list");
+        }
+        std::vector<float> edgeScales;
+        edgeScales.reserve(static_cast<std::size_t>(materialIndexCount));
+        for (std::int32_t surface = 0;
+             surface < materialIndexCount;
+             ++surface)
+        {
+            const std::uint32_t vertexIndex =
+                surfaceIndices[surfaceOffset + static_cast<std::size_t>(surface)];
+            if (vertexIndex >= vertexEdgeScales.size())
+                throw std::runtime_error("PMX surface references an invalid vertex");
+            edgeScales.push_back(vertexEdgeScales[vertexIndex]);
+        }
+        surfaceOffset += static_cast<std::size_t>(materialIndexCount);
+        result.materials.push_back(std::move(material));
+        result.materialVertexEdgeScales.push_back(std::move(edgeScales));
+    }
+    if (surfaceOffset != surfaceIndices.size())
+        throw std::runtime_error("PMX materials do not cover every surface index");
+    return result;
+}
+
 struct ImportedTextureKey
 {
     std::string path;
@@ -121,6 +484,60 @@ std::vector<std::uint8_t> ReadBinaryFile(const std::filesystem::path& path)
     return bytes;
 }
 
+std::optional<bool> HasNonOpaqueAlpha(const TextureData& texture)
+{
+    if (texture.IsRgba8())
+    {
+        for (std::size_t offset = 3U; offset < texture.data.size(); offset += 4U)
+        {
+            if (texture.data[offset] < 255U)
+                return true;
+        }
+        return false;
+    }
+
+    std::vector<std::uint8_t> fileBytes;
+    const std::vector<std::uint8_t>* encoded = &texture.data;
+    if (texture.IsFile())
+    {
+        fileBytes = ReadBinaryFile(texture.filePath);
+        encoded = &fileBytes;
+    }
+    if (encoded->empty() ||
+        encoded->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::nullopt;
+    }
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    std::unique_ptr<unsigned char, decltype(&stbi_image_free)> pixels(
+        stbi_load_from_memory(
+            encoded->data(),
+            static_cast<int>(encoded->size()),
+            &width,
+            &height,
+            &channels,
+            4
+        ),
+        stbi_image_free
+    );
+    if (pixels == nullptr || width <= 0 || height <= 0)
+        return std::nullopt;
+    if (channels != 2 && channels != 4)
+        return false;
+
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    for (std::size_t pixel = 0; pixel < pixelCount; ++pixel)
+    {
+        if (pixels.get()[pixel * 4U + 3U] < 255U)
+            return true;
+    }
+    return false;
+}
+
 glm::mat4 ToGlm(const aiMatrix4x4& matrix)
 {
     glm::mat4 result(1.0f);
@@ -179,7 +596,11 @@ std::string ResourceName(const aiString& name, const char* prefix, std::size_t i
     return result;
 }
 
-ImportedMeshData ImportMesh(const aiMesh& mesh, std::size_t index)
+ImportedMeshData ImportMesh(
+    const aiMesh& mesh,
+    std::size_t index,
+    const std::vector<float>* mmdVertexEdgeScales
+)
 {
     if (mesh.mNumVertices == 0)
         throw std::runtime_error("Imported mesh has no vertices");
@@ -196,7 +617,24 @@ ImportedMeshData ImportMesh(const aiMesh& mesh, std::size_t index)
         {"normal", 3, FLOAT},
         {"tangent", 4, FLOAT}
     };
-    result.data.vertices.reserve(static_cast<std::size_t>(mesh.mNumVertices) * 15);
+    const bool isMmdMesh = mmdVertexEdgeScales != nullptr;
+    const bool hasAdditionalTexCoord =
+        isMmdMesh && mesh.HasTextureCoords(1);
+    if (isMmdMesh)
+    {
+        result.data.layout.push_back({"additionalTexCoord", 2, FLOAT});
+        result.data.layout.push_back({"edgeScale", 1, FLOAT});
+        if (mmdVertexEdgeScales->size() != mesh.mNumVertices)
+        {
+            throw std::runtime_error(
+                "PMX edge-scale data no longer matches imported vertices"
+            );
+        }
+    }
+    const std::size_t vertexStride = isMmdMesh ? 18U : 15U;
+    result.data.vertices.reserve(
+        static_cast<std::size_t>(mesh.mNumVertices) * vertexStride
+    );
 
     for (unsigned int vertexIndex = 0;
          vertexIndex < mesh.mNumVertices;
@@ -266,6 +704,18 @@ ImportedMeshData ImportMesh(const aiMesh& mesh, std::size_t index)
             std::begin(values),
             std::end(values)
         );
+        if (isMmdMesh)
+        {
+            result.data.vertices.push_back(hasAdditionalTexCoord
+                ? mesh.mTextureCoords[1][vertexIndex].x
+                : 0.0f);
+            result.data.vertices.push_back(hasAdditionalTexCoord
+                ? mesh.mTextureCoords[1][vertexIndex].y
+                : 0.0f);
+            result.data.vertices.push_back(
+                (*mmdVertexEdgeScales)[vertexIndex]
+            );
+        }
     }
 
     for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex)
@@ -347,8 +797,62 @@ std::size_t ImportTexture(
         imported.source = TextureData::FromFile(externalPath, colorSpace);
     }
 
+    imported.hasNonOpaqueAlpha = HasNonOpaqueAlpha(imported.source);
+
     const std::size_t textureIndex = result.textures.size();
     result.textures.push_back(std::move(imported));
+    textureIndices.emplace(key, textureIndex);
+    return textureIndex;
+}
+
+std::size_t ImportCommonToonTexture(
+    unsigned int toonIndex,
+    ImportedModelData& result,
+    ImportedTextureIndexMap& textureIndices
+)
+{
+    if (toonIndex > 9U)
+        throw std::runtime_error("PMX common Toon texture index is out of range");
+
+    const std::string name =
+        "__mmd_common_toon_" + std::to_string(toonIndex);
+    const ImportedTextureKey key{name, TextureColorSpace::Srgb};
+    const auto existing = textureIndices.find(key);
+    if (existing != textureIndices.end())
+        return existing->second;
+
+    constexpr int RampHeight = 256;
+    std::vector<std::uint8_t> pixels(
+        static_cast<std::size_t>(RampHeight) * 4U
+    );
+    const float shadowFloor = 0.42f + 0.025f * static_cast<float>(toonIndex);
+    for (int row = 0; row < RampHeight; ++row)
+    {
+        const float coordinate = static_cast<float>(row) /
+            static_cast<float>(RampHeight - 1);
+        const float band = glm::smoothstep(0.38f, 0.62f, coordinate);
+        const float value = glm::mix(shadowFloor, 1.0f, band);
+        const std::uint8_t encoded = static_cast<std::uint8_t>(
+            glm::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f
+        );
+        const std::size_t offset = static_cast<std::size_t>(row) * 4U;
+        pixels[offset] = encoded;
+        pixels[offset + 1U] = encoded;
+        pixels[offset + 2U] = encoded;
+        pixels[offset + 3U] = 255U;
+    }
+
+    const std::size_t textureIndex = result.textures.size();
+    result.textures.push_back(ImportedTextureData{
+        name,
+        TextureData::FromRgba8(
+            1,
+            RampHeight,
+            std::move(pixels),
+            TextureColorSpace::Srgb
+        ),
+        std::optional<bool>(false)
+    });
     textureIndices.emplace(key, textureIndex);
     return textureIndex;
 }
@@ -412,7 +916,8 @@ ImportedMaterialData ImportMaterial(
     std::size_t index,
     const std::filesystem::path& modelDirectory,
     ImportedModelData& result,
-    ImportedTextureIndexMap& textureIndices
+    ImportedTextureIndexMap& textureIndices,
+    const PmxMaterialMetadata* mmdMaterial
 )
 {
     ImportedMaterialData imported;
@@ -515,16 +1020,83 @@ ImportedMaterialData ImportMaterial(
     if (material.Get(AI_MATKEY_TWOSIDED, doubleSided) == AI_SUCCESS)
         imported.doubleSided = doubleSided != 0;
 
-    if (const std::optional<aiString> path = BaseColorTexturePath(material))
+    if (mmdMaterial != nullptr)
+    {
+        imported.shadingModel = MaterialShadingModel::MmdToon;
+        if (!mmdMaterial->name.empty())
+            imported.name = mmdMaterial->name;
+        imported.baseColorFactor = glm::clamp(
+            mmdMaterial->diffuse,
+            glm::vec4(0.0f),
+            glm::vec4(1.0f)
+        );
+        imported.specularColor = glm::max(
+            mmdMaterial->specular,
+            glm::vec3(0.0f)
+        );
+        imported.shininess = std::max(mmdMaterial->specularPower, 1.0f);
+        imported.ambientColor = glm::max(
+            mmdMaterial->ambient,
+            glm::vec3(0.0f)
+        );
+        imported.doubleSided = mmdMaterial->doubleSided;
+        imported.edgeEnabled = mmdMaterial->edgeEnabled;
+        imported.edgeColor = glm::clamp(
+            mmdMaterial->edgeColor,
+            glm::vec4(0.0f),
+            glm::vec4(1.0f)
+        );
+        imported.edgeSize = std::max(mmdMaterial->edgeSize, 0.0f);
+        imported.sphereMapMode = mmdMaterial->sphereTexture.has_value()
+            ? mmdMaterial->sphereMode
+            : MmdSphereMapMode::Disabled;
+        imported.alphaMode = imported.baseColorFactor.a < 0.999f
+            ? MaterialAlphaMode::Blend
+            : MaterialAlphaMode::Opaque;
+    }
+
+    std::optional<aiString> baseColorPath;
+    const std::optional<aiString> opacityPath =
+        TexturePath(material, aiTextureType_OPACITY);
+    if (mmdMaterial != nullptr && mmdMaterial->diffuseTexture.has_value())
+        baseColorPath = aiString(mmdMaterial->diffuseTexture->c_str());
+    else
+        baseColorPath = BaseColorTexturePath(material);
+    if (baseColorPath.has_value())
     {
         imported.baseColorTexture = ImportTexture(
             scene,
-            *path,
+            *baseColorPath,
             TextureColorSpace::Srgb,
             modelDirectory,
             result,
             textureIndices
         );
+
+        const std::optional<bool> hasTextureAlpha = result.textures[
+            *imported.baseColorTexture
+        ].hasNonOpaqueAlpha;
+        const bool baseTextureDefinesOpacity =
+            !opacityPath.has_value() ||
+            ToString(*opacityPath) == ToString(*baseColorPath);
+        if (mmdMaterial != nullptr && hasTextureAlpha == true &&
+            imported.alphaMode == MaterialAlphaMode::Opaque)
+        {
+            // PMX has no explicit OPAQUE/MASK/BLEND enum. Its diffuse texture
+            // alpha usually represents cutout coverage such as hair strands.
+            // Keep depth writes for those pixels; only a translucent material
+            // factor should enter the true Blend path.
+            imported.alphaMode = MaterialAlphaMode::Mask;
+        }
+        else if (baseTextureDefinesOpacity &&
+            hasTextureAlpha == false &&
+            imported.alphaMode == MaterialAlphaMode::Blend &&
+            imported.baseColorFactor.a >= 0.999f)
+        {
+            // Some MMD conversion tools emit BLEND/map_d for every material,
+            // even when its base texture contains no transparent pixels.
+            imported.alphaMode = MaterialAlphaMode::Opaque;
+        }
     }
     if (const std::optional<aiString> path = NormalTexturePath(material))
     {
@@ -595,6 +1167,39 @@ ImportedMaterialData ImportMaterial(
             );
         }
     }
+    if (mmdMaterial != nullptr && mmdMaterial->sphereTexture.has_value())
+    {
+        imported.sphereTexture = ImportTexture(
+            scene,
+            aiString(mmdMaterial->sphereTexture->c_str()),
+            TextureColorSpace::Srgb,
+            modelDirectory,
+            result,
+            textureIndices
+        );
+    }
+    if (mmdMaterial != nullptr)
+    {
+        if (mmdMaterial->toonTexture.has_value())
+        {
+            imported.toonTexture = ImportTexture(
+                scene,
+                aiString(mmdMaterial->toonTexture->c_str()),
+                TextureColorSpace::Srgb,
+                modelDirectory,
+                result,
+                textureIndices
+            );
+        }
+        else if (mmdMaterial->commonToonIndex.has_value())
+        {
+            imported.toonTexture = ImportCommonToonTexture(
+                *mmdMaterial->commonToonIndex,
+                result,
+                textureIndices
+            );
+        }
+    }
     return imported;
 }
 
@@ -644,7 +1249,29 @@ ImportedModelData ModelImporter::Import(
     Assimp::Importer importer;
     const aiScene* scene = nullptr;
     std::vector<std::uint8_t> fileBytes;
-    if (extensionHint == "glb")
+    std::optional<PmxMetadata> pmxMetadata;
+    if (extensionHint == "pmx")
+    {
+        // PMX geometry is self-contained. Read from memory so Unicode model
+        // paths work on Windows, then resolve its external textures ourselves.
+        fileBytes = ReadBinaryFile(absolutePath);
+        pmxMetadata = ParsePmxMetadata(fileBytes);
+        // Assimp's MMD importer expands one vertex per surface index. Keep
+        // that mapping so PMX per-vertex edge scales remain aligned. The MMD
+        // importer already flips V internally; applying our normal FlipUVs
+        // post-process a second time restores the original MMD UV convention
+        // used by the unflipped stb_image upload path.
+        const unsigned int pmxImportFlags = ImportFlags &
+            ~static_cast<unsigned int>(aiProcess_JoinIdenticalVertices) &
+            ~static_cast<unsigned int>(aiProcess_ImproveCacheLocality);
+        scene = importer.ReadFileFromMemory(
+            fileBytes.data(),
+            fileBytes.size(),
+            pmxImportFlags,
+            extensionHint.c_str()
+        );
+    }
+    else if (extensionHint == "glb")
     {
         // A GLB is self-contained. Reading it through std::filesystem keeps
         // Chinese Windows paths independent of the active system code page.
@@ -685,9 +1312,24 @@ ImportedModelData ModelImporter::Import(
         if (scene->mMeshes[index] == nullptr)
             throw std::runtime_error("Imported scene contains a null mesh");
 
-        ImportedMeshData mesh = ImportMesh(*scene->mMeshes[index], index);
         const unsigned int sourceMaterialIndex =
-            static_cast<unsigned int>(mesh.materialIndex);
+            scene->mMeshes[index]->mMaterialIndex;
+        const std::vector<float>* mmdEdgeScales = nullptr;
+        if (pmxMetadata.has_value())
+        {
+            if (sourceMaterialIndex >=
+                pmxMetadata->materialVertexEdgeScales.size())
+            {
+                throw std::runtime_error("PMX mesh has no matching edge-scale range");
+            }
+            mmdEdgeScales =
+                &pmxMetadata->materialVertexEdgeScales[sourceMaterialIndex];
+        }
+        ImportedMeshData mesh = ImportMesh(
+            *scene->mMeshes[index],
+            index,
+            mmdEdgeScales
+        );
         if (sourceMaterialIndex >= scene->mNumMaterials ||
             scene->mMaterials[sourceMaterialIndex] == nullptr)
         {
@@ -704,7 +1346,11 @@ ImportedModelData ModelImporter::Import(
                 sourceMaterialIndex,
                 absolutePath.parent_path(),
                 result,
-                textureIndices
+                textureIndices,
+                pmxMetadata.has_value() &&
+                    sourceMaterialIndex < pmxMetadata->materials.size()
+                    ? &pmxMetadata->materials[sourceMaterialIndex]
+                    : nullptr
             ));
             materialEntry = materialIndices.emplace(
                 sourceMaterialIndex,

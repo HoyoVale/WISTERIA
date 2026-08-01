@@ -158,3 +158,92 @@ PBR 金属度、粗糙度。
 | 释放鼠标 | `Esc` | 单次 |
 | 重置相机 | `R` | 单次 |
 | 关闭窗口 | 窗口关闭按钮 | 事件 |
+
+
+基础的通用 PBR 材质系统已经足够完整，可以作为后续功能的基础；但它还不等于“完整支持 MMD 材质”。
+
+你观察到的“人物各部位光学质感相同”和骨骼无关。
+
+当前模型实际上已经按部位拆分：
+
+- 21 个 Mesh
+- 21 个 Material
+- 21 个 RenderPart
+- 共用约 6 张纹理
+
+骨骼只负责让顶点随关节变形，例如手臂弯曲、头部转动、头发摆动。它不会决定皮肤、衣服、金属饰品分别使用什么材质。
+
+现在质感接近的主要原因是：
+
+- MMD 材质不是标准 PBR 材质。
+- 转换到 OBJ/GLB 时，一部分 MMD 参数丢失了。
+- `.spa/.sph` 球面贴图尚未支持。
+- Toon 阴影纹理尚未支持。
+- 多数材质最终使用相似的 `metallic`、`roughness` 默认值。
+- 皮肤、布料、头发、金属因此都进入了同一套 PBR 光学模型。
+
+## 推荐顺序
+
+我建议先完善静态 MMD 材质，再开发骨骼。
+
+下一步可以增加 `MmdToon` 材质模型，支持：
+
+- Diffuse Color 和 Alpha
+- Specular Color
+- Specular Power
+- Ambient Color
+- `.sph` 乘法球面贴图
+- `.spa` 加法球面贴图
+- Toon 阴影渐变贴图
+- 边缘描边颜色和宽度
+- 双面材质
+- 半透明材质排序
+
+同时给材质增加类型：
+
+```cpp
+enum class ShadingModel
+{
+    PbrMetallicRoughness,
+    MmdToon
+};
+```
+
+Renderer 根据 `ShadingModel` 使用对应 Shader 和上传规则。这样 PBR 和 MMD 不需要硬塞进同一套计算。
+
+需要注意：如果继续导入转换后的 OBJ/GLB，MMD 特有信息可能已经在转换过程中丢失。要完整支持，最好后面直接读取 PMX，或者启用 Assimp 的 MMD Importer，并检查它保留了多少材质信息。
+
+## 骨骼需要哪些新类
+
+骨骼系统确实需要创建新的结构，但应当分清“模型共享数据”和“实例运行状态”：
+
+```text
+ModelAsset
+├── Mesh / Material
+├── Skeleton          模型共享的骨架定义
+└── AnimationClip     模型共享的动画数据
+
+Entity
+└── Animator          每个角色自己的播放时间和当前姿势
+```
+
+建议的核心类：
+
+- `Bone`：骨骼名称、父骨骼索引、逆绑定矩阵。
+- `Skeleton`：管理完整骨骼层级。
+- `AnimationClip`：保存位置、旋转、缩放关键帧。
+- `Animator`：播放动画并计算当前骨骼矩阵。
+- `SkinnedMesh` 或扩展现有 `Mesh`：增加每个顶点的骨骼索引和权重。
+- Shader 骨骼矩阵数组：在顶点着色器中完成蒙皮。
+
+因此比较合适的开发路线是：
+
+1. MMD 静态材质区分。
+2. 直接 PMX/MMD 材质导入。
+3. Skeleton 和顶点权重。
+4. GPU 顶点蒙皮。
+5. AnimationClip 和 Animator。
+6. 动画播放、混合与交互。
+
+这样能先解决你当前看到的材质问题，同时避免误把材质差异归到骨骼系统中。
+

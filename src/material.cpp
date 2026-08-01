@@ -53,6 +53,17 @@ Material::Material(
     {
         throw std::invalid_argument("Material emissive factor must be finite");
     }
+    if (!std::isfinite(this->data.ambientColor.x) ||
+        !std::isfinite(this->data.ambientColor.y) ||
+        !std::isfinite(this->data.ambientColor.z) ||
+        !std::isfinite(this->data.edgeColor.x) ||
+        !std::isfinite(this->data.edgeColor.y) ||
+        !std::isfinite(this->data.edgeColor.z) ||
+        !std::isfinite(this->data.edgeColor.w) ||
+        !std::isfinite(this->data.edgeSize))
+    {
+        throw std::invalid_argument("MMD material factors must be finite");
+    }
     this->data.alphaCutoff = glm::clamp(this->data.alphaCutoff, 0.0f, 1.0f);
     this->data.baseColorFactor = glm::clamp(
         this->data.baseColorFactor,
@@ -79,6 +90,16 @@ Material::Material(
         0.0f,
         1.0f
     );
+    this->data.ambientColor = glm::max(
+        this->data.ambientColor,
+        glm::vec3(0.0f)
+    );
+    this->data.edgeColor = glm::clamp(
+        this->data.edgeColor,
+        glm::vec4(0.0f),
+        glm::vec4(1.0f)
+    );
+    this->data.edgeSize = glm::max(this->data.edgeSize, 0.0f);
 }
 
 void Material::Attach()
@@ -179,6 +200,36 @@ const glm::vec3& Material::EmissiveFactor() const noexcept
 float Material::OcclusionStrength() const noexcept
 {
     return this->data.occlusionStrength;
+}
+
+MaterialShadingModel Material::ShadingModel() const noexcept
+{
+    return this->data.shadingModel;
+}
+
+const glm::vec3& Material::AmbientColor() const noexcept
+{
+    return this->data.ambientColor;
+}
+
+MmdSphereMapMode Material::SphereMapMode() const noexcept
+{
+    return this->data.sphereMapMode;
+}
+
+const glm::vec4& Material::EdgeColor() const noexcept
+{
+    return this->data.edgeColor;
+}
+
+float Material::EdgeSize() const noexcept
+{
+    return this->data.edgeSize;
+}
+
+bool Material::IsEdgeEnabled() const noexcept
+{
+    return this->data.edgeEnabled;
 }
 
 const glm::vec4& Material::BaseColorFactor() const noexcept

@@ -18,6 +18,7 @@ namespace
 {
 constexpr float Epsilon = 0.0001f;
 const std::filesystem::path TestAssetDirectory = WISTERIA_TEST_ASSET_DIR;
+const std::filesystem::path ProjectAssetDirectory = WISTERIA_PROJECT_ASSET_DIR;
 
 void Require(bool condition, const std::string& message)
 {
@@ -87,6 +88,27 @@ void TestBuiltInCubeTangents()
             "Cube tangent handedness is invalid"
         );
     }
+}
+
+void TestMeshBoundsCenter()
+{
+    DefaultModelData data{
+        {
+            -4.0f, 2.0f, -1.0f,
+             2.0f, 8.0f,  5.0f,
+             0.0f, 3.0f,  1.0f
+        },
+        {0U, 1U, 2U},
+        {{"position", 3, FLOAT}}
+    };
+    const Mesh mesh(std::move(data));
+    const glm::vec3 center = mesh.LocalBoundsCenter();
+    Require(
+        NearlyEqual(center.x, -1.0f) &&
+        NearlyEqual(center.y, 5.0f) &&
+        NearlyEqual(center.z, 2.0f),
+        "Mesh local bounds center is incorrect"
+    );
 }
 
 void TestModelInstantiation()
@@ -592,6 +614,20 @@ void TestConvertedMmdGlbWhenAvailable()
     Require(vertexCount >= 40000, "Converted MMD model lost too many vertices");
     Require(indexCount >= 100000, "Converted MMD model lost too many indices");
 
+    std::size_t opaqueMaterialCount = 0;
+    std::size_t blendMaterialCount = 0;
+    for (const ImportedMaterialData& material : imported.materials)
+    {
+        opaqueMaterialCount +=
+            material.alphaMode == MaterialAlphaMode::Opaque ? 1U : 0U;
+        blendMaterialCount +=
+            material.alphaMode == MaterialAlphaMode::Blend ? 1U : 0U;
+    }
+    Require(
+        opaqueMaterialCount > 0 && blendMaterialCount > 0,
+        "Converted MMD GLB alpha materials were not classified by texture content"
+    );
+
     ResourceManager resources;
     ModelAsset& model = resources.LoadModel("yixuan", modelPath);
     Scene scene;
@@ -617,6 +653,20 @@ void TestConvertedMmdObjWhenAvailable()
     Require(imported.materials.size() == 21, "Converted OBJ material count changed");
     Require(imported.textures.size() == 6, "Converted OBJ external texture count changed");
     Require(imported.parts.size() == 21, "Converted OBJ render-part count changed");
+
+    std::size_t opaqueMaterialCount = 0;
+    std::size_t blendMaterialCount = 0;
+    for (const ImportedMaterialData& material : imported.materials)
+    {
+        opaqueMaterialCount +=
+            material.alphaMode == MaterialAlphaMode::Opaque ? 1U : 0U;
+        blendMaterialCount +=
+            material.alphaMode == MaterialAlphaMode::Blend ? 1U : 0U;
+    }
+    Require(
+        opaqueMaterialCount > 0 && blendMaterialCount > 0,
+        "Converted OBJ alpha materials were not classified by texture content"
+    );
 
     for (const ImportedTextureData& texture : imported.textures)
     {
@@ -690,6 +740,90 @@ void TestConvertedMmdObjWhenAvailable()
     Require(resources.TextureCount() == 8, "Linear texture alias was not registered");
 }
 
+void TestDirectPmxMaterialImportWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / u8"仪玄_pmx" / u8"仪玄.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(imported.meshes.size() == 21, "Direct PMX mesh count changed");
+    Require(imported.materials.size() == 21, "Direct PMX material count changed");
+    Require(imported.parts.size() == 21, "Direct PMX part count changed");
+    Require(
+        imported.meshes[0].data.vertices.size() >= 18U &&
+        NearlyEqual(imported.meshes[0].data.vertices[6], 0.56001925f) &&
+        NearlyEqual(imported.meshes[0].data.vertices[7], 0.56904125f),
+        "Direct PMX texture coordinates were vertically flipped"
+    );
+
+    std::size_t sphereMaterialCount = 0;
+    std::size_t toonMaterialCount = 0;
+    std::size_t edgeMaterialCount = 0;
+    std::size_t transparentMaterialCount = 0;
+    std::size_t maskedMaterialCount = 0;
+    for (const ImportedMeshData& mesh : imported.meshes)
+    {
+        Require(
+            mesh.data.layout.size() == 7,
+            "PMX mesh is missing additional UV or edge-scale attributes"
+        );
+        const std::size_t stride = 18U;
+        Require(
+            mesh.data.vertices.size() % stride == 0,
+            "PMX vertex data does not match its UV layout"
+        );
+        for (std::size_t offset = 17;
+             offset < mesh.data.vertices.size();
+             offset += stride)
+        {
+            Require(
+                std::isfinite(mesh.data.vertices[offset]) &&
+                    mesh.data.vertices[offset] >= 0.0f,
+                "PMX vertex edge scale is invalid"
+            );
+        }
+    }
+    for (const ImportedMaterialData& material : imported.materials)
+    {
+        Require(
+            material.shadingModel == MaterialShadingModel::MmdToon,
+            "PMX material did not select MMD Toon shading"
+        );
+        sphereMaterialCount += material.sphereTexture.has_value() ? 1U : 0U;
+        toonMaterialCount += material.toonTexture.has_value() ? 1U : 0U;
+        edgeMaterialCount += material.edgeEnabled ? 1U : 0U;
+        transparentMaterialCount +=
+            material.alphaMode == MaterialAlphaMode::Blend ? 1U : 0U;
+        maskedMaterialCount +=
+            material.alphaMode == MaterialAlphaMode::Mask ? 1U : 0U;
+    }
+    Require(sphereMaterialCount > 0, "PMX sphere maps were not imported");
+    Require(toonMaterialCount > 0, "PMX Toon ramps were not imported");
+    Require(edgeMaterialCount > 0, "PMX edge flags were not imported");
+    Require(transparentMaterialCount > 0, "PMX alpha materials were not imported");
+    Require(maskedMaterialCount > 0, "PMX texture cutouts were not classified as Mask");
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("directPmx", modelPath);
+    Require(model.PartCount() == 21, "Direct PMX ModelAsset part count changed");
+    for (std::size_t index = 0; index < resources.MaterialCount(); ++index)
+    {
+        const Material& material = resources.GetMaterial(
+            "directPmx::material::" + std::to_string(index)
+        );
+        Require(
+            material.ShadingModel() == MaterialShadingModel::MmdToon,
+            "ResourceManager changed PMX shading model"
+        );
+        Require(
+            !material.Interface().imageBasedLightingEnabled,
+            "MMD Toon material unexpectedly enabled PBR IBL uniforms"
+        );
+    }
+}
+
 template<typename Function>
 bool RunTest(const char* name, Function&& function)
 {
@@ -712,6 +846,7 @@ int main()
     int failures = 0;
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
+    failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);
     failures += !RunTest("Model instantiation", TestModelInstantiation);
     failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
     failures += !RunTest("Input frame transitions", TestInputFrameTransitions);
@@ -730,5 +865,9 @@ int main()
     );
     failures += !RunTest("Converted MMD GLB integration", TestConvertedMmdGlbWhenAvailable);
     failures += !RunTest("Converted MMD OBJ integration", TestConvertedMmdObjWhenAvailable);
+    failures += !RunTest(
+        "Direct PMX material integration",
+        TestDirectPmxMaterialImportWhenAvailable
+    );
     return failures == 0 ? 0 : 1;
 }

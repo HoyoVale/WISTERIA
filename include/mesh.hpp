@@ -22,11 +22,13 @@ public:
 
     bool IsAttached() const noexcept;
     std::size_t IndexCount() const noexcept;
+    const glm::vec3& LocalBoundsCenter() const noexcept;
 
 private:
     DefaultModelData data;
     std::unique_ptr<VAO> vao;
     std::unique_ptr<VBO> vbo;
     std::unique_ptr<EBO> ebo;
+    glm::vec3 localBoundsCenter{0.0f};
     bool attached = false;
 };

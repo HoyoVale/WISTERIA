@@ -8,7 +8,8 @@ namespace
 {
 std::filesystem::path DemoModelPath()
 {
-    return std::filesystem::current_path() / "assets" / "models" / u8"仪玄_obj" / u8"仪玄.obj";
+    return std::filesystem::current_path() / "assets" / "models" /
+        u8"仪玄_pmx" / u8"仪玄.pmx";
 }
 }
 
@@ -44,12 +45,19 @@ Window::Window(int width, int height)
         this->scene.SetEnvironment(&environment);
 
         ModelAsset& yixuanModel = this->resources.LoadModel("yixuan",DemoModelPath());
-        Entity& yixuanEntity = this->scene.InstantiateModel(yixuanModel);
+        Entity& yixuanEntity = this->scene.InstantiateModel(
+            yixuanModel,
+            Transform(
+                glm::vec3(0.0f),
+                glm::vec3(0.0f),
+                glm::vec3(0.1f)
+            )
+        );
         yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 12.0f, 0.0f));
 
         this->scene.ActiveCamera().SetParam(CameraParam{
-            .Position = {0.0f, 1.0f, 2.5f},
-            .Target = {0.0f, 1.0f, 0.0f},
+            .Position = {0.0f, 1.1f, 3.5f},
+            .Target = {0.0f, 1.1f, 0.25f},
             .Up = {0.0f, 1.0f, 0.0f}
         });
         this->cameraController =
@@ -91,6 +99,7 @@ Window::Window(int width, int height)
 Window::~Window(){
     this->cameraController.reset();
     this->input.Detach();
+    this->renderer.Release();
     this->scene.ClearEntities();
     this->scene.ClearPointLights();
     this->scene.ClearDirectionalLights();
