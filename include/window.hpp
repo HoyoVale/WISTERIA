@@ -5,6 +5,7 @@
 #include "manager.hpp"
 #include "scene.hpp"
 #include "renderer.hpp"
+#include "framebuffer.hpp"
 #include <GLFW/glfw3.h>
 #include <memory>
 
@@ -27,6 +28,14 @@ public:
     const Scene& GetScene() const noexcept { return this->scene; };
     Input& GetInput() noexcept { return this->input; };
     const Input& GetInput() const noexcept { return this->input; };
+    SceneFramebuffer& GetSceneFramebuffer() noexcept
+    {
+        return this->sceneFramebuffer;
+    }
+    const SceneFramebuffer& GetSceneFramebuffer() const noexcept
+    {
+        return this->sceneFramebuffer;
+    }
 
 private:
     void init();
@@ -39,7 +48,9 @@ private:
     ResourceManager resources;
     Scene scene;
     Renderer renderer;
+    SceneFramebuffer sceneFramebuffer;
     std::unique_ptr<FreeCameraControllerBehaviour> cameraController;
+    WindowSize framebufferSize{0, 0};
     float aspect = 1.0f;
     glm::mat4 projection = glm::mat4(1.0f);
 };

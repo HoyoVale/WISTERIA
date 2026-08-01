@@ -58,8 +58,16 @@ Renderer::~Renderer()
     this->Release();
 }
 
-void Renderer::Render(Scene& scene, const glm::mat4& projection)
+void Renderer::Render(
+    Scene& scene,
+    const glm::mat4& projection,
+    SceneFramebuffer& target
+)
 {
+    if (!target.IsValid())
+        throw std::logic_error("Renderer requires a valid scene framebuffer");
+    target.Bind();
+
     const Camera& camera = scene.ActiveCamera();
     const glm::mat4 view = camera.GetView();
     EnvironmentMap* environment = scene.Environment();
@@ -109,15 +117,8 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
     if (transparentCommands.empty())
         return;
 
-    GLint viewport[4]{};
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    const int width = viewport[2];
-    const int height = viewport[3];
-    if (width <= 0 || height <= 0)
-        return;
-
-    this->EnsureOitResources(width, height);
-    this->BeginOitPass(width, height);
+    this->EnsureOitResources(target);
+    this->BeginOitPass(target);
 
     glDepthMask(GL_FALSE);
     glEnable(GL_DEPTH_TEST);
@@ -181,7 +182,36 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
         }
     }
 
-    this->CompositeOit();
+    this->CompositeOit(target);
+}
+
+void Renderer::Present(
+    const SceneFramebuffer& source,
+    int destinationWidth,
+    int destinationHeight
+)
+{
+    if (!source.IsValid())
+        throw std::logic_error("Cannot present an invalid scene framebuffer");
+    if (destinationWidth <= 0 || destinationHeight <= 0)
+        return;
+
+    this->EnsurePresentResources();
+    Framebuffer::BindDefault();
+    glViewport(0, 0, destinationWidth, destinationHeight);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    this->presentProgram->Use();
+    source.BindColorTexture(0);
+    this->presentProgram->UniformTex("sceneColorTexture", 0);
+    glBindVertexArray(this->fullscreenVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    this->presentProgram->unUse();
+    glDepthMask(GL_TRUE);
 }
 
 void Renderer::DrawPart(
@@ -370,59 +400,67 @@ void Renderer::DrawPart(
     material.Unbind();
 }
 
-void Renderer::EnsureOitResources(int width, int height)
+void Renderer::EnsureOitResources(const SceneFramebuffer& target)
 {
+    const int width = target.Width();
+    const int height = target.Height();
     if (width <= 0 || height <= 0)
         throw std::invalid_argument("OIT framebuffer dimensions must be positive");
 
     if (this->oitCompositeProgram == nullptr)
     {
-        GLint maxDrawBuffers = 0;
-        GLint maxColorAttachments = 0;
-        glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
-        glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
-        if (maxDrawBuffers < 2 || maxColorAttachments < 2)
+        try
         {
-            throw std::runtime_error(
-                "Weighted OIT requires at least two framebuffer color attachments"
+            GLint maxDrawBuffers = 0;
+            GLint maxColorAttachments = 0;
+            glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+            glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
+            if (maxDrawBuffers < 2 || maxColorAttachments < 2)
+            {
+                throw std::runtime_error(
+                    "Weighted OIT requires at least two framebuffer color attachments"
+                );
+            }
+
+            const std::filesystem::path shaderDirectory =
+                std::filesystem::current_path() / "assets" / "shaders";
+            auto nextShader = std::make_unique<Shader>(
+                (shaderDirectory / "oit_composite.vert").string(),
+                (shaderDirectory / "oit_composite.frag").string()
             );
+            auto nextProgram = std::make_unique<Program>(
+                nextShader->GetShaderList()
+            );
+
+            this->oitFramebuffer.Create();
+            glGenTextures(1, &this->oitAccumulationTexture);
+            glGenTextures(1, &this->oitRevealageTexture);
+            if (this->oitAccumulationTexture == 0 ||
+                this->oitRevealageTexture == 0 ||
+                target.DepthRenderbuffer() == 0)
+            {
+                throw std::runtime_error("Cannot create Weighted OIT resources");
+            }
+
+            this->independentBlendSupported =
+                GLAD_GL_ARB_draw_buffers_blend != 0 &&
+                glad_glBlendFunciARB != nullptr;
+            this->oitCompositeShader = std::move(nextShader);
+            this->oitCompositeProgram = std::move(nextProgram);
         }
-
-        const std::filesystem::path shaderDirectory =
-            std::filesystem::current_path() / "assets" / "shaders";
-        auto nextShader = std::make_unique<Shader>(
-            (shaderDirectory / "oit_composite.vert").string(),
-            (shaderDirectory / "oit_composite.frag").string()
-        );
-        auto nextProgram = std::make_unique<Program>(
-            nextShader->GetShaderList()
-        );
-
-        glGenFramebuffers(1, &this->oitFramebuffer);
-        glGenTextures(1, &this->oitAccumulationTexture);
-        glGenTextures(1, &this->oitRevealageTexture);
-        glGenRenderbuffers(1, &this->oitDepthRenderbuffer);
-        glGenVertexArrays(1, &this->oitFullscreenVao);
-        if (this->oitFramebuffer == 0 ||
-            this->oitAccumulationTexture == 0 ||
-            this->oitRevealageTexture == 0 ||
-            this->oitDepthRenderbuffer == 0 ||
-            this->oitFullscreenVao == 0)
+        catch (...)
         {
-            throw std::runtime_error("Cannot create Weighted OIT resources");
+            this->Release();
+            throw;
         }
-
-        this->independentBlendSupported =
-            GLAD_GL_ARB_draw_buffers_blend != 0 &&
-            glad_glBlendFunciARB != nullptr;
-        this->oitCompositeShader = std::move(nextShader);
-        this->oitCompositeProgram = std::move(nextProgram);
     }
 
-    if (this->oitWidth == width && this->oitHeight == height)
+    if (this->oitWidth == width &&
+        this->oitHeight == height &&
+        this->oitDepthAttachment == target.DepthRenderbuffer())
         return;
 
-    glBindFramebuffer(GL_FRAMEBUFFER, this->oitFramebuffer);
+    this->oitFramebuffer.Bind();
 
     glBindTexture(GL_TEXTURE_2D, this->oitAccumulationTexture);
     glTexImage2D(
@@ -440,10 +478,8 @@ void Renderer::EnsureOitResources(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(
-        GL_FRAMEBUFFER,
+    this->oitFramebuffer.AttachTexture2D(
         GL_COLOR_ATTACHMENT0,
-        GL_TEXTURE_2D,
         this->oitAccumulationTexture,
         0
     );
@@ -464,26 +500,15 @@ void Renderer::EnsureOitResources(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(
-        GL_FRAMEBUFFER,
+    this->oitFramebuffer.AttachTexture2D(
         GL_COLOR_ATTACHMENT1,
-        GL_TEXTURE_2D,
         this->oitRevealageTexture,
         0
     );
 
-    glBindRenderbuffer(GL_RENDERBUFFER, this->oitDepthRenderbuffer);
-    glRenderbufferStorage(
-        GL_RENDERBUFFER,
-        GL_DEPTH_COMPONENT24,
-        width,
-        height
-    );
-    glFramebufferRenderbuffer(
-        GL_FRAMEBUFFER,
+    this->oitFramebuffer.AttachRenderbuffer(
         GL_DEPTH_ATTACHMENT,
-        GL_RENDERBUFFER,
-        this->oitDepthRenderbuffer
+        target.DepthRenderbuffer()
     );
 
     const GLenum attachments[] = {
@@ -491,35 +516,52 @@ void Renderer::EnsureOitResources(int width, int height)
         GL_COLOR_ATTACHMENT1
     };
     glDrawBuffers(2, attachments);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    try
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        throw std::runtime_error("Weighted OIT framebuffer is incomplete");
+        this->oitFramebuffer.RequireComplete();
+    }
+    catch (...)
+    {
+        target.Bind();
+        throw;
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    target.Bind();
     this->oitWidth = width;
     this->oitHeight = height;
+    this->oitDepthAttachment = target.DepthRenderbuffer();
 }
 
-void Renderer::BeginOitPass(int width, int height)
+void Renderer::EnsurePresentResources()
 {
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, this->oitFramebuffer);
-    glBlitFramebuffer(
-        0,
-        0,
-        width,
-        height,
-        0,
-        0,
-        width,
-        height,
-        GL_DEPTH_BUFFER_BIT,
-        GL_NEAREST
-    );
+    if (this->presentProgram == nullptr)
+    {
+        const std::filesystem::path shaderDirectory =
+            std::filesystem::current_path() / "assets" / "shaders";
+        auto nextShader = std::make_unique<Shader>(
+            (shaderDirectory / "present.vert").string(),
+            (shaderDirectory / "present.frag").string()
+        );
+        auto nextProgram = std::make_unique<Program>(
+            nextShader->GetShaderList()
+        );
+        this->presentShader = std::move(nextShader);
+        this->presentProgram = std::move(nextProgram);
+    }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, this->oitFramebuffer);
+    if (this->fullscreenVao == 0)
+    {
+        glGenVertexArrays(1, &this->fullscreenVao);
+        if (this->fullscreenVao == 0)
+            throw std::runtime_error("Cannot create fullscreen vertex array");
+    }
+}
+
+void Renderer::BeginOitPass(const SceneFramebuffer& target)
+{
+    this->oitFramebuffer.Bind();
+    glViewport(0, 0, target.Width(), target.Height());
+
     const GLenum attachments[] = {
         GL_COLOR_ATTACHMENT0,
         GL_COLOR_ATTACHMENT1
@@ -531,9 +573,10 @@ void Renderer::BeginOitPass(int width, int height)
     glClearBufferfv(GL_COLOR, 1, clearRevealage);
 }
 
-void Renderer::CompositeOit()
+void Renderer::CompositeOit(const SceneFramebuffer& target)
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    this->EnsurePresentResources();
+    target.Bind();
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
@@ -548,7 +591,7 @@ void Renderer::CompositeOit()
     glBindTexture(GL_TEXTURE_2D, this->oitRevealageTexture);
     this->oitCompositeProgram->UniformTex("revealageTexture", 1);
 
-    glBindVertexArray(this->oitFullscreenVao);
+    glBindVertexArray(this->fullscreenVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
     this->oitCompositeProgram->unUse();
@@ -556,26 +599,24 @@ void Renderer::CompositeOit()
 
 void Renderer::Release() noexcept
 {
+    this->presentProgram.reset();
+    this->presentShader.reset();
     this->oitCompositeProgram.reset();
     this->oitCompositeShader.reset();
-    if (this->oitFullscreenVao != 0)
-        glDeleteVertexArrays(1, &this->oitFullscreenVao);
-    if (this->oitDepthRenderbuffer != 0)
-        glDeleteRenderbuffers(1, &this->oitDepthRenderbuffer);
+    if (this->fullscreenVao != 0)
+        glDeleteVertexArrays(1, &this->fullscreenVao);
     if (this->oitAccumulationTexture != 0)
         glDeleteTextures(1, &this->oitAccumulationTexture);
     if (this->oitRevealageTexture != 0)
         glDeleteTextures(1, &this->oitRevealageTexture);
-    if (this->oitFramebuffer != 0)
-        glDeleteFramebuffers(1, &this->oitFramebuffer);
+    this->oitFramebuffer.Release();
 
-    this->oitFullscreenVao = 0;
-    this->oitDepthRenderbuffer = 0;
+    this->fullscreenVao = 0;
     this->oitAccumulationTexture = 0;
     this->oitRevealageTexture = 0;
-    this->oitFramebuffer = 0;
     this->oitWidth = 0;
     this->oitHeight = 0;
+    this->oitDepthAttachment = 0;
     this->independentBlendSupported = false;
 }
 

@@ -247,3 +247,22 @@ Entity
 
 这样能先解决你当前看到的材质问题，同时避免误把材质差异归到骨骼系统中。
 
+
+Scene
+  ↓
+SceneFramebuffer
+  ├─ RGBA16F 场景颜色
+  └─ Depth 深度附件
+       ↓ 共享深度
+OITFramebuffer
+  ├─ Accumulation
+  └─ Revealage
+       ↓
+透明合成回 SceneFramebuffer
+       ↓
+PostProcess
+  ├─ FXAA
+  ├─ Tone Mapping
+  └─ 未来 Bloom
+       ↓
+Window 默认 framebuffer

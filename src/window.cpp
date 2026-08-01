@@ -89,6 +89,8 @@ Window::Window(int width, int height)
     catch (...)
     {
         this->input.Detach();
+        this->renderer.Release();
+        this->sceneFramebuffer.Release();
         if (this->window != nullptr)
             glfwDestroyWindow(this->window);
         glfwTerminate();
@@ -100,6 +102,7 @@ Window::~Window(){
     this->cameraController.reset();
     this->input.Detach();
     this->renderer.Release();
+    this->sceneFramebuffer.Release();
     this->scene.ClearEntities();
     this->scene.ClearPointLights();
     this->scene.ClearDirectionalLights();
@@ -140,13 +143,14 @@ void Window::computeParam()
     int framebufferHeight = 0;
 
     glfwGetFramebufferSize(this->window,&framebufferWidth,&framebufferHeight);
-    glViewport(0, 0, framebufferWidth,framebufferHeight);
+    this->framebufferSize = {framebufferWidth, framebufferHeight};
 
     // A minimized window may temporarily have a zero-sized framebuffer.
     // Keep the last valid projection until the framebuffer becomes drawable.
     if (framebufferWidth <= 0 || framebufferHeight <= 0)
         return;
 
+    this->sceneFramebuffer.Resize(framebufferWidth, framebufferHeight);
     this->aspect = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
     this->projection = this->scene.ActiveCamera().GetProjection(this->aspect);
 }
@@ -168,11 +172,25 @@ bool Window::Run()
         if (this->cameraController != nullptr)
             this->cameraController->Update(this->timer.GetDeltaTime());
 
-        glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         this->computeParam();
+        if (this->framebufferSize.width <= 0 ||
+            this->framebufferSize.height <= 0)
+        {
+            continue;
+        }
+
         this->scene.Update(this->timer.GetDeltaTime());
-        this->renderer.Render(this->scene, this->Projection());
+        this->sceneFramebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
+        this->renderer.Render(
+            this->scene,
+            this->Projection(),
+            this->sceneFramebuffer
+        );
+        this->renderer.Present(
+            this->sceneFramebuffer,
+            this->framebufferSize.width,
+            this->framebufferSize.height
+        );
 
         glfwSwapBuffers(this->GetGLFWwindow());
     }

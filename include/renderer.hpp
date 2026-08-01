@@ -1,5 +1,6 @@
 #pragma once
 
+#include "framebuffer.hpp"
 #include "scene.hpp"
 #include <glad/gl.h>
 #include <memory>
@@ -18,7 +19,16 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    void Render(Scene& scene, const glm::mat4& projection);
+    void Render(
+        Scene& scene,
+        const glm::mat4& projection,
+        SceneFramebuffer& target
+    );
+    void Present(
+        const SceneFramebuffer& source,
+        int destinationWidth,
+        int destinationHeight
+    );
     void Release() noexcept;
 
 private:
@@ -31,9 +41,10 @@ private:
         const Scene& scene,
         int oitPass
     );
-    void EnsureOitResources(int width, int height);
-    void BeginOitPass(int width, int height);
-    void CompositeOit();
+    void EnsureOitResources(const SceneFramebuffer& target);
+    void EnsurePresentResources();
+    void BeginOitPass(const SceneFramebuffer& target);
+    void CompositeOit(const SceneFramebuffer& target);
     void UploadTransforms(
         Program& program,
         const ShaderInterface& shaderInterface,
@@ -68,14 +79,16 @@ private:
     );
 
 private:
-    GLuint oitFramebuffer = 0;
+    Framebuffer oitFramebuffer;
     GLuint oitAccumulationTexture = 0;
     GLuint oitRevealageTexture = 0;
-    GLuint oitDepthRenderbuffer = 0;
-    GLuint oitFullscreenVao = 0;
+    GLuint fullscreenVao = 0;
     int oitWidth = 0;
     int oitHeight = 0;
+    GLuint oitDepthAttachment = 0;
     bool independentBlendSupported = false;
     std::unique_ptr<Shader> oitCompositeShader;
     std::unique_ptr<Program> oitCompositeProgram;
+    std::unique_ptr<Shader> presentShader;
+    std::unique_ptr<Program> presentProgram;
 };

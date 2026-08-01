@@ -79,6 +79,7 @@ set(WISTERIA_CORE_SOURCES
     src/entity.cpp
     src/scene.cpp
     src/renderer.cpp
+    src/framebuffer.cpp
     src/environment.cpp
     src/manager.cpp
     src/light.cpp
