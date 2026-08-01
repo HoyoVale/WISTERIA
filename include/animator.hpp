@@ -2,6 +2,8 @@
 
 #include "animation.hpp"
 #include "animation_state_machine.hpp"
+#include "root_motion.hpp"
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -33,6 +35,13 @@ public:
     float Speed() const noexcept;
     void SetSpeed(float speed);
 
+    void SetRootMotionBone(BoneIndex boneIndex);
+    void ClearRootMotionBone();
+    std::optional<BoneIndex> RootMotionBone() const noexcept;
+    void SetRootMotionEnabled(bool enabled);
+    bool IsRootMotionEnabled() const noexcept;
+    RootMotionDelta ConsumeRootMotion() noexcept;
+
     const AnimationClip* CurrentClip() const noexcept;
     bool IsTransitioning() const noexcept;
     float TransitionProgress() const noexcept;
@@ -62,22 +71,48 @@ private:
         bool sourceFrozen = false;
     };
 
+    struct PlaybackAdvance
+    {
+        float previousTime = 0.0f;
+        float currentTime = 0.0f;
+        std::uint64_t loopCount = 0;
+    };
+
     void ValidateClip(const AnimationClip& clip) const;
+    PlaybackAdvance Advance(
+        const AnimationClip& clip,
+        float deltaTime,
+        float playbackSpeed,
+        bool playbackLooping,
+        float& time,
+        bool& remainsPlaying
+    ) const;
+    RootMotionDelta ExtractRootMotion(
+        const AnimationClip& clip,
+        const PlaybackAdvance& advance
+    ) const;
+    void AccumulateRootMotion(const RootMotionDelta& delta);
+    void ApplyEvaluatedPose(const PoseBuffer& evaluatedPose);
+    void ResetRootMotion() noexcept;
 
     Pose* pose = nullptr;
     const AnimationClip* currentClip = nullptr;
     PoseBuffer sampledPose;
     PoseBuffer transitionSourcePose;
     PoseBuffer blendedPose;
+    PoseBuffer outputPose;
     AnimationStateMachine stateMachine;
     std::optional<TransitionState> transition;
     std::unordered_map<std::string, float> floatParameters;
     std::unordered_map<std::string, bool> boolParameters;
     std::unordered_set<std::string> triggerParameters;
     std::unordered_set<std::string> activeTriggers;
+    std::optional<BoneIndex> rootMotionBone;
+    RootMotionDelta pendingRootMotion;
     float currentTime = 0.0f;
     float speed = 1.0f;
     bool playing = false;
     bool paused = false;
     bool looping = true;
+    bool rootMotionEnabled = false;
 };

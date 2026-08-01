@@ -260,7 +260,13 @@ void Entity::Update(float deltaTime)
     if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
         throw std::invalid_argument("Entity delta time must be finite and non-negative");
     if (this->animator != nullptr)
+    {
         this->animator->Update(deltaTime);
+        const RootMotionDelta rootMotion =
+            this->animator->ConsumeRootMotion();
+        if (!rootMotion.IsIdentity())
+            this->transform.ApplyLocalMotion(rootMotion);
+    }
     this->UpdateBehaviours(deltaTime);
 }
 

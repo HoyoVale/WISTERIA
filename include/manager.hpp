@@ -5,6 +5,7 @@
 #include "model_asset.hpp"
 #include "texture.hpp"
 #include "environment.hpp"
+#include "vmd_importer.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -55,6 +56,11 @@ public:
     ModelAsset& LoadModel(
         const std::string& name,
         const std::filesystem::path& filePath
+    );
+    AnimationClip& LoadVmdAnimation(
+        ModelAsset& model,
+        const std::filesystem::path& filePath,
+        const VmdImportOptions& options = {}
     );
     EnvironmentMap& CreateEnvironment(
         const std::string& name,

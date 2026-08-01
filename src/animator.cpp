@@ -3,6 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <limits>
 #include <stdexcept>
 
 namespace
@@ -14,32 +18,60 @@ std::string ParameterName(std::string_view name)
     return std::string(name);
 }
 
-bool AdvancePlaybackTime(
-    const AnimationClip& clip,
-    float deltaTime,
-    float speed,
-    bool looping,
-    float& time
+RootMotionDelta ComposeRootMotion(
+    const RootMotionDelta& first,
+    const RootMotionDelta& second
 )
 {
-    const double nextTime = static_cast<double>(time) +
-        static_cast<double>(deltaTime) * static_cast<double>(speed);
-    if (!std::isfinite(nextTime))
-        throw std::overflow_error("Animator playback time overflowed");
+    return RootMotionDelta{
+        first.translation + first.rotation * second.translation,
+        glm::normalize(first.rotation * second.rotation)
+    };
+}
 
-    const double duration = static_cast<double>(clip.Duration());
-    if (looping)
+RootMotionDelta BlendRootMotion(
+    const RootMotionDelta& source,
+    const RootMotionDelta& destination,
+    float weight
+)
+{
+    glm::quat destinationRotation = destination.rotation;
+    if (glm::dot(source.rotation, destinationRotation) < 0.0f)
+        destinationRotation = -destinationRotation;
+    return RootMotionDelta{
+        glm::mix(source.translation, destination.translation, weight),
+        glm::normalize(glm::slerp(
+            source.rotation,
+            destinationRotation,
+            weight
+        ))
+    };
+}
+
+glm::mat4 MotionMatrix(const BoneTransform& transform)
+{
+    return glm::translate(glm::mat4(1.0f), transform.translation) *
+        glm::mat4_cast(glm::normalize(transform.rotation));
+}
+
+glm::mat4 MatrixPower(glm::mat4 base, std::uint64_t exponent)
+{
+    glm::mat4 result(1.0f);
+    while (exponent > 0U)
     {
-        time = static_cast<float>(std::fmod(nextTime, duration));
-        return true;
+        if ((exponent & 1U) != 0U)
+            result *= base;
+        exponent >>= 1U;
+        if (exponent > 0U)
+            base *= base;
     }
-    if (nextTime >= duration)
-    {
-        time = clip.Duration();
-        return false;
-    }
-    time = static_cast<float>(nextTime);
-    return true;
+    return result;
+}
+
+RootMotionDelta RootMotionFromMatrix(const glm::mat4& matrix)
+{
+    const BoneTransform transform = BoneTransform::FromMatrix(matrix);
+    return RootMotionDelta{transform.translation, transform.rotation};
 }
 }
 
@@ -47,7 +79,8 @@ Animator::Animator(Pose& pose)
     : pose(&pose),
       sampledPose(pose.GetSkeleton()),
       transitionSourcePose(pose.GetSkeleton()),
-      blendedPose(pose.GetSkeleton())
+      blendedPose(pose.GetSkeleton()),
+      outputPose(pose.GetSkeleton())
 {
 }
 
@@ -60,6 +93,7 @@ void Animator::Play(const AnimationClip& clip, bool restart)
     this->currentClip = &clip;
     this->playing = true;
     this->paused = false;
+    this->ResetRootMotion();
     this->Evaluate();
 }
 
@@ -103,6 +137,7 @@ void Animator::CrossFade(
     this->currentTime = 0.0f;
     this->playing = true;
     this->paused = false;
+    this->ResetRootMotion();
     this->Evaluate();
 }
 
@@ -113,6 +148,7 @@ void Animator::Stop(bool resetPose)
     this->currentTime = 0.0f;
     this->playing = false;
     this->paused = false;
+    this->ResetRootMotion();
     if (resetPose)
         this->pose->ResetToBindPose();
 }
@@ -160,42 +196,75 @@ void Animator::Update(float deltaTime)
     if (this->transition.has_value())
     {
         TransitionState& activeTransition = *this->transition;
+        const float previousWeight = std::clamp(
+            activeTransition.elapsed / activeTransition.duration,
+            0.0f,
+            1.0f
+        );
+        PlaybackAdvance sourceAdvance;
+        bool sourcePlaying = true;
         if (!activeTransition.sourceFrozen)
         {
-            AdvancePlaybackTime(
+            sourceAdvance = this->Advance(
                 *activeTransition.sourceClip,
                 deltaTime,
                 activeTransition.sourceSpeed,
                 activeTransition.sourceLooping,
-                activeTransition.sourceTime
+                activeTransition.sourceTime,
+                sourcePlaying
             );
         }
-        this->playing = AdvancePlaybackTime(
+        const PlaybackAdvance destinationAdvance = this->Advance(
             *this->currentClip,
             deltaTime,
             this->speed,
             this->looping,
-            this->currentTime
+            this->currentTime,
+            this->playing
         );
         activeTransition.elapsed = std::min(
             activeTransition.duration,
             activeTransition.elapsed + deltaTime
         );
+        const float currentWeight = std::clamp(
+            activeTransition.elapsed / activeTransition.duration,
+            0.0f,
+            1.0f
+        );
+        const RootMotionDelta sourceMotion = activeTransition.sourceFrozen
+            ? RootMotionDelta{}
+            : this->ExtractRootMotion(
+                *activeTransition.sourceClip,
+                sourceAdvance
+            );
+        const RootMotionDelta destinationMotion = this->ExtractRootMotion(
+            *this->currentClip,
+            destinationAdvance
+        );
+        this->AccumulateRootMotion(BlendRootMotion(
+            sourceMotion,
+            destinationMotion,
+            (previousWeight + currentWeight) * 0.5f
+        ));
         this->Evaluate();
         if (activeTransition.elapsed >= activeTransition.duration)
         {
             this->transition.reset();
-            this->sampledPose.ApplyTo(*this->pose);
+            this->ApplyEvaluatedPose(this->sampledPose);
         }
         return;
     }
 
-    this->playing = AdvancePlaybackTime(
+    const PlaybackAdvance advance = this->Advance(
         *this->currentClip,
         deltaTime,
         this->speed,
         this->looping,
-        this->currentTime
+        this->currentTime,
+        this->playing
+    );
+    this->AccumulateRootMotion(
+        this->ExtractRootMotion(*this->currentClip, advance)
     );
     this->Evaluate();
 }
@@ -208,7 +277,7 @@ void Animator::Evaluate()
     this->currentClip->Sample(this->currentTime, this->sampledPose);
     if (!this->transition.has_value())
     {
-        this->sampledPose.ApplyTo(*this->pose);
+        this->ApplyEvaluatedPose(this->sampledPose);
         return;
     }
 
@@ -231,7 +300,7 @@ void Animator::Evaluate()
         weight,
         this->blendedPose
     );
-    this->blendedPose.ApplyTo(*this->pose);
+    this->ApplyEvaluatedPose(this->blendedPose);
 }
 
 bool Animator::IsPlaying() const noexcept
@@ -270,6 +339,7 @@ void Animator::SetTime(float time)
         0.0f,
         this->currentClip->Duration()
     );
+    this->ResetRootMotion();
     this->Evaluate();
 }
 
@@ -287,6 +357,54 @@ void Animator::SetSpeed(float speed)
         );
     }
     this->speed = speed;
+}
+
+void Animator::SetRootMotionBone(BoneIndex boneIndex)
+{
+    if (static_cast<std::size_t>(boneIndex) >= this->pose->BoneCount())
+        throw std::out_of_range("Root motion bone index is out of range");
+    this->rootMotionBone = boneIndex;
+    this->ResetRootMotion();
+    if (this->rootMotionEnabled)
+        this->Evaluate();
+}
+
+void Animator::ClearRootMotionBone()
+{
+    this->rootMotionEnabled = false;
+    this->rootMotionBone.reset();
+    this->ResetRootMotion();
+    this->Evaluate();
+}
+
+std::optional<BoneIndex> Animator::RootMotionBone() const noexcept
+{
+    return this->rootMotionBone;
+}
+
+void Animator::SetRootMotionEnabled(bool enabled)
+{
+    if (enabled && !this->rootMotionBone.has_value())
+    {
+        throw std::logic_error(
+            "Animator requires a root motion bone before enabling root motion"
+        );
+    }
+    this->rootMotionEnabled = enabled;
+    this->ResetRootMotion();
+    this->Evaluate();
+}
+
+bool Animator::IsRootMotionEnabled() const noexcept
+{
+    return this->rootMotionEnabled;
+}
+
+RootMotionDelta Animator::ConsumeRootMotion() noexcept
+{
+    const RootMotionDelta result = this->pendingRootMotion;
+    this->pendingRootMotion = {};
+    return result;
 }
 
 const AnimationClip* Animator::CurrentClip() const noexcept
@@ -385,6 +503,136 @@ Pose& Animator::GetPose() noexcept
 const Pose& Animator::GetPose() const noexcept
 {
     return *this->pose;
+}
+
+Animator::PlaybackAdvance Animator::Advance(
+    const AnimationClip& clip,
+    float deltaTime,
+    float playbackSpeed,
+    bool playbackLooping,
+    float& time,
+    bool& remainsPlaying
+) const
+{
+    PlaybackAdvance result;
+    result.previousTime = time;
+    const double nextTime = static_cast<double>(time) +
+        static_cast<double>(deltaTime) *
+        static_cast<double>(playbackSpeed);
+    if (!std::isfinite(nextTime))
+        throw std::overflow_error("Animator playback time overflowed");
+
+    const double duration = static_cast<double>(clip.Duration());
+    if (playbackLooping)
+    {
+        const double loopCount = std::floor(nextTime / duration);
+        if (loopCount > static_cast<double>(
+                std::numeric_limits<std::uint64_t>::max()
+            ))
+        {
+            throw std::overflow_error("Animator loop count overflowed");
+        }
+        result.loopCount = static_cast<std::uint64_t>(loopCount);
+        time = static_cast<float>(std::fmod(nextTime, duration));
+        remainsPlaying = true;
+    }
+    else if (nextTime >= duration)
+    {
+        time = clip.Duration();
+        remainsPlaying = false;
+    }
+    else
+    {
+        time = static_cast<float>(nextTime);
+        remainsPlaying = true;
+    }
+    result.currentTime = time;
+    return result;
+}
+
+RootMotionDelta Animator::ExtractRootMotion(
+    const AnimationClip& clip,
+    const PlaybackAdvance& advance
+) const
+{
+    if (!this->rootMotionEnabled || !this->rootMotionBone.has_value())
+        return {};
+
+    const BoneIndex boneIndex = *this->rootMotionBone;
+    const AnimationTrack* track = clip.FindTrack(boneIndex);
+    if (track == nullptr)
+        return {};
+
+    const BoneTransform bindTransform = BoneTransform::FromMatrix(
+        this->pose->GetSkeleton().BoneAt(boneIndex).bindLocalMatrix
+    );
+    const glm::mat4 inverseBind = glm::inverse(bindTransform.Matrix());
+    const auto sampleMotion = [track, &bindTransform, &inverseBind](float time)
+    {
+        const BoneTransform sampled = track->Sample(time, bindTransform);
+        const BoneTransform relative = BoneTransform::FromMatrix(
+            inverseBind * sampled.Matrix()
+        );
+        return MotionMatrix(relative);
+    };
+
+    const glm::mat4 previous = sampleMotion(advance.previousTime);
+    const glm::mat4 current = sampleMotion(advance.currentTime);
+    glm::mat4 delta(1.0f);
+    if (advance.loopCount == 0U)
+    {
+        delta = glm::inverse(previous) * current;
+    }
+    else
+    {
+        const glm::mat4 start = sampleMotion(0.0f);
+        const glm::mat4 end = sampleMotion(clip.Duration());
+        delta = glm::inverse(previous) * end;
+        if (advance.loopCount > 1U)
+        {
+            delta *= MatrixPower(
+                glm::inverse(start) * end,
+                advance.loopCount - 1U
+            );
+        }
+        delta *= glm::inverse(start) * current;
+    }
+    return RootMotionFromMatrix(delta);
+}
+
+void Animator::AccumulateRootMotion(const RootMotionDelta& delta)
+{
+    if (!this->rootMotionEnabled)
+        return;
+    this->pendingRootMotion = ComposeRootMotion(
+        this->pendingRootMotion,
+        delta
+    );
+}
+
+void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
+{
+    if (!this->rootMotionEnabled || !this->rootMotionBone.has_value())
+    {
+        evaluatedPose.ApplyTo(*this->pose);
+        return;
+    }
+
+    this->outputPose = evaluatedPose;
+    const BoneIndex boneIndex = *this->rootMotionBone;
+    BoneTransform transform = this->outputPose.TransformAt(boneIndex);
+    const BoneTransform bindTransform = BoneTransform::FromMatrix(
+        this->pose->GetSkeleton().BoneAt(boneIndex).bindLocalMatrix
+    );
+    transform.translation = bindTransform.translation;
+    transform.rotation = bindTransform.rotation;
+    this->outputPose.SetTransform(boneIndex, transform);
+    this->outputPose.ApplyTo(*this->pose);
+}
+
+void Animator::ResetRootMotion() noexcept
+{
+    this->pendingRootMotion = {};
 }
 
 void Animator::ValidateClip(const AnimationClip& clip) const

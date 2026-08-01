@@ -466,6 +466,26 @@ ModelAsset& ResourceManager::LoadModel(
     }
 }
 
+AnimationClip& ResourceManager::LoadVmdAnimation(
+    ModelAsset& model,
+    const std::filesystem::path& filePath,
+    const VmdImportOptions& options
+)
+{
+    if (!model.HasSkeleton())
+    {
+        throw std::invalid_argument(
+            "Cannot load VMD animation into a model without a Skeleton"
+        );
+    }
+    ImportedVmdAnimationData imported = VmdImporter().Import(
+        filePath,
+        model.GetSkeleton(),
+        options
+    );
+    return model.AddAnimationClip(std::move(imported.clip));
+}
+
 EnvironmentMap& ResourceManager::CreateEnvironment(
     const std::string& name,
     const EnvironmentMapData& data

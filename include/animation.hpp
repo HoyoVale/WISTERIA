@@ -1,22 +1,42 @@
 #pragma once
 
 #include "pose_buffer.hpp"
+#include <array>
 #include <cstddef>
 #include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+enum class AnimationInterpolation
+{
+    Linear,
+    CubicBezier
+};
+
+// Maps normalized time to normalized channel progress. VMD stores one curve
+// per translation axis and one for rotation on the destination keyframe.
+struct KeyframeInterpolation
+{
+    AnimationInterpolation mode = AnimationInterpolation::Linear;
+    glm::vec2 controlPoint1{0.0f, 0.0f};
+    glm::vec2 controlPoint2{1.0f, 1.0f};
+
+    float Evaluate(float normalizedTime) const noexcept;
+};
+
 struct VectorKeyframe
 {
     float time = 0.0f;
     glm::vec3 value{0.0f};
+    std::array<KeyframeInterpolation, 3> interpolation{};
 };
 
 struct QuaternionKeyframe
 {
     float time = 0.0f;
     glm::quat value{1.0f, 0.0f, 0.0f, 0.0f};
+    KeyframeInterpolation interpolation{};
 };
 
 // A single bone's translation, rotation and scale channels. Keyframe times

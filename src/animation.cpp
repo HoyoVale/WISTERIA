@@ -20,6 +20,32 @@ bool IsFinite(const glm::quat& value) noexcept
         std::isfinite(value.y) && std::isfinite(value.z);
 }
 
+void ValidateInterpolation(const KeyframeInterpolation& interpolation)
+{
+    if (interpolation.mode != AnimationInterpolation::Linear &&
+        interpolation.mode != AnimationInterpolation::CubicBezier)
+    {
+        throw std::invalid_argument("Animation interpolation mode is invalid");
+    }
+    if (interpolation.mode == AnimationInterpolation::Linear)
+        return;
+
+    const glm::vec2 first = interpolation.controlPoint1;
+    const glm::vec2 second = interpolation.controlPoint2;
+    const auto validControlPoint = [](const glm::vec2& point)
+    {
+        return std::isfinite(point.x) && std::isfinite(point.y) &&
+            point.x >= 0.0f && point.x <= 1.0f &&
+            point.y >= 0.0f && point.y <= 1.0f;
+    };
+    if (!validControlPoint(first) || !validControlPoint(second))
+    {
+        throw std::invalid_argument(
+            "Animation Bezier control points must be finite and normalized"
+        );
+    }
+}
+
 void ValidateVectorKeys(
     const std::vector<VectorKeyframe>& keys,
     const char* channelName
@@ -43,6 +69,8 @@ void ValidateVectorKeys(
                 " key values must be finite"
             );
         }
+        for (const KeyframeInterpolation& interpolation : key.interpolation)
+            ValidateInterpolation(interpolation);
         previousTime = key.time;
     }
 }
@@ -70,6 +98,7 @@ void ValidateAndNormalizeQuaternionKeys(
             );
         }
         key.value /= length;
+        ValidateInterpolation(key.interpolation);
         previousTime = key.time;
     }
 }
@@ -98,9 +127,12 @@ glm::vec3 SampleVectorKeys(
     );
     const VectorKeyframe& next = *upper;
     const VectorKeyframe& previous = *(upper - 1);
-    const float factor =
+    const float normalizedTime =
         (time - previous.time) / (next.time - previous.time);
-    return glm::mix(previous.value, next.value, factor);
+    glm::vec3 factor(0.0f);
+    for (glm::length_t axis = 0; axis < 3; ++axis)
+        factor[axis] = next.interpolation[axis].Evaluate(normalizedTime);
+    return previous.value + (next.value - previous.value) * factor;
 }
 
 glm::quat SampleQuaternionKeys(
@@ -127,10 +159,53 @@ glm::quat SampleQuaternionKeys(
     );
     const QuaternionKeyframe& next = *upper;
     const QuaternionKeyframe& previous = *(upper - 1);
-    const float factor =
+    const float normalizedTime =
         (time - previous.time) / (next.time - previous.time);
+    const float factor = next.interpolation.Evaluate(normalizedTime);
     return glm::normalize(glm::slerp(previous.value, next.value, factor));
 }
+}
+
+float KeyframeInterpolation::Evaluate(float normalizedTime) const noexcept
+{
+    const float input = std::clamp(normalizedTime, 0.0f, 1.0f);
+    if (this->mode == AnimationInterpolation::Linear)
+        return input;
+
+    const auto component = [](float first, float second, float parameter)
+    {
+        const float inverse = 1.0f - parameter;
+        return 3.0f * inverse * inverse * parameter * first +
+            3.0f * inverse * parameter * parameter * second +
+            parameter * parameter * parameter;
+    };
+
+    // The curve is parameterized by X, but animation sampling starts with X
+    // (normalized time). Find its Bezier parameter using bounded bisection.
+    float lower = 0.0f;
+    float upper = 1.0f;
+    for (int iteration = 0; iteration < 16; ++iteration)
+    {
+        const float middle = (lower + upper) * 0.5f;
+        if (component(
+                this->controlPoint1.x,
+                this->controlPoint2.x,
+                middle
+            ) < input)
+        {
+            lower = middle;
+        }
+        else
+        {
+            upper = middle;
+        }
+    }
+    const float parameter = (lower + upper) * 0.5f;
+    return component(
+        this->controlPoint1.y,
+        this->controlPoint2.y,
+        parameter
+    );
 }
 
 AnimationTrack::AnimationTrack(

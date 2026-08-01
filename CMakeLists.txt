@@ -69,6 +69,7 @@ set(WISTERIA_CORE_SOURCES
     src/timer.cpp
     src/model.cpp
     src/transform.cpp
+    src/root_motion.cpp
     src/behaviour.cpp
     src/render_part.cpp
     src/model_asset.cpp
@@ -78,6 +79,7 @@ set(WISTERIA_CORE_SOURCES
     src/animation.cpp
     src/animation_state_machine.cpp
     src/animator.cpp
+    src/vmd_importer.cpp
     src/importer.cpp
     src/entity.cpp
     src/scene.cpp

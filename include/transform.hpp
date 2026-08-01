@@ -1,5 +1,6 @@
 #pragma once
 
+#include "root_motion.hpp"
 #include <glm/glm.hpp>
 
 class Transform {
@@ -23,6 +24,7 @@ public:
     void Translate(const glm::vec3& offset);
     void Rotate(const glm::vec3& offsetDegrees);
     void ScaleBy(const glm::vec3& factor);
+    void ApplyLocalMotion(const RootMotionDelta& motion);
 
 private:
     glm::vec3 position{0.0f};

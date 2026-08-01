@@ -10,14 +10,18 @@
 #include "pose.hpp"
 #include "renderer.hpp"
 #include "scene.hpp"
+#include "vmd_importer.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 namespace
 {
@@ -484,6 +488,186 @@ void TestAnimationSamplingAndAnimator()
     );
 }
 
+void TestRootMotion()
+{
+    Skeleton skeleton({Bone{"root"}});
+    AnimationClip translationClip(
+        "translation",
+        1.0f,
+        {AnimationTrack(
+            0U,
+            {
+                VectorKeyframe{0.0f, glm::vec3(0.0f)},
+                VectorKeyframe{1.0f, glm::vec3(2.0f, 0.0f, 0.0f)}
+            }
+        )}
+    );
+
+    Entity entity;
+    entity.SetSkeleton(skeleton);
+    Animator& animator = entity.GetAnimator();
+    animator.Play(translationClip);
+    animator.SetRootMotionBone(0U);
+    animator.SetRootMotionEnabled(true);
+    Require(
+        animator.IsRootMotionEnabled() &&
+        animator.RootMotionBone() == std::optional<BoneIndex>(0U),
+        "Animator did not retain its root motion configuration"
+    );
+
+    entity.Update(0.5f);
+    Require(
+        NearlyEqual(entity.GetTransform().Position().x, 1.0f),
+        "Entity did not apply Animator root translation"
+    );
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(0U), glm::mat4(1.0f)),
+        "Extracted root motion remained in the skeletal Pose"
+    );
+
+    // Crossing the loop boundary must continue forward instead of subtracting
+    // the end position when playback wraps to the beginning.
+    entity.Update(0.75f);
+    Require(
+        NearlyEqual(entity.GetTransform().Position().x, 2.5f) &&
+        NearlyEqual(animator.Time(), 0.25f),
+        "Looping root motion moved backward at the clip boundary"
+    );
+    animator.Pause();
+    entity.Update(1.0f);
+    Require(
+        NearlyEqual(entity.GetTransform().Position().x, 2.5f),
+        "Paused Animator produced root motion"
+    );
+
+    Entity singleStepEntity;
+    singleStepEntity.SetSkeleton(skeleton);
+    Animator& singleStepAnimator = singleStepEntity.GetAnimator();
+    singleStepAnimator.Play(translationClip);
+    singleStepAnimator.SetRootMotionBone(0U);
+    singleStepAnimator.SetRootMotionEnabled(true);
+    singleStepEntity.Update(1.25f);
+    Require(
+        NearlyEqual(singleStepEntity.GetTransform().Position().x, 2.5f),
+        "Root motion changed with update subdivision"
+    );
+
+    AnimationClip fasterTranslationClip(
+        "fasterTranslation",
+        1.0f,
+        {AnimationTrack(
+            0U,
+            {
+                VectorKeyframe{0.0f, glm::vec3(0.0f)},
+                VectorKeyframe{1.0f, glm::vec3(4.0f, 0.0f, 0.0f)}
+            }
+        )}
+    );
+    Entity fadingEntity;
+    fadingEntity.SetSkeleton(skeleton);
+    Animator& fadingAnimator = fadingEntity.GetAnimator();
+    fadingAnimator.Play(translationClip);
+    fadingAnimator.SetRootMotionBone(0U);
+    fadingAnimator.SetRootMotionEnabled(true);
+    fadingAnimator.CrossFade(fasterTranslationClip, 1.0f);
+    fadingEntity.Update(1.0f);
+    Require(
+        NearlyEqual(fadingEntity.GetTransform().Position().x, 3.0f) &&
+        !fadingAnimator.IsTransitioning() &&
+        NearlyEqual(fadingEntity.GetPose().LocalMatrix(0U), glm::mat4(1.0f)),
+        "CrossFade did not blend and remove source/destination root motion"
+    );
+
+    Pose standalonePose(skeleton);
+    Animator standaloneAnimator(standalonePose);
+    standaloneAnimator.Play(translationClip);
+    standaloneAnimator.SetRootMotionBone(0U);
+    standaloneAnimator.SetRootMotionEnabled(true);
+    standaloneAnimator.Update(0.25f);
+    const RootMotionDelta consumed = standaloneAnimator.ConsumeRootMotion();
+    Require(
+        NearlyEqual(consumed.translation.x, 0.5f) &&
+        standaloneAnimator.ConsumeRootMotion().IsIdentity(),
+        "ConsumeRootMotion did not consume exactly one pending delta"
+    );
+
+    Entity disabledEntity;
+    disabledEntity.SetSkeleton(skeleton);
+    disabledEntity.GetAnimator().Play(translationClip);
+    disabledEntity.Update(0.5f);
+    Require(
+        NearlyEqual(disabledEntity.GetTransform().Position().x, 0.0f) &&
+        NearlyEqual(disabledEntity.GetPose().LocalMatrix(0U)[3].x, 1.0f),
+        "Disabled root motion changed normal skeletal animation"
+    );
+
+    AnimationClip rotationClip(
+        "rotation",
+        1.0f,
+        {AnimationTrack(
+            0U,
+            {},
+            {
+                QuaternionKeyframe{
+                    0.0f,
+                    glm::quat(1.0f, 0.0f, 0.0f, 0.0f)
+                },
+                QuaternionKeyframe{
+                    1.0f,
+                    glm::angleAxis(
+                        glm::radians(90.0f),
+                        glm::vec3(0.0f, 1.0f, 0.0f)
+                    )
+                }
+            }
+        )}
+    );
+    Entity rotatingEntity;
+    rotatingEntity.SetSkeleton(skeleton);
+    Animator& rotatingAnimator = rotatingEntity.GetAnimator();
+    rotatingAnimator.Play(rotationClip);
+    rotatingAnimator.SetLooping(false);
+    rotatingAnimator.SetRootMotionBone(0U);
+    rotatingAnimator.SetRootMotionEnabled(true);
+    rotatingEntity.Update(1.0f);
+    Require(
+        NearlyEqual(rotatingEntity.GetTransform().Rotation().y, 90.0f) &&
+        NearlyEqual(rotatingEntity.GetPose().LocalMatrix(0U), glm::mat4(1.0f)),
+        "Root motion rotation was not transferred to Entity Transform"
+    );
+
+    Transform scaledTransform(
+        glm::vec3(0.0f),
+        glm::vec3(0.0f, 90.0f, 0.0f),
+        glm::vec3(2.0f)
+    );
+    scaledTransform.ApplyLocalMotion(RootMotionDelta{
+        glm::vec3(1.0f, 0.0f, 0.0f),
+        glm::quat(1.0f, 0.0f, 0.0f, 0.0f)
+    });
+    Require(
+        NearlyEqual(scaledTransform.Position().x, 0.0f) &&
+        NearlyEqual(scaledTransform.Position().z, -2.0f),
+        "Transform did not apply root translation in scaled local space"
+    );
+
+    bool missingBoneRejected = false;
+    try
+    {
+        Pose invalidPose(skeleton);
+        Animator invalidAnimator(invalidPose);
+        invalidAnimator.SetRootMotionEnabled(true);
+    }
+    catch (const std::logic_error&)
+    {
+        missingBoneRejected = true;
+    }
+    Require(
+        missingBoneRejected,
+        "Animator enabled root motion without a configured bone"
+    );
+}
+
 void TestAnimatedModelImporter()
 {
     const std::filesystem::path modelPath =
@@ -525,6 +709,199 @@ void TestAnimatedModelImporter()
     Require(
         NearlyEqual(entity.GetPose().LocalMatrix(*rootBone)[3].x, 0.5f),
         "Imported animation did not drive the instantiated Pose"
+    );
+}
+
+void TestVmdImporter()
+{
+    std::vector<std::uint8_t> bytes;
+    const auto appendValue = [&bytes]<typename T>(const T& value)
+    {
+        static_assert(std::is_trivially_copyable_v<T>);
+        const std::size_t begin = bytes.size();
+        bytes.resize(begin + sizeof(T));
+        std::memcpy(bytes.data() + begin, &value, sizeof(T));
+    };
+    const auto appendFixed = [&bytes](std::string_view value, std::size_t size)
+    {
+        const std::size_t begin = bytes.size();
+        bytes.resize(begin + size, 0U);
+        const std::size_t copySize = std::min(value.size(), size);
+        std::memcpy(bytes.data() + begin, value.data(), copySize);
+    };
+    const auto linearInterpolation = []
+    {
+        std::array<std::uint8_t, 64> result{};
+        for (std::size_t offset : {0U, 16U, 32U, 48U})
+        {
+            result[offset] = 20U;
+            result[offset + 4U] = 20U;
+            result[offset + 8U] = 107U;
+            result[offset + 12U] = 107U;
+        }
+        return result;
+    };
+    const auto appendBoneFrame = [
+        &appendValue,
+        &appendFixed,
+        &bytes
+    ](
+        std::string_view shiftJisName,
+        std::uint32_t frame,
+        const glm::vec3& translation,
+        const glm::quat& rotation,
+        const std::array<std::uint8_t, 64>& interpolation
+    )
+    {
+        appendFixed(shiftJisName, 15U);
+        appendValue(frame);
+        appendValue(translation.x);
+        appendValue(translation.y);
+        appendValue(translation.z);
+        appendValue(rotation.x);
+        appendValue(rotation.y);
+        appendValue(rotation.z);
+        appendValue(rotation.w);
+        bytes.insert(
+            bytes.end(),
+            interpolation.begin(),
+            interpolation.end()
+        );
+    };
+
+    appendFixed("Vocaloid Motion Data 0002", 30U);
+    appendFixed("testModel", 20U);
+    appendValue(std::uint32_t{3U});
+
+    const std::string headShiftJis("\x93\xAA", 2U);
+    const std::string unknownShiftJis("\x96\xA2\x92\x6D", 4U);
+    const glm::quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+    appendBoneFrame(
+        headShiftJis,
+        0U,
+        glm::vec3(0.0f),
+        identity,
+        linearInterpolation()
+    );
+
+    std::array<std::uint8_t, 64> curved = linearInterpolation();
+    curved[0U] = 64U;
+    curved[4U] = 0U;
+    curved[8U] = 127U;
+    curved[12U] = 64U;
+    appendBoneFrame(
+        headShiftJis,
+        30U,
+        glm::vec3(2.0f, 0.0f, 4.0f),
+        glm::angleAxis(
+            glm::radians(90.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        ),
+        curved
+    );
+    appendBoneFrame(
+        unknownShiftJis,
+        60U,
+        glm::vec3(8.0f),
+        identity,
+        linearInterpolation()
+    );
+
+    const glm::mat4 headBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 2.0f, 3.0f)
+    );
+    Skeleton skeleton({Bone{
+        "\xE9\xA0\xAD",
+        InvalidBoneIndex,
+        headBind,
+        glm::inverse(headBind)
+    }});
+    const ImportedVmdAnimationData imported = VmdImporter().Import(
+        bytes,
+        skeleton,
+        "memoryMotion",
+        VmdImportOptions{.clipName = "walk"}
+    );
+
+    Require(imported.modelName == "testModel", "VMD model name was not decoded");
+    Require(
+        imported.sourceBoneTrackCount == 2U &&
+        imported.unmatchedBoneNames.size() == 1U,
+        "VMD unmatched-bone reporting is incorrect"
+    );
+    Require(
+        imported.clip.Name() == "walk" &&
+        NearlyEqual(imported.clip.Duration(), 1.0f) &&
+        imported.clip.TrackCount() == 1U,
+        "VMD clip metadata is incorrect"
+    );
+
+    const AnimationTrack* track = imported.clip.FindTrack(0U);
+    Require(track != nullptr, "VMD bone name was not mapped from Shift-JIS");
+    Require(
+        track->TranslationKeys()[1].interpolation[0].mode ==
+            AnimationInterpolation::CubicBezier &&
+        track->TranslationKeys()[1].interpolation[0].Evaluate(0.5f) < 0.5f,
+        "VMD Bezier interpolation was not imported"
+    );
+    const BoneTransform endPose = track->Sample(1.0f, BoneTransform{});
+    Require(
+        NearlyEqual(endPose.translation.x, 3.0f) &&
+        NearlyEqual(endPose.translation.y, 2.0f) &&
+        NearlyEqual(endPose.translation.z, -1.0f),
+        "VMD translation or handedness conversion is incorrect"
+    );
+    Require(
+        endPose.rotation.y < -0.7f,
+        "VMD quaternion handedness conversion is incorrect"
+    );
+
+    bool invalidSignatureRejected = false;
+    try
+    {
+        std::vector<std::uint8_t> invalid = bytes;
+        invalid[0] = static_cast<std::uint8_t>('X');
+        static_cast<void>(VmdImporter().Import(
+            invalid,
+            skeleton,
+            "invalid"
+        ));
+    }
+    catch (const std::runtime_error&)
+    {
+        invalidSignatureRejected = true;
+    }
+    Require(invalidSignatureRejected, "VMD importer accepted an invalid signature");
+}
+
+void TestVmdAssetWhenAvailable()
+{
+    const std::filesystem::path directory =
+        ProjectAssetDirectory / "models" / "mmd" / u8"凑企鹅";
+    const std::filesystem::path modelPath = directory / u8"凑企鹅.pmx";
+    const std::filesystem::path motionPath = directory / "penguin_walking.vmd";
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    const ImportedModelData model = ModelImporter().Import(modelPath);
+    Require(model.skeleton.has_value(), "VMD test PMX has no Skeleton");
+    const ImportedVmdAnimationData motion = VmdImporter().Import(
+        motionPath,
+        *model.skeleton
+    );
+    Require(
+        motion.modelName == "Adelie Tomori_arm" &&
+        motion.sourceBoneTrackCount == 44U,
+        "Real VMD header or bone-track count changed"
+    );
+    Require(
+        motion.clip.TrackCount() >= 20U &&
+        NearlyEqual(motion.clip.Duration(), 0.6f),
+        "Real VMD motion did not bind to the PMX Skeleton"
     );
 }
 
@@ -1528,7 +1905,10 @@ int main()
         "Animation sampling and Animator",
         TestAnimationSamplingAndAnimator
     );
+    failures += !RunTest("Root motion", TestRootMotion);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
+    failures += !RunTest("VMD importer", TestVmdImporter);
+    failures += !RunTest("VMD asset integration", TestVmdAssetWhenAvailable);
     failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
