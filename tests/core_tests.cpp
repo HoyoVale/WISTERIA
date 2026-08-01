@@ -1,3 +1,5 @@
+#include "animation.hpp"
+#include "animator.hpp"
 #include "behaviour.hpp"
 #include "Models/cube.hpp"
 #include "entity.hpp"
@@ -193,6 +195,166 @@ void TestSkeletonValidation()
         badPoseIndexRejected = true;
     }
     Require(badPoseIndexRejected, "Pose accepted an invalid bone index");
+}
+
+void TestAnimationSamplingAndAnimator()
+{
+    const glm::mat4 childBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    Skeleton skeleton({
+        Bone{"root", InvalidBoneIndex, glm::mat4(1.0f), glm::mat4(1.0f)},
+        Bone{"child", 0U, childBind, glm::inverse(childBind)}
+    });
+
+    AnimationTrack rootTrack(
+        0U,
+        {
+            VectorKeyframe{0.0f, glm::vec3(0.0f)},
+            VectorKeyframe{2.0f, glm::vec3(4.0f, 0.0f, 0.0f)}
+        },
+        {
+            QuaternionKeyframe{0.0f, glm::quat(1.0f, 0.0f, 0.0f, 0.0f)},
+            QuaternionKeyframe{
+                2.0f,
+                glm::angleAxis(glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f))
+            }
+        }
+    );
+    const BoneTransform middle = rootTrack.Sample(1.0f, BoneTransform{});
+    Require(
+        NearlyEqual(middle.translation.x, 2.0f),
+        "AnimationTrack did not interpolate translation"
+    );
+    Require(
+        NearlyEqual(glm::length(middle.rotation), 1.0f),
+        "AnimationTrack did not normalize its quaternion sample"
+    );
+
+    ModelAsset model("animatedModel");
+    model.SetSkeleton(std::move(skeleton));
+    AnimationClip& firstClip = model.AddAnimationClip(AnimationClip(
+        "turnAndMove",
+        2.0f,
+        {std::move(rootTrack)}
+    ));
+    Require(
+        model.AnimationClipCount() == 1 &&
+        model.FindAnimationClip("turnAndMove") == &firstClip,
+        "ModelAsset did not retain its animation clip"
+    );
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    Require(entity.HasAnimator(), "Animated model instance has no Animator");
+    Require(
+        entity.GetAnimator().CurrentClip() == &firstClip &&
+        entity.GetAnimator().IsPlaying(),
+        "Scene did not start the model's first animation clip"
+    );
+
+    scene.Update(0.5f);
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 1.0f),
+        "Animator time did not advance in seconds"
+    );
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(1U), childBind),
+        "Animator changed a bone without an animation track"
+    );
+
+    entity.GetAnimator().SetSpeed(2.0f);
+    scene.Update(0.25f);
+    Require(
+        NearlyEqual(entity.GetAnimator().Time(), 1.0f) &&
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 2.0f),
+        "Animator playback speed was not applied"
+    );
+
+    entity.GetAnimator().Pause();
+    scene.Update(0.5f);
+    Require(
+        NearlyEqual(entity.GetAnimator().Time(), 1.0f),
+        "Paused Animator continued advancing"
+    );
+    entity.GetAnimator().Resume();
+    entity.GetAnimator().SetLooping(false);
+    entity.GetAnimator().SetTime(1.75f);
+    scene.Update(1.0f);
+    Require(
+        NearlyEqual(entity.GetAnimator().Time(), 2.0f) &&
+        !entity.GetAnimator().IsPlaying() &&
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 4.0f),
+        "Non-looping Animator did not stop on its final frame"
+    );
+
+    const AnimationClip* stableAddress = entity.GetAnimator().CurrentClip();
+    model.AddAnimationClip(AnimationClip(
+        "secondClip",
+        1.0f,
+        {AnimationTrack(
+            0U,
+            {
+                VectorKeyframe{0.0f, glm::vec3(0.0f)},
+                VectorKeyframe{1.0f, glm::vec3(1.0f)}
+            }
+        )}
+    ));
+    Require(
+        entity.GetAnimator().CurrentClip() == stableAddress,
+        "Adding a ModelAsset clip invalidated a running Animator"
+    );
+
+    entity.GetAnimator().Stop();
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(0U), glm::mat4(1.0f)),
+        "Stopping Animator did not restore the bind pose"
+    );
+}
+
+void TestAnimatedModelImporter()
+{
+    const std::filesystem::path modelPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+        "animated_triangle.gltf";
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(imported.skeleton.has_value(), "Animated glTF lost its Skeleton");
+    Require(imported.animations.size() == 1, "Animated glTF lost its clip");
+    Require(
+        imported.animations[0].Name() == "moveRoot" &&
+        NearlyEqual(imported.animations[0].Duration(), 1.0f) &&
+        imported.animations[0].TrackCount() == 1,
+        "Assimp animation metadata was imported incorrectly"
+    );
+    const std::optional<BoneIndex> rootBone =
+        imported.skeleton->FindBone("rootBone");
+    Require(rootBone.has_value(), "Animated glTF root bone was not imported");
+    const AnimationTrack* track =
+        imported.animations[0].FindTrack(*rootBone);
+    Require(track != nullptr, "Animation channel was not mapped to its bone");
+    Require(
+        NearlyEqual(
+            track->Sample(0.5f, BoneTransform{}).translation.x,
+            1.0f
+        ),
+        "Imported animation keys were not converted to seconds"
+    );
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("animatedTriangle", modelPath);
+    Require(
+        model.AnimationClipCount() == 1 &&
+        model.FindAnimationClip("moveRoot") != nullptr,
+        "ResourceManager lost imported animation data"
+    );
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    scene.Update(0.25f);
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(*rootBone)[3].x, 0.5f),
+        "Imported animation did not drive the instantiated Pose"
+    );
 }
 
 void TestModelAssetSkeleton()
@@ -1191,6 +1353,11 @@ int main()
     int failures = 0;
     failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
     failures += !RunTest("Skeleton validation", TestSkeletonValidation);
+    failures += !RunTest(
+        "Animation sampling and Animator",
+        TestAnimationSamplingAndAnimator
+    );
+    failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
     failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);

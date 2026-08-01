@@ -80,6 +80,8 @@ set(WISTERIA_CORE_SOURCES
     src/model_asset.cpp
     src/skeleton.cpp
     src/pose.cpp
+    src/animation.cpp
+    src/animator.cpp
     src/importer.cpp
     src/entity.cpp
     src/scene.cpp
@@ -104,7 +106,9 @@ target_compile_features(wisteria_core PUBLIC
 )
 
 if(MSVC)
-    target_compile_options(wisteria_core PRIVATE /utf-8)
+    # MSBuild may launch several cl.exe processes for this target. /FS
+    # serializes writes to the shared program database and prevents C1041.
+    target_compile_options(wisteria_core PRIVATE /utf-8 /FS)
 endif()
 
 target_precompile_headers(wisteria_core PRIVATE
@@ -134,6 +138,7 @@ if(BUILD_TESTING)
     target_link_libraries(wisteria_tests PRIVATE wisteria_core)
     target_compile_definitions(wisteria_tests PRIVATE
         WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
+        WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
         WISTERIA_PROJECT_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     )
 

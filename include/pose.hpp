@@ -14,6 +14,7 @@ struct BoneTransform
     glm::vec3 scale{1.0f};
 
     glm::mat4 Matrix() const;
+    static BoneTransform FromMatrix(const glm::mat4& matrix);
 };
 
 // Per-model-instance skeleton state. Local matrices are initialized from the
@@ -32,6 +33,7 @@ public:
         BoneIndex boneIndex,
         const BoneTransform& transform
     );
+    void SetLocalMatrices(std::span<const glm::mat4> matrices);
 
     const glm::mat4& LocalMatrix(BoneIndex boneIndex) const;
     std::span<const glm::mat4> LocalMatrices() const noexcept;

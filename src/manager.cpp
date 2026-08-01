@@ -371,6 +371,8 @@ ModelAsset& ResourceManager::LoadModel(
     auto model = std::make_unique<ModelAsset>(name);
     if (imported.skeleton.has_value())
         model->SetSkeleton(std::move(*imported.skeleton));
+    for (AnimationClip& clip : imported.animations)
+        model->AddAnimationClip(std::move(clip));
     for (const ImportedPartData& part : imported.parts)
     {
         const std::size_t materialIndex =

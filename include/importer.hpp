@@ -1,5 +1,6 @@
 #pragma once
 
+#include "animation.hpp"
 #include "material.hpp"
 #include "model.hpp"
 #include "skeleton.hpp"
@@ -68,6 +69,7 @@ struct ImportedModelData
     std::vector<ImportedMeshData> meshes;
     std::vector<ImportedPartData> parts;
     std::optional<Skeleton> skeleton;
+    std::vector<AnimationClip> animations;
 };
 
 // CPU-only model import. It never creates OpenGL objects and is safe to use

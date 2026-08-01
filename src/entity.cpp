@@ -165,7 +165,39 @@ void Entity::SetSkeleton(const Skeleton& skeleton)
 {
     if (this->pose != nullptr)
         throw std::logic_error("Entity skeleton is already set");
-    this->pose = std::make_unique<Pose>(skeleton);
+    auto nextPose = std::make_unique<Pose>(skeleton);
+    auto nextAnimator = std::make_unique<Animator>(*nextPose);
+    this->pose = std::move(nextPose);
+    this->animator = std::move(nextAnimator);
+}
+
+bool Entity::HasAnimator() const noexcept
+{
+    return this->animator != nullptr;
+}
+
+Animator* Entity::TryGetAnimator() noexcept
+{
+    return this->animator.get();
+}
+
+const Animator* Entity::TryGetAnimator() const noexcept
+{
+    return this->animator.get();
+}
+
+Animator& Entity::GetAnimator()
+{
+    if (this->animator == nullptr)
+        throw std::logic_error("Entity has no skeleton animator");
+    return *this->animator;
+}
+
+const Animator& Entity::GetAnimator() const
+{
+    if (this->animator == nullptr)
+        throw std::logic_error("Entity has no skeleton animator");
+    return *this->animator;
 }
 
 bool Entity::RemoveBehaviour(Behaviour& behaviour)
@@ -221,6 +253,15 @@ void Entity::ClearBehaviours() noexcept
 std::size_t Entity::BehaviourCount() const noexcept
 {
     return this->behaviours.size();
+}
+
+void Entity::Update(float deltaTime)
+{
+    if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
+        throw std::invalid_argument("Entity delta time must be finite and non-negative");
+    if (this->animator != nullptr)
+        this->animator->Update(deltaTime);
+    this->UpdateBehaviours(deltaTime);
 }
 
 void Entity::UpdateBehaviours(float deltaTime)

@@ -821,6 +821,223 @@ std::optional<Skeleton> ImportSkeleton(const aiScene& scene)
     return Skeleton(std::move(bones), inverseBindSpace);
 }
 
+float AnimationTimeSeconds(double ticks, double ticksPerSecond)
+{
+    const double seconds = ticks / ticksPerSecond;
+    if (!std::isfinite(seconds) || seconds < 0.0 ||
+        seconds > static_cast<double>(std::numeric_limits<float>::max()))
+    {
+        throw std::runtime_error("Imported animation contains an invalid key time");
+    }
+    return static_cast<float>(seconds);
+}
+
+std::vector<VectorKeyframe> ImportVectorKeys(
+    const aiVectorKey* source,
+    unsigned int count,
+    double ticksPerSecond
+)
+{
+    std::vector<VectorKeyframe> result;
+    result.reserve(count);
+    for (unsigned int index = 0; index < count; ++index)
+    {
+        const aiVector3D& value = source[index].mValue;
+        if (!std::isfinite(value.x) || !std::isfinite(value.y) ||
+            !std::isfinite(value.z))
+        {
+            throw std::runtime_error(
+                "Imported animation contains a non-finite vector key"
+            );
+        }
+        result.push_back(VectorKeyframe{
+            AnimationTimeSeconds(source[index].mTime, ticksPerSecond),
+            glm::vec3(value.x, value.y, value.z)
+        });
+    }
+
+    std::stable_sort(
+        result.begin(),
+        result.end(),
+        [](const VectorKeyframe& left, const VectorKeyframe& right)
+        {
+            return left.time < right.time;
+        }
+    );
+    std::vector<VectorKeyframe> unique;
+    unique.reserve(result.size());
+    for (const VectorKeyframe& key : result)
+    {
+        if (!unique.empty() &&
+            std::abs(unique.back().time - key.time) <= 0.000001f)
+        {
+            unique.back() = key;
+        }
+        else
+        {
+            unique.push_back(key);
+        }
+    }
+    return unique;
+}
+
+std::vector<QuaternionKeyframe> ImportQuaternionKeys(
+    const aiQuatKey* source,
+    unsigned int count,
+    double ticksPerSecond
+)
+{
+    std::vector<QuaternionKeyframe> result;
+    result.reserve(count);
+    for (unsigned int index = 0; index < count; ++index)
+    {
+        const aiQuaternion& value = source[index].mValue;
+        if (!std::isfinite(value.w) || !std::isfinite(value.x) ||
+            !std::isfinite(value.y) || !std::isfinite(value.z))
+        {
+            throw std::runtime_error(
+                "Imported animation contains a non-finite rotation key"
+            );
+        }
+        result.push_back(QuaternionKeyframe{
+            AnimationTimeSeconds(source[index].mTime, ticksPerSecond),
+            glm::quat(value.w, value.x, value.y, value.z)
+        });
+    }
+
+    std::stable_sort(
+        result.begin(),
+        result.end(),
+        [](const QuaternionKeyframe& left, const QuaternionKeyframe& right)
+        {
+            return left.time < right.time;
+        }
+    );
+    std::vector<QuaternionKeyframe> unique;
+    unique.reserve(result.size());
+    for (const QuaternionKeyframe& key : result)
+    {
+        if (!unique.empty() &&
+            std::abs(unique.back().time - key.time) <= 0.000001f)
+        {
+            unique.back() = key;
+        }
+        else
+        {
+            unique.push_back(key);
+        }
+    }
+    return unique;
+}
+
+std::vector<AnimationClip> ImportAnimations(
+    const aiScene& scene,
+    const std::optional<Skeleton>& skeleton
+)
+{
+    std::vector<AnimationClip> result;
+    if (scene.mNumAnimations == 0)
+        return result;
+    if (!skeleton.has_value())
+    {
+        // Node-only animation needs a scene-node hierarchy, which is outside
+        // this first skeletal animation implementation.
+        return result;
+    }
+
+    result.reserve(scene.mNumAnimations);
+    std::unordered_set<std::string> names;
+    for (unsigned int animationIndex = 0;
+         animationIndex < scene.mNumAnimations;
+         ++animationIndex)
+    {
+        const aiAnimation* sourceAnimation =
+            scene.mAnimations[animationIndex];
+        if (sourceAnimation == nullptr)
+            throw std::runtime_error("Imported scene contains a null animation");
+
+        const double ticksPerSecond =
+            sourceAnimation->mTicksPerSecond > 0.0 &&
+            std::isfinite(sourceAnimation->mTicksPerSecond)
+                ? sourceAnimation->mTicksPerSecond
+                : 25.0;
+        float duration = AnimationTimeSeconds(
+            sourceAnimation->mDuration,
+            ticksPerSecond
+        );
+        std::vector<AnimationTrack> tracks;
+        tracks.reserve(sourceAnimation->mNumChannels);
+        std::unordered_set<BoneIndex> animatedBones;
+
+        for (unsigned int channelIndex = 0;
+             channelIndex < sourceAnimation->mNumChannels;
+             ++channelIndex)
+        {
+            const aiNodeAnim* channel =
+                sourceAnimation->mChannels[channelIndex];
+            if (channel == nullptr)
+                throw std::runtime_error("Imported animation contains a null channel");
+
+            const std::optional<BoneIndex> boneIndex =
+                skeleton->FindBone(ToString(channel->mNodeName));
+            if (!boneIndex.has_value())
+                continue;
+            if (!animatedBones.emplace(*boneIndex).second)
+            {
+                throw std::runtime_error(
+                    "Imported animation contains duplicate channels for one bone"
+                );
+            }
+
+            std::vector<VectorKeyframe> translationKeys = ImportVectorKeys(
+                channel->mPositionKeys,
+                channel->mNumPositionKeys,
+                ticksPerSecond
+            );
+            std::vector<QuaternionKeyframe> rotationKeys =
+                ImportQuaternionKeys(
+                    channel->mRotationKeys,
+                    channel->mNumRotationKeys,
+                    ticksPerSecond
+                );
+            std::vector<VectorKeyframe> scaleKeys = ImportVectorKeys(
+                channel->mScalingKeys,
+                channel->mNumScalingKeys,
+                ticksPerSecond
+            );
+            if (translationKeys.empty() && rotationKeys.empty() &&
+                scaleKeys.empty())
+            {
+                continue;
+            }
+
+            AnimationTrack track(
+                *boneIndex,
+                std::move(translationKeys),
+                std::move(rotationKeys),
+                std::move(scaleKeys)
+            );
+            duration = std::max(duration, track.EndTime());
+            tracks.push_back(std::move(track));
+        }
+
+        if (tracks.empty() || duration <= 0.0f)
+            continue;
+
+        std::string name = ToString(sourceAnimation->mName);
+        if (name.empty())
+            name = "animation" + std::to_string(animationIndex);
+        if (!names.emplace(name).second)
+        {
+            name += "_" + std::to_string(animationIndex);
+            while (!names.emplace(name).second)
+                name += "_";
+        }
+        result.emplace_back(name, duration, std::move(tracks));
+    }
+    return result;
+}
+
 struct VertexInfluences
 {
     std::array<BoneIndex, 4> indices{};
@@ -1683,6 +1900,7 @@ ImportedModelData ModelImporter::Import(
 
     ImportedModelData result;
     result.skeleton = ImportSkeleton(*scene);
+    result.animations = ImportAnimations(*scene, result.skeleton);
     ImportedTextureIndexMap textureIndices;
     std::unordered_map<unsigned int, std::size_t> materialIndices;
     result.meshes.reserve(scene->mNumMeshes);

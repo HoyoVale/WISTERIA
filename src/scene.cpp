@@ -40,7 +40,7 @@ const Camera& Scene::ActiveCamera() const noexcept
 void Scene::Update(float deltaTime)
 {
     for (const std::unique_ptr<Entity>& entity : this->entities)
-        entity->UpdateBehaviours(deltaTime);
+        entity->Update(deltaTime);
 }
 
 void Scene::Clear() noexcept
@@ -79,7 +79,11 @@ Entity& Scene::InstantiateModel(
 {
     Entity& entity = this->CreateEntity(transform);
     if (model.HasSkeleton())
+    {
         entity.SetSkeleton(model.GetSkeleton());
+        if (model.AnimationClipCount() > 0)
+            entity.GetAnimator().Play(model.AnimationClipAt(0));
+    }
     for (const RenderPart& part : model.Parts())
     {
         entity.AddRenderPart(

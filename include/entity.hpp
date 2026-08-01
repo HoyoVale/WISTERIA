@@ -1,5 +1,6 @@
 #pragma once
 
+#include "animator.hpp"
 #include "behaviour.hpp"
 #include "material.hpp"
 #include "mesh.hpp"
@@ -60,6 +61,12 @@ public:
     const Pose& GetPose() const;
     void SetSkeleton(const Skeleton& skeleton);
 
+    bool HasAnimator() const noexcept;
+    Animator* TryGetAnimator() noexcept;
+    const Animator* TryGetAnimator() const noexcept;
+    Animator& GetAnimator();
+    const Animator& GetAnimator() const;
+
     template<typename T, typename... Arguments>
         requires std::derived_from<T, Behaviour>
     T& AddBehaviour(Arguments&&... arguments)
@@ -101,6 +108,7 @@ public:
     }
 
     std::size_t BehaviourCount() const noexcept;
+    void Update(float deltaTime);
     void UpdateBehaviours(float deltaTime);
     void DispatchEvent(const Event& event);
 
@@ -109,6 +117,7 @@ private:
 
     Transform transform;
     std::unique_ptr<Pose> pose;
+    std::unique_ptr<Animator> animator;
     std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;
     std::vector<Behaviour*> pendingBehaviourRemovals;

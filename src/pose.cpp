@@ -2,6 +2,7 @@
 #include "pose.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <cmath>
 #include <stdexcept>
 
@@ -50,6 +51,56 @@ glm::mat4 BoneTransform::Matrix() const
         glm::scale(glm::mat4(1.0f), this->scale);
 }
 
+BoneTransform BoneTransform::FromMatrix(const glm::mat4& matrix)
+{
+    if (!IsFinite(matrix))
+        throw std::invalid_argument("Bone transform matrix must be finite");
+
+    constexpr float epsilon = 0.000001f;
+    glm::vec3 axisX(matrix[0]);
+    glm::vec3 axisY(matrix[1]);
+    glm::vec3 axisZ(matrix[2]);
+    glm::vec3 extractedScale(
+        glm::length(axisX),
+        glm::length(axisY),
+        glm::length(axisZ)
+    );
+    if (extractedScale.x <= epsilon || extractedScale.y <= epsilon ||
+        extractedScale.z <= epsilon)
+    {
+        throw std::invalid_argument(
+            "Bone transform matrix contains a zero scale axis"
+        );
+    }
+
+    axisX /= extractedScale.x;
+    axisY /= extractedScale.y;
+    axisZ /= extractedScale.z;
+    if (glm::determinant(glm::mat3(axisX, axisY, axisZ)) < 0.0f)
+    {
+        extractedScale.x = -extractedScale.x;
+        axisX = -axisX;
+    }
+
+    constexpr float orthogonalTolerance = 0.001f;
+    if (std::abs(glm::dot(axisX, axisY)) > orthogonalTolerance ||
+        std::abs(glm::dot(axisX, axisZ)) > orthogonalTolerance ||
+        std::abs(glm::dot(axisY, axisZ)) > orthogonalTolerance)
+    {
+        throw std::invalid_argument(
+            "Bone transform matrix contains unsupported shear"
+        );
+    }
+
+    BoneTransform result;
+    result.translation = glm::vec3(matrix[3]);
+    result.rotation = glm::normalize(
+        glm::quat_cast(glm::mat3(axisX, axisY, axisZ))
+    );
+    result.scale = extractedScale;
+    return result;
+}
+
 Pose::Pose(const Skeleton& skeleton)
     : skeleton(&skeleton),
       localMatrices(skeleton.BoneCount(), glm::mat4(1.0f)),
@@ -96,6 +147,25 @@ void Pose::SetLocalTransform(
 )
 {
     this->SetLocalMatrix(boneIndex, transform.Matrix());
+}
+
+void Pose::SetLocalMatrices(std::span<const glm::mat4> matrices)
+{
+    if (matrices.size() != this->localMatrices.size())
+    {
+        throw std::invalid_argument(
+            "Pose local matrix count must match the skeleton bone count"
+        );
+    }
+    for (const glm::mat4& matrix : matrices)
+    {
+        if (!IsFinite(matrix))
+            throw std::invalid_argument("Bone local matrix must be finite");
+    }
+
+    this->localMatrices.assign(matrices.begin(), matrices.end());
+    this->dirty = true;
+    ++this->revision;
 }
 
 const glm::mat4& Pose::LocalMatrix(BoneIndex boneIndex) const

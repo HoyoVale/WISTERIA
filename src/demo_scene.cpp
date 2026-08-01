@@ -10,13 +10,13 @@ namespace
 std::filesystem::path DemoModelPath1()
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        "mmd" / u8"爱弥斯_pmx" / u8"爱弥斯.pmx";
+        "mmd" / u8"仪玄_pmx" / u8"仪玄.pmx";
 }
 
 std::filesystem::path DemoModelPath2()
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        "mmd" / u8"爱弥斯校服_pmx" / u8"爱弥斯校服.pmx";
+        "mmd" / u8"仪玄皮肤_pmx" / u8"仪玄.pmx";
 }
 }
 

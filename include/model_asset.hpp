@@ -1,11 +1,14 @@
 #pragma once
 
+#include "animation.hpp"
 #include "render_part.hpp"
 #include "skeleton.hpp"
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Shared, scene-independent description of an imported or procedural model.
@@ -29,6 +32,11 @@ public:
     const Skeleton& GetSkeleton() const;
     void SetSkeleton(Skeleton skeleton);
 
+    std::size_t AnimationClipCount() const noexcept;
+    const AnimationClip& AnimationClipAt(std::size_t index) const;
+    const AnimationClip* FindAnimationClip(std::string_view name) const noexcept;
+    AnimationClip& AddAnimationClip(AnimationClip clip);
+
     RenderPart& AddPart(
         Mesh& mesh,
         Material& material,
@@ -39,4 +47,7 @@ private:
     std::string name;
     std::vector<RenderPart> parts;
     std::optional<Skeleton> skeleton;
+    // Stable clip addresses are required because Animator stores a pointer to
+    // its current shared clip while more clips may still be added.
+    std::vector<std::unique_ptr<AnimationClip>> animationClips;
 };
