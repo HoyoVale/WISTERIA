@@ -5,6 +5,7 @@
 #include "input.hpp"
 #include "manager.hpp"
 #include "model_asset.hpp"
+#include "renderer.hpp"
 #include "scene.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
@@ -253,6 +254,38 @@ void TestFreeCameraController()
     Require(NearlyEqual(camera.Position().z, 3.0f), "Camera reset did not restore position");
     Require(NearlyEqual(camera.Target().x, 0.0f), "Camera reset did not restore direction");
     Require(NearlyEqual(camera.VerticalFovDegrees(), 45.0f), "Camera reset did not restore FOV");
+}
+
+void TestFxaaSettings()
+{
+    Renderer renderer;
+    renderer.SetFxaaSettings(FxaaSettings{
+        .enabled = false,
+        .minimumContrast = 0.05f,
+        .relativeContrast = 0.2f,
+        .subpixelBlending = 0.6f
+    });
+    const FxaaSettings& settings = renderer.GetFxaaSettings();
+    Require(!settings.enabled, "FXAA enabled flag changed");
+    Require(
+        NearlyEqual(settings.minimumContrast, 0.05f) &&
+        NearlyEqual(settings.relativeContrast, 0.2f) &&
+        NearlyEqual(settings.subpixelBlending, 0.6f),
+        "FXAA settings changed"
+    );
+
+    bool rejected = false;
+    try
+    {
+        renderer.SetFxaaSettings(FxaaSettings{
+            .subpixelBlending = 1.1f
+        });
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected = true;
+    }
+    Require(rejected, "Invalid FXAA settings were accepted");
 }
 
 void TestResourceManagerModelRegistry()
@@ -851,6 +884,7 @@ int main()
     failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
     failures += !RunTest("Input frame transitions", TestInputFrameTransitions);
     failures += !RunTest("Free camera controller", TestFreeCameraController);
+    failures += !RunTest("FXAA settings", TestFxaaSettings);
     failures += !RunTest("ResourceManager model registry", TestResourceManagerModelRegistry);
     failures += !RunTest(
         "Environment resource and Scene binding",

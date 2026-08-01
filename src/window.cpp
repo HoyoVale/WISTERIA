@@ -11,6 +11,11 @@ std::filesystem::path DemoModelPath()
     return std::filesystem::current_path() / "assets" / "models" /
         u8"仪玄_pmx" / u8"仪玄.pmx";
 }
+std::filesystem::path Demo2ModelPath()
+{
+    return std::filesystem::current_path() / "assets" / "models" /
+        u8"仪玄皮肤_pmx" / u8"仪玄.pmx";
+}
 }
 
 void FramebufferSizeCallback(GLFWwindow* window,int width,int height)
@@ -45,15 +50,14 @@ Window::Window(int width, int height)
         this->scene.SetEnvironment(&environment);
 
         ModelAsset& yixuanModel = this->resources.LoadModel("yixuan",DemoModelPath());
-        Entity& yixuanEntity = this->scene.InstantiateModel(
-            yixuanModel,
-            Transform(
-                glm::vec3(0.0f),
-                glm::vec3(0.0f),
-                glm::vec3(0.1f)
-            )
-        );
-        yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 12.0f, 0.0f));
+        Entity& yixuanEntity = this->scene.InstantiateModel(yixuanModel,
+            Transform(glm::vec3(0.8f, 0.0f, 0.0f),glm::vec3(0.0f),glm::vec3(0.1f)));
+        ModelAsset& yixuan2Model = this->resources.LoadModel("yixuan2",Demo2ModelPath());
+        Entity& yixuan2Entity = this->scene.InstantiateModel(yixuan2Model,
+            Transform(glm::vec3(-0.8f, 0.0f, 0.0f),glm::vec3(0.0f),glm::vec3(0.1f)));
+            
+        yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 0.0f, 0.0f));
+        yixuan2Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 0.0f, 0.0f));
 
         this->scene.ActiveCamera().SetParam(CameraParam{
             .Position = {0.0f, 1.1f, 3.5f},

@@ -3,6 +3,7 @@
 #include "shader.hpp"
 #include "environment.hpp"
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -207,11 +208,58 @@ void Renderer::Present(
     this->presentProgram->Use();
     source.BindColorTexture(0);
     this->presentProgram->UniformTex("sceneColorTexture", 0);
+    this->presentProgram->Uniform1i(
+        "fxaaEnabled",
+        this->fxaaSettings.enabled ? 1 : 0
+    );
+    this->presentProgram->Uniform2f(
+        "inverseScreenSize",
+        1.0f / static_cast<float>(source.Width()),
+        1.0f / static_cast<float>(source.Height())
+    );
+    this->presentProgram->Uniform1f(
+        "minimumContrast",
+        this->fxaaSettings.minimumContrast
+    );
+    this->presentProgram->Uniform1f(
+        "relativeContrast",
+        this->fxaaSettings.relativeContrast
+    );
+    this->presentProgram->Uniform1f(
+        "subpixelBlending",
+        this->fxaaSettings.subpixelBlending
+    );
     glBindVertexArray(this->fullscreenVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
     this->presentProgram->unUse();
     glDepthMask(GL_TRUE);
+}
+
+void Renderer::SetFxaaSettings(const FxaaSettings& settings)
+{
+    const bool valid =
+        std::isfinite(settings.minimumContrast) &&
+        std::isfinite(settings.relativeContrast) &&
+        std::isfinite(settings.subpixelBlending) &&
+        settings.minimumContrast >= 0.0f &&
+        settings.minimumContrast <= 1.0f &&
+        settings.relativeContrast >= 0.0f &&
+        settings.relativeContrast <= 1.0f &&
+        settings.subpixelBlending >= 0.0f &&
+        settings.subpixelBlending <= 1.0f;
+    if (!valid)
+    {
+        throw std::invalid_argument(
+            "FXAA contrast and subpixel settings must be finite values in [0, 1]"
+        );
+    }
+    this->fxaaSettings = settings;
+}
+
+const FxaaSettings& Renderer::GetFxaaSettings() const noexcept
+{
+    return this->fxaaSettings;
 }
 
 void Renderer::DrawPart(

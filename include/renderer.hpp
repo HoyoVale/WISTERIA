@@ -10,6 +10,14 @@ class Shader;
 struct ShaderInterface;
 class EnvironmentMap;
 
+struct FxaaSettings
+{
+    bool enabled = true;
+    float minimumContrast = 0.0312f;
+    float relativeContrast = 0.125f;
+    float subpixelBlending = 0.75f;
+};
+
 class Renderer
 {
 public:
@@ -29,6 +37,8 @@ public:
         int destinationWidth,
         int destinationHeight
     );
+    void SetFxaaSettings(const FxaaSettings& settings);
+    const FxaaSettings& GetFxaaSettings() const noexcept;
     void Release() noexcept;
 
 private:
@@ -91,4 +101,5 @@ private:
     std::unique_ptr<Program> oitCompositeProgram;
     std::unique_ptr<Shader> presentShader;
     std::unique_ptr<Program> presentProgram;
+    FxaaSettings fxaaSettings;
 };

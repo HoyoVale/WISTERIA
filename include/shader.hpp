@@ -52,13 +52,7 @@ public:
     void Uniform1f(const std::string& valueName, float value);
     void Uniform2f(const std::string& valueName, float x, float y);
     void Uniform3f(const std::string& valueName, float x, float y, float z);
-    void Uniform4f(
-        const std::string& valueName,
-        float x,
-        float y,
-        float z,
-        float w
-    );
+    void Uniform4f(const std::string& valueName,float x,float y,float z,float w);
     void Uniform1i(const std::string& valueName, int value);
     void Uniform1ui(const std::string& valueName, unsigned int value);
     void UniformTex(const std::string& uniformName, unsigned int textureUnit);

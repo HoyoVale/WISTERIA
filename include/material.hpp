@@ -66,8 +66,7 @@ struct ShaderInterface
     std::string materialRoughnessFactor = "materialRoughnessFactor";
     std::string materialEmissiveFactor = "materialEmissiveFactor";
     std::string materialOcclusionStrength = "materialOcclusionStrength";
-    std::string hasMetallicRoughnessTexture =
-        "hasMetallicRoughnessTexture";
+    std::string hasMetallicRoughnessTexture ="hasMetallicRoughnessTexture";
     std::string metallicRoughnessTexture = "metallicRoughnessTexture";
     std::string hasEmissiveTexture = "hasEmissiveTexture";
     std::string emissiveTexture = "emissiveTexture";

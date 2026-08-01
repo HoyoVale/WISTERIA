@@ -28,6 +28,8 @@ public:
     const Scene& GetScene() const noexcept { return this->scene; };
     Input& GetInput() noexcept { return this->input; };
     const Input& GetInput() const noexcept { return this->input; };
+    Renderer& GetRenderer() noexcept { return this->renderer; }
+    const Renderer& GetRenderer() const noexcept { return this->renderer; }
     SceneFramebuffer& GetSceneFramebuffer() noexcept
     {
         return this->sceneFramebuffer;
