@@ -1,11 +1,16 @@
 #include "pch.hpp"
 #include "renderer.hpp"
 #include "shader.hpp"
+#include "environment.hpp"
 #include <algorithm>
 #include <limits>
 
 namespace
 {
+constexpr unsigned int IrradianceTextureUnit = 8;
+constexpr unsigned int PrefilterTextureUnit = 9;
+constexpr unsigned int BrdfLutTextureUnit = 10;
+
 int LightCount(std::size_t available, std::size_t capacity)
 {
     const std::size_t count = std::min({
@@ -21,6 +26,9 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
 {
     const Camera& camera = scene.ActiveCamera();
     const glm::mat4 view = camera.GetView();
+    EnvironmentMap* environment = scene.Environment();
+    if (environment != nullptr)
+        environment->Attach();
 
     for (const std::unique_ptr<Entity>& entityPointer : scene.Entities())
     {
@@ -91,6 +99,38 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
                 shaderInterface.materialNormalScale,
                 material.NormalScale()
             );
+            program.Uniform1f(
+                shaderInterface.materialMetallicFactor,
+                material.MetallicFactor()
+            );
+            program.Uniform1f(
+                shaderInterface.materialRoughnessFactor,
+                material.RoughnessFactor()
+            );
+            program.Uniform3f(
+                shaderInterface.materialEmissiveFactor,
+                material.EmissiveFactor().r,
+                material.EmissiveFactor().g,
+                material.EmissiveFactor().b
+            );
+            program.Uniform1f(
+                shaderInterface.materialOcclusionStrength,
+                material.OcclusionStrength()
+            );
+            program.Uniform1i(
+                shaderInterface.hasMetallicRoughnessTexture,
+                material.HasTexture(
+                    shaderInterface.metallicRoughnessTexture
+                ) ? 1 : 0
+            );
+            program.Uniform1i(
+                shaderInterface.hasEmissiveTexture,
+                material.HasTexture(shaderInterface.emissiveTexture) ? 1 : 0
+            );
+            program.Uniform1i(
+                shaderInterface.hasOcclusionTexture,
+                material.HasTexture(shaderInterface.occlusionTexture) ? 1 : 0
+            );
 
             if (shaderInterface.lightingEnabled)
             {
@@ -99,16 +139,6 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
                     camera.Position().x,
                     camera.Position().y,
                     camera.Position().z
-                );
-                program.Uniform3f(
-                    shaderInterface.materialSpecularColor,
-                    material.SpecularColor().x,
-                    material.SpecularColor().y,
-                    material.SpecularColor().z
-                );
-                program.Uniform1f(
-                    shaderInterface.materialShininess,
-                    material.Shininess()
                 );
                 this->UploadSceneUniforms(
                     program,
@@ -123,6 +153,9 @@ void Renderer::Render(Scene& scene, const glm::mat4& projection)
             material.Unbind();
         }
     }
+
+    if (environment != nullptr)
+        environment->DrawSkybox(view, projection);
 }
 
 void Renderer::UploadTransforms(
@@ -155,9 +188,57 @@ void Renderer::UploadSceneUniforms(
 )
 {
     program.Uniform1f(shaderInterface.ambientStrength, 0.15f);
+    this->UploadEnvironment(program, scene, shaderInterface);
     this->UploadPointLights(program, scene, shaderInterface);
     this->UploadDirectionalLights(program, scene, shaderInterface);
     this->UploadSpotLights(program, scene, shaderInterface);
+}
+
+void Renderer::UploadEnvironment(
+    Program& program,
+    const Scene& scene,
+    const ShaderInterface& shaderInterface
+)
+{
+    if (!shaderInterface.imageBasedLightingEnabled)
+        return;
+
+    const EnvironmentMap* environment = scene.Environment();
+    program.Uniform1i(
+        shaderInterface.hasEnvironment,
+        environment != nullptr ? 1 : 0
+    );
+    program.UniformTex(
+        shaderInterface.irradianceMap,
+        IrradianceTextureUnit
+    );
+    program.UniformTex(
+        shaderInterface.prefilterMap,
+        PrefilterTextureUnit
+    );
+    program.UniformTex(
+        shaderInterface.brdfLut,
+        BrdfLutTextureUnit
+    );
+
+    if (environment == nullptr)
+    {
+        program.Uniform1f(shaderInterface.environmentIntensity, 0.0f);
+        program.Uniform1f(shaderInterface.maxReflectionLod, 0.0f);
+        return;
+    }
+
+    environment->BindIrradiance(IrradianceTextureUnit);
+    environment->BindPrefilter(PrefilterTextureUnit);
+    environment->BindBrdfLut(BrdfLutTextureUnit);
+    program.Uniform1f(
+        shaderInterface.environmentIntensity,
+        environment->Intensity()
+    );
+    program.Uniform1f(
+        shaderInterface.maxReflectionLod,
+        environment->MaxReflectionLod()
+    );
 }
 
 void Renderer::UploadPointLights(

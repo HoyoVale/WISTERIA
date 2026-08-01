@@ -7,30 +7,40 @@
 #include <stb_image.h>
 #include <utility>
 
-TextureData TextureData::FromFile(std::filesystem::path filePath)
+TextureData TextureData::FromFile(
+    std::filesystem::path filePath,
+    TextureColorSpace colorSpace
+)
 {
     TextureData result;
     result.filePath = std::move(filePath);
+    result.colorSpace = colorSpace;
     return result;
 }
 
-TextureData TextureData::FromEncoded(std::vector<std::uint8_t> encodedData)
+TextureData TextureData::FromEncoded(
+    std::vector<std::uint8_t> encodedData,
+    TextureColorSpace colorSpace
+)
 {
     TextureData result;
     result.data = std::move(encodedData);
+    result.colorSpace = colorSpace;
     return result;
 }
 
 TextureData TextureData::FromRgba8(
     int width,
     int height,
-    std::vector<std::uint8_t> pixels
+    std::vector<std::uint8_t> pixels,
+    TextureColorSpace colorSpace
 )
 {
     TextureData result;
     result.width = width;
     result.height = height;
     result.data = std::move(pixels);
+    result.colorSpace = colorSpace;
     return result;
 }
 
@@ -188,6 +198,11 @@ bool Texture::IsAttached() const noexcept
     return this->attached;
 }
 
+TextureColorSpace Texture::ColorSpace() const noexcept
+{
+    return this->data.colorSpace;
+}
+
 void Texture::EnsureCreated()
 {
     if (this->texture == 0)
@@ -212,7 +227,9 @@ void Texture::UploadDecodedPixels(
     glTexImage2D(
         GL_TEXTURE_2D,
         0,
-        GL_RGBA8,
+        this->data.colorSpace == TextureColorSpace::Srgb
+            ? GL_SRGB8_ALPHA8
+            : GL_RGBA8,
         width,
         height,
         0,

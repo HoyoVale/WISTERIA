@@ -4,6 +4,7 @@
 
 class Program;
 struct ShaderInterface;
+class EnvironmentMap;
 
 class Renderer
 {
@@ -19,6 +20,11 @@ private:
         const glm::mat4& projection
     );
     void UploadSceneUniforms(
+        Program& program,
+        const Scene& scene,
+        const ShaderInterface& shaderInterface
+    );
+    void UploadEnvironment(
         Program& program,
         const Scene& scene,
         const ShaderInterface& shaderInterface

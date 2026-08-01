@@ -37,6 +37,12 @@ Window::Window(int width, int height)
 
         this->init();
 
+        EnvironmentMap& environment = this->resources.CreateEnvironment(
+            "defaultSky",
+            EnvironmentMapData::ProceduralSky()
+        );
+        this->scene.SetEnvironment(&environment);
+
         ModelAsset& yixuanModel = this->resources.LoadModel("yixuan",DemoModelPath());
         Entity& yixuanEntity = this->scene.InstantiateModel(yixuanModel);
         yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 12.0f, 0.0f));
@@ -89,6 +95,7 @@ Window::~Window(){
     this->scene.ClearPointLights();
     this->scene.ClearDirectionalLights();
     this->scene.ClearSpotLights();
+    this->scene.ClearEnvironment();
     this->resources.Clear();
     if (this->window != nullptr)
         glfwDestroyWindow(this->window);

@@ -19,6 +19,32 @@
 
 namespace
 {
+struct ImportedTextureKey
+{
+    std::string path;
+    TextureColorSpace colorSpace = TextureColorSpace::Srgb;
+
+    bool operator==(const ImportedTextureKey&) const noexcept = default;
+};
+
+struct ImportedTextureKeyHash
+{
+    std::size_t operator()(const ImportedTextureKey& key) const noexcept
+    {
+        const std::size_t pathHash = std::hash<std::string>{}(key.path);
+        const std::size_t colorSpaceHash =
+            std::hash<int>{}(static_cast<int>(key.colorSpace));
+        return pathHash ^ (colorSpaceHash + 0x9e3779b9U +
+            (pathHash << 6U) + (pathHash >> 2U));
+    }
+};
+
+using ImportedTextureIndexMap = std::unordered_map<
+    ImportedTextureKey,
+    std::size_t,
+    ImportedTextureKeyHash
+>;
+
 constexpr unsigned int ImportFlags =
     aiProcess_Triangulate |
     aiProcess_JoinIdenticalVertices |
@@ -259,20 +285,21 @@ ImportedMeshData ImportMesh(const aiMesh& mesh, std::size_t index)
 std::size_t ImportTexture(
     const aiScene& scene,
     const aiString& texturePath,
+    TextureColorSpace colorSpace,
     const std::filesystem::path& modelDirectory,
     ImportedModelData& result,
-    std::unordered_map<std::string, std::size_t>& textureIndices
+    ImportedTextureIndexMap& textureIndices
 )
 {
-    const std::string key = ToString(texturePath);
+    const ImportedTextureKey key{ToString(texturePath), colorSpace};
     const auto existing = textureIndices.find(key);
     if (existing != textureIndices.end())
         return existing->second;
 
     ImportedTextureData imported;
-    imported.name = key.empty()
+    imported.name = key.path.empty()
         ? "texture" + std::to_string(result.textures.size())
-        : key;
+        : key.path;
 
     if (const aiTexture* embedded = scene.GetEmbeddedTexture(texturePath.C_Str()))
     {
@@ -280,7 +307,8 @@ std::size_t ImportTexture(
         {
             const auto* begin = reinterpret_cast<const std::uint8_t*>(embedded->pcData);
             imported.source = TextureData::FromEncoded(
-                std::vector<std::uint8_t>(begin, begin + embedded->mWidth)
+                std::vector<std::uint8_t>(begin, begin + embedded->mWidth),
+                colorSpace
             );
         }
         else
@@ -301,13 +329,14 @@ std::size_t ImportTexture(
             imported.source = TextureData::FromRgba8(
                 static_cast<int>(embedded->mWidth),
                 static_cast<int>(embedded->mHeight),
-                std::move(rgba)
+                std::move(rgba),
+                colorSpace
             );
         }
     }
     else
     {
-        std::string normalizedKey = key;
+        std::string normalizedKey = key.path;
         std::replace(normalizedKey.begin(), normalizedKey.end(), '\\', '/');
         std::filesystem::path externalPath = FromUtf8(normalizedKey);
         if (externalPath.is_relative())
@@ -315,7 +344,7 @@ std::size_t ImportTexture(
         externalPath = externalPath.lexically_normal();
         if (!std::filesystem::is_regular_file(externalPath))
             throw std::runtime_error("External model texture was not found: " + externalPath.string());
-        imported.source = TextureData::FromFile(externalPath);
+        imported.source = TextureData::FromFile(externalPath, colorSpace);
     }
 
     const std::size_t textureIndex = result.textures.size();
@@ -351,13 +380,39 @@ std::optional<aiString> NormalTexturePath(const aiMaterial& material)
     return std::nullopt;
 }
 
+std::optional<aiString> TexturePath(
+    const aiMaterial& material,
+    aiTextureType type
+)
+{
+    aiString path;
+    if (material.GetTextureCount(type) > 0 &&
+        material.GetTexture(type, 0, &path) == AI_SUCCESS)
+    {
+        return path;
+    }
+    return std::nullopt;
+}
+
+std::optional<aiString> MetallicRoughnessTexturePath(
+    const aiMaterial& material
+)
+{
+    if (const std::optional<aiString> path =
+            TexturePath(material, aiTextureType_METALNESS))
+    {
+        return path;
+    }
+    return TexturePath(material, aiTextureType_DIFFUSE_ROUGHNESS);
+}
+
 ImportedMaterialData ImportMaterial(
     const aiScene& scene,
     const aiMaterial& material,
     std::size_t index,
     const std::filesystem::path& modelDirectory,
     ImportedModelData& result,
-    std::unordered_map<std::string, std::size_t>& textureIndices
+    ImportedTextureIndexMap& textureIndices
 )
 {
     ImportedMaterialData imported;
@@ -401,6 +456,36 @@ ImportedMaterialData ImportMaterial(
         imported.shininess = std::max(shininess, 1.0f);
     }
 
+    float metallicFactor = imported.metallicFactor;
+    if (material.Get(AI_MATKEY_METALLIC_FACTOR, metallicFactor) == AI_SUCCESS &&
+        std::isfinite(metallicFactor))
+    {
+        imported.metallicFactor = glm::clamp(metallicFactor, 0.0f, 1.0f);
+    }
+
+    float roughnessFactor = imported.roughnessFactor;
+    if (material.Get(AI_MATKEY_ROUGHNESS_FACTOR, roughnessFactor) == AI_SUCCESS &&
+        std::isfinite(roughnessFactor))
+    {
+        imported.roughnessFactor = glm::clamp(roughnessFactor, 0.0f, 1.0f);
+    }
+    else
+    {
+        imported.roughnessFactor = glm::clamp(
+            std::sqrt(2.0f / (imported.shininess + 2.0f)),
+            0.0f,
+            1.0f
+        );
+    }
+
+    aiColor3D emissive(0.0f, 0.0f, 0.0f);
+    if (material.Get(AI_MATKEY_COLOR_EMISSIVE, emissive) == AI_SUCCESS)
+    {
+        const glm::vec3 value(emissive.r, emissive.g, emissive.b);
+        if (IsFinite(value))
+            imported.emissiveFactor = glm::max(value, glm::vec3(0.0f));
+    }
+
     aiString alphaMode;
     if (material.Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) == AI_SUCCESS)
     {
@@ -435,6 +520,7 @@ ImportedMaterialData ImportMaterial(
         imported.baseColorTexture = ImportTexture(
             scene,
             *path,
+            TextureColorSpace::Srgb,
             modelDirectory,
             result,
             textureIndices
@@ -445,6 +531,7 @@ ImportedMaterialData ImportMaterial(
         imported.normalTexture = ImportTexture(
             scene,
             *path,
+            TextureColorSpace::Linear,
             modelDirectory,
             result,
             textureIndices
@@ -457,6 +544,55 @@ ImportedMaterialData ImportMaterial(
             ) == AI_SUCCESS && std::isfinite(normalScale))
         {
             imported.normalScale = std::max(normalScale, 0.0f);
+        }
+    }
+    if (const std::optional<aiString> path =
+            MetallicRoughnessTexturePath(material))
+    {
+        imported.metallicRoughnessTexture = ImportTexture(
+            scene,
+            *path,
+            TextureColorSpace::Linear,
+            modelDirectory,
+            result,
+            textureIndices
+        );
+    }
+    if (const std::optional<aiString> path =
+            TexturePath(material, aiTextureType_EMISSIVE))
+    {
+        imported.emissiveTexture = ImportTexture(
+            scene,
+            *path,
+            TextureColorSpace::Srgb,
+            modelDirectory,
+            result,
+            textureIndices
+        );
+    }
+    if (const std::optional<aiString> path =
+            TexturePath(material, aiTextureType_LIGHTMAP))
+    {
+        imported.occlusionTexture = ImportTexture(
+            scene,
+            *path,
+            TextureColorSpace::Linear,
+            modelDirectory,
+            result,
+            textureIndices
+        );
+
+        float occlusionStrength = imported.occlusionStrength;
+        if (material.Get(
+                AI_MATKEY_GLTF_TEXTURE_STRENGTH(aiTextureType_LIGHTMAP, 0),
+                occlusionStrength
+            ) == AI_SUCCESS && std::isfinite(occlusionStrength))
+        {
+            imported.occlusionStrength = glm::clamp(
+                occlusionStrength,
+                0.0f,
+                1.0f
+            );
         }
     }
     return imported;
@@ -541,7 +677,7 @@ ImportedModelData ModelImporter::Import(
     }
 
     ImportedModelData result;
-    std::unordered_map<std::string, std::size_t> textureIndices;
+    ImportedTextureIndexMap textureIndices;
     std::unordered_map<unsigned int, std::size_t> materialIndices;
     result.meshes.reserve(scene->mNumMeshes);
     for (unsigned int index = 0; index < scene->mNumMeshes; ++index)

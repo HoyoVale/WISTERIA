@@ -12,6 +12,12 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(third-party/glfw)
 
+if(MSVC)
+    # GLFW compiles many translation units into one debug PDB. /FS protects
+    # that PDB when CMake is built with --parallel.
+    target_compile_options(glfw PRIVATE /FS)
+endif()
+
 # glad
 add_library(glad STATIC
     third-party/glad/src/gl.c
@@ -72,6 +78,7 @@ set(WISTERIA_CORE_SOURCES
     src/entity.cpp
     src/scene.cpp
     src/renderer.cpp
+    src/environment.cpp
     src/manager.cpp
     src/light.cpp
     src/Models/cube.cpp

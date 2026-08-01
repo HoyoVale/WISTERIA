@@ -47,7 +47,25 @@ struct ShaderInterface
     std::string hasNormalTexture = "hasNormalTexture";
     std::string normalTexture = "normalTexture";
     std::string materialNormalScale = "materialNormalScale";
+    std::string materialMetallicFactor = "materialMetallicFactor";
+    std::string materialRoughnessFactor = "materialRoughnessFactor";
+    std::string materialEmissiveFactor = "materialEmissiveFactor";
+    std::string materialOcclusionStrength = "materialOcclusionStrength";
+    std::string hasMetallicRoughnessTexture =
+        "hasMetallicRoughnessTexture";
+    std::string metallicRoughnessTexture = "metallicRoughnessTexture";
+    std::string hasEmissiveTexture = "hasEmissiveTexture";
+    std::string emissiveTexture = "emissiveTexture";
+    std::string hasOcclusionTexture = "hasOcclusionTexture";
+    std::string occlusionTexture = "occlusionTexture";
     std::string ambientStrength = "ambientStrength";
+    bool imageBasedLightingEnabled = true;
+    std::string hasEnvironment = "hasEnvironment";
+    std::string irradianceMap = "irradianceMap";
+    std::string prefilterMap = "prefilterMap";
+    std::string brdfLut = "brdfLut";
+    std::string environmentIntensity = "environmentIntensity";
+    std::string maxReflectionLod = "maxReflectionLod";
 
     std::string pointLights = "pointLights";
     std::string pointLightCount = "pointLightCount";
@@ -81,6 +99,10 @@ struct MaterialData{
     glm::vec3 specularColor = {1.0f, 1.0f, 1.0f}; // Specular reflection color.
     float shininess = 32.0f; // Higher values make a sharper highlight.
     float normalScale = 1.0f;
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 1.0f;
+    glm::vec3 emissiveFactor = {0.0f, 0.0f, 0.0f};
+    float occlusionStrength = 1.0f;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
@@ -109,6 +131,10 @@ public:
     const glm::vec3& SpecularColor() const noexcept;
     float Shininess() const noexcept;
     float NormalScale() const noexcept;
+    float MetallicFactor() const noexcept;
+    float RoughnessFactor() const noexcept;
+    const glm::vec3& EmissiveFactor() const noexcept;
+    float OcclusionStrength() const noexcept;
     const glm::vec4& BaseColorFactor() const noexcept;
     MaterialAlphaMode AlphaMode() const noexcept;
     float AlphaCutoff() const noexcept;
@@ -119,6 +145,10 @@ public:
     void SetSpecularColor(const glm::vec3& color) noexcept;
     void SetShininess(float shininess) noexcept;
     void SetNormalScale(float normalScale) noexcept;
+    void SetMetallicFactor(float metallicFactor) noexcept;
+    void SetRoughnessFactor(float roughnessFactor) noexcept;
+    void SetEmissiveFactor(const glm::vec3& emissiveFactor) noexcept;
+    void SetOcclusionStrength(float occlusionStrength) noexcept;
 
 private:
     std::unique_ptr<Shader> shader;

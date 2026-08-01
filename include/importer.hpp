@@ -19,10 +19,17 @@ struct ImportedMaterialData
     std::string name;
     std::optional<std::size_t> baseColorTexture;
     std::optional<std::size_t> normalTexture;
+    std::optional<std::size_t> metallicRoughnessTexture;
+    std::optional<std::size_t> emissiveTexture;
+    std::optional<std::size_t> occlusionTexture;
     glm::vec4 baseColorFactor{1.0f};
     glm::vec3 specularColor{1.0f};
     float shininess = 32.0f;
     float normalScale = 1.0f;
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 1.0f;
+    glm::vec3 emissiveFactor{0.0f};
+    float occlusionStrength = 1.0f;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;

@@ -6,19 +6,33 @@
 #include <string>
 #include <vector>
 
+enum class TextureColorSpace
+{
+    Linear,
+    Srgb
+};
+
 struct TextureData
 {
     std::filesystem::path filePath;
     std::vector<std::uint8_t> data;
     int width = 0;
     int height = 0;
+    TextureColorSpace colorSpace = TextureColorSpace::Srgb;
 
-    static TextureData FromFile(std::filesystem::path filePath);
-    static TextureData FromEncoded(std::vector<std::uint8_t> encodedData);
+    static TextureData FromFile(
+        std::filesystem::path filePath,
+        TextureColorSpace colorSpace = TextureColorSpace::Srgb
+    );
+    static TextureData FromEncoded(
+        std::vector<std::uint8_t> encodedData,
+        TextureColorSpace colorSpace = TextureColorSpace::Srgb
+    );
     static TextureData FromRgba8(
         int width,
         int height,
-        std::vector<std::uint8_t> pixels
+        std::vector<std::uint8_t> pixels,
+        TextureColorSpace colorSpace = TextureColorSpace::Srgb
     );
 
     bool IsFile() const noexcept;
@@ -54,6 +68,7 @@ public:
 
     inline GLuint GetTexture() const noexcept { return this->texture; }
     bool IsAttached() const noexcept;
+    TextureColorSpace ColorSpace() const noexcept;
 private:
     void EnsureCreated();
     static GLint MaxUnits();

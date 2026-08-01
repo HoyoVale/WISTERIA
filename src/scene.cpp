@@ -146,6 +146,26 @@ void Scene::ClearSpotLights() noexcept
     this->spotLights.clear();
 }
 
+void Scene::SetEnvironment(EnvironmentMap* environment) noexcept
+{
+    this->environment = environment;
+}
+
+void Scene::ClearEnvironment() noexcept
+{
+    this->environment = nullptr;
+}
+
+EnvironmentMap* Scene::Environment() noexcept
+{
+    return this->environment;
+}
+
+const EnvironmentMap* Scene::Environment() const noexcept
+{
+    return this->environment;
+}
+
 std::size_t Scene::EntityCount() const noexcept
 {
     return this->entities.size();

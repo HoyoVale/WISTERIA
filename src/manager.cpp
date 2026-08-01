@@ -55,16 +55,19 @@ Texture& ResourceManager::CreateTexture(
     if (this->textures.contains(name))
         throw std::invalid_argument("Texture resource already exists: " + name);
 
-    std::optional<std::filesystem::path> normalizedPath;
+    std::optional<TexturePathKey> cacheKey;
     std::shared_ptr<Texture> texture;
     bool createdTexture = false;
 
     if (data.IsFile())
     {
-        normalizedPath = NormalizeResourcePath(data.filePath);
-        data.filePath = *normalizedPath;
+        cacheKey = TexturePathKey{
+            NormalizeResourcePath(data.filePath),
+            data.colorSpace
+        };
+        data.filePath = cacheKey->path;
 
-        const auto cached = this->texturePathCache.find(*normalizedPath);
+        const auto cached = this->texturePathCache.find(*cacheKey);
         if (cached != this->texturePathCache.end())
         {
             texture = cached->second.lock();
@@ -82,11 +85,11 @@ Texture& ResourceManager::CreateTexture(
     Texture& result = *texture;
     this->textures.emplace(name, texture);
 
-    if (normalizedPath.has_value() && createdTexture)
+    if (cacheKey.has_value() && createdTexture)
     {
         try
         {
-            this->texturePathCache.emplace(*normalizedPath, texture);
+            this->texturePathCache.emplace(*cacheKey, texture);
         }
         catch (...)
         {
@@ -160,19 +163,30 @@ ModelAsset& ResourceManager::LoadModel(
             throw std::invalid_argument("Material resource already exists: " + resourceName);
         materialNames.push_back(resourceName);
 
-        const std::optional<std::size_t> textureIndex =
-            imported.materials[index].baseColorTexture;
-        if (textureIndex.has_value() && *textureIndex >= imported.textures.size())
-            throw std::runtime_error("Imported material references an invalid texture index");
-        const std::optional<std::size_t> normalTextureIndex =
-            imported.materials[index].normalTexture;
-        if (normalTextureIndex.has_value() &&
-            *normalTextureIndex >= imported.textures.size())
+        const auto validateTextureIndex =
+            [&imported](
+                const std::optional<std::size_t>& textureIndex,
+                const char* semantic
+            )
         {
-            throw std::runtime_error(
-                "Imported material references an invalid normal texture index"
-            );
-        }
+            if (textureIndex.has_value() &&
+                *textureIndex >= imported.textures.size())
+            {
+                throw std::runtime_error(
+                    std::string("Imported material references an invalid ") +
+                    semantic + " texture index"
+                );
+            }
+        };
+        const ImportedMaterialData& material = imported.materials[index];
+        validateTextureIndex(material.baseColorTexture, "base-color");
+        validateTextureIndex(material.normalTexture, "normal");
+        validateTextureIndex(
+            material.metallicRoughnessTexture,
+            "metallic-roughness"
+        );
+        validateTextureIndex(material.emissiveTexture, "emissive");
+        validateTextureIndex(material.occlusionTexture, "occlusion");
     }
     for (std::size_t index = 0; index < imported.meshes.size(); ++index)
     {
@@ -192,8 +206,9 @@ ModelAsset& ResourceManager::LoadModel(
 
     std::vector<std::shared_ptr<Texture>> importedTextures;
     std::unordered_map<
-        std::filesystem::path,
-        std::shared_ptr<Texture>
+        TexturePathKey,
+        std::shared_ptr<Texture>,
+        TexturePathKeyHash
     > newExternalTextures;
     importedTextures.reserve(imported.textures.size());
     for (std::size_t index = 0; index < imported.textures.size(); ++index)
@@ -206,9 +221,13 @@ ModelAsset& ResourceManager::LoadModel(
             const std::filesystem::path normalizedTexturePath =
                 NormalizeResourcePath(source.filePath);
             source.filePath = normalizedTexturePath;
+            const TexturePathKey cacheKey{
+                normalizedTexturePath,
+                source.colorSpace
+            };
 
             const auto cached =
-                this->texturePathCache.find(normalizedTexturePath);
+                this->texturePathCache.find(cacheKey);
             if (cached != this->texturePathCache.end())
             {
                 texture = cached->second.lock();
@@ -219,7 +238,7 @@ ModelAsset& ResourceManager::LoadModel(
             if (texture == nullptr)
             {
                 const auto pending =
-                    newExternalTextures.find(normalizedTexturePath);
+                    newExternalTextures.find(cacheKey);
                 if (pending != newExternalTextures.end())
                     texture = pending->second;
             }
@@ -227,7 +246,7 @@ ModelAsset& ResourceManager::LoadModel(
             if (texture == nullptr)
             {
                 texture = std::make_shared<Texture>(std::move(source));
-                newExternalTextures.emplace(normalizedTexturePath, texture);
+                newExternalTextures.emplace(cacheKey, texture);
             }
         }
         else
@@ -249,6 +268,10 @@ ModelAsset& ResourceManager::LoadModel(
         data.specularColor = source.specularColor;
         data.shininess = source.shininess;
         data.normalScale = source.normalScale;
+        data.metallicFactor = source.metallicFactor;
+        data.roughnessFactor = source.roughnessFactor;
+        data.emissiveFactor = source.emissiveFactor;
+        data.occlusionStrength = source.occlusionStrength;
         data.alphaMode = source.alphaMode;
         data.alphaCutoff = source.alphaCutoff;
         data.doubleSided = source.doubleSided;
@@ -267,6 +290,31 @@ ModelAsset& ResourceManager::LoadModel(
             const std::size_t textureIndex = *source.normalTexture;
             bindings.emplace(
                 data.shaderInterface.normalTexture,
+                importedTextures[textureIndex]
+            );
+        }
+        if (source.metallicRoughnessTexture.has_value())
+        {
+            const std::size_t textureIndex =
+                *source.metallicRoughnessTexture;
+            bindings.emplace(
+                data.shaderInterface.metallicRoughnessTexture,
+                importedTextures[textureIndex]
+            );
+        }
+        if (source.emissiveTexture.has_value())
+        {
+            const std::size_t textureIndex = *source.emissiveTexture;
+            bindings.emplace(
+                data.shaderInterface.emissiveTexture,
+                importedTextures[textureIndex]
+            );
+        }
+        if (source.occlusionTexture.has_value())
+        {
+            const std::size_t textureIndex = *source.occlusionTexture;
+            bindings.emplace(
+                data.shaderInterface.occlusionTexture,
                 importedTextures[textureIndex]
             );
         }
@@ -343,10 +391,10 @@ ModelAsset& ResourceManager::LoadModel(
             throw std::logic_error("Model path cache changed during import");
         modelPathCommitted = true;
 
-        for (const auto& [path, texture] : newExternalTextures)
+        for (const auto& [key, texture] : newExternalTextures)
         {
             const bool texturePathInserted =
-                this->texturePathCache.emplace(path, texture).second;
+                this->texturePathCache.emplace(key, texture).second;
             if (!texturePathInserted)
                 throw std::logic_error("Texture path cache changed during import");
         }
@@ -357,9 +405,9 @@ ModelAsset& ResourceManager::LoadModel(
     {
         if (modelPathCommitted)
             this->modelPathCache.erase(normalizedModelPath);
-        for (const auto& [path, texture] : newExternalTextures)
+        for (const auto& [key, texture] : newExternalTextures)
         {
-            const auto cached = this->texturePathCache.find(path);
+            const auto cached = this->texturePathCache.find(key);
             if (
                 cached != this->texturePathCache.end() &&
                 cached->second.lock() == texture
@@ -377,6 +425,26 @@ ModelAsset& ResourceManager::LoadModel(
             this->textures.erase(textureNames[index]);
         throw;
     }
+}
+
+EnvironmentMap& ResourceManager::CreateEnvironment(
+    const std::string& name,
+    const EnvironmentMapData& data
+)
+{
+    if (name.empty())
+        throw std::invalid_argument("Environment resource name must not be empty");
+    if (this->environments.contains(name))
+    {
+        throw std::invalid_argument(
+            "Environment resource already exists: " + name
+        );
+    }
+
+    auto environment = std::make_unique<EnvironmentMap>(data);
+    EnvironmentMap& result = *environment;
+    this->environments.emplace(name, std::move(environment));
+    return result;
 }
 
 Mesh* ResourceManager::FindMesh(const std::string& name) noexcept
@@ -418,12 +486,12 @@ const Texture* ResourceManager::FindTexture(const std::string& name) const noexc
 }
 
 Texture* ResourceManager::FindTextureByPath(
-    const std::filesystem::path& filePath
+    const std::filesystem::path& filePath,
+    TextureColorSpace colorSpace
 )
 {
-    const std::filesystem::path normalizedPath =
-        NormalizeResourcePath(filePath);
-    const auto iterator = this->texturePathCache.find(normalizedPath);
+    const TexturePathKey key{NormalizeResourcePath(filePath), colorSpace};
+    const auto iterator = this->texturePathCache.find(key);
     if (iterator == this->texturePathCache.end())
         return nullptr;
 
@@ -437,12 +505,12 @@ Texture* ResourceManager::FindTextureByPath(
 }
 
 const Texture* ResourceManager::FindTextureByPath(
-    const std::filesystem::path& filePath
+    const std::filesystem::path& filePath,
+    TextureColorSpace colorSpace
 ) const
 {
-    const std::filesystem::path normalizedPath =
-        NormalizeResourcePath(filePath);
-    const auto iterator = this->texturePathCache.find(normalizedPath);
+    const TexturePathKey key{NormalizeResourcePath(filePath), colorSpace};
+    const auto iterator = this->texturePathCache.find(key);
     if (iterator == this->texturePathCache.end())
         return nullptr;
 
@@ -482,6 +550,26 @@ const ModelAsset* ResourceManager::FindModelByPath(
         NormalizeResourcePath(filePath);
     const auto iterator = this->modelPathCache.find(normalizedPath);
     return iterator != this->modelPathCache.end() ? iterator->second : nullptr;
+}
+
+EnvironmentMap* ResourceManager::FindEnvironment(
+    const std::string& name
+) noexcept
+{
+    const auto iterator = this->environments.find(name);
+    return iterator != this->environments.end()
+        ? iterator->second.get()
+        : nullptr;
+}
+
+const EnvironmentMap* ResourceManager::FindEnvironment(
+    const std::string& name
+) const noexcept
+{
+    const auto iterator = this->environments.find(name);
+    return iterator != this->environments.end()
+        ? iterator->second.get()
+        : nullptr;
 }
 
 Mesh& ResourceManager::GetMesh(const std::string& name)
@@ -554,6 +642,32 @@ const ModelAsset& ResourceManager::GetModel(const std::string& name) const
     return *model;
 }
 
+EnvironmentMap& ResourceManager::GetEnvironment(const std::string& name)
+{
+    EnvironmentMap* environment = this->FindEnvironment(name);
+    if (environment == nullptr)
+    {
+        throw std::out_of_range(
+            "Environment resource was not found: " + name
+        );
+    }
+    return *environment;
+}
+
+const EnvironmentMap& ResourceManager::GetEnvironment(
+    const std::string& name
+) const
+{
+    const EnvironmentMap* environment = this->FindEnvironment(name);
+    if (environment == nullptr)
+    {
+        throw std::out_of_range(
+            "Environment resource was not found: " + name
+        );
+    }
+    return *environment;
+}
+
 std::size_t ResourceManager::MeshCount() const noexcept
 {
     return this->meshes.size();
@@ -574,11 +688,17 @@ std::size_t ResourceManager::ModelCount() const noexcept
     return this->models.size();
 }
 
+std::size_t ResourceManager::EnvironmentCount() const noexcept
+{
+    return this->environments.size();
+}
+
 void ResourceManager::Clear() noexcept
 {
     this->modelPathCache.clear();
     this->texturePathCache.clear();
     this->models.clear();
+    this->environments.clear();
     this->materials.clear();
     this->textures.clear();
     this->meshes.clear();

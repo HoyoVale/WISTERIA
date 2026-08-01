@@ -8,6 +8,8 @@
 #include <memory>
 #include <vector>
 
+class EnvironmentMap;
+
 // Scene owns scene objects. Mesh and Material stay externally owned resources.
 class Scene
 {
@@ -52,6 +54,11 @@ public:
     bool RemoveSpotLight(const SpotLight& light);
     void ClearSpotLights() noexcept;
 
+    void SetEnvironment(EnvironmentMap* environment) noexcept;
+    void ClearEnvironment() noexcept;
+    EnvironmentMap* Environment() noexcept;
+    const EnvironmentMap* Environment() const noexcept;
+
     std::size_t EntityCount() const noexcept;
     Entity* EntityAt(std::size_t index) noexcept;
     const Entity* EntityAt(std::size_t index) const noexcept;
@@ -69,4 +76,5 @@ private:
     std::vector<std::unique_ptr<PointLight>> pointLights;
     std::vector<std::unique_ptr<DirectionalLight>> directionalLights;
     std::vector<std::unique_ptr<SpotLight>> spotLights;
+    EnvironmentMap* environment = nullptr;
 };

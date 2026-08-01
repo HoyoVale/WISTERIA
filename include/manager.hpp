@@ -4,6 +4,7 @@
 #include "mesh.hpp"
 #include "model_asset.hpp"
 #include "texture.hpp"
+#include "environment.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -11,6 +12,27 @@
 #include <unordered_map>
 
 class Window;
+
+struct TexturePathKey
+{
+    std::filesystem::path path;
+    TextureColorSpace colorSpace = TextureColorSpace::Srgb;
+
+    bool operator==(const TexturePathKey&) const noexcept = default;
+};
+
+struct TexturePathKeyHash
+{
+    std::size_t operator()(const TexturePathKey& key) const noexcept
+    {
+        const std::size_t pathHash =
+            std::hash<std::filesystem::path>{}(key.path);
+        const std::size_t colorSpaceHash =
+            std::hash<int>{}(static_cast<int>(key.colorSpace));
+        return pathHash ^ (colorSpaceHash + 0x9e3779b9U +
+            (pathHash << 6U) + (pathHash >> 2U));
+    }
+};
 
 class ResourceManager
 {
@@ -34,6 +56,10 @@ public:
         const std::string& name,
         const std::filesystem::path& filePath
     );
+    EnvironmentMap& CreateEnvironment(
+        const std::string& name,
+        const EnvironmentMapData& data = {}
+    );
 
     Mesh* FindMesh(const std::string& name) noexcept;
     const Mesh* FindMesh(const std::string& name) const noexcept;
@@ -41,9 +67,13 @@ public:
     const Material* FindMaterial(const std::string& name) const noexcept;
     Texture* FindTexture(const std::string& name) noexcept;
     const Texture* FindTexture(const std::string& name) const noexcept;
-    Texture* FindTextureByPath(const std::filesystem::path& filePath);
+    Texture* FindTextureByPath(
+        const std::filesystem::path& filePath,
+        TextureColorSpace colorSpace = TextureColorSpace::Srgb
+    );
     const Texture* FindTextureByPath(
-        const std::filesystem::path& filePath
+        const std::filesystem::path& filePath,
+        TextureColorSpace colorSpace = TextureColorSpace::Srgb
     ) const;
     ModelAsset* FindModel(const std::string& name) noexcept;
     const ModelAsset* FindModel(const std::string& name) const noexcept;
@@ -51,6 +81,10 @@ public:
     const ModelAsset* FindModelByPath(
         const std::filesystem::path& filePath
     ) const;
+    EnvironmentMap* FindEnvironment(const std::string& name) noexcept;
+    const EnvironmentMap* FindEnvironment(
+        const std::string& name
+    ) const noexcept;
 
     Mesh& GetMesh(const std::string& name);
     const Mesh& GetMesh(const std::string& name) const;
@@ -60,20 +94,25 @@ public:
     const Texture& GetTexture(const std::string& name) const;
     ModelAsset& GetModel(const std::string& name);
     const ModelAsset& GetModel(const std::string& name) const;
+    EnvironmentMap& GetEnvironment(const std::string& name);
+    const EnvironmentMap& GetEnvironment(const std::string& name) const;
 
     std::size_t MeshCount() const noexcept;
     std::size_t MaterialCount() const noexcept;
     std::size_t TextureCount() const noexcept;
     std::size_t ModelCount() const noexcept;
+    std::size_t EnvironmentCount() const noexcept;
 
 private:
     std::unordered_map<std::string, std::unique_ptr<Mesh>> meshes;
     std::unordered_map<std::string, std::unique_ptr<Material>> materials;
     std::unordered_map<std::string, std::shared_ptr<Texture>> textures;
     std::unordered_map<std::string, std::unique_ptr<ModelAsset>> models;
+    std::unordered_map<std::string, std::unique_ptr<EnvironmentMap>> environments;
     std::unordered_map<
-        std::filesystem::path,
-        std::weak_ptr<Texture>
+        TexturePathKey,
+        std::weak_ptr<Texture>,
+        TexturePathKeyHash
     > texturePathCache;
     std::unordered_map<std::filesystem::path, ModelAsset*> modelPathCache;
 

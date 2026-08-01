@@ -253,6 +253,74 @@ void TestResourceManagerModelRegistry()
     Require(duplicateRejected, "Duplicate model name was accepted");
 }
 
+void TestEnvironmentResourceAndSceneBinding()
+{
+    EnvironmentMapData data = EnvironmentMapData::ProceduralSky();
+    data.environmentResolution = 64;
+    data.irradianceResolution = 16;
+    data.prefilterResolution = 64;
+    data.prefilterMipLevels = 4;
+    data.brdfResolution = 64;
+    data.intensity = 1.5f;
+
+    ResourceManager resources;
+    EnvironmentMap& environment = resources.CreateEnvironment(
+        "testEnvironment",
+        data
+    );
+    Scene scene;
+    scene.SetEnvironment(&environment);
+
+    Require(
+        scene.Environment() == &environment,
+        "Scene did not preserve its environment reference"
+    );
+    Require(
+        resources.FindEnvironment("testEnvironment") == &environment &&
+        &resources.GetEnvironment("testEnvironment") == &environment,
+        "ResourceManager environment lookup failed"
+    );
+    Require(
+        resources.EnvironmentCount() == 1,
+        "ResourceManager environment count is incorrect"
+    );
+    Require(!environment.IsAttached(), "CPU test unexpectedly created OpenGL IBL resources");
+    Require(NearlyEqual(environment.Intensity(), 1.5f), "Environment intensity changed");
+    Require(NearlyEqual(environment.MaxReflectionLod(), 3.0f), "Environment mip range changed");
+
+    environment.SetIntensity(0.75f);
+    environment.SetDrawSkybox(false);
+    Require(NearlyEqual(environment.Intensity(), 0.75f), "Environment intensity setter failed");
+    Require(!environment.ShouldDrawSkybox(), "Environment skybox setter failed");
+
+    scene.ClearEnvironment();
+    Require(scene.Environment() == nullptr, "Scene environment was not cleared");
+
+    bool duplicateRejected = false;
+    try
+    {
+        resources.CreateEnvironment("testEnvironment", data);
+    }
+    catch (const std::invalid_argument&)
+    {
+        duplicateRejected = true;
+    }
+    Require(duplicateRejected, "Duplicate environment name was accepted");
+
+    bool invalidMipCountRejected = false;
+    try
+    {
+        EnvironmentMapData invalid = data;
+        invalid.prefilterMipLevels = 8;
+        EnvironmentMap invalidEnvironment(invalid);
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidMipCountRejected = true;
+    }
+    Require(invalidMipCountRejected, "Invalid environment mip count was accepted");
+}
+
 void TestStaticModelImporter()
 {
     const ImportedModelData imported = ModelImporter().Import(
@@ -262,7 +330,7 @@ void TestStaticModelImporter()
     Require(imported.meshes.size() == 1, "Importer mesh count is incorrect");
     Require(imported.materials.size() == 1, "Importer material count is incorrect");
     Require(
-        imported.textures.size() == 2,
+        imported.textures.size() == 4,
         "Importer embedded texture count is incorrect: " +
             std::to_string(imported.textures.size())
     );
@@ -303,7 +371,17 @@ void TestStaticModelImporter()
     const ImportedMaterialData& material = imported.materials[0];
     Require(material.baseColorTexture == 0, "Importer lost base-color texture binding");
     Require(material.normalTexture == 1, "Importer lost normal texture binding");
+    Require(
+        material.metallicRoughnessTexture == 2,
+        "Importer lost metallic-roughness texture binding"
+    );
+    Require(material.occlusionTexture == 2, "Importer lost occlusion texture binding");
+    Require(material.emissiveTexture == 3, "Importer lost emissive texture binding");
     Require(NearlyEqual(material.normalScale, 0.75f), "Importer changed normal scale");
+    Require(NearlyEqual(material.metallicFactor, 0.6f), "Importer changed metallic factor");
+    Require(NearlyEqual(material.roughnessFactor, 0.4f), "Importer changed roughness factor");
+    Require(NearlyEqual(material.occlusionStrength, 0.8f), "Importer changed AO strength");
+    Require(NearlyEqual(material.emissiveFactor.r, 0.1f), "Importer changed emissive factor");
     Require(material.alphaMode == MaterialAlphaMode::Blend, "Importer lost alpha mode");
     Require(material.doubleSided, "Importer lost double-sided material state");
     Require(NearlyEqual(material.alphaCutoff, 0.35f), "Importer alpha cutoff changed");
@@ -321,6 +399,13 @@ void TestStaticModelImporter()
             "Importer produced an empty embedded texture"
         );
     }
+    Require(
+        imported.textures[0].source.colorSpace == TextureColorSpace::Srgb &&
+        imported.textures[1].source.colorSpace == TextureColorSpace::Linear &&
+        imported.textures[2].source.colorSpace == TextureColorSpace::Linear &&
+        imported.textures[3].source.colorSpace == TextureColorSpace::Srgb,
+        "Importer assigned an incorrect PBR texture color space"
+    );
     Require(
         NearlyEqual(imported.parts[0].localTransform[3].x, 1.0f) &&
         NearlyEqual(imported.parts[0].localTransform[3].y, 2.0f) &&
@@ -348,7 +433,7 @@ void TestImportedResourceCreation()
     Require(resources.MeshCount() == 1, "Imported shared mesh was duplicated");
     Require(resources.MaterialCount() == 1, "Imported material count is incorrect");
     Require(
-        resources.TextureCount() == 2,
+        resources.TextureCount() == 4,
         "Imported texture count is incorrect: " +
             std::to_string(resources.TextureCount())
     );
@@ -374,6 +459,21 @@ void TestImportedResourceCreation()
         NearlyEqual(importedMaterial.NormalScale(), 0.75f),
         "ResourceManager changed imported normal scale"
     );
+    Require(
+        importedMaterial.HasTexture(
+            importedMaterial.Interface().metallicRoughnessTexture
+        ) &&
+        importedMaterial.HasTexture(importedMaterial.Interface().emissiveTexture) &&
+        importedMaterial.HasTexture(importedMaterial.Interface().occlusionTexture),
+        "ResourceManager lost imported PBR texture bindings"
+    );
+    Require(
+        NearlyEqual(importedMaterial.MetallicFactor(), 0.6f) &&
+        NearlyEqual(importedMaterial.RoughnessFactor(), 0.4f) &&
+        NearlyEqual(importedMaterial.OcclusionStrength(), 0.8f) &&
+        NearlyEqual(importedMaterial.EmissiveFactor().g, 0.2f),
+        "ResourceManager changed imported PBR factors"
+    );
 
     const std::filesystem::path equivalentPath =
         modelPath.parent_path() / "." / modelPath.filename();
@@ -389,7 +489,7 @@ void TestImportedResourceCreation()
     Require(resources.ModelCount() == 1, "Model path cache added a duplicate model");
     Require(resources.MeshCount() == 1, "Model path cache added duplicate meshes");
     Require(resources.MaterialCount() == 1, "Model path cache added duplicate materials");
-    Require(resources.TextureCount() == 2, "Model path cache added duplicate textures");
+    Require(resources.TextureCount() == 4, "Model path cache added duplicate textures");
 
     bool aliasRejected = false;
     try
@@ -571,6 +671,23 @@ void TestConvertedMmdObjWhenAvailable()
         resources.TextureCount() == 7,
         "Texture alias was not registered as a named resource"
     );
+
+    Texture& linearTexture = resources.CreateTexture(
+        "yixuanObjLinearTexture",
+        TextureData::FromFile(firstTexturePath, TextureColorSpace::Linear)
+    );
+    Require(
+        &linearTexture != &textureAlias,
+        "Texture cache shared one GPU texture across different color spaces"
+    );
+    Require(
+        resources.FindTextureByPath(
+            firstTexturePath,
+            TextureColorSpace::Linear
+        ) == &linearTexture,
+        "Linear texture path cache lookup failed"
+    );
+    Require(resources.TextureCount() == 8, "Linear texture alias was not registered");
 }
 
 template<typename Function>
@@ -600,6 +717,10 @@ int main()
     failures += !RunTest("Input frame transitions", TestInputFrameTransitions);
     failures += !RunTest("Free camera controller", TestFreeCameraController);
     failures += !RunTest("ResourceManager model registry", TestResourceManagerModelRegistry);
+    failures += !RunTest(
+        "Environment resource and Scene binding",
+        TestEnvironmentResourceAndSceneBinding
+    );
     failures += !RunTest("Static model importer", TestStaticModelImporter);
     failures += !RunTest("Imported resource creation", TestImportedResourceCreation);
     failures += !RunTest("Importer missing-file rejection", TestImporterRejectsMissingFile);
