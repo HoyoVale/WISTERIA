@@ -311,7 +311,7 @@ void TestAnimationSamplingAndAnimator()
     );
 
     const AnimationClip* stableAddress = entity.GetAnimator().CurrentClip();
-    model.AddAnimationClip(AnimationClip(
+    AnimationClip& secondClip = model.AddAnimationClip(AnimationClip(
         "secondClip",
         1.0f,
         {AnimationTrack(
@@ -327,7 +327,157 @@ void TestAnimationSamplingAndAnimator()
         "Adding a ModelAsset clip invalidated a running Animator"
     );
 
-    entity.GetAnimator().Stop();
+    Animator& animator = entity.GetAnimator();
+    animator.SetSpeed(1.0f);
+    animator.SetLooping(false);
+    animator.Play(firstClip);
+    animator.SetTime(1.0f);
+    animator.CrossFade(secondClip, 2.0f);
+    Require(
+        animator.IsTransitioning() &&
+        animator.CurrentClip() == &secondClip &&
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 2.0f),
+        "CrossFade did not begin from the currently displayed pose"
+    );
+
+    animator.Update(0.5f);
+    Require(
+        NearlyEqual(animator.TransitionProgress(), 0.25f) &&
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 2.375f),
+        "CrossFade did not blend independently advancing clips"
+    );
+    animator.Pause();
+    animator.Update(0.5f);
+    Require(
+        NearlyEqual(animator.TransitionProgress(), 0.25f),
+        "Paused CrossFade continued advancing"
+    );
+    animator.Resume();
+    animator.Update(1.5f);
+    Require(
+        !animator.IsTransitioning() &&
+        animator.CurrentClip() == &secondClip &&
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 1.0f),
+        "CrossFade did not finish on the destination clip"
+    );
+
+    animator.Play(firstClip);
+    animator.SetTime(1.0f);
+    animator.CrossFade(secondClip, 2.0f);
+    animator.Update(0.5f);
+    const glm::mat4 poseBeforeInterruption =
+        entity.GetPose().LocalMatrix(0U);
+    animator.CrossFade(firstClip, 1.0f);
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(0U), poseBeforeInterruption),
+        "Interrupting a CrossFade caused a pose discontinuity"
+    );
+    animator.Update(0.5f);
+    Require(
+        NearlyEqual(entity.GetPose().LocalMatrix(0U)[3].x, 1.6875f),
+        "Interrupted CrossFade did not blend from its captured pose"
+    );
+
+    animator.CrossFade(secondClip, 0.0f);
+    Require(
+        !animator.IsTransitioning() &&
+        animator.CurrentClip() == &secondClip &&
+        NearlyEqual(animator.Time(), 0.0f),
+        "Zero-duration CrossFade did not switch immediately"
+    );
+
+    bool invalidFadeRejected = false;
+    try
+    {
+        animator.CrossFade(firstClip, -1.0f);
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidFadeRejected = true;
+    }
+    Require(
+        invalidFadeRejected,
+        "Animator accepted a negative CrossFade duration"
+    );
+
+    animator.SetFloat("motionSpeed", 0.0f);
+    animator.SetBool("grounded", true);
+    AnimationStateMachine& stateMachine = animator.GetStateMachine();
+    stateMachine.AddState(AnimationState{
+        "Idle",
+        &firstClip,
+        1.0f,
+        true
+    });
+    stateMachine.AddState(AnimationState{
+        "Move",
+        &secondClip,
+        1.5f,
+        false
+    });
+    stateMachine.AddTransition(AnimationTransitionRule{
+        "Idle",
+        "Move",
+        0.4f,
+        [](const Animator& value)
+        {
+            return value.GetBool("grounded") &&
+                value.GetFloat("motionSpeed") > 0.5f;
+        }
+    });
+    stateMachine.AddTransition(AnimationTransitionRule{
+        std::string(AnimationStateMachine::AnyState),
+        "Idle",
+        0.1f,
+        [](const Animator& value)
+        {
+            return value.IsTriggerSet("reset");
+        }
+    });
+    stateMachine.SetState("Idle");
+    animator.Update(0.0f);
+    Require(
+        stateMachine.CurrentState() != nullptr &&
+        stateMachine.CurrentState()->name == "Idle" &&
+        animator.CurrentClip() == &firstClip,
+        "AnimationStateMachine did not apply its initial state"
+    );
+
+    animator.SetFloat("motionSpeed", 1.0f);
+    animator.Update(0.0f);
+    Require(
+        stateMachine.CurrentState()->name == "Move" &&
+        animator.CurrentClip() == &secondClip &&
+        animator.IsTransitioning() &&
+        NearlyEqual(animator.Speed(), 1.5f) &&
+        !animator.IsLooping(),
+        "AnimationStateMachine did not enter its conditional destination"
+    );
+
+    animator.SetTrigger("reset");
+    animator.Update(0.0f);
+    Require(
+        stateMachine.CurrentState()->name == "Idle" &&
+        animator.CurrentClip() == &firstClip &&
+        !animator.IsTriggerSet("reset"),
+        "Any-state trigger transition or trigger consumption failed"
+    );
+
+    bool parameterTypeRejected = false;
+    try
+    {
+        animator.SetBool("motionSpeed", true);
+    }
+    catch (const std::invalid_argument&)
+    {
+        parameterTypeRejected = true;
+    }
+    Require(
+        parameterTypeRejected,
+        "Animator accepted one parameter name with two types"
+    );
+
+    animator.Stop();
     Require(
         NearlyEqual(entity.GetPose().LocalMatrix(0U), glm::mat4(1.0f)),
         "Stopping Animator did not restore the bind pose"

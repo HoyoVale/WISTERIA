@@ -34,9 +34,8 @@ target_include_directories(glm_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
 )
 
-# Assimp 5.2.5 is the newest release compatible with the project's current
-# CMake 3.21 toolchain. Build only the static-model importers used here.
-include(FetchContent)
+# Assimp 5.2.5 is vendored so a clean build never depends on GitHub access.
+# Build only the static importers used by this project.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
@@ -51,12 +50,7 @@ set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_MMD_IMPORTER ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
 
-FetchContent_Declare(
-    assimp
-    URL https://github.com/assimp/assimp/archive/refs/tags/v5.2.5.tar.gz
-    URL_HASH SHA256=b5219e63ae31d895d60d98001ee5bb809fb2c7b2de1e7f78ceeb600063641e1a
-)
-FetchContent_MakeAvailable(assimp)
+add_subdirectory(third-party/assimp)
 
 # reusable project code
 set(WISTERIA_CORE_SOURCES
@@ -82,6 +76,7 @@ set(WISTERIA_CORE_SOURCES
     src/pose.cpp
     src/pose_buffer.cpp
     src/animation.cpp
+    src/animation_state_machine.cpp
     src/animator.cpp
     src/importer.cpp
     src/entity.cpp

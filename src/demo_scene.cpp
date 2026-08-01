@@ -4,6 +4,7 @@
 #include "manager.hpp"
 #include "scene.hpp"
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <string_view>
 
@@ -12,13 +13,13 @@ namespace
 std::filesystem::path DemoModelPath1()
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        "mmd" / u8"仪玄_pmx" / u8"仪玄.pmx";
+        "mmd" / u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
 }
 
 std::filesystem::path DemoModelPath2()
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        "mmd" / u8"仪玄皮肤_pmx" / u8"仪玄.pmx";
+        "mmd" / u8"叶瞬光皮肤_pmx" / u8"叶瞬光.pmx";
 }
 
 BoneIndex FindDemoAnimationBone(const Skeleton& skeleton)
@@ -44,6 +45,29 @@ BoneIndex FindDemoAnimationBone(const Skeleton& skeleton)
     return 0U;
 }
 
+class DemoAnimationParameterBehaviour final : public Behaviour
+{
+public:
+    void Update(Entity& entity, float deltaTime) override
+    {
+        this->elapsed += deltaTime;
+        if (this->elapsed < SwitchInterval)
+            return;
+
+        this->elapsed = std::fmod(this->elapsed, SwitchInterval);
+        Animator& animator = entity.GetAnimator();
+        animator.SetBool(
+            "demoNod",
+            !animator.GetBool("demoNod")
+        );
+    }
+
+private:
+    static constexpr float SwitchInterval = 3.0f;
+
+    float elapsed = 0.0f;
+};
+
 void EnsureDemoAnimation(ModelAsset& model)
 {
     if (!model.HasSkeleton() || model.AnimationClipCount() != 0)
@@ -54,12 +78,15 @@ void EnsureDemoAnimation(ModelAsset& model)
     const BoneTransform bindTransform = BoneTransform::FromMatrix(
         skeleton.BoneAt(boneIndex).bindLocalMatrix
     );
-    const auto rotated = [&bindTransform](float degrees)
+    const auto rotated = [&bindTransform](
+        float degrees,
+        const glm::vec3& axis
+    )
     {
         return glm::normalize(
             bindTransform.rotation * glm::angleAxis(
                 glm::radians(degrees),
-                glm::vec3(0.0f, 1.0f, 0.0f)
+                axis
             )
         );
     };
@@ -72,9 +99,36 @@ void EnsureDemoAnimation(ModelAsset& model)
             {},
             {
                 QuaternionKeyframe{0.0f, bindTransform.rotation},
-                QuaternionKeyframe{1.0f, rotated(25.0f)},
+                QuaternionKeyframe{
+                    1.0f,
+                    rotated(25.0f, glm::vec3(0.0f, 1.0f, 0.0f))
+                },
                 QuaternionKeyframe{2.0f, bindTransform.rotation},
-                QuaternionKeyframe{3.0f, rotated(-25.0f)},
+                QuaternionKeyframe{
+                    3.0f,
+                    rotated(-25.0f, glm::vec3(0.0f, 1.0f, 0.0f))
+                },
+                QuaternionKeyframe{4.0f, bindTransform.rotation}
+            }
+        )}
+    ));
+    model.AddAnimationClip(AnimationClip(
+        "demoHeadNod",
+        4.0f,
+        {AnimationTrack(
+            boneIndex,
+            {},
+            {
+                QuaternionKeyframe{0.0f, bindTransform.rotation},
+                QuaternionKeyframe{
+                    1.0f,
+                    rotated(16.0f, glm::vec3(1.0f, 0.0f, 0.0f))
+                },
+                QuaternionKeyframe{2.0f, bindTransform.rotation},
+                QuaternionKeyframe{
+                    3.0f,
+                    rotated(-12.0f, glm::vec3(1.0f, 0.0f, 0.0f))
+                },
                 QuaternionKeyframe{4.0f, bindTransform.rotation}
             }
         )}
@@ -82,6 +136,53 @@ void EnsureDemoAnimation(ModelAsset& model)
 
     std::cout << "[INFO] Demo animation uses bone: "
               << skeleton.BoneAt(boneIndex).name << std::endl;
+}
+
+void EnableDemoStateMachine(Entity& entity, const ModelAsset& model)
+{
+    const AnimationClip* headTurn =
+        model.FindAnimationClip("demoHeadTurn");
+    const AnimationClip* headNod =
+        model.FindAnimationClip("demoHeadNod");
+    if (headTurn != nullptr && headNod != nullptr)
+    {
+        Animator& animator = entity.GetAnimator();
+        animator.SetBool("demoNod", false);
+
+        AnimationStateMachine& stateMachine = animator.GetStateMachine();
+        stateMachine.AddState(AnimationState{
+            "HeadTurn",
+            headTurn,
+            1.0f,
+            true
+        });
+        stateMachine.AddState(AnimationState{
+            "HeadNod",
+            headNod,
+            1.0f,
+            true
+        });
+        stateMachine.AddTransition(AnimationTransitionRule{
+            "HeadTurn",
+            "HeadNod",
+            1.0f,
+            [](const Animator& currentAnimator)
+            {
+                return currentAnimator.GetBool("demoNod");
+            }
+        });
+        stateMachine.AddTransition(AnimationTransitionRule{
+            "HeadNod",
+            "HeadTurn",
+            1.0f,
+            [](const Animator& currentAnimator)
+            {
+                return !currentAnimator.GetBool("demoNod");
+            }
+        });
+        stateMachine.SetState("HeadTurn");
+        entity.AddBehaviour<DemoAnimationParameterBehaviour>();
+    }
 }
 }
 
@@ -108,6 +209,7 @@ void SetupDemoScene1(Scene& scene, ResourceManager& resources)
         )
     );
 
+    EnableDemoStateMachine(Entity, Model);
     Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
 
     scene.ActiveCamera().SetParam(CameraParam{
@@ -146,6 +248,7 @@ void SetupDemoScene2(Scene& scene, ResourceManager& resources)
         )
     );
 
+    EnableDemoStateMachine(Entity, Model);
     Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
 
     scene.ActiveCamera().SetParam(CameraParam{

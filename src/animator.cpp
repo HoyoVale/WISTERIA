@@ -5,15 +5,56 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace
+{
+std::string ParameterName(std::string_view name)
+{
+    if (name.empty())
+        throw std::invalid_argument("Animator parameter name must not be empty");
+    return std::string(name);
+}
+
+bool AdvancePlaybackTime(
+    const AnimationClip& clip,
+    float deltaTime,
+    float speed,
+    bool looping,
+    float& time
+)
+{
+    const double nextTime = static_cast<double>(time) +
+        static_cast<double>(deltaTime) * static_cast<double>(speed);
+    if (!std::isfinite(nextTime))
+        throw std::overflow_error("Animator playback time overflowed");
+
+    const double duration = static_cast<double>(clip.Duration());
+    if (looping)
+    {
+        time = static_cast<float>(std::fmod(nextTime, duration));
+        return true;
+    }
+    if (nextTime >= duration)
+    {
+        time = clip.Duration();
+        return false;
+    }
+    time = static_cast<float>(nextTime);
+    return true;
+}
+}
+
 Animator::Animator(Pose& pose)
     : pose(&pose),
-      sampledPose(pose.GetSkeleton())
+      sampledPose(pose.GetSkeleton()),
+      transitionSourcePose(pose.GetSkeleton()),
+      blendedPose(pose.GetSkeleton())
 {
 }
 
 void Animator::Play(const AnimationClip& clip, bool restart)
 {
     this->ValidateClip(clip);
+    this->transition.reset();
     if (this->currentClip != &clip || restart)
         this->currentTime = 0.0f;
     this->currentClip = &clip;
@@ -22,8 +63,52 @@ void Animator::Play(const AnimationClip& clip, bool restart)
     this->Evaluate();
 }
 
+void Animator::CrossFade(
+    const AnimationClip& destination,
+    float duration
+)
+{
+    this->ValidateClip(destination);
+    if (!std::isfinite(duration) || duration < 0.0f)
+    {
+        throw std::invalid_argument(
+            "Animation cross-fade duration must be finite and non-negative"
+        );
+    }
+    if (this->currentClip == nullptr || duration == 0.0f)
+    {
+        this->Play(destination, true);
+        return;
+    }
+
+    TransitionState nextTransition;
+    if (this->transition.has_value())
+    {
+        // Preserve the exact currently displayed mixed pose. This avoids a
+        // visual pop when a new transition interrupts an unfinished one.
+        this->transitionSourcePose = this->blendedPose;
+        nextTransition.sourceFrozen = true;
+    }
+    else
+    {
+        nextTransition.sourceClip = this->currentClip;
+        nextTransition.sourceTime = this->currentTime;
+        nextTransition.sourceSpeed = this->speed;
+        nextTransition.sourceLooping = this->looping;
+    }
+    nextTransition.duration = duration;
+
+    this->transition = nextTransition;
+    this->currentClip = &destination;
+    this->currentTime = 0.0f;
+    this->playing = true;
+    this->paused = false;
+    this->Evaluate();
+}
+
 void Animator::Stop(bool resetPose)
 {
+    this->transition.reset();
     this->currentClip = nullptr;
     this->currentTime = 0.0f;
     this->playing = false;
@@ -34,14 +119,17 @@ void Animator::Stop(bool resetPose)
 
 void Animator::Pause() noexcept
 {
-    if (this->playing)
+    if (this->playing || this->transition.has_value())
         this->paused = true;
 }
 
 void Animator::Resume() noexcept
 {
-    if (this->currentClip != nullptr && this->playing)
+    if (this->currentClip != nullptr &&
+        (this->playing || this->transition.has_value()))
+    {
         this->paused = false;
+    }
 }
 
 void Animator::Update(float deltaTime)
@@ -52,24 +140,63 @@ void Animator::Update(float deltaTime)
             "Animator delta time must be finite and non-negative"
         );
     }
-    if (!this->playing || this->paused || this->currentClip == nullptr)
-        return;
+    try
+    {
+        this->stateMachine.Update(*this);
+    }
+    catch (...)
+    {
+        this->activeTriggers.clear();
+        throw;
+    }
+    this->activeTriggers.clear();
 
-    const float duration = this->currentClip->Duration();
-    const float nextTime = this->currentTime + deltaTime * this->speed;
-    if (this->looping)
+    if (this->paused || this->currentClip == nullptr ||
+        (!this->playing && !this->transition.has_value()))
     {
-        this->currentTime = std::fmod(nextTime, duration);
+        return;
     }
-    else if (nextTime >= duration)
+
+    if (this->transition.has_value())
     {
-        this->currentTime = duration;
-        this->playing = false;
+        TransitionState& activeTransition = *this->transition;
+        if (!activeTransition.sourceFrozen)
+        {
+            AdvancePlaybackTime(
+                *activeTransition.sourceClip,
+                deltaTime,
+                activeTransition.sourceSpeed,
+                activeTransition.sourceLooping,
+                activeTransition.sourceTime
+            );
+        }
+        this->playing = AdvancePlaybackTime(
+            *this->currentClip,
+            deltaTime,
+            this->speed,
+            this->looping,
+            this->currentTime
+        );
+        activeTransition.elapsed = std::min(
+            activeTransition.duration,
+            activeTransition.elapsed + deltaTime
+        );
+        this->Evaluate();
+        if (activeTransition.elapsed >= activeTransition.duration)
+        {
+            this->transition.reset();
+            this->sampledPose.ApplyTo(*this->pose);
+        }
+        return;
     }
-    else
-    {
-        this->currentTime = nextTime;
-    }
+
+    this->playing = AdvancePlaybackTime(
+        *this->currentClip,
+        deltaTime,
+        this->speed,
+        this->looping,
+        this->currentTime
+    );
     this->Evaluate();
 }
 
@@ -79,12 +206,37 @@ void Animator::Evaluate()
         return;
 
     this->currentClip->Sample(this->currentTime, this->sampledPose);
-    this->sampledPose.ApplyTo(*this->pose);
+    if (!this->transition.has_value())
+    {
+        this->sampledPose.ApplyTo(*this->pose);
+        return;
+    }
+
+    const TransitionState& activeTransition = *this->transition;
+    if (!activeTransition.sourceFrozen)
+    {
+        activeTransition.sourceClip->Sample(
+            activeTransition.sourceTime,
+            this->transitionSourcePose
+        );
+    }
+    const float weight = std::clamp(
+        activeTransition.elapsed / activeTransition.duration,
+        0.0f,
+        1.0f
+    );
+    BlendPoseBuffers(
+        this->transitionSourcePose,
+        this->sampledPose,
+        weight,
+        this->blendedPose
+    );
+    this->blendedPose.ApplyTo(*this->pose);
 }
 
 bool Animator::IsPlaying() const noexcept
 {
-    return this->playing && !this->paused;
+    return (this->playing || this->transition.has_value()) && !this->paused;
 }
 
 bool Animator::IsPaused() const noexcept
@@ -140,6 +292,89 @@ void Animator::SetSpeed(float speed)
 const AnimationClip* Animator::CurrentClip() const noexcept
 {
     return this->currentClip;
+}
+
+bool Animator::IsTransitioning() const noexcept
+{
+    return this->transition.has_value();
+}
+
+float Animator::TransitionProgress() const noexcept
+{
+    if (!this->transition.has_value())
+        return 0.0f;
+    return std::clamp(
+        this->transition->elapsed / this->transition->duration,
+        0.0f,
+        1.0f
+    );
+}
+
+AnimationStateMachine& Animator::GetStateMachine() noexcept
+{
+    return this->stateMachine;
+}
+
+const AnimationStateMachine& Animator::GetStateMachine() const noexcept
+{
+    return this->stateMachine;
+}
+
+void Animator::SetFloat(std::string_view name, float value)
+{
+    const std::string key = ParameterName(name);
+    if (!std::isfinite(value))
+        throw std::invalid_argument("Animator float parameter must be finite");
+    if (this->boolParameters.contains(key) ||
+        this->triggerParameters.contains(key))
+        throw std::invalid_argument("Animator parameter has a different type: " + key);
+    this->floatParameters[key] = value;
+}
+
+float Animator::GetFloat(std::string_view name) const
+{
+    const std::string key = ParameterName(name);
+    const auto iterator = this->floatParameters.find(key);
+    if (iterator == this->floatParameters.end())
+        throw std::out_of_range("Animator float parameter does not exist: " + key);
+    return iterator->second;
+}
+
+void Animator::SetBool(std::string_view name, bool value)
+{
+    const std::string key = ParameterName(name);
+    if (this->floatParameters.contains(key) ||
+        this->triggerParameters.contains(key))
+        throw std::invalid_argument("Animator parameter has a different type: " + key);
+    this->boolParameters[key] = value;
+}
+
+bool Animator::GetBool(std::string_view name) const
+{
+    const std::string key = ParameterName(name);
+    const auto iterator = this->boolParameters.find(key);
+    if (iterator == this->boolParameters.end())
+        throw std::out_of_range("Animator bool parameter does not exist: " + key);
+    return iterator->second;
+}
+
+void Animator::SetTrigger(std::string_view name)
+{
+    const std::string key = ParameterName(name);
+    if (this->floatParameters.contains(key) || this->boolParameters.contains(key))
+        throw std::invalid_argument("Animator parameter has a different type: " + key);
+    this->triggerParameters.insert(key);
+    this->activeTriggers.insert(key);
+}
+
+bool Animator::IsTriggerSet(std::string_view name) const
+{
+    return this->activeTriggers.contains(std::string(name));
+}
+
+void Animator::ResetTrigger(std::string_view name)
+{
+    this->activeTriggers.erase(std::string(name));
 }
 
 Pose& Animator::GetPose() noexcept
