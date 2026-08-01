@@ -49,6 +49,10 @@ struct ShaderInterface
     std::string projection = "projection";
     std::string combinedTransform = "transform";
 
+    bool skinningSupported = true;
+    std::string skinningEnabled = "skinningEnabled";
+    std::string boneMatrixPalette = "boneMatrixPalette";
+
     bool lightingEnabled = true;
     std::string cameraPosition = "cameraPosition";
     std::string materialSpecularColor = "materialSpecularColor";

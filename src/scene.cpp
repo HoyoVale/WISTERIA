@@ -78,6 +78,8 @@ Entity& Scene::InstantiateModel(
 )
 {
     Entity& entity = this->CreateEntity(transform);
+    if (model.HasSkeleton())
+        entity.SetSkeleton(model.GetSkeleton());
     for (const RenderPart& part : model.Parts())
     {
         entity.AddRenderPart(

@@ -4,8 +4,8 @@ Run through Blender rather than the system Python:
 
 blender --background \
   --python script/convert_mmd.py -- \
-  --input "./assets/models/仪玄_pmx/鸟.pmx" \
-  --output "./assets/models/仪玄_glb/鸟.glb" \
+  --input "./assets/models/mmd/爱弥斯_pmx/爱弥斯.pmx" \
+  --output "./assets/models/glb/爱弥斯_glb/爱弥斯.glb" \
   --rigged
 
 The vendored MMD Tools package in third-party/blender_mmd_tools is used by

@@ -9,6 +9,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -19,6 +20,7 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace
@@ -596,10 +598,350 @@ std::string ResourceName(const aiString& name, const char* prefix, std::size_t i
     return result;
 }
 
+bool MatricesNearlyEqual(
+    const glm::mat4& left,
+    const glm::mat4& right,
+    float epsilon = 0.0001f
+)
+{
+    for (glm::length_t column = 0; column < 4; ++column)
+    {
+        for (glm::length_t row = 0; row < 4; ++row)
+        {
+            if (std::abs(left[column][row] - right[column][row]) > epsilon)
+                return false;
+        }
+    }
+    return true;
+}
+
+float MatrixMaximumDifference(
+    const glm::mat4& left,
+    const glm::mat4& right
+)
+{
+    float result = 0.0f;
+    for (glm::length_t column = 0; column < 4; ++column)
+    {
+        for (glm::length_t row = 0; row < 4; ++row)
+        {
+            result = std::max(
+                result,
+                std::abs(left[column][row] - right[column][row])
+            );
+        }
+    }
+    return result;
+}
+
+void CollectNodesByName(
+    const aiNode& node,
+    std::unordered_map<std::string, std::vector<const aiNode*>>& nodesByName
+)
+{
+    nodesByName[ToString(node.mName)].push_back(&node);
+    for (unsigned int index = 0; index < node.mNumChildren; ++index)
+    {
+        if (node.mChildren[index] == nullptr)
+            throw std::runtime_error("Imported skeleton contains a null node");
+        CollectNodesByName(*node.mChildren[index], nodesByName);
+    }
+}
+
+void AppendSkeletonBones(
+    const aiNode& node,
+    BoneIndex parentIndex,
+    const glm::mat4& parentGlobal,
+    const std::unordered_set<const aiNode*>& includedNodes,
+    const std::unordered_map<std::string, glm::mat4>& inverseBindMatrices,
+    std::vector<Bone>& bones
+)
+{
+    if (!includedNodes.contains(&node))
+        return;
+
+    if (bones.size() >= static_cast<std::size_t>(InvalidBoneIndex))
+        throw std::length_error("Imported skeleton contains too many bones");
+
+    const glm::mat4 localMatrix = ToGlm(node.mTransformation);
+    const glm::mat4 globalMatrix = parentGlobal * localMatrix;
+    if (!IsFinite(localMatrix) || !IsFinite(globalMatrix))
+        throw std::runtime_error("Imported bone contains a non-finite matrix");
+
+    const std::string name = ToString(node.mName);
+    const auto inverseBind = inverseBindMatrices.find(name);
+    const glm::mat4 inverseBindMatrix =
+        inverseBind != inverseBindMatrices.end()
+            ? inverseBind->second
+            : glm::inverse(globalMatrix);
+    if (!IsFinite(inverseBindMatrix))
+        throw std::runtime_error("Imported bone has an invalid inverse bind matrix");
+
+    const BoneIndex currentIndex = static_cast<BoneIndex>(bones.size());
+    bones.push_back(Bone{
+        name,
+        parentIndex,
+        localMatrix,
+        inverseBindMatrix
+    });
+
+    for (unsigned int index = 0; index < node.mNumChildren; ++index)
+    {
+        AppendSkeletonBones(
+            *node.mChildren[index],
+            currentIndex,
+            globalMatrix,
+            includedNodes,
+            inverseBindMatrices,
+            bones
+        );
+    }
+}
+
+std::optional<Skeleton> ImportSkeleton(const aiScene& scene)
+{
+    std::unordered_map<std::string, glm::mat4> inverseBindMatrices;
+    for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex)
+    {
+        const aiMesh* mesh = scene.mMeshes[meshIndex];
+        if (mesh == nullptr)
+            throw std::runtime_error("Imported scene contains a null mesh");
+
+        for (unsigned int boneIndex = 0; boneIndex < mesh->mNumBones; ++boneIndex)
+        {
+            const aiBone* bone = mesh->mBones[boneIndex];
+            if (bone == nullptr)
+                throw std::runtime_error("Imported mesh contains a null bone");
+            const std::string name = ToString(bone->mName);
+            if (name.empty())
+                throw std::runtime_error("Imported bone name must not be empty");
+
+            const glm::mat4 inverseBindMatrix = ToGlm(bone->mOffsetMatrix);
+            if (!IsFinite(inverseBindMatrix))
+                throw std::runtime_error("Imported inverse bind matrix is not finite");
+
+            const auto [iterator, inserted] = inverseBindMatrices.emplace(
+                name,
+                inverseBindMatrix
+            );
+            if (!inserted &&
+                !MatricesNearlyEqual(iterator->second, inverseBindMatrix))
+            {
+                throw std::runtime_error(
+                    "One bone has inconsistent inverse bind matrices across meshes"
+                );
+            }
+        }
+    }
+
+    if (inverseBindMatrices.empty())
+        return std::nullopt;
+
+    std::unordered_map<std::string, std::vector<const aiNode*>> nodesByName;
+    CollectNodesByName(*scene.mRootNode, nodesByName);
+
+    std::unordered_set<const aiNode*> includedNodes;
+    for (const auto& entry : inverseBindMatrices)
+    {
+        const std::string& name = entry.first;
+        const auto nodes = nodesByName.find(name);
+        if (nodes == nodesByName.end() || nodes->second.empty())
+            throw std::runtime_error("Imported bone has no matching hierarchy node: " + name);
+        if (nodes->second.size() != 1)
+            throw std::runtime_error("Imported bone name is ambiguous in hierarchy: " + name);
+
+        for (const aiNode* node = nodes->second.front();
+             node != nullptr;
+             node = node->mParent)
+        {
+            includedNodes.insert(node);
+        }
+    }
+
+    std::vector<Bone> bones;
+    bones.reserve(includedNodes.size());
+    AppendSkeletonBones(
+        *scene.mRootNode,
+        InvalidBoneIndex,
+        glm::mat4(1.0f),
+        includedNodes,
+        inverseBindMatrices,
+        bones
+    );
+
+    const Skeleton preliminarySkeleton(bones);
+    constexpr std::size_t MaximumExactlyRepresentableFloatIndex = 1U << 24U;
+    if (preliminarySkeleton.BoneCount() >
+        MaximumExactlyRepresentableFloatIndex)
+    {
+        throw std::length_error(
+            "Skeleton bone indices cannot be represented by the vertex format"
+        );
+    }
+    std::optional<glm::mat4> bindSpaceMatrix;
+    for (const auto& [name, inverseBindMatrix] : inverseBindMatrices)
+    {
+        const std::optional<BoneIndex> boneIndex =
+            preliminarySkeleton.FindBone(name);
+        if (!boneIndex.has_value())
+            throw std::runtime_error("Imported inverse bind has no Skeleton bone");
+        const glm::mat4 candidate =
+            preliminarySkeleton.BindGlobalMatrices()[*boneIndex] *
+            inverseBindMatrix;
+        if (!IsFinite(candidate))
+            throw std::runtime_error("Imported skeleton bind space is invalid");
+        if (!bindSpaceMatrix.has_value())
+            bindSpaceMatrix = candidate;
+        else if (!MatricesNearlyEqual(*bindSpaceMatrix, candidate, 0.01f))
+        {
+            throw std::runtime_error(
+                "Imported bones do not share one mesh bind space; bone=" +
+                name + ", difference=" + std::to_string(
+                    MatrixMaximumDifference(*bindSpaceMatrix, candidate)
+                )
+            );
+        }
+    }
+    if (!bindSpaceMatrix.has_value())
+        throw std::runtime_error("Imported skeleton has no weighted bones");
+
+    for (std::size_t index = 0; index < bones.size(); ++index)
+    {
+        if (!inverseBindMatrices.contains(bones[index].name))
+        {
+            bones[index].inverseBindMatrix =
+                glm::inverse(
+                    preliminarySkeleton.BindGlobalMatrices()[index]
+                ) * *bindSpaceMatrix;
+        }
+    }
+    const glm::mat4 inverseBindSpace = glm::inverse(*bindSpaceMatrix);
+    if (!IsFinite(inverseBindSpace))
+        throw std::runtime_error("Imported skeleton bind space is singular");
+    return Skeleton(std::move(bones), inverseBindSpace);
+}
+
+struct VertexInfluences
+{
+    std::array<BoneIndex, 4> indices{};
+    std::array<float, 4> weights{};
+};
+
+void AddVertexInfluence(
+    VertexInfluences& influences,
+    BoneIndex boneIndex,
+    float weight
+)
+{
+    for (std::size_t index = 0; index < influences.weights.size(); ++index)
+    {
+        if (influences.weights[index] > 0.0f &&
+            influences.indices[index] == boneIndex)
+        {
+            influences.weights[index] += weight;
+            return;
+        }
+    }
+
+    const auto minimum = std::min_element(
+        influences.weights.begin(),
+        influences.weights.end()
+    );
+    if (weight <= *minimum)
+        return;
+    const std::size_t slot = static_cast<std::size_t>(
+        std::distance(influences.weights.begin(), minimum)
+    );
+    influences.indices[slot] = boneIndex;
+    influences.weights[slot] = weight;
+}
+
+std::vector<VertexInfluences> ImportVertexInfluences(
+    const aiMesh& mesh,
+    const Skeleton& skeleton,
+    std::size_t& requiredBoneCount
+)
+{
+    std::vector<VertexInfluences> result(mesh.mNumVertices);
+    BoneIndex fallbackRoot = InvalidBoneIndex;
+    for (std::size_t index = 0; index < skeleton.BoneCount(); ++index)
+    {
+        if (skeleton.BoneAt(static_cast<BoneIndex>(index)).parentIndex ==
+            InvalidBoneIndex)
+        {
+            fallbackRoot = static_cast<BoneIndex>(index);
+            break;
+        }
+    }
+    if (fallbackRoot == InvalidBoneIndex)
+        throw std::runtime_error("Imported skeleton has no root bone");
+
+    for (unsigned int sourceBoneIndex = 0;
+         sourceBoneIndex < mesh.mNumBones;
+         ++sourceBoneIndex)
+    {
+        const aiBone* sourceBone = mesh.mBones[sourceBoneIndex];
+        if (sourceBone == nullptr)
+            throw std::runtime_error("Imported mesh contains a null bone");
+        const std::optional<BoneIndex> boneIndex =
+            skeleton.FindBone(ToString(sourceBone->mName));
+        if (!boneIndex.has_value())
+            throw std::runtime_error("Mesh bone is missing from imported Skeleton");
+
+        requiredBoneCount = std::max(
+            requiredBoneCount,
+            static_cast<std::size_t>(*boneIndex) + 1U
+        );
+        for (unsigned int weightIndex = 0;
+             weightIndex < sourceBone->mNumWeights;
+             ++weightIndex)
+        {
+            const aiVertexWeight& sourceWeight =
+                sourceBone->mWeights[weightIndex];
+            if (sourceWeight.mVertexId >= mesh.mNumVertices)
+                throw std::runtime_error("Bone weight references an invalid vertex");
+            if (!std::isfinite(sourceWeight.mWeight) ||
+                sourceWeight.mWeight < 0.0f)
+            {
+                throw std::runtime_error("Imported bone weight is invalid");
+            }
+            if (sourceWeight.mWeight > 0.0f)
+            {
+                AddVertexInfluence(
+                    result[sourceWeight.mVertexId],
+                    *boneIndex,
+                    sourceWeight.mWeight
+                );
+            }
+        }
+    }
+
+    for (VertexInfluences& influences : result)
+    {
+        float totalWeight = 0.0f;
+        for (float weight : influences.weights)
+            totalWeight += weight;
+        if (totalWeight <= 0.000001f)
+        {
+            influences.indices[0] = fallbackRoot;
+            influences.weights[0] = 1.0f;
+            requiredBoneCount = std::max(
+                requiredBoneCount,
+                static_cast<std::size_t>(fallbackRoot) + 1U
+            );
+            continue;
+        }
+        for (float& weight : influences.weights)
+            weight /= totalWeight;
+    }
+    return result;
+}
+
 ImportedMeshData ImportMesh(
     const aiMesh& mesh,
     std::size_t index,
-    const std::vector<float>* mmdVertexEdgeScales
+    const std::vector<float>* mmdVertexEdgeScales,
+    const Skeleton* skeleton
 )
 {
     if (mesh.mNumVertices == 0)
@@ -622,8 +964,12 @@ ImportedMeshData ImportMesh(
         isMmdMesh && mesh.HasTextureCoords(1);
     if (isMmdMesh)
     {
-        result.data.layout.push_back({"additionalTexCoord", 2, FLOAT});
-        result.data.layout.push_back({"edgeScale", 1, FLOAT});
+        result.data.layout.push_back(
+            {"additionalTexCoord", 2, FLOAT, false, false, 5U}
+        );
+        result.data.layout.push_back(
+            {"edgeScale", 1, FLOAT, false, false, 6U}
+        );
         if (mmdVertexEdgeScales->size() != mesh.mNumVertices)
         {
             throw std::runtime_error(
@@ -631,7 +977,27 @@ ImportedMeshData ImportMesh(
             );
         }
     }
-    const std::size_t vertexStride = isMmdMesh ? 18U : 15U;
+    const bool isSkinned = mesh.HasBones();
+    if (isSkinned && skeleton == nullptr)
+        throw std::runtime_error("Skinned mesh has no imported Skeleton");
+
+    std::vector<VertexInfluences> vertexInfluences;
+    if (isSkinned)
+    {
+        result.data.layout.push_back(
+            {"boneIndices", 4, FLOAT, false, false, 7U}
+        );
+        result.data.layout.push_back(
+            {"boneWeights", 4, FLOAT, false, false, 8U}
+        );
+        vertexInfluences = ImportVertexInfluences(
+            mesh,
+            *skeleton,
+            result.requiredBoneCount
+        );
+    }
+    const std::size_t vertexStride = 15U +
+        (isMmdMesh ? 3U : 0U) + (isSkinned ? 8U : 0U);
     result.data.vertices.reserve(
         static_cast<std::size_t>(mesh.mNumVertices) * vertexStride
     );
@@ -714,6 +1080,18 @@ ImportedMeshData ImportMesh(
                 : 0.0f);
             result.data.vertices.push_back(
                 (*mmdVertexEdgeScales)[vertexIndex]
+            );
+        }
+        if (isSkinned)
+        {
+            const VertexInfluences& influences =
+                vertexInfluences[vertexIndex];
+            for (BoneIndex boneIndex : influences.indices)
+                result.data.vertices.push_back(static_cast<float>(boneIndex));
+            result.data.vertices.insert(
+                result.data.vertices.end(),
+                influences.weights.begin(),
+                influences.weights.end()
             );
         }
     }
@@ -1304,6 +1682,7 @@ ImportedModelData ModelImporter::Import(
     }
 
     ImportedModelData result;
+    result.skeleton = ImportSkeleton(*scene);
     ImportedTextureIndexMap textureIndices;
     std::unordered_map<unsigned int, std::size_t> materialIndices;
     result.meshes.reserve(scene->mNumMeshes);
@@ -1328,7 +1707,8 @@ ImportedModelData ModelImporter::Import(
         ImportedMeshData mesh = ImportMesh(
             *scene->mMeshes[index],
             index,
-            mmdEdgeScales
+            mmdEdgeScales,
+            result.skeleton.has_value() ? &*result.skeleton : nullptr
         );
         if (sourceMaterialIndex >= scene->mNumMaterials ||
             scene->mMaterials[sourceMaterialIndex] == nullptr)

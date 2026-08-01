@@ -14,11 +14,13 @@ namespace
 constexpr unsigned int IrradianceTextureUnit = 8;
 constexpr unsigned int PrefilterTextureUnit = 9;
 constexpr unsigned int BrdfLutTextureUnit = 10;
+constexpr unsigned int SkinningTextureUnit = 11;
 
 struct RenderCommand
 {
     RenderPart* part = nullptr;
     glm::mat4 model{1.0f};
+    const Pose* pose = nullptr;
 };
 
 class ScopedDepthState
@@ -69,6 +71,10 @@ void Renderer::Render(
 {
     if (!target.IsValid())
         throw std::logic_error("Renderer requires a valid scene framebuffer");
+    // The cache only deduplicates consecutive parts during this frame. Do not
+    // retain a raw Pose identity across scene mutations or frame boundaries.
+    this->uploadedPose = nullptr;
+    this->uploadedPoseRevision = 0;
     target.Bind();
 
     const glm::mat4 view = camera.GetView();
@@ -89,7 +95,7 @@ void Renderer::Render(
         {
             const glm::mat4 model =
                 entityTransform * part.LocalTransform();
-            RenderCommand command{&part, model};
+            RenderCommand command{&part, model, entity.TryGetPose()};
             if (part.GetMaterial().AlphaMode() == MaterialAlphaMode::Blend)
                 transparentCommands.push_back(command);
             else
@@ -109,6 +115,7 @@ void Renderer::Render(
             projection,
             camera,
             scene,
+            command.pose,
             0
         );
     }
@@ -150,6 +157,7 @@ void Renderer::Render(
                 projection,
                 camera,
                 scene,
+                command.pose,
                 1
             );
         }
@@ -170,6 +178,7 @@ void Renderer::Render(
                 projection,
                 camera,
                 scene,
+                command.pose,
                 1
             );
         }
@@ -185,6 +194,7 @@ void Renderer::Render(
                 projection,
                 camera,
                 scene,
+                command.pose,
                 2
             );
         }
@@ -276,6 +286,7 @@ void Renderer::DrawPart(
     const glm::mat4& projection,
     const Camera& camera,
     const Scene& scene,
+    const Pose* pose,
     int oitPass
 )
 {
@@ -308,6 +319,7 @@ void Renderer::DrawPart(
         view,
         projection
     );
+    this->UploadSkinning(program, shaderInterface, mesh, pose);
 
     const glm::vec4& baseColor = material.BaseColorFactor();
     program.Uniform4f(
@@ -693,15 +705,136 @@ void Renderer::Release() noexcept
         glDeleteTextures(1, &this->oitAccumulationTexture);
     if (this->oitRevealageTexture != 0)
         glDeleteTextures(1, &this->oitRevealageTexture);
+    if (this->skinningTexture != 0)
+        glDeleteTextures(1, &this->skinningTexture);
+    if (this->skinningBuffer != 0)
+        glDeleteBuffers(1, &this->skinningBuffer);
     this->oitFramebuffer.Release();
 
     this->fullscreenVao = 0;
     this->oitAccumulationTexture = 0;
     this->oitRevealageTexture = 0;
+    this->skinningTexture = 0;
+    this->skinningBuffer = 0;
     this->oitWidth = 0;
     this->oitHeight = 0;
     this->oitDepthAttachment = 0;
     this->independentBlendSupported = false;
+    this->maximumSkinningMatrices = 0;
+    this->uploadedPose = nullptr;
+    this->uploadedPoseRevision = 0;
+}
+
+void Renderer::EnsureSkinningResources()
+{
+    if (this->skinningBuffer != 0 && this->skinningTexture != 0)
+        return;
+
+    GLint vertexTextureUnits = 0;
+    GLint combinedTextureUnits = 0;
+    glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &vertexTextureUnits);
+    glGetIntegerv(
+        GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,
+        &combinedTextureUnits
+    );
+    if (vertexTextureUnits < 1 ||
+        combinedTextureUnits <= static_cast<GLint>(SkinningTextureUnit))
+    {
+        throw std::runtime_error(
+            "OpenGL does not provide the texture unit required for GPU skinning"
+        );
+    }
+
+    GLuint nextBuffer = 0;
+    GLuint nextTexture = 0;
+    glGenBuffers(1, &nextBuffer);
+    glGenTextures(1, &nextTexture);
+    if (nextBuffer == 0 || nextTexture == 0)
+    {
+        if (nextTexture != 0)
+            glDeleteTextures(1, &nextTexture);
+        if (nextBuffer != 0)
+            glDeleteBuffers(1, &nextBuffer);
+        throw std::runtime_error("Cannot create GPU skinning matrix palette");
+    }
+
+    glBindBuffer(GL_TEXTURE_BUFFER, nextBuffer);
+    glBindTexture(GL_TEXTURE_BUFFER, nextTexture);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, nextBuffer);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_BUFFER, 0);
+    GLint maximumTexels = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maximumTexels);
+    if (maximumTexels < 4)
+    {
+        glDeleteTextures(1, &nextTexture);
+        glDeleteBuffers(1, &nextBuffer);
+        throw std::runtime_error("OpenGL texture buffers cannot store one bone matrix");
+    }
+    this->skinningBuffer = nextBuffer;
+    this->skinningTexture = nextTexture;
+    this->maximumSkinningMatrices =
+        static_cast<std::size_t>(maximumTexels) / 4U;
+}
+
+void Renderer::UploadSkinning(
+    Program& program,
+    const ShaderInterface& shaderInterface,
+    const Mesh& mesh,
+    const Pose* pose
+)
+{
+    if (!shaderInterface.skinningSupported)
+        return;
+
+    const bool enabled = mesh.IsSkinned() && pose != nullptr;
+    program.Uniform1i(shaderInterface.skinningEnabled, enabled ? 1 : 0);
+    if (!enabled)
+        return;
+    if (pose->BoneCount() < mesh.RequiredBoneCount())
+    {
+        throw std::runtime_error(
+            "Entity Pose does not contain every bone required by its Mesh"
+        );
+    }
+
+    this->EnsureSkinningResources();
+    const std::span<const glm::mat4> matrices = pose->SkinningMatrices();
+    if (matrices.size() > this->maximumSkinningMatrices)
+    {
+        throw std::runtime_error(
+            "Skeleton exceeds GL_MAX_TEXTURE_BUFFER_SIZE"
+        );
+    }
+
+    if (this->uploadedPose != pose ||
+        this->uploadedPoseRevision != pose->Revision())
+    {
+        if (matrices.size() >
+            static_cast<std::size_t>(
+                std::numeric_limits<GLsizeiptr>::max()
+            ) / sizeof(glm::mat4))
+        {
+            throw std::overflow_error("Skinning palette is too large");
+        }
+        glBindBuffer(GL_TEXTURE_BUFFER, this->skinningBuffer);
+        glBufferData(
+            GL_TEXTURE_BUFFER,
+            static_cast<GLsizeiptr>(matrices.size() * sizeof(glm::mat4)),
+            matrices.data(),
+            GL_DYNAMIC_DRAW
+        );
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+        this->uploadedPose = pose;
+        this->uploadedPoseRevision = pose->Revision();
+    }
+
+    glActiveTexture(GL_TEXTURE0 + SkinningTextureUnit);
+    glBindTexture(GL_TEXTURE_BUFFER, this->skinningTexture);
+    program.UniformTex(
+        shaderInterface.boneMatrixPalette,
+        SkinningTextureUnit
+    );
 }
 
 void Renderer::UploadTransforms(

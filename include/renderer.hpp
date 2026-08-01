@@ -3,6 +3,7 @@
 #include "framebuffer.hpp"
 #include "scene.hpp"
 #include <glad/gl.h>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 
@@ -11,6 +12,7 @@ class Shader;
 struct ShaderInterface;
 class EnvironmentMap;
 class Mesh;
+class Pose;
 class VAO;
 
 struct FxaaSettings
@@ -53,6 +55,7 @@ private:
         const glm::mat4& projection,
         const Camera& camera,
         const Scene& scene,
+        const Pose* pose,
         int oitPass
     );
     void EnsureOitResources(const SceneFramebuffer& target);
@@ -68,6 +71,13 @@ private:
         const glm::mat4& view,
         const glm::mat4& projection
     );
+    void UploadSkinning(
+        Program& program,
+        const ShaderInterface& shaderInterface,
+        const Mesh& mesh,
+        const Pose* pose
+    );
+    void EnsureSkinningResources();
     void UploadSceneUniforms(
         Program& program,
         const Scene& scene,
@@ -99,10 +109,15 @@ private:
     GLuint oitAccumulationTexture = 0;
     GLuint oitRevealageTexture = 0;
     GLuint fullscreenVao = 0;
+    GLuint skinningBuffer = 0;
+    GLuint skinningTexture = 0;
     int oitWidth = 0;
     int oitHeight = 0;
     GLuint oitDepthAttachment = 0;
     bool independentBlendSupported = false;
+    std::size_t maximumSkinningMatrices = 0;
+    const Pose* uploadedPose = nullptr;
+    std::uint64_t uploadedPoseRevision = 0;
     std::unique_ptr<Shader> oitCompositeShader;
     std::unique_ptr<Program> oitCompositeProgram;
     std::unique_ptr<Shader> presentShader;

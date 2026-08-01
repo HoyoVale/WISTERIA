@@ -2,6 +2,7 @@
 
 #include "material.hpp"
 #include "model.hpp"
+#include "skeleton.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -50,6 +51,7 @@ struct ImportedMeshData
     std::string name;
     DefaultModelData data;
     std::size_t materialIndex = 0;
+    std::size_t requiredBoneCount = 0;
 };
 
 struct ImportedPartData
@@ -65,10 +67,11 @@ struct ImportedModelData
     std::vector<ImportedMaterialData> materials;
     std::vector<ImportedMeshData> meshes;
     std::vector<ImportedPartData> parts;
+    std::optional<Skeleton> skeleton;
 };
 
-// CPU-only static model import. It never creates OpenGL objects and is safe to
-// use before a graphics context exists.
+// CPU-only model import. It never creates OpenGL objects and is safe to use
+// before a graphics context exists.
 class ModelImporter
 {
 public:

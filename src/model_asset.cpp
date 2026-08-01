@@ -25,6 +25,30 @@ std::span<const RenderPart> ModelAsset::Parts() const noexcept
     return this->parts;
 }
 
+bool ModelAsset::HasSkeleton() const noexcept
+{
+    return this->skeleton.has_value();
+}
+
+const Skeleton* ModelAsset::TryGetSkeleton() const noexcept
+{
+    return this->skeleton.has_value() ? &*this->skeleton : nullptr;
+}
+
+const Skeleton& ModelAsset::GetSkeleton() const
+{
+    if (!this->skeleton.has_value())
+        throw std::logic_error("ModelAsset has no skeleton");
+    return *this->skeleton;
+}
+
+void ModelAsset::SetSkeleton(Skeleton skeleton)
+{
+    if (this->skeleton.has_value())
+        throw std::logic_error("ModelAsset skeleton is already set");
+    this->skeleton.emplace(std::move(skeleton));
+}
+
 RenderPart& ModelAsset::AddPart(
     Mesh& mesh,
     Material& material,

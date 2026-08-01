@@ -1,7 +1,9 @@
 #pragma once
 
 #include "render_part.hpp"
+#include "skeleton.hpp"
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -22,6 +24,11 @@ public:
     std::size_t PartCount() const noexcept;
     std::span<const RenderPart> Parts() const noexcept;
 
+    bool HasSkeleton() const noexcept;
+    const Skeleton* TryGetSkeleton() const noexcept;
+    const Skeleton& GetSkeleton() const;
+    void SetSkeleton(Skeleton skeleton);
+
     RenderPart& AddPart(
         Mesh& mesh,
         Material& material,
@@ -31,4 +38,5 @@ public:
 private:
     std::string name;
     std::vector<RenderPart> parts;
+    std::optional<Skeleton> skeleton;
 };

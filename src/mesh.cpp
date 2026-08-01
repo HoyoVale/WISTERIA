@@ -1,6 +1,7 @@
 #include "pch.hpp"
 #include "mesh.hpp"
 #include "vao.hpp"
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -75,9 +76,31 @@ glm::vec3 CalculateBoundsCenter(const DefaultModelData& data)
 
 }
 
-Mesh::Mesh(DefaultModelData data)
-    : data(std::move(data))
+Mesh::Mesh(DefaultModelData data, std::size_t requiredBoneCount)
+    : data(std::move(data)),
+      requiredBoneCount(requiredBoneCount)
 {
+    const auto hasAttribute = [this](const char* name)
+    {
+        return std::any_of(
+            this->data.layout.begin(),
+            this->data.layout.end(),
+            [name](const Layout& attribute)
+            {
+                return attribute.name == name;
+            }
+        );
+    };
+    const bool hasBoneIndices = hasAttribute("boneIndices");
+    const bool hasBoneWeights = hasAttribute("boneWeights");
+    if (hasBoneIndices != hasBoneWeights ||
+        (this->requiredBoneCount > 0 && !hasBoneIndices) ||
+        (this->requiredBoneCount == 0 && hasBoneIndices))
+    {
+        throw std::invalid_argument(
+            "Mesh skinning metadata does not match its vertex layout"
+        );
+    }
     this->localBoundsCenter = CalculateBoundsCenter(this->data);
 }
 
@@ -144,4 +167,14 @@ std::size_t Mesh::IndexCount() const noexcept
 const glm::vec3& Mesh::LocalBoundsCenter() const noexcept
 {
     return this->localBoundsCenter;
+}
+
+bool Mesh::IsSkinned() const noexcept
+{
+    return this->requiredBoneCount > 0;
+}
+
+std::size_t Mesh::RequiredBoneCount() const noexcept
+{
+    return this->requiredBoneCount;
 }

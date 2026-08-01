@@ -39,13 +39,6 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
     if (maxAttributes <= 0)
         throw std::runtime_error("OpenGL reported no available vertex attributes");
 
-    if (layout.size() >
-        static_cast<std::size_t>(maxAttributes) -
-        std::min<std::size_t>(this->index, maxAttributes))
-    {
-        throw std::out_of_range("VAO layout exceeds GL_MAX_VERTEX_ATTRIBS");
-    }
-
     std::size_t strideBytes = 0;
     for (const Layout& attribute : layout)
     {
@@ -67,11 +60,23 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
     this->Bind();
     vbo.Bind();
 
-    GLuint index = this->index;
+    GLuint nextAutomaticIndex = this->index;
     std::size_t offsetBytes = 0;
     const GLsizei stride = static_cast<GLsizei>(strideBytes);
     for (const Layout& attribute : layout)
     {
+        GLuint index = attribute.location;
+        if (index == AutomaticAttributeLocation)
+        {
+            while (this->attribList.contains(nextAutomaticIndex))
+                ++nextAutomaticIndex;
+            index = nextAutomaticIndex;
+        }
+        if (index >= static_cast<GLuint>(maxAttributes))
+            throw std::out_of_range("VAO attribute location exceeds GL_MAX_VERTEX_ATTRIBS");
+        if (this->attribList.contains(index))
+            throw std::invalid_argument("VAO attribute location is already in use");
+
         glEnableVertexAttribArray(index);
         const void* offset = reinterpret_cast<const void*>(
             static_cast<std::uintptr_t>(offsetBytes)
@@ -100,10 +105,10 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
         }
 
         this->attribList[index] = attribute.name;
-        ++index;
+        nextAutomaticIndex = std::max(nextAutomaticIndex, index + 1U);
         offsetBytes += attribute.size * ParseTypeSize(attribute.type);
     }
-    this->index = index;
+    this->index = nextAutomaticIndex;
 }
 
 GLenum VAO::ParseType(DataType type)

@@ -87,22 +87,31 @@ int main(int argumentCount, char* arguments[])
     {
         Application application;
         WindowManager& windowManager = application.GetWindowManager();
-        Window& window = windowManager.CreateWindow(WindowConfig{
+        Window& window1 = windowManager.CreateWindow(WindowConfig{
             .width = 600,
             .height = 600,
-            .title = "FLORAL WISTERIA"
+            .title = "WINDOW 1"
         });
-        const std::shared_ptr<Scene> sharedScene = windowManager.CreateScene();
-        SetupDemoScene(*sharedScene, application.GetResources());
-        windowManager.BindScene(window, sharedScene);
-        windowManager.EnableFreeCameraController(window);
+        Window& window2 = windowManager.CreateWindow(WindowConfig{
+            .width = 600,
+            .height = 600,
+            .title = "WINDOW 2"
+        });
+        const std::shared_ptr<Scene> Scene1 = windowManager.CreateScene();
+        const std::shared_ptr<Scene> Scene2 = windowManager.CreateScene();
+        SetupDemoScene1(*Scene1, application.GetResources());
+        SetupDemoScene2(*Scene2, application.GetResources());
+        windowManager.BindScene(window1, Scene1);
+        windowManager.EnableFreeCameraController(window1);
+        windowManager.BindScene(window2, Scene2);
+        windowManager.EnableFreeCameraController(window2);
 
         if (HasArgument(argumentCount, arguments, "--multi-window"))
         {
             Window& secondWindow = windowManager.CreateWindow(WindowConfig{
                 .width = 600,
                 .height = 600,
-                .title = "FLORAL WISTERIA - SECOND VIEW"
+                .title = "WINDOW 1 - SECOND VIEW"
             });
             const std::shared_ptr<Camera> sideCamera =
                 windowManager.CreateCamera(CameraParam{
@@ -112,7 +121,7 @@ int main(int argumentCount, char* arguments[])
                 });
             windowManager.BindRenderView(
                 secondWindow,
-                sharedScene,
+                Scene1,
                 sideCamera
             );
             windowManager.EnableFreeCameraController(secondWindow);
@@ -120,13 +129,13 @@ int main(int argumentCount, char* arguments[])
 
         if (HasArgument(argumentCount, arguments, "--dynamic-window"))
         {
-            Entity* host = sharedScene->EntityAt(0);
+            Entity* host = Scene1->EntityAt(0);
             if (host == nullptr)
                 throw std::runtime_error("Dynamic window demo requires an Entity");
             host->AddBehaviour<DynamicWindowDemoBehaviour>(
                 windowManager,
-                window,
-                sharedScene
+                window1,
+                Scene1
             );
         }
 

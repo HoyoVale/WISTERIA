@@ -361,11 +361,16 @@ ModelAsset& ResourceManager::LoadModel(
     for (std::size_t index = 0; index < imported.meshes.size(); ++index)
     {
         importedMeshes.push_back(
-            std::make_unique<Mesh>(std::move(imported.meshes[index].data))
+            std::make_unique<Mesh>(
+                std::move(imported.meshes[index].data),
+                imported.meshes[index].requiredBoneCount
+            )
         );
     }
 
     auto model = std::make_unique<ModelAsset>(name);
+    if (imported.skeleton.has_value())
+        model->SetSkeleton(std::move(*imported.skeleton));
     for (const ImportedPartData& part : imported.parts)
     {
         const std::size_t materialIndex =

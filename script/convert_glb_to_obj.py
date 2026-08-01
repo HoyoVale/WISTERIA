@@ -3,8 +3,8 @@
 Run through Blender rather than the system Python:
 
 blender --background --python script/convert_glb_to_obj.py -- \
-    --input ./assets/models/仪玄皮肤_glb/仪玄皮肤.glb \
-    --output ./assets/models/obj/仪玄皮肤_obj/仪玄皮肤.obj
+    --input ./assets/models/glb/爱弥斯_glb/爱弥斯.glb \
+    --output ./assets/models/obj/爱弥斯_obj/爱弥斯.obj
 """
 
 from __future__ import annotations

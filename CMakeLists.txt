@@ -78,6 +78,8 @@ set(WISTERIA_CORE_SOURCES
     src/behaviour.cpp
     src/render_part.cpp
     src/model_asset.cpp
+    src/skeleton.cpp
+    src/pose.cpp
     src/importer.cpp
     src/entity.cpp
     src/scene.cpp

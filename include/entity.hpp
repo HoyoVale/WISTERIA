@@ -4,6 +4,7 @@
 #include "material.hpp"
 #include "mesh.hpp"
 #include "render_part.hpp"
+#include "pose.hpp"
 #include "transform.hpp"
 #include <concepts>
 #include <cstddef>
@@ -51,6 +52,13 @@ public:
 
     bool IsVisible() const noexcept;
     void SetVisible(bool visible) noexcept;
+
+    bool HasPose() const noexcept;
+    Pose* TryGetPose() noexcept;
+    const Pose* TryGetPose() const noexcept;
+    Pose& GetPose();
+    const Pose& GetPose() const;
+    void SetSkeleton(const Skeleton& skeleton);
 
     template<typename T, typename... Arguments>
         requires std::derived_from<T, Behaviour>
@@ -100,6 +108,7 @@ private:
     void FlushPendingBehaviourRemovals() noexcept;
 
     Transform transform;
+    std::unique_ptr<Pose> pose;
     std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;
     std::vector<Behaviour*> pendingBehaviourRemovals;

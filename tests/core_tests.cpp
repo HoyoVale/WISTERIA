@@ -5,9 +5,11 @@
 #include "input.hpp"
 #include "manager.hpp"
 #include "model_asset.hpp"
+#include "pose.hpp"
 #include "renderer.hpp"
 #include "scene.hpp"
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <filesystem>
@@ -30,6 +32,204 @@ void Require(bool condition, const std::string& message)
 bool NearlyEqual(float left, float right)
 {
     return std::abs(left - right) <= Epsilon;
+}
+
+bool NearlyEqual(const glm::mat4& left, const glm::mat4& right)
+{
+    for (glm::length_t column = 0; column < 4; ++column)
+    {
+        for (glm::length_t row = 0; row < 4; ++row)
+        {
+            if (!NearlyEqual(left[column][row], right[column][row]))
+                return false;
+        }
+    }
+    return true;
+}
+
+float MatrixIdentityDeviation(const glm::mat4& matrix)
+{
+    float result = 0.0f;
+    for (glm::length_t column = 0; column < 4; ++column)
+    {
+        for (glm::length_t row = 0; row < 4; ++row)
+        {
+            result = std::max(
+                result,
+                std::abs(matrix[column][row] -
+                    (column == row ? 1.0f : 0.0f))
+            );
+        }
+    }
+    return result;
+}
+
+void TestSkeletonAndPose()
+{
+    const glm::mat4 rootLocal = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    const glm::mat4 childLocal = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 2.0f, 0.0f)
+    );
+    const glm::mat4 leafLocal = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 0.0f, 3.0f)
+    );
+    const glm::mat4 childGlobal = rootLocal * childLocal;
+    const glm::mat4 leafGlobal = childGlobal * leafLocal;
+
+    // The child intentionally appears before its parent. Skeleton must derive
+    // a safe parent-before-child evaluation order rather than trusting input.
+    Skeleton skeleton({
+        Bone{"child", 2U, childLocal, glm::inverse(childGlobal)},
+        Bone{"leaf", 0U, leafLocal, glm::inverse(leafGlobal)},
+        Bone{"root", InvalidBoneIndex, rootLocal, glm::inverse(rootLocal)}
+    });
+
+    Require(skeleton.BoneCount() == 3, "Skeleton bone count is incorrect");
+    Require(skeleton.RootCount() == 1, "Skeleton root count is incorrect");
+    Require(
+        skeleton.FindBone("root") == std::optional<BoneIndex>(2U) &&
+        !skeleton.FindBone("missing").has_value(),
+        "Skeleton bone-name lookup is incorrect"
+    );
+    Require(
+        skeleton.EvaluationOrder()[0] == 2U &&
+        skeleton.EvaluationOrder()[1] == 0U &&
+        skeleton.EvaluationOrder()[2] == 1U,
+        "Skeleton evaluation order is not parent-before-child"
+    );
+    Require(
+        NearlyEqual(skeleton.BindGlobalMatrices()[1], leafGlobal),
+        "Skeleton bind global matrix is incorrect"
+    );
+
+    Pose pose(skeleton);
+    Require(pose.IsDirty(), "New Pose was unexpectedly clean");
+    for (const glm::mat4& skinMatrix : pose.SkinningMatrices())
+    {
+        Require(
+            NearlyEqual(skinMatrix, glm::mat4(1.0f)),
+            "Bind pose did not produce an identity skinning matrix"
+        );
+    }
+    Require(!pose.IsDirty(), "Pose remained dirty after evaluation");
+
+    pose.SetLocalTransform(
+        0U,
+        BoneTransform{
+            .translation = {0.0f, 4.0f, 0.0f}
+        }
+    );
+    Require(pose.IsDirty(), "Pose edit did not invalidate cached matrices");
+    Require(
+        NearlyEqual(pose.GlobalMatrix(1U)[3].x, 1.0f) &&
+        NearlyEqual(pose.GlobalMatrix(1U)[3].y, 4.0f) &&
+        NearlyEqual(pose.GlobalMatrix(1U)[3].z, 3.0f),
+        "Pose edit did not propagate through the bone hierarchy"
+    );
+    Require(
+        NearlyEqual(
+            pose.SkinningMatrices()[1],
+            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f))
+        ),
+        "Pose produced an incorrect final skinning matrix"
+    );
+
+    pose.ResetToBindPose();
+    Require(
+        NearlyEqual(pose.SkinningMatrices()[1], glm::mat4(1.0f)),
+        "Pose reset did not restore the bind pose"
+    );
+}
+
+void TestSkeletonValidation()
+{
+    bool duplicateRejected = false;
+    try
+    {
+        Skeleton duplicate({Bone{"bone"}, Bone{"bone"}});
+    }
+    catch (const std::invalid_argument&)
+    {
+        duplicateRejected = true;
+    }
+    Require(duplicateRejected, "Skeleton accepted duplicate bone names");
+
+    bool badParentRejected = false;
+    try
+    {
+        Skeleton badParent({Bone{"bone", 4U}});
+    }
+    catch (const std::invalid_argument&)
+    {
+        badParentRejected = true;
+    }
+    Require(badParentRejected, "Skeleton accepted an invalid parent index");
+
+    bool cycleRejected = false;
+    try
+    {
+        Skeleton cycle({Bone{"first", 1U}, Bone{"second", 0U}});
+    }
+    catch (const std::invalid_argument&)
+    {
+        cycleRejected = true;
+    }
+    Require(cycleRejected, "Skeleton accepted a hierarchy cycle");
+
+    Skeleton valid({Bone{"root"}});
+    Pose pose(valid);
+    bool badPoseIndexRejected = false;
+    try
+    {
+        pose.SetLocalMatrix(1U, glm::mat4(1.0f));
+    }
+    catch (const std::out_of_range&)
+    {
+        badPoseIndexRejected = true;
+    }
+    Require(badPoseIndexRejected, "Pose accepted an invalid bone index");
+}
+
+void TestModelAssetSkeleton()
+{
+    ModelAsset model("skeletonModel");
+    Require(!model.HasSkeleton(), "Static ModelAsset unexpectedly has a skeleton");
+    Require(model.TryGetSkeleton() == nullptr, "Missing skeleton returned a pointer");
+
+    bool missingRejected = false;
+    try
+    {
+        static_cast<void>(model.GetSkeleton());
+    }
+    catch (const std::logic_error&)
+    {
+        missingRejected = true;
+    }
+    Require(missingRejected, "ModelAsset returned a missing skeleton");
+
+    model.SetSkeleton(Skeleton({Bone{"root"}}));
+    Require(model.HasSkeleton(), "ModelAsset did not store its skeleton");
+    Require(
+        model.TryGetSkeleton() == &model.GetSkeleton() &&
+        model.GetSkeleton().BoneCount() == 1,
+        "ModelAsset skeleton access is inconsistent"
+    );
+
+    bool replacementRejected = false;
+    try
+    {
+        model.SetSkeleton(Skeleton({Bone{"replacement"}}));
+    }
+    catch (const std::logic_error&)
+    {
+        replacementRejected = true;
+    }
+    Require(replacementRejected, "ModelAsset allowed its skeleton to be replaced");
 }
 
 void TestRenderPartAndModelAsset()
@@ -773,10 +973,97 @@ void TestConvertedMmdObjWhenAvailable()
     Require(resources.TextureCount() == 8, "Linear texture alias was not registered");
 }
 
+void TestRiggedGlbImportWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "glb" /
+        u8"仪玄_glb" / u8"仪玄.glb";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(imported.skeleton.has_value(), "Rigged GLB lost its Skeleton");
+    const Skeleton& skeleton = *imported.skeleton;
+    Require(skeleton.BoneCount() >= 400, "Rigged GLB lost too many bones");
+    const Pose bindPose(skeleton);
+    const std::span<const glm::mat4> glbSkinMatrices =
+        bindPose.SkinningMatrices();
+    for (std::size_t index = 0; index < glbSkinMatrices.size(); ++index)
+    {
+        Require(
+            MatrixIdentityDeviation(glbSkinMatrices[index]) <= 0.002f,
+            "Rigged GLB bind pose changed bone " +
+                std::to_string(index) + " (" +
+                skeleton.BoneAt(static_cast<BoneIndex>(index)).name +
+                "), deviation=" +
+                std::to_string(MatrixIdentityDeviation(glbSkinMatrices[index]))
+        );
+    }
+
+    std::size_t skinnedMeshCount = 0;
+    for (const ImportedMeshData& mesh : imported.meshes)
+    {
+        if (mesh.requiredBoneCount == 0)
+            continue;
+        ++skinnedMeshCount;
+        Require(mesh.data.layout.size() == 7, "Rigged GLB skin layout is invalid");
+        Require(
+            mesh.data.layout[5].name == "boneIndices" &&
+            mesh.data.layout[5].location == 7U &&
+            mesh.data.layout[6].name == "boneWeights" &&
+            mesh.data.layout[6].location == 8U,
+            "Rigged GLB skin attributes use incorrect locations"
+        );
+        constexpr std::size_t Stride = 23U;
+        Require(
+            mesh.data.vertices.size() % Stride == 0,
+            "Rigged GLB vertex data does not match its skin layout"
+        );
+        for (std::size_t offset = 15U;
+             offset < mesh.data.vertices.size();
+             offset += Stride)
+        {
+            float weightSum = 0.0f;
+            for (std::size_t influence = 0; influence < 4U; ++influence)
+            {
+                const float boneIndex = mesh.data.vertices[offset + influence];
+                const float weight = mesh.data.vertices[offset + 4U + influence];
+                Require(
+                    std::isfinite(boneIndex) && boneIndex >= 0.0f &&
+                    boneIndex < static_cast<float>(skeleton.BoneCount()),
+                    "Rigged GLB contains an invalid vertex bone index"
+                );
+                Require(
+                    std::isfinite(weight) && weight >= 0.0f,
+                    "Rigged GLB contains an invalid vertex bone weight"
+                );
+                weightSum += weight;
+            }
+            Require(
+                NearlyEqual(weightSum, 1.0f),
+                "Rigged GLB vertex bone weights are not normalized"
+            );
+        }
+    }
+    Require(skinnedMeshCount > 0, "Rigged GLB produced no skinned Mesh");
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("riggedYixuan", modelPath);
+    Require(model.HasSkeleton(), "ResourceManager lost the imported Skeleton");
+    Scene scene;
+    Entity& instance = scene.InstantiateModel(model);
+    Require(instance.HasPose(), "Model instance did not create a Pose");
+    Require(
+        &instance.GetPose().GetSkeleton() == &model.GetSkeleton(),
+        "Entity Pose does not reference the ModelAsset Skeleton"
+    );
+}
+
 void TestDirectPmxMaterialImportWhenAvailable()
 {
     const std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / u8"仪玄_pmx" / u8"仪玄.pmx";
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"仪玄_pmx" / u8"仪玄.pmx";
     if (!std::filesystem::is_regular_file(modelPath))
         return;
 
@@ -784,6 +1071,15 @@ void TestDirectPmxMaterialImportWhenAvailable()
     Require(imported.meshes.size() == 21, "Direct PMX mesh count changed");
     Require(imported.materials.size() == 21, "Direct PMX material count changed");
     Require(imported.parts.size() == 21, "Direct PMX part count changed");
+    Require(imported.skeleton.has_value(), "Direct PMX lost its Skeleton");
+    const Pose pmxBindPose(*imported.skeleton);
+    for (const glm::mat4& skinMatrix : pmxBindPose.SkinningMatrices())
+    {
+        Require(
+            NearlyEqual(skinMatrix, glm::mat4(1.0f)),
+            "Direct PMX bind pose changed vertex positions"
+        );
+    }
     Require(
         imported.meshes[0].data.vertices.size() >= 18U &&
         NearlyEqual(imported.meshes[0].data.vertices[6], 0.56001925f) &&
@@ -799,10 +1095,10 @@ void TestDirectPmxMaterialImportWhenAvailable()
     for (const ImportedMeshData& mesh : imported.meshes)
     {
         Require(
-            mesh.data.layout.size() == 7,
-            "PMX mesh is missing additional UV or edge-scale attributes"
+            mesh.data.layout.size() == 9,
+            "PMX mesh is missing MMD or skinning attributes"
         );
-        const std::size_t stride = 18U;
+        const std::size_t stride = 26U;
         Require(
             mesh.data.vertices.size() % stride == 0,
             "PMX vertex data does not match its UV layout"
@@ -815,6 +1111,21 @@ void TestDirectPmxMaterialImportWhenAvailable()
                 std::isfinite(mesh.data.vertices[offset]) &&
                     mesh.data.vertices[offset] >= 0.0f,
                 "PMX vertex edge scale is invalid"
+            );
+        }
+        Require(mesh.requiredBoneCount > 0, "PMX mesh lost its bone weights");
+        for (std::size_t offset = 22;
+             offset < mesh.data.vertices.size();
+             offset += stride)
+        {
+            const float weightSum =
+                mesh.data.vertices[offset] +
+                mesh.data.vertices[offset + 1U] +
+                mesh.data.vertices[offset + 2U] +
+                mesh.data.vertices[offset + 3U];
+            Require(
+                NearlyEqual(weightSum, 1.0f),
+                "PMX vertex bone weights are not normalized"
             );
         }
     }
@@ -841,6 +1152,7 @@ void TestDirectPmxMaterialImportWhenAvailable()
     ResourceManager resources;
     ModelAsset& model = resources.LoadModel("directPmx", modelPath);
     Require(model.PartCount() == 21, "Direct PMX ModelAsset part count changed");
+    Require(model.HasSkeleton(), "ResourceManager lost the PMX Skeleton");
     for (std::size_t index = 0; index < resources.MaterialCount(); ++index)
     {
         const Material& material = resources.GetMaterial(
@@ -877,6 +1189,9 @@ bool RunTest(const char* name, Function&& function)
 int main()
 {
     int failures = 0;
+    failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
+    failures += !RunTest("Skeleton validation", TestSkeletonValidation);
+    failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);
@@ -899,6 +1214,7 @@ int main()
     );
     failures += !RunTest("Converted MMD GLB integration", TestConvertedMmdGlbWhenAvailable);
     failures += !RunTest("Converted MMD OBJ integration", TestConvertedMmdObjWhenAvailable);
+    failures += !RunTest("Rigged GLB skin integration", TestRiggedGlbImportWhenAvailable);
     failures += !RunTest(
         "Direct PMX material integration",
         TestDirectPmxMaterialImportWhenAvailable

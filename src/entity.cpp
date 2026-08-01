@@ -132,6 +132,42 @@ void Entity::SetVisible(bool visible) noexcept
     this->visible = visible;
 }
 
+bool Entity::HasPose() const noexcept
+{
+    return this->pose != nullptr;
+}
+
+Pose* Entity::TryGetPose() noexcept
+{
+    return this->pose.get();
+}
+
+const Pose* Entity::TryGetPose() const noexcept
+{
+    return this->pose.get();
+}
+
+Pose& Entity::GetPose()
+{
+    if (this->pose == nullptr)
+        throw std::logic_error("Entity has no skeleton pose");
+    return *this->pose;
+}
+
+const Pose& Entity::GetPose() const
+{
+    if (this->pose == nullptr)
+        throw std::logic_error("Entity has no skeleton pose");
+    return *this->pose;
+}
+
+void Entity::SetSkeleton(const Skeleton& skeleton)
+{
+    if (this->pose != nullptr)
+        throw std::logic_error("Entity skeleton is already set");
+    this->pose = std::make_unique<Pose>(skeleton);
+}
+
 bool Entity::RemoveBehaviour(Behaviour& behaviour)
 {
     const auto iterator = std::find_if(
