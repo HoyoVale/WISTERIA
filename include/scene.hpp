@@ -26,6 +26,7 @@ public:
     const Camera& ActiveCamera() const noexcept;
 
     void Update(float deltaTime);
+    void Clear() noexcept;
 
     Entity& CreateEntity(const Transform& transform = {});
     Entity& CreateEntity(

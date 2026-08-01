@@ -62,6 +62,7 @@ FetchContent_MakeAvailable(assimp)
 set(WISTERIA_CORE_SOURCES
     src/stb_image.cpp
     src/application.cpp
+    src/demo_scene.cpp
     src/window.cpp
     src/shader.cpp
     src/vbo.cpp

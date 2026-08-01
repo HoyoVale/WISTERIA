@@ -1,23 +1,7 @@
 #include "pch.hpp"
 #include "window.hpp"
-#include <filesystem>
-#include <iostream>
 #include <glad/gl.h>
 #include <utility>
-
-namespace
-{
-std::filesystem::path DemoModelPath()
-{
-    return std::filesystem::current_path() / "assets" / "models" /
-        u8"仪玄_pmx" / u8"仪玄.pmx";
-}
-std::filesystem::path Demo2ModelPath()
-{
-    return std::filesystem::current_path() / "assets" / "models" /
-        u8"仪玄皮肤_pmx" / u8"仪玄.pmx";
-}
-}
 
 Window::Window(
     int width,
@@ -25,8 +9,11 @@ Window::Window(
     std::string title,
     GLFWwindow* sharedContext
 )
-    : size{width, height}, title(std::move(title))
+    : size{width, height},
+      title(std::move(title)),
+      scene(std::make_shared<Scene>())
 {
+    this->camera = CameraHandle(this->scene, &this->scene->ActiveCamera());
     try
     {
         this->window = glfwCreateWindow(
@@ -40,53 +27,6 @@ Window::Window(
             throw std::runtime_error("GLFW window creation failed");
 
         this->init();
-
-        EnvironmentMap& environment = this->resources.CreateEnvironment(
-            "defaultSky",
-            EnvironmentMapData::ProceduralSky()
-        );
-        this->scene.SetEnvironment(&environment);
-
-        ModelAsset& yixuanModel = this->resources.LoadModel("yixuan",DemoModelPath());
-        Entity& yixuanEntity = this->scene.InstantiateModel(yixuanModel,
-            Transform(glm::vec3(0.8f, 0.0f, 0.0f),glm::vec3(0.0f),glm::vec3(0.1f)));
-        ModelAsset& yixuan2Model = this->resources.LoadModel("yixuan2",Demo2ModelPath());
-        Entity& yixuan2Entity = this->scene.InstantiateModel(yixuan2Model,
-            Transform(glm::vec3(-0.8f, 0.0f, 0.0f),glm::vec3(0.0f),glm::vec3(0.1f)));
-            
-        yixuanEntity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 0.0f, 0.0f));
-        yixuan2Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 0.0f, 0.0f));
-
-        this->scene.ActiveCamera().SetParam(CameraParam{
-            .Position = {0.0f, 1.1f, 3.5f},
-            .Target = {0.0f, 1.1f, 0.25f},
-            .Up = {0.0f, 1.0f, 0.0f}
-        });
-        this->cameraController =
-            std::make_unique<FreeCameraControllerBehaviour>(
-                this->scene.ActiveCamera(),
-                this->input
-            );
-        this->scene.CreatePointLight(PointLightData{
-            .Position = {2.5f, 1.5f, 2.5f},
-            .Color = {1.0f, 1.0f, 1.0f},
-            .Intensity = 1.6f,
-            .Range = 8.0f
-        });
-        // this->scene.CreateDirectionalLight(DirectionalLightData{
-        //     .Direction = {-0.2f, -1.0f, -0.3f},
-        //     .Color = {1.0f, 1.0f, 1.0f},
-        //     .Intensity = 2.0f
-        // });
-        // this->scene.CreateSpotLight(SpotLightData{
-        //     .Position = {2.5f, 2.5f, 3.0f},
-        //     .Direction = {-0.55f, -0.55f, -0.65f},
-        //     .Color = {1.0f, 0.35f, 0.65f},
-        //     .Intensity = 2.0f,
-        //     .Range = 8.0f,
-        //     .InnerCutoffDegrees = 12.5f,
-        //     .OuterCutoffDegrees = 22.0f
-        // });
     }
     catch (...)
     {
@@ -105,13 +45,9 @@ void Window::Release() noexcept
     if (this->window != nullptr)
         glfwMakeContextCurrent(this->window);
     this->cameraController.reset();
+    this->camera.reset();
+    this->scene.reset();
     this->input.Detach();
-    this->scene.ClearEntities();
-    this->scene.ClearPointLights();
-    this->scene.ClearDirectionalLights();
-    this->scene.ClearSpotLights();
-    this->scene.ClearEnvironment();
-    this->resources.Clear();
     if (this->window != nullptr)
     {
         glfwDestroyWindow(this->window);
@@ -151,7 +87,7 @@ glm::mat4 Window::Projection(float aspect) const
 {
     if (aspect <= 0.0f)
         throw std::invalid_argument("Projection aspect ratio must be positive");
-    return this->scene.ActiveCamera().GetProjection(aspect);
+    return this->GetCamera().GetProjection(aspect);
 }
 
 bool Window::ShouldClose() const noexcept
@@ -180,9 +116,56 @@ void Window::BeginInputFrame() noexcept
 
 void Window::Update(float deltaTime)
 {
-    if (this->scene.EntityCount() == 0)
-        throw std::logic_error("Window requires at least one Scene entity");
     if (this->cameraController != nullptr)
         this->cameraController->Update(deltaTime);
-    this->scene.Update(deltaTime);
+}
+
+void Window::EnableFreeCameraController(
+    const FreeCameraControllerSettings& settings
+)
+{
+    this->cameraController =
+        std::make_unique<FreeCameraControllerBehaviour>(
+            this->GetCamera(),
+            this->input,
+            settings
+        );
+}
+
+void Window::DisableFreeCameraController() noexcept
+{
+    this->cameraController.reset();
+}
+
+void Window::BindScene(SceneHandle nextScene)
+{
+    if (nextScene == nullptr)
+        throw std::invalid_argument("Window scene binding cannot be null");
+
+    CameraHandle activeCamera(nextScene, &nextScene->ActiveCamera());
+    this->BindRenderView(std::move(nextScene), std::move(activeCamera));
+}
+
+void Window::BindCamera(CameraHandle nextCamera)
+{
+    if (nextCamera == nullptr)
+        throw std::invalid_argument("Window camera binding cannot be null");
+
+    this->cameraController.reset();
+    this->camera = std::move(nextCamera);
+}
+
+void Window::BindRenderView(
+    SceneHandle nextScene,
+    CameraHandle nextCamera
+)
+{
+    if (nextScene == nullptr)
+        throw std::invalid_argument("Window scene binding cannot be null");
+    if (nextCamera == nullptr)
+        throw std::invalid_argument("Window camera binding cannot be null");
+
+    this->cameraController.reset();
+    this->scene = std::move(nextScene);
+    this->camera = std::move(nextCamera);
 }

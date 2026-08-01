@@ -7,6 +7,7 @@
 
 class Program;
 class Shader;
+class VAO;
 
 struct EnvironmentMapData
 {
@@ -46,7 +47,12 @@ public:
     void BindIrradiance(unsigned int unit) const;
     void BindPrefilter(unsigned int unit) const;
     void BindBrdfLut(unsigned int unit) const;
-    void DrawSkybox(const glm::mat4& view, const glm::mat4& projection);
+    void ConfigureSkyboxVertexArray(VAO& vertexArray) const;
+    void DrawSkybox(
+        const glm::mat4& view,
+        const glm::mat4& projection,
+        VAO& vertexArray
+    );
 
     float Intensity() const noexcept;
     void SetIntensity(float intensity);
@@ -66,6 +72,7 @@ private:
     void CreateSkyboxProgram();
     void RenderCube() const;
     void RenderQuad() const;
+    void ReleaseCaptureResources() noexcept;
     void Release() noexcept;
 
 private:

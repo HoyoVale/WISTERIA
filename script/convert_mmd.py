@@ -2,10 +2,12 @@
 
 Run through Blender rather than the system Python:
 
-    blender --background --python script/convert_mmd.py -- \
-        --addon-dir /path/to/blender_mmd_tools \
-        --input /path/to/model.pmx \
-        --output /path/to/model.glb
+blender --background --python script/convert_mmd.py -- \
+    --input /path/to/model.pmx \
+    --output /path/to/model.glb
+
+The vendored MMD Tools package in third-party/blender_mmd_tools is used by
+default. Pass --addon-dir only when testing another checkout.
 """
 
 from __future__ import annotations
@@ -17,6 +19,10 @@ import sys
 import bpy
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ADDON_DIR = PROJECT_ROOT / "third-party" / "blender_mmd_tools"
+
+
 def parse_arguments() -> argparse.Namespace:
     try:
         separator = sys.argv.index("--")
@@ -24,7 +30,15 @@ def parse_arguments() -> argparse.Namespace:
         raise SystemExit("Missing '--' before converter arguments") from error
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--addon-dir", required=True, type=Path)
+    parser.add_argument(
+        "--addon-dir",
+        default=DEFAULT_ADDON_DIR,
+        type=Path,
+        help=(
+            "Directory containing the mmd_tools Python package "
+            f"(default: {DEFAULT_ADDON_DIR})"
+        ),
+    )
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(

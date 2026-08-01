@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "mesh.hpp"
+#include "vao.hpp"
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -85,34 +86,36 @@ void Mesh::Attach()
     if (this->attached)
         return;
 
-    auto nextVao = std::make_unique<VAO>();
     auto nextVbo = std::make_unique<VBO>();
     auto nextEbo = std::make_unique<EBO>();
 
-    nextVao->Bind();
     nextVbo->Upload(
         this->data.vertices.data(),
         this->data.VertexBytes()
     );
-    nextVao->BindBuffer(*nextVbo, this->data.layout);
     nextEbo->Upload(
         this->data.indices.data(),
         this->data.IndexBytes()
     );
-    nextVao->unBind();
 
-    this->vao.swap(nextVao);
     this->vbo.swap(nextVbo);
     this->ebo.swap(nextEbo);
     this->attached = true;
 }
 
-void Mesh::Bind()
+void Mesh::ConfigureVertexArray(VAO& vao)
 {
     if (!this->attached)
-        throw std::logic_error("Mesh must be attached before binding");
+    {
+        throw std::logic_error(
+            "Mesh buffers must be attached before configuring a vertex array"
+        );
+    }
 
-    this->vao->Bind();
+    vao.Bind();
+    vao.BindBuffer(*this->vbo, this->data.layout);
+    this->ebo->Bind();
+    vao.unBind();
 }
 
 void Mesh::Draw()
@@ -126,12 +129,6 @@ void Mesh::Draw()
         this->data.IndexGLType(),
         nullptr
     );
-}
-
-void Mesh::Unbind()
-{
-    if (this->attached)
-        this->vao->unBind();
 }
 
 bool Mesh::IsAttached() const noexcept

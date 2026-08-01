@@ -2,6 +2,7 @@
 #include "renderer.hpp"
 #include "shader.hpp"
 #include "environment.hpp"
+#include "vao.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -61,6 +62,7 @@ Renderer::~Renderer()
 
 void Renderer::Render(
     Scene& scene,
+    const Camera& camera,
     const glm::mat4& projection,
     SceneFramebuffer& target
 )
@@ -69,7 +71,6 @@ void Renderer::Render(
         throw std::logic_error("Renderer requires a valid scene framebuffer");
     target.Bind();
 
-    const Camera& camera = scene.ActiveCamera();
     const glm::mat4 view = camera.GetView();
     EnvironmentMap* environment = scene.Environment();
     if (environment != nullptr)
@@ -112,8 +113,14 @@ void Renderer::Render(
         );
     }
 
-    if (environment != nullptr)
-        environment->DrawSkybox(view, projection);
+    if (environment != nullptr && environment->ShouldDrawSkybox())
+    {
+        environment->DrawSkybox(
+            view,
+            projection,
+            this->SkyboxVertexArrayFor(*environment)
+        );
+    }
 
     if (transparentCommands.empty())
         return;
@@ -275,6 +282,7 @@ void Renderer::DrawPart(
     Mesh& mesh = part.GetMesh();
     Material& material = part.GetMaterial();
     mesh.Attach();
+    VAO& vertexArray = this->VertexArrayFor(mesh);
     material.Attach();
 
     if (material.AlphaMode() == MaterialAlphaMode::Blend)
@@ -426,7 +434,7 @@ void Renderer::DrawPart(
         );
     }
 
-    mesh.Bind();
+    vertexArray.Bind();
     if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
         material.IsEdgeEnabled() && material.EdgeSize() > 0.0f)
     {
@@ -444,8 +452,34 @@ void Renderer::DrawPart(
         }
     }
     mesh.Draw();
-    mesh.Unbind();
+    vertexArray.unBind();
     material.Unbind();
+}
+
+VAO& Renderer::VertexArrayFor(Mesh& mesh)
+{
+    const auto cached = this->meshVertexArrays.find(&mesh);
+    if (cached != this->meshVertexArrays.end())
+        return *cached->second;
+
+    auto vertexArray = std::make_unique<VAO>();
+    mesh.ConfigureVertexArray(*vertexArray);
+    VAO& result = *vertexArray;
+    this->meshVertexArrays.emplace(&mesh, std::move(vertexArray));
+    return result;
+}
+
+VAO& Renderer::SkyboxVertexArrayFor(EnvironmentMap& environment)
+{
+    const auto cached = this->skyboxVertexArrays.find(&environment);
+    if (cached != this->skyboxVertexArrays.end())
+        return *cached->second;
+
+    auto vertexArray = std::make_unique<VAO>();
+    environment.ConfigureSkyboxVertexArray(*vertexArray);
+    VAO& result = *vertexArray;
+    this->skyboxVertexArrays.emplace(&environment, std::move(vertexArray));
+    return result;
 }
 
 void Renderer::EnsureOitResources(const SceneFramebuffer& target)
@@ -647,6 +681,8 @@ void Renderer::CompositeOit(const SceneFramebuffer& target)
 
 void Renderer::Release() noexcept
 {
+    this->skyboxVertexArrays.clear();
+    this->meshVertexArrays.clear();
     this->presentProgram.reset();
     this->presentShader.reset();
     this->oitCompositeProgram.reset();

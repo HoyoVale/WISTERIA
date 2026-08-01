@@ -14,6 +14,30 @@ GLsizeiptr BufferSize(std::size_t size)
     }
     return static_cast<GLsizeiptr>(size);
 }
+
+class ScopedCopyWriteBuffer
+{
+public:
+    explicit ScopedCopyWriteBuffer(GLuint buffer)
+    {
+        glGetIntegerv(
+            GL_COPY_WRITE_BUFFER,
+            &this->previousBuffer
+        );
+        glBindBuffer(GL_COPY_WRITE_BUFFER, buffer);
+    }
+
+    ~ScopedCopyWriteBuffer()
+    {
+        glBindBuffer(
+            GL_COPY_WRITE_BUFFER,
+            static_cast<GLuint>(this->previousBuffer)
+        );
+    }
+
+private:
+    GLint previousBuffer = 0;
+};
 }
 
 EBO::EBO()
@@ -50,9 +74,9 @@ void EBO::Upload(
     if (dataSize > 0 && data == nullptr)
         throw std::invalid_argument("EBO upload data must not be null");
 
-    this->Bind();
+    const ScopedCopyWriteBuffer binding(this->ebo);
     glBufferData(
-        GL_ELEMENT_ARRAY_BUFFER,
+        GL_COPY_WRITE_BUFFER,
         BufferSize(dataSize),
         data,
         usage
@@ -62,9 +86,9 @@ void EBO::Upload(
 
 void EBO::Allocate(std::size_t dataSize, GLenum usage)
 {
-    this->Bind();
+    const ScopedCopyWriteBuffer binding(this->ebo);
     glBufferData(
-        GL_ELEMENT_ARRAY_BUFFER,
+        GL_COPY_WRITE_BUFFER,
         BufferSize(dataSize),
         nullptr,
         usage
@@ -85,9 +109,9 @@ void EBO::Update(
     if (offset > this->capacity || dataSize > this->capacity - offset)
         throw std::out_of_range("EBO update exceeds allocated capacity");
 
-    this->Bind();
+    const ScopedCopyWriteBuffer binding(this->ebo);
     glBufferSubData(
-        GL_ELEMENT_ARRAY_BUFFER,
+        GL_COPY_WRITE_BUFFER,
         static_cast<GLintptr>(offset),
         BufferSize(dataSize),
         data

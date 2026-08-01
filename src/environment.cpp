@@ -1,6 +1,7 @@
 #include "pch.hpp"
 #include "environment.hpp"
 #include "shader.hpp"
+#include "vao.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -302,6 +303,7 @@ void EnvironmentMap::Attach()
         this->CreatePrefilterMap();
         this->CreateBrdfLut();
         this->CreateSkyboxProgram();
+        this->ReleaseCaptureResources();
         this->attached = true;
     }
     catch (...)
@@ -340,9 +342,39 @@ void EnvironmentMap::BindBrdfLut(unsigned int unit) const
     glBindTexture(GL_TEXTURE_2D, this->brdfLut);
 }
 
+void EnvironmentMap::ConfigureSkyboxVertexArray(VAO& vertexArray) const
+{
+    if (!this->attached || this->cubeVbo == 0)
+    {
+        throw std::logic_error(
+            "Environment map must be attached before configuring its vertex array"
+        );
+    }
+
+    GLint previousVertexArray = 0;
+    GLint previousArrayBuffer = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previousVertexArray);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previousArrayBuffer);
+
+    vertexArray.Bind();
+    glBindBuffer(GL_ARRAY_BUFFER, this->cubeVbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(
+        0,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        3 * sizeof(float),
+        nullptr
+    );
+    glBindVertexArray(static_cast<GLuint>(previousVertexArray));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previousArrayBuffer));
+}
+
 void EnvironmentMap::DrawSkybox(
     const glm::mat4& view,
-    const glm::mat4& projection
+    const glm::mat4& projection,
+    VAO& vertexArray
 )
 {
     if (!this->attached)
@@ -363,7 +395,9 @@ void EnvironmentMap::DrawSkybox(
     this->skyboxProgram->UniformTex("environmentMap", 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_CUBE_MAP, this->environmentCubemap);
-    this->RenderCube();
+    vertexArray.Bind();
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    vertexArray.unBind();
 }
 
 float EnvironmentMap::Intensity() const noexcept
@@ -845,8 +879,29 @@ void EnvironmentMap::RenderQuad() const
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
+void EnvironmentMap::ReleaseCaptureResources() noexcept
+{
+    if (this->captureRenderbuffer != 0)
+        glDeleteRenderbuffers(1, &this->captureRenderbuffer);
+    if (this->captureFramebuffer != 0)
+        glDeleteFramebuffers(1, &this->captureFramebuffer);
+    if (this->quadVbo != 0)
+        glDeleteBuffers(1, &this->quadVbo);
+    if (this->quadVao != 0)
+        glDeleteVertexArrays(1, &this->quadVao);
+    if (this->cubeVao != 0)
+        glDeleteVertexArrays(1, &this->cubeVao);
+
+    this->captureRenderbuffer = 0;
+    this->captureFramebuffer = 0;
+    this->quadVbo = 0;
+    this->quadVao = 0;
+    this->cubeVao = 0;
+}
+
 void EnvironmentMap::Release() noexcept
 {
+    this->ReleaseCaptureResources();
     this->skyboxProgram.reset();
     this->skyboxShader.reset();
     if (this->brdfLut != 0)
@@ -857,28 +912,13 @@ void EnvironmentMap::Release() noexcept
         glDeleteTextures(1, &this->irradianceCubemap);
     if (this->environmentCubemap != 0)
         glDeleteTextures(1, &this->environmentCubemap);
-    if (this->captureRenderbuffer != 0)
-        glDeleteRenderbuffers(1, &this->captureRenderbuffer);
-    if (this->captureFramebuffer != 0)
-        glDeleteFramebuffers(1, &this->captureFramebuffer);
-    if (this->quadVbo != 0)
-        glDeleteBuffers(1, &this->quadVbo);
-    if (this->quadVao != 0)
-        glDeleteVertexArrays(1, &this->quadVao);
     if (this->cubeVbo != 0)
         glDeleteBuffers(1, &this->cubeVbo);
-    if (this->cubeVao != 0)
-        glDeleteVertexArrays(1, &this->cubeVao);
 
     this->brdfLut = 0;
     this->prefilterCubemap = 0;
     this->irradianceCubemap = 0;
     this->environmentCubemap = 0;
-    this->captureRenderbuffer = 0;
-    this->captureFramebuffer = 0;
-    this->quadVbo = 0;
-    this->quadVao = 0;
     this->cubeVbo = 0;
-    this->cubeVao = 0;
     this->attached = false;
 }

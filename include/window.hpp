@@ -1,13 +1,15 @@
 #pragma once
 #include "behaviour.hpp"
 #include "input.hpp"
-#include "manager.hpp"
 #include "scene.hpp"
 #include <GLFW/glfw3.h>
 #include <memory>
 #include <string>
 
 class Application;
+
+using SceneHandle = std::shared_ptr<Scene>;
+using CameraHandle = std::shared_ptr<Camera>;
 
 struct WindowSize {
         int width  = 640, height = 480;
@@ -31,10 +33,16 @@ public:
     void SwapBuffers() const;
     void BeginInputFrame() noexcept;
     void Update(float deltaTime);
-    ResourceManager& GetResources() noexcept { return this->resources; };
-    const ResourceManager& GetResources() const noexcept { return this->resources; };
-    Scene& GetScene() noexcept { return this->scene; };
-    const Scene& GetScene() const noexcept { return this->scene; };
+    void EnableFreeCameraController(
+        const FreeCameraControllerSettings& settings = {}
+    );
+    void DisableFreeCameraController() noexcept;
+    Scene& GetScene() noexcept { return *this->scene; };
+    const Scene& GetScene() const noexcept { return *this->scene; };
+    Camera& GetCamera() noexcept { return *this->camera; };
+    const Camera& GetCamera() const noexcept { return *this->camera; };
+    const SceneHandle& GetSceneHandle() const noexcept { return this->scene; };
+    const CameraHandle& GetCameraHandle() const noexcept { return this->camera; };
     Input& GetInput() noexcept { return this->input; };
     const Input& GetInput() const noexcept { return this->input; };
 
@@ -47,13 +55,16 @@ private:
         GLFWwindow* sharedContext = nullptr
     );
     void init();
+    void BindScene(SceneHandle nextScene);
+    void BindCamera(CameraHandle nextCamera);
+    void BindRenderView(SceneHandle nextScene, CameraHandle nextCamera);
     void Release() noexcept;
 private:
     WindowSize size;
     std::string title;
     GLFWwindow* window = nullptr;
     Input input;
-    ResourceManager resources;
-    Scene scene;
+    SceneHandle scene;
+    CameraHandle camera;
     std::unique_ptr<FreeCameraControllerBehaviour> cameraController;
 };

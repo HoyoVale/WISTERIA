@@ -43,6 +43,15 @@ void Scene::Update(float deltaTime)
         entity->UpdateBehaviours(deltaTime);
 }
 
+void Scene::Clear() noexcept
+{
+    this->ClearEntities();
+    this->ClearPointLights();
+    this->ClearDirectionalLights();
+    this->ClearSpotLights();
+    this->ClearEnvironment();
+}
+
 Entity& Scene::CreateEntity(const Transform& transform)
 {
     auto entity = std::make_unique<Entity>(transform);

@@ -1,9 +1,10 @@
 #pragma once
 #include "model.hpp"
-#include "vao.hpp"
 #include "vbo.hpp"
 #include "ebo.hpp"
 #include <memory>
+
+class VAO;
 
 class Mesh{
 public:
@@ -16,9 +17,8 @@ public:
     Mesh& operator=(Mesh&&) = delete;
 
     void Attach();
-    void Bind();
+    void ConfigureVertexArray(VAO& vao);
     void Draw();
-    void Unbind();
 
     bool IsAttached() const noexcept;
     std::size_t IndexCount() const noexcept;
@@ -26,7 +26,6 @@ public:
 
 private:
     DefaultModelData data;
-    std::unique_ptr<VAO> vao;
     std::unique_ptr<VBO> vbo;
     std::unique_ptr<EBO> ebo;
     glm::vec3 localBoundsCenter{0.0f};

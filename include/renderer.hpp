@@ -4,11 +4,14 @@
 #include "scene.hpp"
 #include <glad/gl.h>
 #include <memory>
+#include <unordered_map>
 
 class Program;
 class Shader;
 struct ShaderInterface;
 class EnvironmentMap;
+class Mesh;
+class VAO;
 
 struct FxaaSettings
 {
@@ -29,6 +32,7 @@ public:
 
     void Render(
         Scene& scene,
+        const Camera& camera,
         const glm::mat4& projection,
         SceneFramebuffer& target
     );
@@ -53,6 +57,8 @@ private:
     );
     void EnsureOitResources(const SceneFramebuffer& target);
     void EnsurePresentResources();
+    VAO& VertexArrayFor(Mesh& mesh);
+    VAO& SkyboxVertexArrayFor(EnvironmentMap& environment);
     void BeginOitPass(const SceneFramebuffer& target);
     void CompositeOit(const SceneFramebuffer& target);
     void UploadTransforms(
@@ -102,4 +108,7 @@ private:
     std::unique_ptr<Shader> presentShader;
     std::unique_ptr<Program> presentProgram;
     FxaaSettings fxaaSettings;
+    std::unordered_map<const Mesh*, std::unique_ptr<VAO>> meshVertexArrays;
+    std::unordered_map<const EnvironmentMap*, std::unique_ptr<VAO>>
+        skyboxVertexArrays;
 };

@@ -11,7 +11,7 @@
 #include <string>
 #include <unordered_map>
 
-class Window;
+class Application;
 
 struct TexturePathKey
 {
@@ -116,8 +116,9 @@ private:
     > texturePathCache;
     std::unordered_map<std::filesystem::path, ModelAsset*> modelPathCache;
 
-    // Resources may only be released during Window shutdown, after Scene is clear.
+    // Resources may only be released by Application after every Scene and
+    // context-local renderer cache has been cleared while a shared context lives.
     void Clear() noexcept;
 
-    friend class Window;
+    friend class Application;
 };
