@@ -40,6 +40,29 @@ bool NearlyEqual(float left, float right)
     return std::abs(left - right) <= Epsilon;
 }
 
+bool NearlyEqual(const glm::vec3& left, const glm::vec3& right)
+{
+    return NearlyEqual(left.x, right.x) &&
+        NearlyEqual(left.y, right.y) &&
+        NearlyEqual(left.z, right.z);
+}
+
+bool NearlyEqual(const glm::vec4& left, const glm::vec4& right)
+{
+    return NearlyEqual(left.x, right.x) &&
+        NearlyEqual(left.y, right.y) &&
+        NearlyEqual(left.z, right.z) &&
+        NearlyEqual(left.w, right.w);
+}
+
+bool NearlySameRotation(const glm::quat& left, const glm::quat& right)
+{
+    return NearlyEqual(std::abs(glm::dot(
+        glm::normalize(left),
+        glm::normalize(right)
+    )), 1.0f);
+}
+
 bool NearlyEqual(const glm::mat4& left, const glm::mat4& right)
 {
     for (glm::length_t column = 0; column < 4; ++column)
@@ -847,6 +870,146 @@ void TestAnimatedModelImporter()
     );
 }
 
+void TestExtendedPmxMorphImporter()
+{
+    const std::filesystem::path modelPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+        "extended_morph.pmx";
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value() &&
+        imported.skeleton->BoneCount() == 2U,
+        "Extended PMX fixture lost its imported Skeleton"
+    );
+    Require(
+        imported.meshes.size() == 1U &&
+        imported.materials.size() == 1U &&
+        imported.morphs.size() == 5U,
+        "Extended PMX fixture changed its resource counts"
+    );
+
+    const MorphSet morphSet(imported.morphs);
+    const std::optional<MorphIndex> vertexMorph =
+        morphSet.FindMorph("vertex");
+    const std::optional<MorphIndex> boneMorphIndex =
+        morphSet.FindMorph("bone");
+    const std::optional<MorphIndex> uvMorph = morphSet.FindMorph("uv");
+    const std::optional<MorphIndex> materialMorphIndex =
+        morphSet.FindMorph("materialMorph");
+    const std::optional<MorphIndex> groupMorph =
+        morphSet.FindMorph("group");
+    Require(
+        vertexMorph.has_value() && boneMorphIndex.has_value() &&
+        uvMorph.has_value() && materialMorphIndex.has_value() &&
+        groupMorph.has_value(),
+        "Extended PMX fixture lost one or more named morphs"
+    );
+    const MorphIndex vertexIndex = *vertexMorph;
+    const MorphIndex boneIndex = *boneMorphIndex;
+    const MorphIndex uvIndex = *uvMorph;
+    const MorphIndex materialIndex = *materialMorphIndex;
+    const MorphIndex groupIndex = *groupMorph;
+    Require(
+        morphSet.DefinitionAt(vertexIndex).kind == MorphKind::Vertex &&
+        morphSet.DefinitionAt(boneIndex).kind == MorphKind::Bone &&
+        morphSet.DefinitionAt(uvIndex).kind == MorphKind::Uv &&
+        morphSet.DefinitionAt(materialIndex).kind == MorphKind::Material &&
+        morphSet.DefinitionAt(groupIndex).kind == MorphKind::Group,
+        "PMX morph types 1, 2, 3, 8, or 0 were mapped incorrectly"
+    );
+
+    const MorphDefinition& boneMorph = morphSet.DefinitionAt(boneIndex);
+    Require(
+        boneMorph.boneOffsets.size() == 1U &&
+        imported.skeleton->BoneAt(
+            boneMorph.boneOffsets[0U].boneIndex
+        ).name == "root",
+        "PMX Bone Morph source index was not remapped to the Skeleton"
+    );
+    const MorphDefinition& materialMorph =
+        morphSet.DefinitionAt(materialIndex);
+    Require(
+        materialMorph.materialOffsets.size() == 1U &&
+        materialMorph.materialOffsets[0U].materialIndex == 0U &&
+        materialMorph.materialOffsets[0U].operation ==
+            MaterialMorphOperation::Add,
+        "PMX Material Morph metadata was imported incorrectly"
+    );
+
+    MorphState state(morphSet);
+    state.SetWeight(groupIndex, 1.0f);
+    const std::span<const float> effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[boneIndex], 0.5f) &&
+        NearlyEqual(effective[uvIndex], 2.0f) &&
+        NearlyEqual(effective[materialIndex], 1.0f) &&
+        NearlyEqual(effective[groupIndex], 0.0f),
+        "Imported PMX Group Morph did not drive extended morph kinds"
+    );
+
+    PoseBuffer pose(*imported.skeleton);
+    morphSet.ApplyBoneMorphs(effective, pose);
+    const BoneTransform& transformed = pose.TransformAt(
+        boneMorph.boneOffsets[0U].boneIndex
+    );
+    Require(
+        NearlyEqual(
+            transformed.translation,
+            glm::vec3(0.5f, 1.0f, -1.5f)
+        ) &&
+        NearlySameRotation(
+            transformed.rotation,
+            glm::angleAxis(
+                glm::radians(-45.0f),
+                glm::vec3(1.0f, 0.0f, 0.0f)
+            )
+        ),
+        "Imported PMX Bone Morph coordinate conversion is incorrect"
+    );
+
+    const ImportedMeshData& importedMeshData = imported.meshes[0U];
+    Mesh importedMesh(
+        DefaultModelData{
+            importedMeshData.data.vertices,
+            importedMeshData.data.indices,
+            importedMeshData.data.layout
+        },
+        importedMeshData.requiredBoneCount,
+        importedMeshData.morphTargets
+    );
+    std::vector<MorphVertexDelta> deltas;
+    Require(
+        importedMeshData.morphMaterialIndex ==
+            std::optional<std::uint32_t>(0U) &&
+        importedMeshData.morphTargets.size() == 2U &&
+        importedMesh.CalculateMorphDeltas(effective, deltas),
+        "Imported PMX UV Morph did not create a runtime mesh target"
+    );
+    bool foundUvDelta = false;
+    for (const MorphVertexDelta& delta : deltas)
+    {
+        if (NearlyEqual(
+                delta.uv[0U],
+                glm::vec4(0.5f, 1.0f, 0.0f, 0.0f)
+            ))
+        {
+            foundUvDelta = true;
+            break;
+        }
+    }
+    Require(foundUvDelta, "Imported PMX UV Morph delta changed");
+
+    MaterialMorphValues values;
+    values.edgeSize = 1.0f;
+    morphSet.ApplyMaterialMorphs(0U, effective, values);
+    Require(
+        NearlyEqual(values.diffuse.x, 1.2f) &&
+        NearlyEqual(values.edgeSize, 1.5f) &&
+        NearlyEqual(values.textureFactor.x, 1.1f),
+        "Imported PMX Material Morph values changed"
+    );
+}
+
 void TestVmdImporter()
 {
     std::vector<std::uint8_t> bytes;
@@ -1414,6 +1577,228 @@ void TestMorphRuntime()
         cycleRejected = true;
     }
     Require(cycleRejected, "MorphSet accepted a cyclic Group Morph graph");
+}
+
+void TestExtendedMmdMorphRuntime()
+{
+    Skeleton skeleton({Bone{"root"}});
+
+    MorphDefinition boneMorph;
+    boneMorph.name = "bone";
+    boneMorph.kind = MorphKind::Bone;
+    boneMorph.boneOffsets.push_back(BoneMorphOffset{
+        0U,
+        glm::vec3(2.0f, 0.0f, 0.0f),
+        glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f))
+    });
+
+    MorphDefinition uvMorph;
+    uvMorph.name = "uv";
+    uvMorph.kind = MorphKind::Uv;
+
+    MaterialMorphOffset multiplyOffset;
+    multiplyOffset.materialIndex = AllMaterialMorphTargets;
+    multiplyOffset.operation = MaterialMorphOperation::Multiply;
+    multiplyOffset.diffuse = glm::vec4(0.5f, 1.0f, 1.0f, 1.0f);
+    multiplyOffset.specular = glm::vec3(1.0f);
+    multiplyOffset.shininess = 1.0f;
+    multiplyOffset.ambient = glm::vec3(1.0f);
+    multiplyOffset.edgeColor = glm::vec4(1.0f);
+    multiplyOffset.edgeSize = 2.0f;
+    multiplyOffset.textureFactor = glm::vec4(0.5f, 1.0f, 1.0f, 1.0f);
+    multiplyOffset.sphereTextureFactor = glm::vec4(1.0f);
+    multiplyOffset.toonTextureFactor = glm::vec4(1.0f);
+    MorphDefinition multiplyMaterialMorph;
+    multiplyMaterialMorph.name = "materialMultiply";
+    multiplyMaterialMorph.kind = MorphKind::Material;
+    multiplyMaterialMorph.materialOffsets.push_back(multiplyOffset);
+
+    MaterialMorphOffset addOffset;
+    addOffset.materialIndex = 3U;
+    addOffset.operation = MaterialMorphOperation::Add;
+    addOffset.diffuse = glm::vec4(0.2f, 0.0f, 0.0f, 0.0f);
+    addOffset.edgeSize = 0.4f;
+    addOffset.textureFactor = glm::vec4(0.2f, 0.0f, 0.0f, 0.0f);
+    MorphDefinition addMaterialMorph;
+    addMaterialMorph.name = "materialAdd";
+    addMaterialMorph.kind = MorphKind::Material;
+    addMaterialMorph.materialOffsets.push_back(addOffset);
+
+    MorphDefinition combinedMorph;
+    combinedMorph.name = "combined";
+    combinedMorph.kind = MorphKind::Group;
+    combinedMorph.groupMembers = {
+        GroupMorphMember{0U, 0.5f},
+        GroupMorphMember{1U, 2.0f},
+        GroupMorphMember{2U, 1.0f},
+        GroupMorphMember{3U, 0.5f}
+    };
+
+    MorphSet morphSet({
+        std::move(boneMorph),
+        std::move(uvMorph),
+        std::move(multiplyMaterialMorph),
+        std::move(addMaterialMorph),
+        std::move(combinedMorph)
+    });
+    Require(
+        morphSet.HasKind(MorphKind::Bone) &&
+        morphSet.HasKind(MorphKind::Uv) &&
+        morphSet.HasKind(MorphKind::Material),
+        "MorphSet did not retain extended MMD morph kinds"
+    );
+
+    MorphState state(morphSet);
+    state.SetWeight("combined", 1.0f);
+    const std::span<const float> effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[0U], 0.5f) &&
+        NearlyEqual(effective[1U], 2.0f) &&
+        NearlyEqual(effective[2U], 1.0f) &&
+        NearlyEqual(effective[3U], 0.5f) &&
+        NearlyEqual(effective[4U], 0.0f),
+        "Group Morph did not expand Bone, UV, and Material leaves"
+    );
+
+    PoseBuffer poseBuffer(skeleton);
+    morphSet.ApplyBoneMorphs(effective, poseBuffer);
+    const BoneTransform& boneTransform = poseBuffer.TransformAt(0U);
+    Require(
+        NearlyEqual(boneTransform.translation, glm::vec3(1.0f, 0.0f, 0.0f)) &&
+        NearlySameRotation(
+            boneTransform.rotation,
+            glm::angleAxis(
+                glm::radians(45.0f),
+                glm::vec3(0.0f, 0.0f, 1.0f)
+            )
+        ),
+        "Bone Morph did not apply weighted translation and rotation"
+    );
+
+    DefaultModelData data{
+        {
+            0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f
+        },
+        {0U, 1U, 2U},
+        {{"position", 3, FLOAT}}
+    };
+    Mesh mesh(
+        std::move(data),
+        0U,
+        {
+            MeshMorphTarget{
+                1U,
+                {},
+                {
+                    UvMorphOffset{
+                        1U,
+                        0U,
+                        glm::vec4(0.25f, 0.5f, 0.0f, 0.0f)
+                    },
+                    UvMorphOffset{
+                        2U,
+                        1U,
+                        glm::vec4(0.1f, 0.2f, 0.3f, 0.4f)
+                    }
+                }
+            }
+        }
+    );
+    std::vector<MorphVertexDelta> deltas;
+    Require(
+        mesh.CalculateMorphDeltas(effective, deltas) &&
+        deltas.size() == 3U &&
+        NearlyEqual(
+            deltas[1U].uv[0U],
+            glm::vec4(0.5f, 1.0f, 0.0f, 0.0f)
+        ) &&
+        NearlyEqual(
+            deltas[2U].uv[1U],
+            glm::vec4(0.2f, 0.4f, 0.6f, 0.8f)
+        ),
+        "UV Morph did not accumulate the correct channel deltas"
+    );
+
+    MaterialMorphValues targetValues;
+    targetValues.edgeSize = 1.0f;
+    morphSet.ApplyMaterialMorphs(3U, effective, targetValues);
+    Require(
+        NearlyEqual(targetValues.diffuse.x, 0.6f) &&
+        NearlyEqual(targetValues.edgeSize, 2.2f) &&
+        NearlyEqual(targetValues.textureFactor.x, 0.6f),
+        "Material Morph multiply/add composition is incorrect"
+    );
+
+    MaterialMorphValues otherValues;
+    otherValues.edgeSize = 1.0f;
+    morphSet.ApplyMaterialMorphs(4U, effective, otherValues);
+    Require(
+        NearlyEqual(otherValues.diffuse.x, 0.5f) &&
+        NearlyEqual(otherValues.edgeSize, 2.0f) &&
+        NearlyEqual(otherValues.textureFactor.x, 0.5f),
+        "All-material Morph did not apply independently of targeted offsets"
+    );
+
+    Pose animatedPose(skeleton);
+    MorphState animatedState(morphSet);
+    Animator animator(animatedPose, &animatedState);
+    animatedState.SetWeight("combined", 1.0f);
+    animator.Update(0.0f);
+    const BoneTransform animatedTransform = BoneTransform::FromMatrix(
+        animatedPose.LocalMatrix(0U)
+    );
+    Require(
+        NearlyEqual(
+            animatedTransform.translation,
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        ) &&
+        NearlySameRotation(
+            animatedTransform.rotation,
+            glm::angleAxis(
+                glm::radians(45.0f),
+                glm::vec3(0.0f, 0.0f, 1.0f)
+            )
+        ),
+        "Animator did not re-evaluate a manually changed Bone Morph"
+    );
+
+    const AnimationClip heldClip(
+        "held",
+        1.0f,
+        {
+            AnimationTrack(
+                0U,
+                {VectorKeyframe{0.0f, glm::vec3(3.0f, 0.0f, 0.0f)}}
+            )
+        }
+    );
+    animatedState.Reset();
+    animator.Play(heldClip);
+    animator.Stop(false);
+    animatedState.SetWeight("combined", 1.0f);
+    animator.Update(0.0f);
+    Require(
+        NearlyEqual(
+            BoneTransform::FromMatrix(animatedPose.LocalMatrix(0U))
+                .translation,
+            glm::vec3(4.0f, 0.0f, 0.0f)
+        ),
+        "Manual Bone Morph discarded a stopped animation pose"
+    );
+
+    animator.Stop(true);
+    animatedState.SetWeight("combined", 1.0f);
+    animator.Update(0.0f);
+    Require(
+        NearlyEqual(
+            BoneTransform::FromMatrix(animatedPose.LocalMatrix(0U))
+                .translation,
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        ),
+        "Animator Stop(true) retained a stale animation pose baseline"
+    );
 }
 
 void TestRenderPartAndModelAsset()
@@ -2471,10 +2856,18 @@ int main()
     failures += !RunTest("Root motion", TestRootMotion);
     failures += !RunTest("MMD append and IK constraints", TestMmdBoneConstraints);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
+    failures += !RunTest(
+        "Extended PMX morph importer",
+        TestExtendedPmxMorphImporter
+    );
     failures += !RunTest("VMD importer", TestVmdImporter);
     failures += !RunTest("VMD asset integration", TestVmdAssetWhenAvailable);
     failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
     failures += !RunTest("Morph runtime", TestMorphRuntime);
+    failures += !RunTest(
+        "Extended MMD morph runtime",
+        TestExtendedMmdMorphRuntime
+    );
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);

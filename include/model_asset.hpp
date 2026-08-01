@@ -5,6 +5,7 @@
 #include "render_part.hpp"
 #include "skeleton.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -46,7 +47,8 @@ public:
     RenderPart& AddPart(
         Mesh& mesh,
         Material& material,
-        const glm::mat4& localTransform = glm::mat4(1.0f)
+        const glm::mat4& localTransform = glm::mat4(1.0f),
+        std::optional<std::uint32_t> morphMaterialIndex = std::nullopt
     );
 
 private:

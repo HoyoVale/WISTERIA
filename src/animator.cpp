@@ -172,9 +172,13 @@ void Animator::Stop(bool resetPose)
     this->ResetRootMotion();
     if (resetPose)
     {
-        this->pose->ResetToBindPose();
         if (this->morphState != nullptr)
             this->morphState->Reset();
+        this->sampledPose.ResetToBindPose();
+        this->pose->ResetToBindPose();
+        this->lastAppliedMorphRevision = this->morphState != nullptr
+            ? this->morphState->Revision()
+            : 0U;
     }
 }
 
@@ -212,9 +216,20 @@ void Animator::Update(float deltaTime)
     }
     this->activeTriggers.clear();
 
+    const bool morphChanged = this->morphState != nullptr &&
+        this->morphState->Revision() != this->lastAppliedMorphRevision;
     if (this->paused || this->currentClip == nullptr ||
         (!this->playing && !this->transition.has_value()))
     {
+        if (morphChanged)
+        {
+            if (this->currentClip != nullptr)
+                this->Evaluate();
+            else
+            {
+                this->ApplyEvaluatedPose(this->sampledPose);
+            }
+        }
         return;
     }
 
@@ -310,8 +325,8 @@ void Animator::Evaluate()
     }
     if (!this->transition.has_value())
     {
-        this->ApplyEvaluatedPose(this->sampledPose);
         this->ApplyEvaluatedMorphWeights(this->sampledMorphWeights);
+        this->ApplyEvaluatedPose(this->sampledPose);
         return;
     }
 
@@ -342,7 +357,6 @@ void Animator::Evaluate()
         weight,
         this->blendedPose
     );
-    this->ApplyEvaluatedPose(this->blendedPose);
     if (this->morphState != nullptr)
     {
         for (std::size_t index = 0;
@@ -357,6 +371,7 @@ void Animator::Evaluate()
         }
         this->ApplyEvaluatedMorphWeights(this->blendedMorphWeights);
     }
+    this->ApplyEvaluatedPose(this->blendedPose);
 }
 
 bool Animator::IsPlaying() const noexcept
@@ -522,6 +537,8 @@ void Animator::SetMorphState(MorphState& morphState)
     this->sampledMorphWeights.assign(count, 0.0f);
     this->transitionSourceMorphWeights.assign(count, 0.0f);
     this->blendedMorphWeights.assign(count, 0.0f);
+    this->lastAppliedMorphRevision =
+        std::numeric_limits<std::uint64_t>::max();
     if (this->currentClip != nullptr)
         this->ValidateClip(*this->currentClip);
     this->Evaluate();
@@ -745,13 +762,26 @@ void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
     const Skeleton& skeleton = this->pose->GetSkeleton();
     const bool needsRootMotionRemoval =
         this->rootMotionEnabled && this->rootMotionBone.has_value();
-    if (!skeleton.HasMmdConstraints() && !needsRootMotionRemoval)
+    const bool hasBoneMorphs = this->morphState != nullptr &&
+        this->morphState->GetMorphSet().HasKind(MorphKind::Bone);
+    if (!skeleton.HasMmdConstraints() && !needsRootMotionRemoval &&
+        !hasBoneMorphs)
     {
         evaluatedPose.ApplyTo(*this->pose);
+        this->lastAppliedMorphRevision = this->morphState != nullptr
+            ? this->morphState->Revision()
+            : 0U;
         return;
     }
 
     this->outputPose = evaluatedPose;
+    if (hasBoneMorphs)
+    {
+        this->morphState->GetMorphSet().ApplyBoneMorphs(
+            this->morphState->EffectiveWeights(),
+            this->outputPose
+        );
+    }
     if (skeleton.HasMmdConstraints())
     {
         this->mmdPoseSolver.Solve(
@@ -774,6 +804,9 @@ void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
         this->outputPose.SetTransform(boneIndex, transform);
     }
     this->outputPose.ApplyTo(*this->pose);
+    this->lastAppliedMorphRevision = this->morphState != nullptr
+        ? this->morphState->Revision()
+        : 0U;
 }
 
 void Animator::SampleMorphWeights(

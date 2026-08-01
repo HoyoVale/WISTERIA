@@ -126,7 +126,8 @@ Mesh::Mesh(
     std::unordered_set<MorphIndex> targetIndices;
     for (const MeshMorphTarget& target : this->morphTargets)
     {
-        if (target.morphIndex == InvalidMorphIndex || target.offsets.empty() ||
+        if (target.morphIndex == InvalidMorphIndex ||
+            (target.offsets.empty() && target.uvOffsets.empty()) ||
             !targetIndices.emplace(target.morphIndex).second)
         {
             throw std::invalid_argument("Mesh morph target metadata is invalid");
@@ -142,6 +143,25 @@ Mesh::Mesh(
             {
                 throw std::invalid_argument(
                     "Mesh morph target contains an invalid vertex offset"
+                );
+            }
+        }
+        std::unordered_set<std::uint64_t> affectedUvCoordinates;
+        for (const UvMorphOffset& offset : target.uvOffsets)
+        {
+            const std::uint64_t key =
+                static_cast<std::uint64_t>(offset.channel) << 32U |
+                static_cast<std::uint64_t>(offset.vertexIndex);
+            if (offset.vertexIndex >= this->vertexCount ||
+                offset.channel >= MmdUvChannelCount ||
+                !std::isfinite(offset.offset.x) ||
+                !std::isfinite(offset.offset.y) ||
+                !std::isfinite(offset.offset.z) ||
+                !std::isfinite(offset.offset.w) ||
+                !affectedUvCoordinates.emplace(key).second)
+            {
+                throw std::invalid_argument(
+                    "Mesh morph target contains an invalid UV offset"
                 );
             }
         }
@@ -251,9 +271,8 @@ bool Mesh::CalculateMorphOffsets(
         const float weight = weights[target.morphIndex];
         if (!std::isfinite(weight))
             throw std::invalid_argument("Mesh morph weight must be finite");
-        if (weight == 0.0f)
-            continue;
-        active = true;
+        if (weight != 0.0f && !target.offsets.empty())
+            active = true;
     }
     if (!active)
     {
@@ -269,6 +288,42 @@ bool Mesh::CalculateMorphOffsets(
             continue;
         for (const VertexMorphOffset& offset : target.offsets)
             output[offset.vertexIndex] += offset.offset * weight;
+    }
+    return true;
+}
+
+bool Mesh::CalculateMorphDeltas(
+    std::span<const float> weights,
+    std::vector<MorphVertexDelta>& output
+) const
+{
+    bool active = false;
+    for (const MeshMorphTarget& target : this->morphTargets)
+    {
+        if (static_cast<std::size_t>(target.morphIndex) >= weights.size())
+            throw std::invalid_argument("Mesh morph target has no matching weight");
+        const float weight = weights[target.morphIndex];
+        if (!std::isfinite(weight))
+            throw std::invalid_argument("Mesh morph weight must be finite");
+        if (weight != 0.0f)
+            active = true;
+    }
+    if (!active)
+    {
+        output.clear();
+        return false;
+    }
+
+    output.assign(this->vertexCount, MorphVertexDelta{});
+    for (const MeshMorphTarget& target : this->morphTargets)
+    {
+        const float weight = weights[target.morphIndex];
+        if (weight == 0.0f)
+            continue;
+        for (const VertexMorphOffset& offset : target.offsets)
+            output[offset.vertexIndex].position += offset.offset * weight;
+        for (const UvMorphOffset& offset : target.uvOffsets)
+            output[offset.vertexIndex].uv[offset.channel] += offset.offset * weight;
     }
     return true;
 }

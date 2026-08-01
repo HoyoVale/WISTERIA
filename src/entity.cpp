@@ -79,10 +79,16 @@ void Entity::SetMaterial(Material& material)
 RenderPart& Entity::AddRenderPart(
     Mesh& mesh,
     Material& material,
-    const glm::mat4& localTransform
+    const glm::mat4& localTransform,
+    std::optional<std::uint32_t> morphMaterialIndex
 )
 {
-    return this->renderParts.emplace_back(mesh, material, localTransform);
+    return this->renderParts.emplace_back(
+        mesh,
+        material,
+        localTransform,
+        morphMaterialIndex
+    );
 }
 
 bool Entity::RemoveRenderPart(const RenderPart& part)

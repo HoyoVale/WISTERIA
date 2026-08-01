@@ -1,6 +1,9 @@
 #pragma once
 
+#include "bone.hpp"
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -15,6 +18,9 @@ using MorphIndex = std::uint32_t;
 
 inline constexpr MorphIndex InvalidMorphIndex =
     static_cast<MorphIndex>(-1);
+inline constexpr std::uint32_t AllMaterialMorphTargets =
+    std::numeric_limits<std::uint32_t>::max();
+inline constexpr std::size_t MmdUvChannelCount = 5U;
 
 enum class MorphCategory : std::uint8_t
 {
@@ -28,7 +34,16 @@ enum class MorphCategory : std::uint8_t
 enum class MorphKind : std::uint8_t
 {
     Vertex = 0,
-    Group = 1
+    Group = 1,
+    Bone = 2,
+    Uv = 3,
+    Material = 4
+};
+
+enum class MaterialMorphOperation : std::uint8_t
+{
+    Multiply = 0,
+    Add = 1
 };
 
 struct GroupMorphMember
@@ -37,12 +52,36 @@ struct GroupMorphMember
     float weight = 0.0f;
 };
 
+struct BoneMorphOffset
+{
+    BoneIndex boneIndex = InvalidBoneIndex;
+    glm::vec3 translation{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct MaterialMorphOffset
+{
+    std::uint32_t materialIndex = AllMaterialMorphTargets;
+    MaterialMorphOperation operation = MaterialMorphOperation::Add;
+    glm::vec4 diffuse{0.0f};
+    glm::vec3 specular{0.0f};
+    float shininess = 0.0f;
+    glm::vec3 ambient{0.0f};
+    glm::vec4 edgeColor{0.0f};
+    float edgeSize = 0.0f;
+    glm::vec4 textureFactor{0.0f};
+    glm::vec4 sphereTextureFactor{0.0f};
+    glm::vec4 toonTextureFactor{0.0f};
+};
+
 struct MorphDefinition
 {
     std::string name;
     MorphCategory category = MorphCategory::Other;
     MorphKind kind = MorphKind::Vertex;
     std::vector<GroupMorphMember> groupMembers;
+    std::vector<BoneMorphOffset> boneOffsets;
+    std::vector<MaterialMorphOffset> materialOffsets;
 };
 
 struct VertexMorphOffset
@@ -51,11 +90,40 @@ struct VertexMorphOffset
     glm::vec3 offset{0.0f};
 };
 
+struct UvMorphOffset
+{
+    std::uint32_t vertexIndex = 0U;
+    std::uint8_t channel = 0U;
+    glm::vec4 offset{0.0f};
+};
+
 struct MeshMorphTarget
 {
     MorphIndex morphIndex = InvalidMorphIndex;
     std::vector<VertexMorphOffset> offsets;
+    std::vector<UvMorphOffset> uvOffsets;
 };
+
+struct MorphVertexDelta
+{
+    glm::vec3 position{0.0f};
+    std::array<glm::vec4, MmdUvChannelCount> uv{};
+};
+
+struct MaterialMorphValues
+{
+    glm::vec4 diffuse{1.0f};
+    glm::vec3 specular{1.0f};
+    float shininess = 32.0f;
+    glm::vec3 ambient{0.0f};
+    glm::vec4 edgeColor{0.0f, 0.0f, 0.0f, 1.0f};
+    float edgeSize = 0.0f;
+    glm::vec4 textureFactor{1.0f};
+    glm::vec4 sphereTextureFactor{1.0f};
+    glm::vec4 toonTextureFactor{1.0f};
+};
+
+class PoseBuffer;
 
 // Immutable model-level morph name/index table shared by every instance.
 class MorphSet
@@ -67,14 +135,25 @@ public:
     std::span<const MorphDefinition> Definitions() const noexcept;
     const MorphDefinition& DefinitionAt(MorphIndex index) const;
     std::optional<MorphIndex> FindMorph(std::string_view name) const;
+    bool HasKind(MorphKind kind) const noexcept;
     void ExpandWeights(
         std::span<const float> source,
         std::vector<float>& output
+    ) const;
+    void ApplyBoneMorphs(
+        std::span<const float> weights,
+        PoseBuffer& pose
+    ) const;
+    void ApplyMaterialMorphs(
+        std::uint32_t materialIndex,
+        std::span<const float> weights,
+        MaterialMorphValues& values
     ) const;
 
 private:
     std::vector<MorphDefinition> definitions;
     std::unordered_map<std::string, MorphIndex> indices;
+    std::array<bool, 5U> kinds{};
 };
 
 // Per-Entity runtime weights. It references a shared MorphSet but never

@@ -77,9 +77,17 @@ struct PmxMetadata
         std::vector<std::pair<std::uint32_t, glm::vec3>> offsets;
     };
 
+    struct UvMorphMetadata
+    {
+        MorphIndex morphIndex = InvalidMorphIndex;
+        std::uint8_t channel = 0U;
+        std::vector<std::pair<std::uint32_t, glm::vec4>> offsets;
+    };
+
     std::vector<BoneMetadata> bones;
     std::vector<MorphDefinition> morphDefinitions;
     std::vector<VertexMorphMetadata> vertexMorphs;
+    std::vector<UvMorphMetadata> uvMorphs;
 };
 
 void AppendUtf8(std::string& output, std::uint32_t codePoint)
@@ -239,6 +247,19 @@ glm::vec4 ReadPmxVec4(PmxReader& reader)
     const float z = reader.Read<float>();
     const float w = reader.Read<float>();
     return glm::vec4(x, y, z, w);
+}
+
+glm::quat ReadPmxQuaternion(PmxReader& reader)
+{
+    const float x = reader.Read<float>();
+    const float y = reader.Read<float>();
+    const float z = reader.Read<float>();
+    const float w = reader.Read<float>();
+    const glm::quat converted(w, -x, -y, z);
+    const float lengthSquared = glm::dot(converted, converted);
+    if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
+        throw std::runtime_error("PMX morph contains an invalid quaternion");
+    return glm::normalize(converted);
 }
 
 std::optional<std::string> PmxTexturePath(
@@ -507,8 +528,12 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         std::string name;
         MorphCategory category = MorphCategory::Other;
         MorphKind kind = MorphKind::Vertex;
+        std::uint8_t uvChannel = 0U;
         std::vector<std::pair<std::uint32_t, glm::vec3>> vertexOffsets;
+        std::vector<std::pair<std::uint32_t, glm::vec4>> uvOffsets;
         std::vector<std::pair<std::int32_t, float>> groupMembers;
+        std::vector<BoneMorphOffset> boneOffsets;
+        std::vector<MaterialMorphOffset> materialOffsets;
     };
     std::vector<PendingMorph> pendingMorphs;
     pendingMorphs.reserve(static_cast<std::size_t>(morphCount));
@@ -526,7 +551,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         if (panel > static_cast<std::uint8_t>(MorphCategory::Other))
             throw std::runtime_error("PMX morph category is invalid");
 
-        if (type == 0U || type == 1U)
+        if (type <= 8U)
         {
             if (name.empty() || !supportedMorphNames.emplace(name).second)
             {
@@ -534,13 +559,25 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                     "Supported PMX morph names must be non-empty and unique"
                 );
             }
+
             PendingMorph morph;
             morph.sourceIndex = morphIndex;
             morph.name = name;
             morph.category = static_cast<MorphCategory>(panel);
-            morph.kind = type == 0U
-                ? MorphKind::Group
-                : MorphKind::Vertex;
+            if (type == 0U)
+                morph.kind = MorphKind::Group;
+            else if (type == 1U)
+                morph.kind = MorphKind::Vertex;
+            else if (type == 2U)
+                morph.kind = MorphKind::Bone;
+            else if (type <= 7U)
+            {
+                morph.kind = MorphKind::Uv;
+                morph.uvChannel = static_cast<std::uint8_t>(type - 3U);
+            }
+            else
+                morph.kind = MorphKind::Material;
+
             if (type == 0U)
             {
                 morph.groupMembers.reserve(
@@ -548,8 +585,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                 );
                 for (std::int32_t offset = 0; offset < offsetCount; ++offset)
                 {
-                    const int memberIndex =
-                        reader.ReadIndex(morphIndexSize);
+                    const int memberIndex = reader.ReadIndex(morphIndexSize);
                     const float weight = reader.Read<float>();
                     if (memberIndex < 0 || memberIndex >= morphCount ||
                         !std::isfinite(weight))
@@ -561,7 +597,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                     morph.groupMembers.emplace_back(memberIndex, weight);
                 }
             }
-            else
+            else if (type == 1U)
             {
                 morph.vertexOffsets.reserve(
                     static_cast<std::size_t>(offsetCount)
@@ -585,6 +621,105 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                     );
                 }
             }
+            else if (type == 2U)
+            {
+                morph.boneOffsets.reserve(static_cast<std::size_t>(offsetCount));
+                std::unordered_set<BoneIndex> affectedBones;
+                for (std::int32_t offset = 0; offset < offsetCount; ++offset)
+                {
+                    const int sourceBoneIndex = reader.ReadIndex(boneIndexSize);
+                    if (sourceBoneIndex < 0 ||
+                        static_cast<std::size_t>(sourceBoneIndex) >=
+                            result.bones.size())
+                    {
+                        throw std::runtime_error(
+                            "PMX bone morph references an invalid bone"
+                        );
+                    }
+                    const BoneIndex boneIndex =
+                        static_cast<BoneIndex>(sourceBoneIndex);
+                    if (!affectedBones.emplace(boneIndex).second)
+                    {
+                        throw std::runtime_error(
+                            "PMX bone morph references a duplicate bone"
+                        );
+                    }
+                    const glm::vec3 translation = ReadPmxVec3(reader);
+                    morph.boneOffsets.push_back(BoneMorphOffset{
+                        boneIndex,
+                        glm::vec3(
+                            translation.x,
+                            translation.y,
+                            -translation.z
+                        ),
+                        ReadPmxQuaternion(reader)
+                    });
+                }
+            }
+            else if (type <= 7U)
+            {
+                morph.uvOffsets.reserve(static_cast<std::size_t>(offsetCount));
+                std::unordered_set<std::uint32_t> affectedVertices;
+                for (std::int32_t offset = 0; offset < offsetCount; ++offset)
+                {
+                    const std::uint32_t vertexIndex =
+                        reader.ReadUnsignedIndex(vertexIndexSize);
+                    if (vertexIndex >= vertexEdgeScales.size() ||
+                        !affectedVertices.emplace(vertexIndex).second)
+                    {
+                        throw std::runtime_error(
+                            "PMX UV morph references an invalid or duplicate vertex"
+                        );
+                    }
+                    morph.uvOffsets.emplace_back(
+                        vertexIndex,
+                        ReadPmxVec4(reader)
+                    );
+                }
+            }
+            else
+            {
+                morph.materialOffsets.reserve(
+                    static_cast<std::size_t>(offsetCount)
+                );
+                for (std::int32_t offset = 0; offset < offsetCount; ++offset)
+                {
+                    const int sourceMaterialIndex =
+                        reader.ReadIndex(materialIndexSize);
+                    if (sourceMaterialIndex < -1 ||
+                        sourceMaterialIndex >= materialCount)
+                    {
+                        throw std::runtime_error(
+                            "PMX material morph references an invalid material"
+                        );
+                    }
+                    const std::uint8_t operation = reader.Read<std::uint8_t>();
+                    if (operation > static_cast<std::uint8_t>(
+                            MaterialMorphOperation::Add
+                        ))
+                    {
+                        throw std::runtime_error(
+                            "PMX material morph operation is invalid"
+                        );
+                    }
+                    MaterialMorphOffset materialOffset;
+                    materialOffset.materialIndex = sourceMaterialIndex < 0
+                        ? AllMaterialMorphTargets
+                        : static_cast<std::uint32_t>(sourceMaterialIndex);
+                    materialOffset.operation =
+                        static_cast<MaterialMorphOperation>(operation);
+                    materialOffset.diffuse = ReadPmxVec4(reader);
+                    materialOffset.specular = ReadPmxVec3(reader);
+                    materialOffset.shininess = reader.Read<float>();
+                    materialOffset.ambient = ReadPmxVec3(reader);
+                    materialOffset.edgeColor = ReadPmxVec4(reader);
+                    materialOffset.edgeSize = reader.Read<float>();
+                    materialOffset.textureFactor = ReadPmxVec4(reader);
+                    materialOffset.sphereTextureFactor = ReadPmxVec4(reader);
+                    materialOffset.toonTextureFactor = ReadPmxVec4(reader);
+                    morph.materialOffsets.push_back(materialOffset);
+                }
+            }
             pendingMorphs.push_back(std::move(morph));
             continue;
         }
@@ -594,20 +729,6 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         {
         case 9U: // PMX 2.1 flip morph.
             recordSize = morphIndexSize + sizeof(float);
-            break;
-        case 2U: // Bone morph.
-            recordSize = boneIndexSize + 7U * sizeof(float);
-            break;
-        case 3U: // UV morph.
-        case 4U: // Additional UV1.
-        case 5U: // Additional UV2.
-        case 6U: // Additional UV3.
-        case 7U: // Additional UV4.
-            recordSize = vertexIndexSize + 4U * sizeof(float);
-            break;
-        case 8U: // Material morph.
-            recordSize = materialIndexSize + sizeof(std::uint8_t) +
-                28U * sizeof(float);
             break;
         case 10U: // PMX 2.1 impulse morph.
             recordSize = rigidBodyIndexSize + sizeof(std::uint8_t) +
@@ -630,6 +751,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
     );
     result.morphDefinitions.reserve(pendingMorphs.size());
     result.vertexMorphs.reserve(pendingMorphs.size());
+    result.uvMorphs.reserve(pendingMorphs.size());
     for (PendingMorph& pending : pendingMorphs)
     {
         const MorphIndex runtimeIndex = static_cast<MorphIndex>(
@@ -637,12 +759,13 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         );
         sourceToRuntime[static_cast<std::size_t>(pending.sourceIndex)] =
             runtimeIndex;
-        result.morphDefinitions.push_back(MorphDefinition{
-            pending.name,
-            pending.category,
-            pending.kind,
-            {}
-        });
+        MorphDefinition definition;
+        definition.name = pending.name;
+        definition.category = pending.category;
+        definition.kind = pending.kind;
+        definition.boneOffsets = std::move(pending.boneOffsets);
+        definition.materialOffsets = std::move(pending.materialOffsets);
+        result.morphDefinitions.push_back(std::move(definition));
         if (pending.kind == MorphKind::Vertex)
         {
             result.vertexMorphs.push_back(
@@ -654,6 +777,14 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                 }
             );
         }
+        else if (pending.kind == MorphKind::Uv)
+        {
+            result.uvMorphs.push_back(PmxMetadata::UvMorphMetadata{
+                runtimeIndex,
+                pending.uvChannel,
+                std::move(pending.uvOffsets)
+            });
+        }
     }
     for (const PendingMorph& pending : pendingMorphs)
     {
@@ -662,16 +793,15 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         const MorphIndex runtimeIndex = sourceToRuntime[
             static_cast<std::size_t>(pending.sourceIndex)
         ];
-        MorphDefinition& definition =
-            result.morphDefinitions[runtimeIndex];
+        MorphDefinition& definition = result.morphDefinitions[runtimeIndex];
         definition.groupMembers.reserve(pending.groupMembers.size());
         for (const auto& [sourceMemberIndex, weight] : pending.groupMembers)
         {
             const MorphIndex memberIndex = sourceToRuntime[
                 static_cast<std::size_t>(sourceMemberIndex)
             ];
-            // Unsupported Bone/UV/Material/Flip/Impulse members remain
-            // intentionally inactive until their runtime systems exist.
+            // PMX 2.1 Flip/Impulse members remain inactive until their
+            // dedicated runtime systems exist.
             if (memberIndex != InvalidMorphIndex)
             {
                 definition.groupMembers.push_back(GroupMorphMember{
@@ -1093,6 +1223,46 @@ void ApplyPmxBoneMetadata(
                 ik.links.push_back(std::move(link));
             }
             destination.ikConstraint = std::move(ik);
+        }
+    }
+}
+
+void RemapPmxBoneMorphs(
+    std::vector<MorphDefinition>& definitions,
+    const PmxMetadata& metadata,
+    const Skeleton& skeleton
+)
+{
+    std::vector<BoneIndex> pmxToSkeleton;
+    pmxToSkeleton.reserve(metadata.bones.size());
+    for (const PmxMetadata::BoneMetadata& source : metadata.bones)
+    {
+        const std::optional<BoneIndex> destination =
+            skeleton.FindBone(source.name);
+        if (!destination.has_value())
+        {
+            throw std::runtime_error(
+                "PMX Bone Morph has no matching Skeleton bone: " +
+                source.name
+            );
+        }
+        pmxToSkeleton.push_back(*destination);
+    }
+
+    for (MorphDefinition& definition : definitions)
+    {
+        if (definition.kind != MorphKind::Bone)
+            continue;
+        for (BoneMorphOffset& offset : definition.boneOffsets)
+        {
+            if (static_cast<std::size_t>(offset.boneIndex) >=
+                pmxToSkeleton.size())
+            {
+                throw std::runtime_error(
+                    "PMX Bone Morph source index is out of range"
+                );
+            }
+            offset.boneIndex = pmxToSkeleton[offset.boneIndex];
         }
     }
 }
@@ -1564,7 +1734,8 @@ ImportedMeshData ImportMesh(
     std::size_t index,
     const std::vector<float>* mmdVertexEdgeScales,
     const std::vector<std::uint32_t>* mmdSourceVertexIndices,
-    const std::vector<PmxMetadata::VertexMorphMetadata>* mmdMorphs,
+    const std::vector<PmxMetadata::VertexMorphMetadata>* mmdVertexMorphs,
+    const std::vector<PmxMetadata::UvMorphMetadata>* mmdUvMorphs,
     const Skeleton* skeleton
 )
 {
@@ -1576,6 +1747,7 @@ ImportedMeshData ImportMesh(
     ImportedMeshData result;
     result.name = ResourceName(mesh.mName, "mesh", index);
     result.materialIndex = mesh.mMaterialIndex;
+    result.morphMaterialIndex = mesh.mMaterialIndex;
     result.data.layout = {
         {"position", 3, FLOAT},
         {"color", 3, FLOAT},
@@ -1600,7 +1772,8 @@ ImportedMeshData ImportMesh(
                 "PMX edge-scale data no longer matches imported vertices"
             );
         }
-        if (mmdSourceVertexIndices == nullptr || mmdMorphs == nullptr ||
+        if (mmdSourceVertexIndices == nullptr ||
+            mmdVertexMorphs == nullptr || mmdUvMorphs == nullptr ||
             mmdSourceVertexIndices->size() != mesh.mNumVertices)
         {
             throw std::runtime_error(
@@ -1742,11 +1915,11 @@ ImportedMeshData ImportMesh(
     if (isMmdMesh)
     {
         for (std::size_t morphIndex = 0U;
-             morphIndex < mmdMorphs->size();
+             morphIndex < mmdVertexMorphs->size();
              ++morphIndex)
         {
             const PmxMetadata::VertexMorphMetadata& sourceMorph =
-                (*mmdMorphs)[morphIndex];
+                (*mmdVertexMorphs)[morphIndex];
             std::unordered_map<std::uint32_t, glm::vec3> offsets;
             offsets.reserve(sourceMorph.offsets.size());
             for (const auto& [vertexIndex, offset] : sourceMorph.offsets)
@@ -1770,6 +1943,35 @@ ImportedMeshData ImportMesh(
                 }
             }
             if (!target.offsets.empty())
+                result.morphTargets.push_back(std::move(target));
+        }
+
+        for (const PmxMetadata::UvMorphMetadata& sourceMorph : *mmdUvMorphs)
+        {
+            std::unordered_map<std::uint32_t, glm::vec4> offsets;
+            offsets.reserve(sourceMorph.offsets.size());
+            for (const auto& [vertexIndex, offset] : sourceMorph.offsets)
+                offsets.emplace(vertexIndex, offset);
+
+            MeshMorphTarget target;
+            target.morphIndex = sourceMorph.morphIndex;
+            for (std::size_t localVertex = 0U;
+                 localVertex < mmdSourceVertexIndices->size();
+                 ++localVertex)
+            {
+                const auto offset = offsets.find(
+                    (*mmdSourceVertexIndices)[localVertex]
+                );
+                if (offset != offsets.end())
+                {
+                    target.uvOffsets.push_back(UvMorphOffset{
+                        static_cast<std::uint32_t>(localVertex),
+                        sourceMorph.channel,
+                        offset->second
+                    });
+                }
+            }
+            if (!target.uvOffsets.empty())
                 result.morphTargets.push_back(std::move(target));
         }
     }
@@ -2348,12 +2550,36 @@ ImportedModelData ModelImporter::Import(
     }
 
     ImportedModelData result;
-    if (pmxMetadata.has_value())
-        result.morphs = pmxMetadata->morphDefinitions;
     result.skeleton = ImportSkeleton(
         *scene,
         pmxMetadata.has_value() ? &*pmxMetadata : nullptr
     );
+    if (pmxMetadata.has_value())
+    {
+        result.morphs = pmxMetadata->morphDefinitions;
+        const bool hasBoneMorph = std::any_of(
+            result.morphs.begin(),
+            result.morphs.end(),
+            [](const MorphDefinition& definition)
+            {
+                return definition.kind == MorphKind::Bone;
+            }
+        );
+        if (hasBoneMorph && !result.skeleton.has_value())
+        {
+            throw std::runtime_error(
+                "PMX Bone Morph requires an imported Skeleton"
+            );
+        }
+        if (hasBoneMorph)
+        {
+            RemapPmxBoneMorphs(
+                result.morphs,
+                *pmxMetadata,
+                *result.skeleton
+            );
+        }
+    }
     result.animations = ImportAnimations(*scene, result.skeleton);
     ImportedTextureIndexMap textureIndices;
     std::unordered_map<unsigned int, std::size_t> materialIndices;
@@ -2367,7 +2593,9 @@ ImportedModelData ModelImporter::Import(
             scene->mMeshes[index]->mMaterialIndex;
         const std::vector<float>* mmdEdgeScales = nullptr;
         const std::vector<std::uint32_t>* mmdSourceVertexIndices = nullptr;
-        const std::vector<PmxMetadata::VertexMorphMetadata>* mmdMorphs = nullptr;
+        const std::vector<PmxMetadata::VertexMorphMetadata>*
+            mmdVertexMorphs = nullptr;
+        const std::vector<PmxMetadata::UvMorphMetadata>* mmdUvMorphs = nullptr;
         if (pmxMetadata.has_value())
         {
             if (sourceMaterialIndex >=
@@ -2379,14 +2607,16 @@ ImportedModelData ModelImporter::Import(
                 &pmxMetadata->materialVertexEdgeScales[sourceMaterialIndex];
             mmdSourceVertexIndices =
                 &pmxMetadata->materialSourceVertexIndices[sourceMaterialIndex];
-            mmdMorphs = &pmxMetadata->vertexMorphs;
+            mmdVertexMorphs = &pmxMetadata->vertexMorphs;
+            mmdUvMorphs = &pmxMetadata->uvMorphs;
         }
         ImportedMeshData mesh = ImportMesh(
             *scene->mMeshes[index],
             index,
             mmdEdgeScales,
             mmdSourceVertexIndices,
-            mmdMorphs,
+            mmdVertexMorphs,
+            mmdUvMorphs,
             result.skeleton.has_value() ? &*result.skeleton : nullptr
         );
         if (sourceMaterialIndex >= scene->mNumMaterials ||

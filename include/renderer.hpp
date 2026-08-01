@@ -1,6 +1,7 @@
 #pragma once
 
 #include "framebuffer.hpp"
+#include "morph.hpp"
 #include "scene.hpp"
 #include <glad/gl.h>
 #include <cstdint>
@@ -59,7 +60,7 @@ private:
         std::size_t capacityBytes = 0;
         bool initialized = false;
         bool active = false;
-        std::vector<glm::vec3> offsets;
+        std::vector<MorphVertexDelta> offsets;
     };
 
     void DrawPart(

@@ -53,6 +53,7 @@ struct ImportedMeshData
     std::string name;
     DefaultModelData data;
     std::size_t materialIndex = 0;
+    std::optional<std::uint32_t> morphMaterialIndex;
     std::size_t requiredBoneCount = 0;
     std::vector<MeshMorphTarget> morphTargets;
 };

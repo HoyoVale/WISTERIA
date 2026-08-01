@@ -91,7 +91,8 @@ Entity& Scene::InstantiateModel(
         entity.AddRenderPart(
             part.GetMesh(),
             part.GetMaterial(),
-            part.LocalTransform()
+            part.LocalTransform(),
+            part.MorphMaterialIndex()
         );
     }
     return entity;

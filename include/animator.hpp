@@ -5,6 +5,7 @@
 #include "mmd_pose_solver.hpp"
 #include "root_motion.hpp"
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -131,6 +132,8 @@ private:
     std::optional<BoneIndex> rootMotionBone;
     RootMotionDelta pendingRootMotion;
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
+    std::uint64_t lastAppliedMorphRevision =
+        std::numeric_limits<std::uint64_t>::max();
     float currentTime = 0.0f;
     float speed = 1.0f;
     bool playing = false;

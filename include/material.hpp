@@ -94,6 +94,9 @@ struct ShaderInterface
     std::string outlinePass = "outlinePass";
     std::string materialEdgeColor = "materialEdgeColor";
     std::string materialEdgeSize = "materialEdgeSize";
+    std::string materialTextureFactor = "materialTextureFactor";
+    std::string materialSphereTextureFactor = "materialSphereTextureFactor";
+    std::string materialToonTextureFactor = "materialToonTextureFactor";
 
     std::string pointLights = "pointLights";
     std::string pointLightCount = "pointLightCount";

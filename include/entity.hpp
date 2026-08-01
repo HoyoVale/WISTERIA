@@ -11,6 +11,8 @@
 #include <concepts>
 #include <cstddef>
 #include <memory>
+#include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -44,7 +46,8 @@ public:
     RenderPart& AddRenderPart(
         Mesh& mesh,
         Material& material,
-        const glm::mat4& localTransform = glm::mat4(1.0f)
+        const glm::mat4& localTransform = glm::mat4(1.0f),
+        std::optional<std::uint32_t> morphMaterialIndex = std::nullopt
     );
     bool RemoveRenderPart(const RenderPart& part);
     void ClearRenderParts() noexcept;

@@ -24,10 +24,12 @@ bool IsFinite(const glm::mat4& matrix)
 RenderPart::RenderPart(
     Mesh& mesh,
     Material& material,
-    const glm::mat4& localTransform
+    const glm::mat4& localTransform,
+    std::optional<std::uint32_t> morphMaterialIndex
 )
     : mesh(&mesh),
-      material(&material)
+      material(&material),
+      morphMaterialIndex(morphMaterialIndex)
 {
     this->SetLocalTransform(localTransform);
 }
@@ -73,4 +75,9 @@ void RenderPart::SetLocalTransform(const glm::mat4& localTransform)
         throw std::invalid_argument("RenderPart transform must contain finite values");
 
     this->localTransform = localTransform;
+}
+
+std::optional<std::uint32_t> RenderPart::MorphMaterialIndex() const noexcept
+{
+    return this->morphMaterialIndex;
 }

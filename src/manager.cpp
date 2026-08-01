@@ -384,7 +384,8 @@ ModelAsset& ResourceManager::LoadModel(
         model->AddPart(
             *importedMeshes[part.meshIndex].get(),
             *importedMaterials[materialIndex].get(),
-            part.localTransform
+            part.localTransform,
+            imported.meshes[part.meshIndex].morphMaterialIndex
         );
     }
 

@@ -57,6 +57,46 @@ int LightCount(std::size_t available, std::size_t capacity)
     });
     return static_cast<int>(count);
 }
+
+MaterialMorphValues EvaluateMaterialMorphs(
+    const RenderPart& part,
+    const MorphState* morphState
+)
+{
+    const Material& material = part.GetMaterial();
+    MaterialMorphValues values;
+    values.diffuse = material.BaseColorFactor();
+    values.specular = material.SpecularColor();
+    values.shininess = material.Shininess();
+    values.ambient = material.AmbientColor();
+    values.edgeColor = material.EdgeColor();
+    values.edgeSize = material.EdgeSize();
+
+    if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
+        morphState != nullptr &&
+        morphState->GetMorphSet().HasKind(MorphKind::Material))
+    {
+        morphState->GetMorphSet().ApplyMaterialMorphs(
+            part.MorphMaterialIndex().value_or(AllMaterialMorphTargets),
+            morphState->EffectiveWeights(),
+            values
+        );
+    }
+    return values;
+}
+
+MaterialAlphaMode EffectiveAlphaMode(
+    const Material& material,
+    const MaterialMorphValues& values
+)
+{
+    if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
+        values.diffuse.a < 0.999f)
+    {
+        return MaterialAlphaMode::Blend;
+    }
+    return material.AlphaMode();
+}
 }
 
 Renderer::~Renderer()
@@ -104,8 +144,13 @@ void Renderer::Render(
                 entity.TryGetPose(),
                 entity.TryGetMorphState()
             };
-            if (part.GetMaterial().AlphaMode() == MaterialAlphaMode::Blend)
+            const MaterialMorphValues materialValues =
+                EvaluateMaterialMorphs(part, command.morphState);
+            if (EffectiveAlphaMode(part.GetMaterial(), materialValues) ==
+                MaterialAlphaMode::Blend)
+            {
                 transparentCommands.push_back(command);
+            }
             else
                 opaqueCommands.push_back(command);
         }
@@ -308,8 +353,12 @@ void Renderer::DrawPart(
     mesh.Attach();
     VAO& vertexArray = this->VertexArrayFor(mesh);
     material.Attach();
+    const MaterialMorphValues materialValues =
+        EvaluateMaterialMorphs(part, morphState);
+    const MaterialAlphaMode alphaMode =
+        EffectiveAlphaMode(material, materialValues);
 
-    if (material.AlphaMode() == MaterialAlphaMode::Blend)
+    if (alphaMode == MaterialAlphaMode::Blend)
         glEnable(GL_BLEND);
     else
         glDisable(GL_BLEND);
@@ -340,7 +389,10 @@ void Renderer::DrawPart(
     );
     this->UploadSkinning(program, shaderInterface, mesh, pose);
 
-    const glm::vec4& baseColor = material.BaseColorFactor();
+    const glm::vec4& baseColor = material.ShadingModel() ==
+        MaterialShadingModel::MmdToon
+        ? materialValues.diffuse
+        : material.BaseColorFactor();
     program.Uniform4f(
         shaderInterface.materialBaseColorFactor,
         baseColor.r,
@@ -350,7 +402,7 @@ void Renderer::DrawPart(
     );
     program.Uniform1i(
         shaderInterface.materialAlphaMode,
-        static_cast<int>(material.AlphaMode())
+        static_cast<int>(alphaMode)
     );
     program.Uniform1f(
         shaderInterface.materialAlphaCutoff,
@@ -409,19 +461,19 @@ void Renderer::DrawPart(
     {
         program.Uniform3f(
             shaderInterface.materialSpecularColor,
-            material.SpecularColor().r,
-            material.SpecularColor().g,
-            material.SpecularColor().b
+            materialValues.specular.r,
+            materialValues.specular.g,
+            materialValues.specular.b
         );
         program.Uniform1f(
             shaderInterface.materialShininess,
-            material.Shininess()
+            materialValues.shininess
         );
         program.Uniform3f(
             shaderInterface.materialAmbientColor,
-            material.AmbientColor().r,
-            material.AmbientColor().g,
-            material.AmbientColor().b
+            materialValues.ambient.r,
+            materialValues.ambient.g,
+            materialValues.ambient.b
         );
         program.Uniform1i(
             shaderInterface.hasSphereTexture,
@@ -435,7 +487,7 @@ void Renderer::DrawPart(
             shaderInterface.hasToonTexture,
             material.HasTexture(shaderInterface.toonTexture) ? 1 : 0
         );
-        const glm::vec4& edgeColor = material.EdgeColor();
+        const glm::vec4& edgeColor = materialValues.edgeColor;
         program.Uniform4f(
             shaderInterface.materialEdgeColor,
             edgeColor.r,
@@ -445,7 +497,28 @@ void Renderer::DrawPart(
         );
         program.Uniform1f(
             shaderInterface.materialEdgeSize,
-            material.EdgeSize()
+            materialValues.edgeSize
+        );
+        program.Uniform4f(
+            shaderInterface.materialTextureFactor,
+            materialValues.textureFactor.r,
+            materialValues.textureFactor.g,
+            materialValues.textureFactor.b,
+            materialValues.textureFactor.a
+        );
+        program.Uniform4f(
+            shaderInterface.materialSphereTextureFactor,
+            materialValues.sphereTextureFactor.r,
+            materialValues.sphereTextureFactor.g,
+            materialValues.sphereTextureFactor.b,
+            materialValues.sphereTextureFactor.a
+        );
+        program.Uniform4f(
+            shaderInterface.materialToonTextureFactor,
+            materialValues.toonTextureFactor.r,
+            materialValues.toonTextureFactor.g,
+            materialValues.toonTextureFactor.b,
+            materialValues.toonTextureFactor.a
         );
         program.Uniform1i(shaderInterface.outlinePass, 0);
     }
@@ -467,7 +540,7 @@ void Renderer::DrawPart(
 
     vertexArray.Bind();
     if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
-        material.IsEdgeEnabled() && material.EdgeSize() > 0.0f)
+        material.IsEdgeEnabled() && materialValues.edgeSize > 0.0f)
     {
         program.Uniform1i(shaderInterface.outlinePass, 1);
         glEnable(GL_CULL_FACE);
@@ -804,14 +877,29 @@ void Renderer::UploadMorphing(
     const MorphState* morphState
 )
 {
-    constexpr GLuint MorphAttributeLocation = 9U;
+    constexpr GLuint PositionLocation = 9U;
+    constexpr GLuint FirstUvLocation = 10U;
+    const auto disableAttributes = [&vertexArray]()
+    {
+        vertexArray.Bind();
+        glDisableVertexAttribArray(PositionLocation);
+        glVertexAttrib3f(PositionLocation, 0.0f, 0.0f, 0.0f);
+        for (std::size_t channel = 0U;
+             channel < MmdUvChannelCount;
+             ++channel)
+        {
+            const GLuint location = FirstUvLocation +
+                static_cast<GLuint>(channel);
+            glDisableVertexAttribArray(location);
+            glVertexAttrib4f(location, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
+        vertexArray.unBind();
+    };
+
     if (!shaderInterface.morphingSupported ||
         !mesh.HasMorphTargets() || morphState == nullptr)
     {
-        vertexArray.Bind();
-        glDisableVertexAttribArray(MorphAttributeLocation);
-        glVertexAttrib3f(MorphAttributeLocation, 0.0f, 0.0f, 0.0f);
-        vertexArray.unBind();
+        disableAttributes();
         return;
     }
 
@@ -819,7 +907,7 @@ void Renderer::UploadMorphing(
     entry.lastUsedFrame = this->morphingFrame;
     if (!entry.initialized || entry.revision != morphState->Revision())
     {
-        entry.active = mesh.CalculateMorphOffsets(
+        entry.active = mesh.CalculateMorphDeltas(
             morphState->EffectiveWeights(),
             entry.offsets
         );
@@ -828,7 +916,7 @@ void Renderer::UploadMorphing(
             if (entry.offsets.size() >
                 static_cast<std::size_t>(
                     std::numeric_limits<GLsizeiptr>::max()
-                ) / sizeof(glm::vec3))
+                ) / sizeof(MorphVertexDelta))
             {
                 throw std::overflow_error("Morph vertex buffer is too large");
             }
@@ -844,7 +932,7 @@ void Renderer::UploadMorphing(
             }
 
             const std::size_t byteCount =
-                entry.offsets.size() * sizeof(glm::vec3);
+                entry.offsets.size() * sizeof(MorphVertexDelta);
             glBindBuffer(GL_ARRAY_BUFFER, entry.buffer);
             if (byteCount > entry.capacityBytes)
             {
@@ -871,24 +959,41 @@ void Renderer::UploadMorphing(
         entry.initialized = true;
     }
 
-    vertexArray.Bind();
-    if (entry.active)
+    if (!entry.active)
     {
-        glBindBuffer(GL_ARRAY_BUFFER, entry.buffer);
-        glEnableVertexAttribArray(MorphAttributeLocation);
+        disableAttributes();
+        return;
+    }
+
+    vertexArray.Bind();
+    glBindBuffer(GL_ARRAY_BUFFER, entry.buffer);
+    glEnableVertexAttribArray(PositionLocation);
+    glVertexAttribPointer(
+        PositionLocation,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        static_cast<GLsizei>(sizeof(MorphVertexDelta)),
+        reinterpret_cast<const void*>(offsetof(MorphVertexDelta, position))
+    );
+    for (std::size_t channel = 0U;
+         channel < MmdUvChannelCount;
+         ++channel)
+    {
+        const GLuint location = FirstUvLocation +
+            static_cast<GLuint>(channel);
+        glEnableVertexAttribArray(location);
         glVertexAttribPointer(
-            MorphAttributeLocation,
-            3,
+            location,
+            4,
             GL_FLOAT,
             GL_FALSE,
-            static_cast<GLsizei>(sizeof(glm::vec3)),
-            nullptr
+            static_cast<GLsizei>(sizeof(MorphVertexDelta)),
+            reinterpret_cast<const void*>(
+                offsetof(MorphVertexDelta, uv) +
+                channel * sizeof(glm::vec4)
+            )
         );
-    }
-    else
-    {
-        glDisableVertexAttribArray(MorphAttributeLocation);
-        glVertexAttrib3f(MorphAttributeLocation, 0.0f, 0.0f, 0.0f);
     }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     vertexArray.unBind();

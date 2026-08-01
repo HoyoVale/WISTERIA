@@ -157,8 +157,14 @@ AnimationClip& ModelAsset::AddAnimationClip(AnimationClip clip)
 RenderPart& ModelAsset::AddPart(
     Mesh& mesh,
     Material& material,
-    const glm::mat4& localTransform
+    const glm::mat4& localTransform,
+    std::optional<std::uint32_t> morphMaterialIndex
 )
 {
-    return this->parts.emplace_back(mesh, material, localTransform);
+    return this->parts.emplace_back(
+        mesh,
+        material,
+        localTransform,
+        morphMaterialIndex
+    );
 }

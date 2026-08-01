@@ -37,6 +37,10 @@ public:
         std::span<const float> weights,
         std::vector<glm::vec3>& output
     ) const;
+    bool CalculateMorphDeltas(
+        std::span<const float> weights,
+        std::vector<MorphVertexDelta>& output
+    ) const;
 
 private:
     DefaultModelData data;

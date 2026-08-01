@@ -1,5 +1,6 @@
 #include "pch.hpp"
 #include "morph.hpp"
+#include "pose_buffer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,77 @@
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
+
+namespace
+{
+bool IsFinite(const glm::vec3& value)
+{
+    return std::isfinite(value.x) &&
+        std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+bool IsFinite(const glm::vec4& value)
+{
+    return std::isfinite(value.x) &&
+        std::isfinite(value.y) &&
+        std::isfinite(value.z) &&
+        std::isfinite(value.w);
+}
+
+bool IsFinite(const glm::quat& value)
+{
+    return std::isfinite(value.w) &&
+        std::isfinite(value.x) &&
+        std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+void ValidateMaterialOffset(const MaterialMorphOffset& offset)
+{
+    if (offset.operation < MaterialMorphOperation::Multiply ||
+        offset.operation > MaterialMorphOperation::Add ||
+        !IsFinite(offset.diffuse) ||
+        !IsFinite(offset.specular) ||
+        !std::isfinite(offset.shininess) ||
+        !IsFinite(offset.ambient) ||
+        !IsFinite(offset.edgeColor) ||
+        !std::isfinite(offset.edgeSize) ||
+        !IsFinite(offset.textureFactor) ||
+        !IsFinite(offset.sphereTextureFactor) ||
+        !IsFinite(offset.toonTextureFactor))
+    {
+        throw std::invalid_argument("Material morph contains an invalid offset");
+    }
+}
+
+template<typename T>
+void ApplyMaterialValue(
+    T& value,
+    const T& factor,
+    MaterialMorphOperation operation,
+    float weight
+)
+{
+    if (operation == MaterialMorphOperation::Multiply)
+        value *= glm::mix(T(1), factor, weight);
+    else
+        value += factor * weight;
+}
+
+void ApplyMaterialValue(
+    float& value,
+    float factor,
+    MaterialMorphOperation operation,
+    float weight
+)
+{
+    if (operation == MaterialMorphOperation::Multiply)
+        value *= glm::mix(1.0f, factor, weight);
+    else
+        value += factor * weight;
+}
+}
 
 MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
     : definitions(std::move(definitions))
@@ -32,20 +104,38 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
             throw std::invalid_argument("Morph category is invalid");
         }
         if (definition.kind < MorphKind::Vertex ||
-            definition.kind > MorphKind::Group)
+            definition.kind > MorphKind::Material)
+        {
             throw std::invalid_argument("Morph kind is invalid");
-        if (definition.kind == MorphKind::Vertex &&
+        }
+        this->kinds[static_cast<std::size_t>(definition.kind)] = true;
+
+        if (definition.kind != MorphKind::Group &&
             !definition.groupMembers.empty())
         {
             throw std::invalid_argument(
-                "Vertex morph cannot contain group members"
+                "Only Group morphs can contain group members"
             );
         }
+        if (definition.kind != MorphKind::Bone &&
+            !definition.boneOffsets.empty())
+        {
+            throw std::invalid_argument(
+                "Only Bone morphs can contain bone offsets"
+            );
+        }
+        if (definition.kind != MorphKind::Material &&
+            !definition.materialOffsets.empty())
+        {
+            throw std::invalid_argument(
+                "Only Material morphs can contain material offsets"
+            );
+        }
+
         std::unordered_set<MorphIndex> memberIndices;
         for (const GroupMorphMember& member : definition.groupMembers)
         {
-            if (definition.kind != MorphKind::Group ||
-                static_cast<std::size_t>(member.morphIndex) >=
+            if (static_cast<std::size_t>(member.morphIndex) >=
                     this->definitions.size() ||
                 !std::isfinite(member.weight) ||
                 !memberIndices.emplace(member.morphIndex).second)
@@ -55,6 +145,26 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
                 );
             }
         }
+
+        std::unordered_set<BoneIndex> boneIndices;
+        for (const BoneMorphOffset& offset : definition.boneOffsets)
+        {
+            const float lengthSquared = glm::dot(offset.rotation, offset.rotation);
+            if (offset.boneIndex == InvalidBoneIndex ||
+                !IsFinite(offset.translation) ||
+                !IsFinite(offset.rotation) ||
+                !std::isfinite(lengthSquared) ||
+                lengthSquared <= 0.000001f ||
+                !boneIndices.emplace(offset.boneIndex).second)
+            {
+                throw std::invalid_argument(
+                    "Bone morph contains an invalid offset"
+                );
+            }
+        }
+        for (const MaterialMorphOffset& offset : definition.materialOffsets)
+            ValidateMaterialOffset(offset);
+
         if (!this->indices.emplace(
                 definition.name,
                 static_cast<MorphIndex>(index)
@@ -111,6 +221,12 @@ std::optional<MorphIndex> MorphSet::FindMorph(std::string_view name) const
         : std::optional<MorphIndex>(iterator->second);
 }
 
+bool MorphSet::HasKind(MorphKind kind) const noexcept
+{
+    const std::size_t index = static_cast<std::size_t>(kind);
+    return index < this->kinds.size() && this->kinds[index];
+}
+
 void MorphSet::ExpandWeights(
     std::span<const float> source,
     std::vector<float>& output
@@ -133,7 +249,7 @@ void MorphSet::ExpandWeights(
         if (!std::isfinite(weight))
             throw std::overflow_error("Expanded morph weight is not finite");
         const MorphDefinition& definition = this->definitions[morphIndex];
-        if (definition.kind == MorphKind::Vertex)
+        if (definition.kind != MorphKind::Group)
         {
             const float next = output[morphIndex] + weight;
             if (!std::isfinite(next))
@@ -151,6 +267,131 @@ void MorphSet::ExpandWeights(
             static_cast<MorphIndex>(index),
             source[index]
         );
+    }
+}
+
+void MorphSet::ApplyBoneMorphs(
+    std::span<const float> weights,
+    PoseBuffer& pose
+) const
+{
+    if (weights.size() != this->definitions.size())
+        throw std::invalid_argument("Morph weight count does not match MorphSet");
+
+    for (std::size_t index = 0; index < this->definitions.size(); ++index)
+    {
+        const MorphDefinition& definition = this->definitions[index];
+        if (definition.kind != MorphKind::Bone)
+            continue;
+        const float weight = weights[index];
+        if (!std::isfinite(weight))
+            throw std::invalid_argument("Bone morph weight must be finite");
+        if (weight == 0.0f)
+            continue;
+
+        for (const BoneMorphOffset& offset : definition.boneOffsets)
+        {
+            if (static_cast<std::size_t>(offset.boneIndex) >= pose.BoneCount())
+            {
+                throw std::out_of_range(
+                    "Bone morph references a bone outside the Skeleton"
+                );
+            }
+            BoneTransform transform = pose.TransformAt(offset.boneIndex);
+            transform.translation += offset.translation * weight;
+            const glm::quat delta = glm::normalize(glm::slerp(
+                glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                glm::normalize(offset.rotation),
+                weight
+            ));
+            transform.rotation = glm::normalize(transform.rotation * delta);
+            pose.SetTransform(offset.boneIndex, transform);
+        }
+    }
+}
+
+void MorphSet::ApplyMaterialMorphs(
+    std::uint32_t materialIndex,
+    std::span<const float> weights,
+    MaterialMorphValues& values
+) const
+{
+    if (weights.size() != this->definitions.size())
+        throw std::invalid_argument("Morph weight count does not match MorphSet");
+
+    for (std::size_t index = 0; index < this->definitions.size(); ++index)
+    {
+        const MorphDefinition& definition = this->definitions[index];
+        if (definition.kind != MorphKind::Material)
+            continue;
+        const float weight = weights[index];
+        if (!std::isfinite(weight))
+            throw std::invalid_argument("Material morph weight must be finite");
+        if (weight == 0.0f)
+            continue;
+
+        for (const MaterialMorphOffset& offset : definition.materialOffsets)
+        {
+            if (offset.materialIndex != AllMaterialMorphTargets &&
+                offset.materialIndex != materialIndex)
+            {
+                continue;
+            }
+            ApplyMaterialValue(
+                values.diffuse,
+                offset.diffuse,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.specular,
+                offset.specular,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.shininess,
+                offset.shininess,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.ambient,
+                offset.ambient,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.edgeColor,
+                offset.edgeColor,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.edgeSize,
+                offset.edgeSize,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.textureFactor,
+                offset.textureFactor,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.sphereTextureFactor,
+                offset.sphereTextureFactor,
+                offset.operation,
+                weight
+            );
+            ApplyMaterialValue(
+                values.toonTextureFactor,
+                offset.toonTextureFactor,
+                offset.operation,
+                weight
+            );
+        }
     }
 }
 
