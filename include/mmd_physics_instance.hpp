@@ -36,6 +36,45 @@ struct MmdPhysicsAlignmentSummary
     bool nonIdentityBindSpace = false;
 };
 
+enum class MmdPhysicsRecoveryReason : std::uint8_t
+{
+    None,
+    NonFinite,
+    NonFiniteJoint,
+    ExtremeVelocity,
+    HighVelocity,
+    Runaway,
+    JointViolation
+};
+
+struct MmdPhysicsRecoveryStatistics
+{
+    std::size_t chainCount = 0U;
+    std::size_t physicsTickCount = 0U;
+    std::size_t totalRecoveries = 0U;
+    std::size_t recoveredBodyCount = 0U;
+    std::size_t largestRecoveryRegion = 0U;
+    std::size_t pendingAbnormalChainCount = 0U;
+    std::size_t cooldownChainCount = 0U;
+    std::size_t fusedChainCount = 0U;
+    std::size_t totalFuseTrips = 0U;
+    std::size_t suppressedRecoveryCount = 0U;
+    std::size_t lastRecoveredChain =
+        std::numeric_limits<std::size_t>::max();
+    std::size_t lastRecoveredBodyCount = 0U;
+    std::size_t lastSeedBodyIndex =
+        std::numeric_limits<std::size_t>::max();
+    std::size_t lastJointIndex =
+        std::numeric_limits<std::size_t>::max();
+    MmdPhysicsRecoveryReason lastReason = MmdPhysicsRecoveryReason::None;
+    float lastAbnormalSeconds = 0.0f;
+    float lastPositionError = 0.0f;
+    float lastLinearViolation = 0.0f;
+    float lastAngularViolationDegrees = 0.0f;
+    float lastLinearSpeed = 0.0f;
+    float lastAngularSpeed = 0.0f;
+};
+
 // Per-Entity runtime bridge between immutable PMX physics metadata and the
 // shared scene PhysicsWorld. Bullet objects remain owned by PhysicsWorld;
 // this object owns only safe WISTERIA handles and MMD synchronization state.
@@ -69,6 +108,7 @@ public:
         float alpha,
         float fixedTimeStep
     ) override;
+    void ObserveSimulationSubstep(float fixedTimeStep) override;
     void FinishSimulation() override;
     void ResetSimulation() override;
     PhysicsStabilizationRequest StabilizationRequest() const noexcept override;
@@ -84,6 +124,7 @@ public:
     MmdPhysicsDebugOverlay CycleDebugOverlay() noexcept;
     const char* DebugOverlayName() const noexcept;
     const MmdPhysicsAlignmentSummary& AlignmentSummary() const noexcept;
+    const MmdPhysicsRecoveryStatistics& RecoveryStatistics() const noexcept;
     bool StabilizationFailed() const noexcept;
     std::size_t PendingStabilizationSteps() const noexcept;
     void LogAlignmentReport(std::size_t maximumEntries = 16U) const;
@@ -148,11 +189,59 @@ private:
         glm::mat4 prePhysicsAnimatedModelTransform{1.0f};
     };
 
+    struct RecoveryEdge
+    {
+        std::size_t bodyIndex = std::numeric_limits<std::size_t>::max();
+        std::size_t jointIndex = std::numeric_limits<std::size_t>::max();
+    };
+
+    struct RecoveryTrigger
+    {
+        MmdPhysicsRecoveryReason reason = MmdPhysicsRecoveryReason::None;
+        std::size_t seedBodyIndex =
+            std::numeric_limits<std::size_t>::max();
+        std::size_t jointIndex =
+            std::numeric_limits<std::size_t>::max();
+        bool immediate = false;
+        float score = 0.0f;
+        float positionError = 0.0f;
+        float linearViolation = 0.0f;
+        float angularViolationDegrees = 0.0f;
+        float linearSpeed = 0.0f;
+        float angularSpeed = 0.0f;
+    };
+
+    struct RecoveryChain
+    {
+        std::vector<std::size_t> bodyIndices;
+        std::vector<std::size_t> jointIndices;
+        std::size_t anchorBodyIndex =
+            std::numeric_limits<std::size_t>::max();
+        float abnormalSeconds = 0.0f;
+        float cooldownSeconds = 0.0f;
+        float fuseWindowSeconds = 0.0f;
+        float fuseRemainingSeconds = 0.0f;
+        std::size_t recoveriesInWindow = 0U;
+        bool fuseSuppressionLatched = false;
+        RecoveryTrigger pendingTrigger{};
+    };
+
     void PrePhysicsUpdate(const Transform& transform, float deltaTime);
     void PostPhysicsUpdate(const Transform& transform);
     void ResetToPose(const Transform& transform);
     void CaptureConstraintPreservingResetTargets();
     void ApplyResetTargets(const Transform& transform);
+    void BuildRecoveryChains();
+    void RecoverAbnormalChains(float fixedTimeStep);
+    std::vector<std::size_t> CollectRecoveryRegion(
+        std::size_t chainIndex,
+        const RecoveryTrigger& trigger
+    ) const;
+    void RecoverChain(
+        std::size_t chainIndex,
+        const RecoveryTrigger& trigger
+    );
+    void UpdateRecoveryStatistics() noexcept;
     JointSnapshot CaptureJointSnapshot(
         const char* stage,
         std::size_t completedSteps = 0U
@@ -174,10 +263,15 @@ private:
     std::vector<glm::mat4> localMatrixScratch;
     std::vector<glm::mat4> globalMatrixScratch;
     std::vector<MmdRigidBodyImpulse> impulseScratch;
+    std::vector<RecoveryChain> recoveryChains;
+    std::vector<std::size_t> recoveryChainByBody;
+    std::vector<std::vector<RecoveryEdge>> recoveryAdjacency;
+    std::vector<float> recoveryJointSeverityHistory;
     std::vector<AlignmentRecord> alignmentRecords;
     std::vector<JointSnapshot> jointSnapshots;
     JointSnapshot createdJointSnapshot{};
     MmdPhysicsAlignmentSummary alignmentSummary;
+    MmdPhysicsRecoveryStatistics recoveryStatistics;
     MmdPhysicsDebugOverlay debugOverlay = MmdPhysicsDebugOverlay::Off;
     std::size_t pendingStabilizationSteps = 0U;
     bool resetTargetRefreshPending = false;

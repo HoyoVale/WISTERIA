@@ -3897,6 +3897,66 @@ void TestBulletFoundationValidation()
     Require(badStepRejected, "PhysicsWorld accepted a zero fixed time step");
 }
 
+
+void TestBulletP1CcdMarginsAndSolver()
+{
+    PhysicsStepSettings settings;
+    settings.solverIterations = 21;
+    settings.splitImpulse = true;
+    settings.splitImpulsePenetrationThreshold = -0.015f;
+    settings.solverErp = 0.18f;
+    settings.solverErp2 = 0.16f;
+    PhysicsWorld world(settings);
+    world.SetGravity(glm::vec3(0.0f));
+
+    PhysicsBodyDesc thin = DynamicBodyDesc(
+        PhysicsShapeDesc::Box(glm::vec3(0.10f, 0.50f, 0.20f)),
+        glm::vec3(-2.0f, 0.0f, 0.0f)
+    );
+    thin.enableCcd = true;
+    thin.ccdMotionThreshold = 0.05f;
+    thin.ccdSweptSphereRadius = 0.08f;
+    const PhysicsBodyHandle thinHandle = world.CreateBody(thin);
+    const PhysicsBodyRuntimeSettings runtime =
+        world.RuntimeSettings(thinHandle);
+
+    Require(
+        runtime.ccdEnabled &&
+        NearlyEqual(runtime.ccdMotionThreshold, 0.05f) &&
+        NearlyEqual(runtime.ccdSweptSphereRadius, 0.08f),
+        "PhysicsWorld did not retain selective CCD settings"
+    );
+    Require(
+        runtime.collisionMargin > 0.0f &&
+        runtime.collisionMargin < 0.02f,
+        "Size-related box collision margin was not applied"
+    );
+
+    const PhysicsWorldStatistics statistics = world.Statistics();
+    Require(
+        statistics.ccdBodyCount == 1U &&
+        statistics.solverIterations == 21 &&
+        statistics.splitImpulse &&
+        NearlyEqual(
+            statistics.splitImpulsePenetrationThreshold,
+            -0.015f
+        ),
+        "P1 solver/CCD statistics do not match the active Bullet policy"
+    );
+
+    PhysicsBodyDesc wall;
+    wall.shape = PhysicsShapeDesc::Box(glm::vec3(0.05f, 2.0f, 2.0f));
+    wall.motionType = PhysicsMotionType::Static;
+    wall.position = glm::vec3(0.0f);
+    world.CreateBody(wall);
+    world.SetLinearVelocity(thinHandle, glm::vec3(300.0f, 0.0f, 0.0f));
+    world.StepFixed(1.0f / 60.0f);
+    Require(
+        world.State(thinHandle).position.x < 0.5f,
+        "Selective CCD allowed a fast thin body to tunnel through a wall"
+    );
+}
+
 void TestBulletFoundationRigidBodies()
 {
     PhysicsWorld world;
@@ -4653,6 +4713,322 @@ std::unique_ptr<ModelAsset> CreateMmdInitializationStabilizationModel(
         {joint}
     ));
     return model;
+}
+
+
+std::unique_ptr<ModelAsset> CreateMmdLocalRecoveryModel()
+{
+    auto model = std::make_unique<ModelAsset>("localRecovery");
+    const glm::mat4 anchorABind = glm::mat4(1.0f);
+    const glm::mat4 tipABind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    const glm::mat4 anchorBBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(10.0f, 0.0f, 0.0f)
+    );
+    const glm::mat4 tipBBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(11.0f, 0.0f, 0.0f)
+    );
+    model->SetSkeleton(Skeleton({
+        Bone{"anchorA", InvalidBoneIndex, anchorABind, glm::inverse(anchorABind)},
+        Bone{"tipA", InvalidBoneIndex, tipABind, glm::inverse(tipABind)},
+        Bone{"anchorB", InvalidBoneIndex, anchorBBind, glm::inverse(anchorBBind)},
+        Bone{"tipB", InvalidBoneIndex, tipBBind, glm::inverse(tipBBind)}
+    }));
+
+    std::vector<MmdRigidBodyDefinition> bodies(4U);
+    const glm::mat4 binds[] = {
+        anchorABind, tipABind, anchorBBind, tipBBind
+    };
+    for (std::size_t index = 0U; index < bodies.size(); ++index)
+    {
+        bodies[index].name = "recoveryBody" + std::to_string(index);
+        bodies[index].bone = static_cast<BoneIndex>(index);
+        bodies[index].shape = MmdRigidBodyShape::Sphere;
+        bodies[index].size = glm::vec3(0.2f, 0.0f, 0.0f);
+        bodies[index].modelBindTransform = binds[index];
+        bodies[index].boneToBody = glm::mat4(1.0f);
+        bodies[index].bodyToBone = glm::mat4(1.0f);
+        const bool anchor = index == 0U || index == 2U;
+        bodies[index].mode = anchor
+            ? MmdRigidBodyMode::FollowBone
+            : MmdRigidBodyMode::PhysicsWithBone;
+        bodies[index].mass = anchor ? 0.0f : 1.0f;
+    }
+
+    std::vector<MmdJointDefinition> joints(2U);
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        const std::size_t base = index * 2U;
+        joints[index].name = "recoveryJoint" + std::to_string(index);
+        joints[index].bodyA = static_cast<RigidBodyIndex>(base);
+        joints[index].bodyB = static_cast<RigidBodyIndex>(base + 1U);
+        joints[index].position = glm::vec3(
+            index == 0U ? 0.5f : 10.5f,
+            0.0f,
+            0.0f
+        );
+        joints[index].modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joints[index].position
+        );
+        joints[index].linearLower = glm::vec3(0.0f);
+        joints[index].linearUpper = glm::vec3(0.0f);
+        joints[index].angularLower = glm::vec3(0.0f);
+        joints[index].angularUpper = glm::vec3(0.0f);
+    }
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
+void TestMmdPhysicsP1LocalRecovery()
+{
+    std::unique_ptr<ModelAsset> model = CreateMmdLocalRecoveryModel();
+    Scene scene;
+    scene.Physics().SetGravity(glm::vec3(0.0f));
+    Entity& entity = scene.InstantiateModel(*model);
+    scene.Update(0.0f);
+
+    MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+    Require(
+        physics.RecoveryStatistics().chainCount == 2U,
+        "MMD local recovery did not separate independent physics chains"
+    );
+    Require(
+        scene.Physics().Statistics().ccdBodyCount == 2U &&
+        scene.Physics().RuntimeSettings(physics.BodyHandleAt(1U)).ccdEnabled &&
+        scene.Physics().RuntimeSettings(physics.BodyHandleAt(3U)).ccdEnabled,
+        "MMD selective CCD was not limited to the two small dynamic bodies"
+    );
+
+    const PhysicsBodyState unaffectedBefore = physics.BodyStateAt(3U);
+    scene.Physics().SetTransform(
+        physics.BodyHandleAt(1U),
+        glm::vec3(100.0f, 0.0f, 0.0f),
+        glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+        true
+    );
+    for (int frame = 0; frame < 120; ++frame)
+        scene.Update(0.0f);
+    Require(
+        physics.RecoveryStatistics().totalRecoveries == 0U &&
+        physics.RecoveryStatistics().physicsTickCount == 0U,
+        "MMD recovery advanced during render frames with no physics tick"
+    );
+    scene.Update(1.0f / 60.0f);
+
+    const MmdPhysicsRecoveryStatistics& recovery =
+        physics.RecoveryStatistics();
+    Require(
+        recovery.totalRecoveries == 1U &&
+        recovery.physicsTickCount == 1U &&
+        recovery.lastRecoveredBodyCount == 2U &&
+        (recovery.lastReason == MmdPhysicsRecoveryReason::Runaway ||
+            recovery.lastReason ==
+                MmdPhysicsRecoveryReason::ExtremeVelocity) &&
+        !physics.StabilizationFailed(),
+        "Abnormal MMD chain did not recover on the real physics tick"
+    );
+    Require(
+        glm::distance(
+            physics.BodyStateAt(1U).position,
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        ) < 0.05f,
+        "Recovered MMD chain did not return to its animation-aligned target"
+    );
+    Require(
+        glm::distance(
+            physics.BodyStateAt(3U).position,
+            unaffectedBefore.position
+        ) < 0.01f,
+        "Local recovery disturbed an independent MMD physics chain"
+    );
+}
+
+
+std::unique_ptr<ModelAsset> CreateMmdLongRecoveryChainModel()
+{
+    constexpr std::size_t BodyCount = 17U;
+    auto model = std::make_unique<ModelAsset>("longRecoveryChain");
+    std::vector<Bone> bones;
+    std::vector<MmdRigidBodyDefinition> bodies(BodyCount);
+    bones.reserve(BodyCount);
+    for (std::size_t index = 0U; index < BodyCount; ++index)
+    {
+        const glm::mat4 bind = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(static_cast<float>(index), 0.0f, 0.0f)
+        );
+        bones.push_back(Bone{
+            "longRecoveryBone" + std::to_string(index),
+            InvalidBoneIndex,
+            bind,
+            glm::inverse(bind)
+        });
+        MmdRigidBodyDefinition& body = bodies[index];
+        body.name = "longRecoveryBody" + std::to_string(index);
+        body.bone = static_cast<BoneIndex>(index);
+        body.shape = MmdRigidBodyShape::Sphere;
+        body.size = glm::vec3(0.2f, 0.0f, 0.0f);
+        body.modelBindTransform = bind;
+        body.boneToBody = glm::mat4(1.0f);
+        body.bodyToBone = glm::mat4(1.0f);
+        body.mode = index == 0U
+            ? MmdRigidBodyMode::FollowBone
+            : MmdRigidBodyMode::PhysicsWithBone;
+        body.mass = index == 0U ? 0.0f : 1.0f;
+    }
+    model->SetSkeleton(Skeleton(std::move(bones)));
+
+    std::vector<MmdJointDefinition> joints(BodyCount - 1U);
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        MmdJointDefinition& joint = joints[index];
+        joint.name = "longRecoveryJoint" + std::to_string(index);
+        joint.bodyA = static_cast<RigidBodyIndex>(index);
+        joint.bodyB = static_cast<RigidBodyIndex>(index + 1U);
+        joint.position = glm::vec3(
+            static_cast<float>(index) + 0.5f,
+            0.0f,
+            0.0f
+        );
+        joint.modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joint.position
+        );
+        joint.linearLower = glm::vec3(0.0f);
+        joint.linearUpper = glm::vec3(0.0f);
+        joint.angularLower = glm::vec3(0.0f);
+        joint.angularUpper = glm::vec3(0.0f);
+    }
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
+void TestMmdPhysicsP11LocalizedRegionAndFuse()
+{
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdLocalRecoveryModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        scene.Update(0.0f);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        scene.Physics().SetTransform(
+            physics.BodyHandleAt(1U),
+            glm::vec3(3.0f, 0.0f, 0.0f),
+            glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+            true
+        );
+        constexpr float Tick = 1.0f / 60.0f;
+        for (int tick = 0; tick < 20; ++tick)
+            physics.ObserveSimulationSubstep(Tick);
+        Require(
+            physics.RecoveryStatistics().totalRecoveries == 0U &&
+            physics.RecoveryStatistics().pendingAbnormalChainCount == 1U,
+            "Finite joint error recovered before its physical-time threshold"
+        );
+        for (int tick = 0; tick < 10; ++tick)
+            physics.ObserveSimulationSubstep(Tick);
+        Require(
+            physics.RecoveryStatistics().totalRecoveries == 1U &&
+            physics.RecoveryStatistics().lastReason ==
+                MmdPhysicsRecoveryReason::JointViolation &&
+            physics.RecoveryStatistics().lastAbnormalSeconds >= 0.44f,
+            "Sustained joint error did not recover after physical-time gating"
+        );
+    }
+
+    {
+        std::unique_ptr<ModelAsset> model =
+            CreateMmdLongRecoveryChainModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        scene.Update(0.0f);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        Require(
+            physics.RecoveryStatistics().chainCount == 1U,
+            "Long MMD recovery fixture was not one coarse chain"
+        );
+        const PhysicsBodyState farBodyBefore = physics.BodyStateAt(16U);
+        scene.Physics().SetTransform(
+            physics.BodyHandleAt(8U),
+            glm::vec3(100.0f, 0.0f, 0.0f),
+            glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+            true
+        );
+        physics.ObserveSimulationSubstep(1.0f / 60.0f);
+        const MmdPhysicsRecoveryStatistics& recovery =
+            physics.RecoveryStatistics();
+        Require(
+            recovery.totalRecoveries == 1U &&
+            recovery.lastRecoveredBodyCount <= 9U &&
+            recovery.lastRecoveredBodyCount < 17U &&
+            recovery.largestRecoveryRegion ==
+                recovery.lastRecoveredBodyCount,
+            "MMD P1.1 recovery did not stay inside the local graph radius"
+        );
+        Require(
+            glm::distance(
+                physics.BodyStateAt(16U).position,
+                farBodyBefore.position
+            ) < 0.001f,
+            "Localized MMD recovery modified a distant body in the same chain"
+        );
+    }
+
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdLocalRecoveryModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        scene.Update(0.0f);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        constexpr float Tick = 1.0f / 60.0f;
+        const auto runHighVelocityEpisode = [&]()
+        {
+            scene.Physics().SetLinearVelocity(
+                physics.BodyHandleAt(1U),
+                glm::vec3(60.0f, 0.0f, 0.0f)
+            );
+            for (int tick = 0; tick < 20; ++tick)
+                physics.ObserveSimulationSubstep(Tick);
+        };
+        const auto clearCooldown = [&]()
+        {
+            for (int tick = 0; tick < 190; ++tick)
+                physics.ObserveSimulationSubstep(Tick);
+        };
+
+        runHighVelocityEpisode();
+        clearCooldown();
+        runHighVelocityEpisode();
+        clearCooldown();
+        runHighVelocityEpisode();
+        Require(
+            physics.RecoveryStatistics().totalRecoveries == 3U &&
+            physics.RecoveryStatistics().totalFuseTrips == 1U &&
+            physics.RecoveryStatistics().fusedChainCount == 1U,
+            "MMD recovery fuse did not trip after repeated local resets"
+        );
+
+        runHighVelocityEpisode();
+        Require(
+            physics.RecoveryStatistics().totalRecoveries == 3U &&
+            physics.RecoveryStatistics().suppressedRecoveryCount == 1U,
+            "MMD recovery fuse did not suppress the next repeated reset"
+        );
+    }
 }
 
 void TestMmdPhysicsInitializationStabilization()
@@ -5424,6 +5800,10 @@ int main()
         TestBulletFoundationValidation
     );
     failures += !RunTest(
+        "Bullet P1 CCD, margins and solver",
+        TestBulletP1CcdMarginsAndSolver
+    );
+    failures += !RunTest(
         "Bullet rigid bodies",
         TestBulletFoundationRigidBodies
     );
@@ -5478,6 +5858,14 @@ int main()
     failures += !RunTest(
         "MMD initialization stabilization",
         TestMmdPhysicsInitializationStabilization
+    );
+    failures += !RunTest(
+        "MMD P1 local chain recovery",
+        TestMmdPhysicsP1LocalRecovery
+    );
+    failures += !RunTest(
+        "MMD P1.1 tick timing, local region and fuse",
+        TestMmdPhysicsP11LocalizedRegionAndFuse
     );
     failures += !RunTest(
         "MMD Physics 2B Spring and lifecycle",

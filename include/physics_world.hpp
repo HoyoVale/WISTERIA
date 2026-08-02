@@ -55,6 +55,9 @@ public:
     PhysicsWorldStatistics Statistics() const noexcept;
 
     PhysicsBodyState State(PhysicsBodyHandle body) const;
+    PhysicsBodyRuntimeSettings RuntimeSettings(
+        PhysicsBodyHandle body
+    ) const;
     void SetTransform(
         PhysicsBodyHandle body,
         const glm::vec3& position,

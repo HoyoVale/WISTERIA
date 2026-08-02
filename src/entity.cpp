@@ -369,6 +369,12 @@ void Entity::PreparePhysicsSubstep(
     }
 }
 
+void Entity::ObservePhysicsSubstep(float fixedTimeStep)
+{
+    if (this->physicsInstance != nullptr)
+        this->physicsInstance->ObserveSimulationSubstep(fixedTimeStep);
+}
+
 void Entity::PostPhysicsUpdate()
 {
     if (this->physicsInstance != nullptr)

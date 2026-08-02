@@ -24,6 +24,28 @@ constexpr float JointWarmupLinearViolation = 0.1f;
 constexpr float JointWarmupAngularViolationDegrees = 5.0f;
 constexpr float JointFailureLinearViolation = 0.5f;
 constexpr float JointFailureAngularViolationDegrees = 45.0f;
+constexpr float RecoveryPersistenceSeconds = 0.45f;
+constexpr float RecoveryHighVelocityPersistenceSeconds = 0.30f;
+constexpr float RecoveryCooldownSeconds = 3.0f;
+constexpr float RecoveryFuseWindowSeconds = 12.0f;
+constexpr float RecoveryFuseDurationSeconds = 10.0f;
+constexpr std::size_t RecoveryFuseLimit = 3U;
+constexpr std::size_t RecoveryLocalGraphRadius = 4U;
+constexpr std::size_t RecoveryMaximumDynamicBodies = 24U;
+constexpr std::size_t RecoveryMaximumTotalBodies = 32U;
+constexpr float RecoveryLinearSpeed = 55.0f;
+constexpr float RecoveryHardLinearSpeed = 180.0f;
+constexpr float RecoveryAngularSpeed = 140.0f;
+constexpr float RecoveryHardAngularSpeed = 360.0f;
+constexpr float RecoveryJointSeparation = 1.75f;
+constexpr float RecoveryHardJointSeparation = 6.0f;
+constexpr float RecoveryLinearViolation = 1.0f;
+constexpr float RecoveryHardLinearViolation = 3.0f;
+constexpr float RecoveryAngularViolationDegrees = 115.0f;
+constexpr float RecoveryHardAngularViolationDegrees = 175.0f;
+constexpr float RecoveryRunawayDistance = 5.0f;
+constexpr float RecoveryHardRunawayDistance = 10.0f;
+constexpr float RecoverySeverityGrowthTolerance = 0.03f;
 
 struct RigidTransform
 {
@@ -36,6 +58,42 @@ struct EntityFrame
     RigidTransform rigid;
     float scale = 1.0f;
 };
+
+const char* RecoveryReasonName(MmdPhysicsRecoveryReason reason) noexcept
+{
+    switch (reason)
+    {
+    case MmdPhysicsRecoveryReason::None:
+        return "none";
+    case MmdPhysicsRecoveryReason::NonFinite:
+        return "non_finite";
+    case MmdPhysicsRecoveryReason::NonFiniteJoint:
+        return "non_finite_joint";
+    case MmdPhysicsRecoveryReason::ExtremeVelocity:
+        return "extreme_velocity";
+    case MmdPhysicsRecoveryReason::HighVelocity:
+        return "high_velocity";
+    case MmdPhysicsRecoveryReason::Runaway:
+        return "runaway";
+    case MmdPhysicsRecoveryReason::JointViolation:
+        return "joint_violation";
+    }
+    return "unknown";
+}
+
+float CharacteristicBodySize(const MmdRigidBodyDefinition& body) noexcept
+{
+    switch (body.shape)
+    {
+    case MmdRigidBodyShape::Sphere:
+        return std::max(body.size.x, 0.001f);
+    case MmdRigidBodyShape::Box:
+        return std::max(std::min({body.size.x, body.size.y, body.size.z}), 0.001f);
+    case MmdRigidBodyShape::Capsule:
+        return std::max(body.size.x, 0.001f);
+    }
+    return 0.001f;
+}
 
 RigidTransform ExtractRigidTransform(const glm::mat4& matrix)
 {
@@ -134,6 +192,71 @@ PhysicsMotionType MakeMotionType(MmdRigidBodyMode mode)
     return mode == MmdRigidBodyMode::FollowBone
         ? PhysicsMotionType::Kinematic
         : PhysicsMotionType::Dynamic;
+}
+
+float MinimumShapeFeature(const PhysicsShapeDesc& shape) noexcept
+{
+    switch (shape.kind)
+    {
+    case PhysicsShapeKind::Sphere:
+    case PhysicsShapeKind::Capsule:
+        return shape.dimensions.x;
+    case PhysicsShapeKind::Box:
+        return std::min({
+            shape.dimensions.x,
+            shape.dimensions.y,
+            shape.dimensions.z
+        });
+    }
+    return 0.0f;
+}
+
+float MaximumShapeExtent(const PhysicsShapeDesc& shape) noexcept
+{
+    switch (shape.kind)
+    {
+    case PhysicsShapeKind::Sphere:
+        return shape.dimensions.x;
+    case PhysicsShapeKind::Box:
+        return std::max({
+            shape.dimensions.x,
+            shape.dimensions.y,
+            shape.dimensions.z
+        });
+    case PhysicsShapeKind::Capsule:
+        return shape.dimensions.x + shape.dimensions.y * 0.5f;
+    }
+    return 0.0f;
+}
+
+void ConfigureSelectiveCcd(
+    PhysicsBodyDesc& description,
+    float entityScale
+) noexcept
+{
+    if (description.motionType != PhysicsMotionType::Dynamic)
+        return;
+
+    const float minimumFeature = MinimumShapeFeature(description.shape);
+    const float maximumExtent = MaximumShapeExtent(description.shape);
+    if (minimumFeature <= 0.0f || maximumExtent <= 0.0f)
+        return;
+
+    const float aspectRatio = maximumExtent / minimumFeature;
+    const bool smallBody = minimumFeature <= 0.35f * entityScale;
+    const bool slenderBody = aspectRatio >= 2.5f;
+    if (!smallBody && !slenderBody)
+        return;
+
+    description.enableCcd = true;
+    description.ccdMotionThreshold = std::max(
+        0.001f * entityScale,
+        minimumFeature * 0.5f
+    );
+    description.ccdSweptSphereRadius = std::max(
+        0.0005f * entityScale,
+        minimumFeature * 0.8f
+    );
 }
 
 glm::mat4 AnimatedBodyModelTransform(
@@ -615,6 +738,7 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             description.collisionMask = static_cast<std::uint16_t>(
                 ~definition.nonCollisionMask
             );
+            ConfigureSelectiveCcd(description, entity.scale);
             const std::size_t runtimeIndex = this->rigidBodies.size();
             RuntimeBody runtime;
             runtime.definition = &definition;
@@ -783,6 +907,7 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             }
             this->constraints.push_back(handle);
         }
+        this->BuildRecoveryChains();
         this->createdJointSnapshot = this->CaptureJointSnapshot("created");
         this->ResetToPose(transform);
         this->BuildAlignmentDiagnostics();
@@ -895,6 +1020,18 @@ void MmdPhysicsInstance::PrepareSimulationSubstep(
         runtime.lastAnimatedPosition = position;
         runtime.lastAnimatedRotation = rotation;
     }
+}
+
+void MmdPhysicsInstance::ObserveSimulationSubstep(float fixedTimeStep)
+{
+    if (!std::isfinite(fixedTimeStep) || fixedTimeStep <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "MMD recovery time step must be finite and positive"
+        );
+    }
+    if (!this->stabilizationFailed)
+        this->RecoverAbnormalChains(fixedTimeStep);
 }
 
 void MmdPhysicsInstance::FinishSimulation()
@@ -1181,6 +1318,12 @@ const MmdPhysicsAlignmentSummary&
 MmdPhysicsInstance::AlignmentSummary() const noexcept
 {
     return this->alignmentSummary;
+}
+
+const MmdPhysicsRecoveryStatistics&
+MmdPhysicsInstance::RecoveryStatistics() const noexcept
+{
+    return this->recoveryStatistics;
 }
 
 bool MmdPhysicsInstance::StabilizationFailed() const noexcept
@@ -1918,12 +2061,765 @@ void MmdPhysicsInstance::ResetToPose(const Transform& transform)
     this->pendingStabilizationSteps = 0U;
     this->resetTargetRefreshPending = true;
     this->suppressImpulseMorphOnce = true;
+    for (RecoveryChain& chain : this->recoveryChains)
+    {
+        chain.abnormalSeconds = 0.0f;
+        chain.cooldownSeconds = 0.0f;
+        chain.fuseWindowSeconds = 0.0f;
+        chain.fuseRemainingSeconds = 0.0f;
+        chain.recoveriesInWindow = 0U;
+        chain.fuseSuppressionLatched = false;
+        chain.pendingTrigger = {};
+    }
+    std::fill(
+        this->recoveryJointSeverityHistory.begin(),
+        this->recoveryJointSeverityHistory.end(),
+        0.0f
+    );
+    this->UpdateRecoveryStatistics();
     this->BuildAlignmentDiagnostics();
 
     if (this->rigidBodies.size() >= 32U)
     {
         this->LogJointSnapshot(beforeReset);
         this->LogJointSnapshot(afterReset);
+    }
+}
+
+
+void MmdPhysicsInstance::BuildRecoveryChains()
+{
+    const std::size_t bodyCount = this->rigidBodies.size();
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    this->recoveryChains.clear();
+    this->recoveryChainByBody.assign(bodyCount, invalidIndex);
+    this->recoveryAdjacency.assign(bodyCount, {});
+
+    std::vector<std::vector<std::size_t>> adjacency(bodyCount);
+    const std::span<const MmdJointDefinition> joints = this->asset->Joints();
+    for (std::size_t jointIndex = 0U; jointIndex < joints.size(); ++jointIndex)
+    {
+        const MmdJointDefinition& joint = joints[jointIndex];
+        if (joint.bodyA == InvalidRigidBodyIndex ||
+            joint.bodyB == InvalidRigidBodyIndex ||
+            joint.bodyA == joint.bodyB ||
+            static_cast<std::size_t>(joint.bodyA) >= bodyCount ||
+            static_cast<std::size_t>(joint.bodyB) >= bodyCount ||
+            IsWideTravelHelperJoint(joint))
+        {
+            continue;
+        }
+        adjacency[joint.bodyA].push_back(joint.bodyB);
+        adjacency[joint.bodyB].push_back(joint.bodyA);
+        this->recoveryAdjacency[joint.bodyA].push_back(RecoveryEdge{
+            static_cast<std::size_t>(joint.bodyB), jointIndex
+        });
+        this->recoveryAdjacency[joint.bodyB].push_back(RecoveryEdge{
+            static_cast<std::size_t>(joint.bodyA), jointIndex
+        });
+    }
+
+    std::vector<bool> visited(bodyCount, false);
+    std::vector<std::size_t> owner(bodyCount, invalidIndex);
+    for (std::size_t start = 0U; start < bodyCount; ++start)
+    {
+        if (visited[start])
+            continue;
+
+        std::vector<std::size_t> component;
+        std::vector<std::size_t> anchors;
+        std::queue<std::size_t> discover;
+        discover.push(start);
+        visited[start] = true;
+        while (!discover.empty())
+        {
+            const std::size_t index = discover.front();
+            discover.pop();
+            component.push_back(index);
+            if (this->rigidBodies[index].definition->mode ==
+                MmdRigidBodyMode::FollowBone)
+            {
+                anchors.push_back(index);
+            }
+            for (const std::size_t neighbor : adjacency[index])
+            {
+                if (!visited[neighbor])
+                {
+                    visited[neighbor] = true;
+                    discover.push(neighbor);
+                }
+            }
+        }
+
+        std::queue<std::size_t> propagate;
+        if (anchors.empty())
+        {
+            owner[start] = start;
+            propagate.push(start);
+        }
+        else
+        {
+            for (const std::size_t anchor : anchors)
+            {
+                owner[anchor] = anchor;
+                propagate.push(anchor);
+            }
+        }
+        while (!propagate.empty())
+        {
+            const std::size_t index = propagate.front();
+            propagate.pop();
+            for (const std::size_t neighbor : adjacency[index])
+            {
+                if (owner[neighbor] == invalidIndex)
+                {
+                    owner[neighbor] = owner[index];
+                    propagate.push(neighbor);
+                }
+            }
+        }
+        for (const std::size_t index : component)
+        {
+            if (owner[index] == invalidIndex)
+                owner[index] = start;
+        }
+
+        for (const std::size_t candidateOwner : component)
+        {
+            const bool alreadyCreated = std::any_of(
+                this->recoveryChains.begin(),
+                this->recoveryChains.end(),
+                [candidateOwner](const RecoveryChain& chain)
+                {
+                    return chain.anchorBodyIndex == candidateOwner;
+                }
+            );
+            if (alreadyCreated)
+                continue;
+
+            bool hasDynamicBody = false;
+            for (const std::size_t index : component)
+            {
+                if (owner[index] == candidateOwner &&
+                    this->rigidBodies[index].definition->mode !=
+                        MmdRigidBodyMode::FollowBone)
+                {
+                    hasDynamicBody = true;
+                    break;
+                }
+            }
+            if (!hasDynamicBody)
+                continue;
+
+            RecoveryChain chain;
+            chain.anchorBodyIndex = candidateOwner;
+            const std::size_t chainIndex = this->recoveryChains.size();
+            for (const std::size_t index : component)
+            {
+                if (owner[index] == candidateOwner)
+                {
+                    chain.bodyIndices.push_back(index);
+                    this->recoveryChainByBody[index] = chainIndex;
+                }
+            }
+            this->recoveryChains.push_back(std::move(chain));
+        }
+    }
+
+    for (std::size_t jointIndex = 0U; jointIndex < joints.size(); ++jointIndex)
+    {
+        const MmdJointDefinition& joint = joints[jointIndex];
+        if (joint.bodyA == InvalidRigidBodyIndex ||
+            joint.bodyB == InvalidRigidBodyIndex ||
+            joint.bodyA == joint.bodyB ||
+            static_cast<std::size_t>(joint.bodyA) >= bodyCount ||
+            static_cast<std::size_t>(joint.bodyB) >= bodyCount ||
+            IsWideTravelHelperJoint(joint))
+        {
+            continue;
+        }
+
+        const std::size_t chainA = this->recoveryChainByBody[joint.bodyA];
+        const std::size_t chainB = this->recoveryChainByBody[joint.bodyB];
+        const auto appendJoint = [this, jointIndex, invalidIndex](
+            std::size_t chainIndex
+        )
+        {
+            if (chainIndex == invalidIndex ||
+                chainIndex >= this->recoveryChains.size())
+            {
+                return;
+            }
+            std::vector<std::size_t>& indices =
+                this->recoveryChains[chainIndex].jointIndices;
+            if (std::find(indices.begin(), indices.end(), jointIndex) ==
+                indices.end())
+            {
+                indices.push_back(jointIndex);
+            }
+        };
+        appendJoint(chainA);
+        appendJoint(chainB);
+    }
+
+    this->recoveryJointSeverityHistory.assign(joints.size(), 0.0f);
+    this->recoveryStatistics = {};
+    this->recoveryStatistics.chainCount = this->recoveryChains.size();
+}
+
+void MmdPhysicsInstance::RecoverAbnormalChains(float fixedTimeStep)
+{
+    if (this->recoveryChains.empty())
+        return;
+
+    ++this->recoveryStatistics.physicsTickCount;
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    const EntityFrame entity = ExtractEntityFrame(*this->transform);
+    const float scale = entity.scale;
+
+    for (RecoveryChain& chain : this->recoveryChains)
+    {
+        chain.cooldownSeconds = std::max(
+            0.0f,
+            chain.cooldownSeconds - fixedTimeStep
+        );
+        const bool fuseWasActive = chain.fuseRemainingSeconds > 0.0f;
+        chain.fuseRemainingSeconds = std::max(
+            0.0f,
+            chain.fuseRemainingSeconds - fixedTimeStep
+        );
+        chain.fuseWindowSeconds = std::max(
+            0.0f,
+            chain.fuseWindowSeconds - fixedTimeStep
+        );
+        if (fuseWasActive && chain.fuseRemainingSeconds <= 0.0f)
+        {
+            chain.recoveriesInWindow = 0U;
+            chain.fuseWindowSeconds = 0.0f;
+            chain.fuseSuppressionLatched = false;
+        }
+        else if (chain.fuseRemainingSeconds <= 0.0f &&
+            chain.fuseWindowSeconds <= 0.0f)
+        {
+            chain.recoveriesInWindow = 0U;
+            chain.fuseSuppressionLatched = false;
+        }
+    }
+
+    std::vector<PhysicsBodyState> states;
+    std::vector<glm::mat4> bodyModels;
+    std::vector<bool> finite;
+    states.reserve(this->rigidBodies.size());
+    bodyModels.reserve(this->rigidBodies.size());
+    finite.reserve(this->rigidBodies.size());
+    std::vector<RecoveryTrigger> triggers(this->recoveryChains.size());
+
+    const auto mark = [this, invalidIndex, &triggers](
+        std::size_t chainIndex,
+        const RecoveryTrigger& trigger
+    )
+    {
+        if (chainIndex == invalidIndex ||
+            chainIndex >= this->recoveryChains.size())
+        {
+            return;
+        }
+        RecoveryTrigger& current = triggers[chainIndex];
+        const bool replace = current.reason == MmdPhysicsRecoveryReason::None ||
+            (trigger.immediate && !current.immediate) ||
+            (trigger.immediate == current.immediate &&
+                trigger.score > current.score);
+        if (replace)
+            current = trigger;
+    };
+
+    for (std::size_t index = 0U; index < this->rigidBodies.size(); ++index)
+    {
+        const RuntimeBody& runtime = this->rigidBodies[index];
+        const PhysicsBodyState state = this->world->State(runtime.handle);
+        states.push_back(state);
+        const bool stateFinite =
+            std::isfinite(state.position.x) &&
+            std::isfinite(state.position.y) &&
+            std::isfinite(state.position.z) &&
+            std::isfinite(state.rotation.w) &&
+            std::isfinite(state.rotation.x) &&
+            std::isfinite(state.rotation.y) &&
+            std::isfinite(state.rotation.z) &&
+            std::isfinite(state.linearVelocity.x) &&
+            std::isfinite(state.linearVelocity.y) &&
+            std::isfinite(state.linearVelocity.z) &&
+            std::isfinite(state.angularVelocity.x) &&
+            std::isfinite(state.angularVelocity.y) &&
+            std::isfinite(state.angularVelocity.z);
+        finite.push_back(stateFinite);
+        bodyModels.push_back(
+            stateFinite ? WorldToModel(state, entity) : glm::mat4(1.0f)
+        );
+
+        const std::size_t chainIndex = this->recoveryChainByBody[index];
+        if (!stateFinite)
+        {
+            RecoveryTrigger trigger;
+            trigger.reason = MmdPhysicsRecoveryReason::NonFinite;
+            trigger.seedBodyIndex = index;
+            trigger.immediate = true;
+            trigger.score = 1000.0f;
+            mark(chainIndex, trigger);
+            continue;
+        }
+        if (runtime.definition->mode == MmdRigidBodyMode::FollowBone)
+            continue;
+
+        const float linearSpeed = glm::length(state.linearVelocity);
+        const float angularSpeed = glm::length(state.angularVelocity);
+        if (linearSpeed > RecoveryHardLinearSpeed * scale ||
+            angularSpeed > RecoveryHardAngularSpeed)
+        {
+            RecoveryTrigger trigger;
+            trigger.reason = MmdPhysicsRecoveryReason::ExtremeVelocity;
+            trigger.seedBodyIndex = index;
+            trigger.immediate = true;
+            trigger.linearSpeed = linearSpeed;
+            trigger.angularSpeed = angularSpeed;
+            trigger.score = 900.0f + std::max(
+                linearSpeed / (RecoveryHardLinearSpeed * scale),
+                angularSpeed / RecoveryHardAngularSpeed
+            );
+            mark(chainIndex, trigger);
+        }
+        else if (linearSpeed > RecoveryLinearSpeed * scale ||
+            angularSpeed > RecoveryAngularSpeed)
+        {
+            RecoveryTrigger trigger;
+            trigger.reason = MmdPhysicsRecoveryReason::HighVelocity;
+            trigger.seedBodyIndex = index;
+            trigger.linearSpeed = linearSpeed;
+            trigger.angularSpeed = angularSpeed;
+            trigger.score = 300.0f + std::max(
+                linearSpeed / (RecoveryLinearSpeed * scale),
+                angularSpeed / RecoveryAngularSpeed
+            );
+            mark(chainIndex, trigger);
+        }
+
+        const RigidTransform animated = ModelToWorld(
+            runtime.prePhysicsAnimatedModelTransform,
+            entity
+        );
+        const float bodySize = CharacteristicBodySize(*runtime.definition) *
+            scale;
+        const float runawayDistance = std::max(
+            RecoveryRunawayDistance * scale,
+            bodySize * 12.0f
+        );
+        const float hardRunawayDistance = std::max(
+            RecoveryHardRunawayDistance * scale,
+            bodySize * 24.0f
+        );
+        const float distanceFromAnimation = glm::distance(
+            state.position,
+            animated.position
+        );
+        if (distanceFromAnimation > runawayDistance)
+        {
+            RecoveryTrigger trigger;
+            trigger.reason = MmdPhysicsRecoveryReason::Runaway;
+            trigger.seedBodyIndex = index;
+            trigger.immediate = distanceFromAnimation > hardRunawayDistance;
+            trigger.positionError = distanceFromAnimation;
+            trigger.score = (trigger.immediate ? 800.0f : 400.0f) +
+                distanceFromAnimation / runawayDistance;
+            mark(chainIndex, trigger);
+        }
+    }
+
+    const std::span<const MmdJointDefinition> joints = this->asset->Joints();
+    for (std::size_t jointIndex = 0U; jointIndex < joints.size(); ++jointIndex)
+    {
+        const MmdJointDefinition& joint = joints[jointIndex];
+        if (joint.bodyA == InvalidRigidBodyIndex ||
+            joint.bodyB == InvalidRigidBodyIndex ||
+            joint.bodyA == joint.bodyB ||
+            static_cast<std::size_t>(joint.bodyA) >= bodyModels.size() ||
+            static_cast<std::size_t>(joint.bodyB) >= bodyModels.size() ||
+            IsWideTravelHelperJoint(joint))
+        {
+            continue;
+        }
+
+        const std::size_t chainA = this->recoveryChainByBody[joint.bodyA];
+        const std::size_t chainB = this->recoveryChainByBody[joint.bodyB];
+        if (!finite[joint.bodyA] || !finite[joint.bodyB])
+        {
+            RecoveryTrigger triggerA;
+            triggerA.reason = MmdPhysicsRecoveryReason::NonFiniteJoint;
+            triggerA.seedBodyIndex = joint.bodyA;
+            triggerA.jointIndex = jointIndex;
+            triggerA.immediate = true;
+            triggerA.score = 950.0f;
+            RecoveryTrigger triggerB = triggerA;
+            triggerB.seedBodyIndex = joint.bodyB;
+            mark(chainA, triggerA);
+            mark(chainB, triggerB);
+            continue;
+        }
+
+        const glm::mat4 frameA = glm::inverse(
+            this->asset->RigidBodyAt(joint.bodyA).modelBindTransform
+        ) * joint.modelBindTransform;
+        const glm::mat4 frameB = glm::inverse(
+            this->asset->RigidBodyAt(joint.bodyB).modelBindTransform
+        ) * joint.modelBindTransform;
+        const glm::mat4 anchorA = bodyModels[joint.bodyA] * frameA;
+        const glm::mat4 anchorB = bodyModels[joint.bodyB] * frameB;
+        const auto [positionError, rotationError] =
+            TransformError(anchorA, anchorB);
+        (void)rotationError;
+        const glm::mat4 relative = glm::inverse(anchorA) * anchorB;
+        const glm::vec3 linearViolation = LinearLimitViolation(
+            joint,
+            glm::vec3(relative[3])
+        );
+        const glm::vec3 angularViolation = AngularLimitViolation(
+            joint,
+            EulerXyzFromRotation(relative)
+        );
+        const float maximumLinearViolation = std::max({
+            linearViolation.x,
+            linearViolation.y,
+            linearViolation.z
+        });
+        const float maximumAngularViolationDegrees = glm::degrees(std::max({
+            angularViolation.x,
+            angularViolation.y,
+            angularViolation.z
+        }));
+        const float severity = std::max({
+            positionError / (RecoveryJointSeparation * scale),
+            maximumLinearViolation / (RecoveryLinearViolation * scale),
+            maximumAngularViolationDegrees /
+                RecoveryAngularViolationDegrees
+        });
+        const float previousSeverity =
+            this->recoveryJointSeverityHistory[jointIndex];
+        this->recoveryJointSeverityHistory[jointIndex] = severity;
+        const bool hard =
+            positionError > RecoveryHardJointSeparation * scale ||
+            maximumLinearViolation >
+                RecoveryHardLinearViolation * scale ||
+            maximumAngularViolationDegrees >
+                RecoveryHardAngularViolationDegrees;
+        const bool sustainedCandidate = severity > 1.0f &&
+            (severity >= 1.5f ||
+                previousSeverity >= 1.0f ||
+                severity > previousSeverity + RecoverySeverityGrowthTolerance);
+        if (!hard && !sustainedCandidate)
+            continue;
+
+        RecoveryTrigger triggerA;
+        triggerA.reason = MmdPhysicsRecoveryReason::JointViolation;
+        triggerA.seedBodyIndex = joint.bodyA;
+        triggerA.jointIndex = jointIndex;
+        // Joint solver error is deliberately never an immediate-reset reason.
+        // Even large finite errors must persist in physical time; this avoids
+        // mistaking one iterative solver excursion for a broken chain.
+        triggerA.immediate = false;
+        triggerA.score = (hard ? 600.0f : 200.0f) + severity;
+        triggerA.positionError = positionError;
+        triggerA.linearViolation = maximumLinearViolation;
+        triggerA.angularViolationDegrees = maximumAngularViolationDegrees;
+        RecoveryTrigger triggerB = triggerA;
+        triggerB.seedBodyIndex = joint.bodyB;
+        mark(chainA, triggerA);
+        mark(chainB, triggerB);
+    }
+
+    for (std::size_t chainIndex = 0U;
+         chainIndex < this->recoveryChains.size();
+         ++chainIndex)
+    {
+        RecoveryChain& chain = this->recoveryChains[chainIndex];
+        const RecoveryTrigger& trigger = triggers[chainIndex];
+        if (trigger.reason == MmdPhysicsRecoveryReason::None)
+        {
+            chain.abnormalSeconds = 0.0f;
+            chain.pendingTrigger = {};
+            if (chain.fuseRemainingSeconds <= 0.0f)
+                chain.fuseSuppressionLatched = false;
+            continue;
+        }
+
+        const bool sameEpisode =
+            chain.pendingTrigger.reason == trigger.reason &&
+            chain.pendingTrigger.seedBodyIndex == trigger.seedBodyIndex &&
+            chain.pendingTrigger.jointIndex == trigger.jointIndex;
+        if (sameEpisode)
+        {
+            chain.abnormalSeconds += fixedTimeStep;
+            if (trigger.score > chain.pendingTrigger.score)
+                chain.pendingTrigger = trigger;
+        }
+        else
+        {
+            chain.abnormalSeconds = fixedTimeStep;
+            chain.pendingTrigger = trigger;
+            chain.fuseSuppressionLatched = false;
+        }
+
+        const float persistence =
+            trigger.reason == MmdPhysicsRecoveryReason::HighVelocity
+                ? RecoveryHighVelocityPersistenceSeconds
+                : RecoveryPersistenceSeconds;
+        const bool shouldRecover = trigger.immediate ||
+            chain.abnormalSeconds >= persistence;
+        if (!shouldRecover)
+            continue;
+
+        const bool emergencyNonFinite =
+            trigger.reason == MmdPhysicsRecoveryReason::NonFinite ||
+            trigger.reason == MmdPhysicsRecoveryReason::NonFiniteJoint;
+        if (chain.fuseRemainingSeconds > 0.0f && !emergencyNonFinite)
+        {
+            if (!chain.fuseSuppressionLatched)
+            {
+                chain.fuseSuppressionLatched = true;
+                ++this->recoveryStatistics.suppressedRecoveryCount;
+                std::cout << "[MMD RECOVERY FUSE] chain=" << chainIndex
+                          << " reason="
+                          << RecoveryReasonName(trigger.reason)
+                          << " remainingMs="
+                          << chain.fuseRemainingSeconds * 1000.0f
+                          << " suppressed="
+                          << this->recoveryStatistics.suppressedRecoveryCount
+                          << std::endl;
+            }
+            continue;
+        }
+
+        if (!trigger.immediate && chain.cooldownSeconds > 0.0f)
+            continue;
+
+        this->RecoverChain(chainIndex, chain.pendingTrigger);
+        chain.abnormalSeconds = 0.0f;
+        chain.pendingTrigger = {};
+        chain.cooldownSeconds = RecoveryCooldownSeconds;
+        chain.fuseSuppressionLatched = false;
+
+        if (chain.fuseWindowSeconds <= 0.0f)
+        {
+            chain.fuseWindowSeconds = RecoveryFuseWindowSeconds;
+            chain.recoveriesInWindow = 0U;
+        }
+        ++chain.recoveriesInWindow;
+        if (chain.recoveriesInWindow >= RecoveryFuseLimit)
+        {
+            chain.fuseRemainingSeconds = RecoveryFuseDurationSeconds;
+            ++this->recoveryStatistics.totalFuseTrips;
+            std::cout << "[MMD RECOVERY FUSE] chain=" << chainIndex
+                      << " tripped=true durationMs="
+                      << RecoveryFuseDurationSeconds * 1000.0f
+                      << " recoveriesInWindow="
+                      << chain.recoveriesInWindow
+                      << " totalTrips="
+                      << this->recoveryStatistics.totalFuseTrips
+                      << std::endl;
+        }
+    }
+
+    this->UpdateRecoveryStatistics();
+}
+
+std::vector<std::size_t> MmdPhysicsInstance::CollectRecoveryRegion(
+    std::size_t chainIndex,
+    const RecoveryTrigger& trigger
+) const
+{
+    std::vector<std::size_t> region;
+    if (chainIndex >= this->recoveryChains.size())
+        return region;
+
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    std::vector<bool> visited(this->rigidBodies.size(), false);
+    std::queue<std::pair<std::size_t, std::size_t>> pending;
+    const auto enqueue = [&](std::size_t bodyIndex, std::size_t depth)
+    {
+        if (bodyIndex >= this->rigidBodies.size() || visited[bodyIndex] ||
+            this->recoveryChainByBody[bodyIndex] != chainIndex)
+        {
+            return;
+        }
+        visited[bodyIndex] = true;
+        pending.emplace(bodyIndex, depth);
+    };
+
+    if (trigger.jointIndex != invalidIndex &&
+        trigger.jointIndex < this->asset->JointCount())
+    {
+        const MmdJointDefinition& joint =
+            this->asset->JointAt(trigger.jointIndex);
+        if (joint.bodyA != InvalidRigidBodyIndex)
+            enqueue(joint.bodyA, 0U);
+        if (joint.bodyB != InvalidRigidBodyIndex)
+            enqueue(joint.bodyB, 0U);
+    }
+    enqueue(trigger.seedBodyIndex, 0U);
+    if (pending.empty())
+    {
+        for (const std::size_t bodyIndex :
+             this->recoveryChains[chainIndex].bodyIndices)
+        {
+            if (this->rigidBodies[bodyIndex].definition->mode !=
+                MmdRigidBodyMode::FollowBone)
+            {
+                enqueue(bodyIndex, 0U);
+                break;
+            }
+        }
+    }
+
+    std::size_t dynamicBodyCount = 0U;
+    while (!pending.empty() && region.size() < RecoveryMaximumTotalBodies)
+    {
+        const auto [bodyIndex, depth] = pending.front();
+        pending.pop();
+        const bool dynamic = this->rigidBodies[bodyIndex].definition->mode !=
+            MmdRigidBodyMode::FollowBone;
+        if (dynamic && dynamicBodyCount >= RecoveryMaximumDynamicBodies)
+            continue;
+
+        region.push_back(bodyIndex);
+        if (dynamic)
+            ++dynamicBodyCount;
+        if (depth >= RecoveryLocalGraphRadius)
+            continue;
+        if (!dynamic && depth > 0U)
+            continue;
+
+        for (const RecoveryEdge& edge : this->recoveryAdjacency[bodyIndex])
+            enqueue(edge.bodyIndex, depth + 1U);
+    }
+
+    std::sort(region.begin(), region.end());
+    region.erase(std::unique(region.begin(), region.end()), region.end());
+    return region;
+}
+
+void MmdPhysicsInstance::RecoverChain(
+    std::size_t chainIndex,
+    const RecoveryTrigger& trigger
+)
+{
+    if (chainIndex >= this->recoveryChains.size())
+        return;
+    RecoveryChain& chain = this->recoveryChains[chainIndex];
+    const std::vector<std::size_t> region = this->CollectRecoveryRegion(
+        chainIndex,
+        trigger
+    );
+    if (region.empty())
+        return;
+
+    const EntityFrame entity = ExtractEntityFrame(*this->transform);
+    std::size_t anchorIndex = chain.anchorBodyIndex;
+    if (anchorIndex >= this->rigidBodies.size())
+        anchorIndex = region.front();
+
+    const RuntimeBody& anchor = this->rigidBodies[anchorIndex];
+    const glm::mat4 componentDelta =
+        anchor.prePhysicsAnimatedModelTransform *
+        glm::inverse(anchor.definition->modelBindTransform);
+
+    for (const std::size_t bodyIndex : region)
+    {
+        RuntimeBody& runtime = this->rigidBodies[bodyIndex];
+        const glm::mat4 targetModel =
+            runtime.definition->mode == MmdRigidBodyMode::FollowBone
+                ? runtime.prePhysicsAnimatedModelTransform
+                : componentDelta * runtime.definition->modelBindTransform;
+        const RigidTransform target = ModelToWorld(targetModel, entity);
+        this->world->SetTransform(
+            runtime.handle,
+            target.position,
+            target.rotation,
+            true
+        );
+        runtime.lastAnimatedPosition = target.position;
+        runtime.lastAnimatedRotation = target.rotation;
+        runtime.frameStartAnimatedPosition = target.position;
+        runtime.frameStartAnimatedRotation = target.rotation;
+        runtime.frameTargetAnimatedPosition = target.position;
+        runtime.frameTargetAnimatedRotation = target.rotation;
+        runtime.hasAnimatedTransform = true;
+    }
+
+    ++this->recoveryStatistics.totalRecoveries;
+    this->recoveryStatistics.recoveredBodyCount += region.size();
+    this->recoveryStatistics.largestRecoveryRegion = std::max(
+        this->recoveryStatistics.largestRecoveryRegion,
+        region.size()
+    );
+    this->recoveryStatistics.lastRecoveredChain = chainIndex;
+    this->recoveryStatistics.lastRecoveredBodyCount = region.size();
+    this->recoveryStatistics.lastSeedBodyIndex = trigger.seedBodyIndex;
+    this->recoveryStatistics.lastJointIndex = trigger.jointIndex;
+    this->recoveryStatistics.lastReason = trigger.reason;
+    this->recoveryStatistics.lastAbnormalSeconds = chain.abnormalSeconds;
+    this->recoveryStatistics.lastPositionError = trigger.positionError;
+    this->recoveryStatistics.lastLinearViolation = trigger.linearViolation;
+    this->recoveryStatistics.lastAngularViolationDegrees =
+        trigger.angularViolationDegrees;
+    this->recoveryStatistics.lastLinearSpeed = trigger.linearSpeed;
+    this->recoveryStatistics.lastAngularSpeed = trigger.angularSpeed;
+
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    std::cout << "[MMD RECOVERY] chain=" << chainIndex
+              << " localBodies=" << region.size()
+              << " chainBodies=" << chain.bodyIndices.size()
+              << " reason=" << RecoveryReasonName(trigger.reason)
+              << " seedBody=" << trigger.seedBodyIndex;
+    if (trigger.seedBodyIndex < this->rigidBodies.size())
+    {
+        std::cout << ":\""
+                  << this->rigidBodies[trigger.seedBodyIndex].definition->name
+                  << "\"";
+    }
+    std::cout << " joint=";
+    if (trigger.jointIndex == invalidIndex ||
+        trigger.jointIndex >= this->asset->JointCount())
+    {
+        std::cout << "none";
+    }
+    else
+    {
+        std::cout << trigger.jointIndex << ":\""
+                  << this->asset->JointAt(trigger.jointIndex).name
+                  << "\"";
+    }
+    std::cout << " abnormalMs=" << chain.abnormalSeconds * 1000.0f
+              << " positionError=" << trigger.positionError
+              << " linearViolation=" << trigger.linearViolation
+              << " angularViolationDeg="
+              << trigger.angularViolationDegrees
+              << " linearSpeed=" << trigger.linearSpeed
+              << " angularSpeed=" << trigger.angularSpeed
+              << " total=" << this->recoveryStatistics.totalRecoveries
+              << std::endl;
+}
+
+void MmdPhysicsInstance::UpdateRecoveryStatistics() noexcept
+{
+    this->recoveryStatistics.pendingAbnormalChainCount = 0U;
+    this->recoveryStatistics.cooldownChainCount = 0U;
+    this->recoveryStatistics.fusedChainCount = 0U;
+    for (const RecoveryChain& chain : this->recoveryChains)
+    {
+        if (chain.abnormalSeconds > 0.0f)
+            ++this->recoveryStatistics.pendingAbnormalChainCount;
+        if (chain.cooldownSeconds > 0.0f)
+            ++this->recoveryStatistics.cooldownChainCount;
+        if (chain.fuseRemainingSeconds > 0.0f)
+            ++this->recoveryStatistics.fusedChainCount;
     }
 }
 

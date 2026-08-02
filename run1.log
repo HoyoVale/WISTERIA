@@ -1,0 +1,641 @@
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- Including Win32 support
+-- Shared libraries disabled
+-- compiling zlib from sources
+-- Build an import-only version of Assimp.
+-- Enabled importer formats: OBJ GLTF MMD
+-- Disabled importer formats: AMF 3DS AC ASE ASSBIN B3D BVH COLLADA DXF CSM HMP IRRMESH IQM IRR LWO LWS M3D MD2 MD3 MD5 MDC MDL NFF NDO OFF OGRE OPENGEX PLY MS3D COB BLEND IFC XGL FBX Q3D Q3BSP RAW SIB SMD STL TERRAGEN 3D X X3D 3MF
+-- Configuring done
+-- Generating done
+-- Build files have been written to: C:/Users/hoyo/Desktop/temp/learn/FGGP/build
+閫傜敤浜?.NET Framework MSBuild 鐗堟湰 17.14.23+b0019275e
+
+  glfw.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\third-party\glfw\src\RelWithDebInfo\glfw3.lib
+  LinearMath.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\third-party\bullet3\LinearMath\RelWithDebInfo\LinearMath.lib
+  BulletDynamics.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\third-party\bullet3\BulletDynamics\RelWithDebInfo\BulletDynamics.lib
+  zlibstatic.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\third-party\assimp\contrib\zlib\RelWithDebInfo\zlibstatic.lib
+  BulletCollision.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\third-party\bullet3\BulletCollision\RelWithDebInfo\BulletCollision.lib
+  glad.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\RelWithDebInfo\glad.lib
+  assimp.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\third-party\assimp\lib\RelWithDebInfo\assimp-vc143-mt.lib
+  wisteria_core.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\RelWithDebInfo\wisteria_core.lib
+  wisteria.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\RelWithDebInfo\wisteria.exe
+  wisteria_tests.vcxproj -> C:\Users\hoyo\Desktop\temp\learn\FGGP\build\RelWithDebInfo\wisteria_tests.exe
+[INFO] Full-body demo loaded VMD: C:\Users\hoyo\Desktop\temp\learn\FGGP\assets\motions\皮卡皮卡皮卡丘+\身体动作.vmd
+[MMD INIT STAGE] stage=before-reset steps=0 finite=true maxJointPos=7.7485e-06 maxJointRotDeg=0 maxLinearViolation=9.53674e-06 maxAngularViolationDeg=3.24434e-05 stabilizationLinearViolation=9.53674e-06 stabilizationAngularViolationDeg=3.24434e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=338 joint="Skirt_1_1" bodyA="Skirt_0_1" bodyB="Skirt_1_1" linearViolationJointIndex=338 linearViolationJoint="Skirt_1_1" angularViolationJointIndex=44 angularViolationJoint="B"
+[MMD INIT STAGE] stage=after-reset steps=0 finite=true maxJointPos=12.6232 maxJointRotDeg=94.7784 maxLinearViolation=9.53674e-06 maxAngularViolationDeg=97.5158 stabilizationLinearViolation=9.53674e-06 stabilizationAngularViolationDeg=3.31905e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=995 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=398 linearViolationJoint="B" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD ALIGN] bodies=732 joints=1029 bindSpace=identity skinBindMax=1.19209e-07 bindPosMax=2.98023e-08 bindRotMaxDeg=0 createBulletPosMax=1.19209e-07 createBulletRotMaxDeg=0 postResetPosMax=1.19209e-07 postResetRotMaxDeg=0.0395647
+[INFO] MMD full-body demo: demoExternalVmd | tracks=55 | rigidBodies=732
+[PHYSICS STATS] build=RelWithDebInfo fps=0 frameMs=0 physicsMs=0 peakPhysicsMs=0 fixedMs=16.6667 substeps=0 peakSubsteps=0 stabilizationSubsteps=0 accumulatorMs=0 droppedMs=0 peakDroppedMs=0 catchUpLimited=false bodies=0 static=0 dynamic=0 kinematic=0 ccdBodies=0 boxMarginMin=0 boxMarginMax=0 solverIterations=0 splitImpulse=false splitImpulseThreshold=0 recoveryChains=11 recoveries=0 recoveredBodies=0 pendingRecoveryChains=0 recoveryCooldownChains=0 active=0 sleeping=0 constraints=0 manifolds=0 contacts=0 peakContacts=0 finite=true
+[MMD INIT STAGE] stage=before-reset steps=0 finite=true maxJointPos=12.6232 maxJointRotDeg=94.7784 maxLinearViolation=9.53674e-06 maxAngularViolationDeg=97.5158 stabilizationLinearViolation=9.53674e-06 stabilizationAngularViolationDeg=3.31905e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=995 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=398 linearViolationJoint="B" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT STAGE] stage=after-reset steps=0 finite=true maxJointPos=12.6227 maxJointRotDeg=94.7756 maxLinearViolation=6.67572e-06 maxAngularViolationDeg=97.512 stabilizationLinearViolation=6.67572e-06 stabilizationAngularViolationDeg=2.73208e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=220 linearViolationJoint="Skirt_2_1" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT STAGE] stage=pre-warmup-reset steps=0 finite=true maxJointPos=12.6227 maxJointRotDeg=94.7756 maxLinearViolation=6.67572e-06 maxAngularViolationDeg=97.512 stabilizationLinearViolation=6.67572e-06 stabilizationAngularViolationDeg=2.73208e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=220 linearViolationJoint="Skirt_2_1" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT] warmup=not_required maxLinearViolation=6.67572e-06 maxAngularViolationDeg=2.73208e-05
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=1
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=2
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=3
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=4
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=5
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=6
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=7
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=8
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=9
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=10
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=11
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=12
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=13
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=14
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=15
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=16
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=17
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=18
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=19
+[PHYSICS STATS] build=RelWithDebInfo fps=386.832 frameMs=2.5851 physicsMs=1.1384 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=14.7037 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=19 recoveredBodies=5402 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3963 contacts=2630 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=20
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=21
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=22
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=23
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=24
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=25
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=26
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=27
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=28
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=29
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=30
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=31
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=32
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=33
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=34
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=35
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=36
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=37
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=38
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=39
+[PHYSICS STATS] build=RelWithDebInfo fps=564.589 frameMs=1.7712 physicsMs=0.8308 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=15.8786 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=39 recoveredBodies=11092 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3977 contacts=2552 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=40
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=41
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=42
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=43
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=44
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=45
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=46
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=47
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=48
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=49
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=50
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=51
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=52
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=53
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=54
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=55
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=56
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=57
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=58
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=59
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=60
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=61
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=62
+[PHYSICS STATS] build=RelWithDebInfo fps=576.901 frameMs=1.7334 physicsMs=6.1584 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=0.917945 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=62 recoveredBodies=17355 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4033 contacts=2606 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=63
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=64
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=65
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=66
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=67
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=68
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=69
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=70
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=71
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=72
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=73
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=74
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=75
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=76
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=77
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=78
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=79
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=80
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=81
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=82
+[PHYSICS STATS] build=RelWithDebInfo fps=589.24 frameMs=1.6971 physicsMs=7.3697 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=1.08019 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=82 recoveredBodies=23038 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3889 contacts=2419 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=83
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=84
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=85
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=86
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=87
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=88
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=89
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=90
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=91
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=92
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=93
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=94
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=95
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=96
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=97
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=98
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=99
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=100
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=101
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=102
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=103
+[PHYSICS STATS] build=RelWithDebInfo fps=269.549 frameMs=3.7099 physicsMs=6.1097 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=2.65094 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=103 recoveredBodies=29009 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3792 contacts=2345 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=104
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=105
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=106
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=107
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=108
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=109
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=110
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=111
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=112
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=113
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=114
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=115
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=116
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=117
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=118
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=119
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=120
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=121
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=122
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=123
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=124
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=125
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=126
+[PHYSICS STATS] build=RelWithDebInfo fps=582.174 frameMs=1.7177 physicsMs=0.7904 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=9.09609 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=126 recoveredBodies=35002 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4032 contacts=2620 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=127
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=128
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=129
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=130
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=131
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=132
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=133
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=134
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=135
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=136
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=137
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=138
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=139
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=140
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=141
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=142
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=143
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=144
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=145
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=146
+[MMD RECOVERY] chain=8 bodies=11 reason=joint_violation total=147
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=148
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=149
+[PHYSICS STATS] build=RelWithDebInfo fps=124.727 frameMs=8.0175 physicsMs=0.8099 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=9.66514 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=149 recoveredBodies=41265 pendingRecoveryChains=0 recoveryCooldownChains=3 active=732 sleeping=0 constraints=1026 manifolds=4341 contacts=3014 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=150
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=151
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=152
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=153
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=154
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=155
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=156
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=157
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=158
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=159
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=160
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=161
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=162
+[PHYSICS STATS] build=RelWithDebInfo fps=214.445 frameMs=4.6632 physicsMs=7.4874 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=1.31648 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=162 recoveredBodies=44960 pendingRecoveryChains=2 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3714 contacts=2385 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=163
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=164
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=165
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=166
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=167
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=168
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=169
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=170
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=171
+[PHYSICS STATS] build=RelWithDebInfo fps=93.5778 frameMs=10.6863 physicsMs=1.4344 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=11.0588 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=171 recoveredBodies=47524 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3185 contacts=1663 peakContacts=3037 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=172
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=173
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=174
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=175
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=176
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=177
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=178
+[MMD RECOVERY] chain=1 bodies=281 reason=high_velocity total=179
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=180
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=181
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=182
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=183
+[PHYSICS STATS] build=RelWithDebInfo fps=566.251 frameMs=1.766 physicsMs=0.8443 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=15.2067 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=183 recoveredBodies=50661 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4067 contacts=2645 peakContacts=3044 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=184
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=185
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=186
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=187
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=188
+[MMD RECOVERY] chain=8 bodies=11 reason=joint_violation total=189
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=190
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=191
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=192
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=193
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=194
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=195
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=196
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=197
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=198
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=199
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=200
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=201
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=202
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=203
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=204
+[PHYSICS STATS] build=RelWithDebInfo fps=499.5 frameMs=2.002 physicsMs=0.9291 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=16.3112 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=204 recoveredBodies=56355 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3824 contacts=2342 peakContacts=3044 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=205
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=206
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=207
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=208
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=209
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=210
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=211
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=212
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=213
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=214
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=215
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=216
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=217
+[MMD INIT STAGE] stage=before-reset steps=0 finite=true maxJointPos=15.8205 maxJointRotDeg=76.7387 maxLinearViolation=0.928468 maxAngularViolationDeg=61.3679 stabilizationLinearViolation=0.928468 stabilizationAngularViolationDeg=57.7098 ignoredWideTravelJoints=75 severeJoints=10 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=293 linearViolationJoint="Skirt_2_1B" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT STAGE] stage=after-reset steps=0 finite=true maxJointPos=12.6207 maxJointRotDeg=94.764 maxLinearViolation=9.53674e-06 maxAngularViolationDeg=97.4964 stabilizationLinearViolation=9.53674e-06 stabilizationAngularViolationDeg=3.56451e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=9 linearViolationJoint="Ctr_F_HairNewB_02" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT STAGE] stage=pre-warmup-reset steps=0 finite=true maxJointPos=12.6207 maxJointRotDeg=94.764 maxLinearViolation=9.53674e-06 maxAngularViolationDeg=97.4964 stabilizationLinearViolation=9.53674e-06 stabilizationAngularViolationDeg=3.56451e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=9 linearViolationJoint="Ctr_F_HairNewB_02" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT] warmup=not_required maxLinearViolation=9.53674e-06 maxAngularViolationDeg=3.56451e-05
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=218
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=219
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=220
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=221
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=222
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=223
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=224
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=225
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=226
+[PHYSICS STATS] build=RelWithDebInfo fps=541.126 frameMs=1.848 physicsMs=6.6949 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=0.719308 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=226 recoveredBodies=62607 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3755 contacts=2244 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=227
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=228
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=229
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=230
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=231
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=232
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=233
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=234
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=235
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=236
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=237
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=238
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=239
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=240
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=241
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=242
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=243
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=244
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=245
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=246
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=247
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=248
+[PHYSICS STATS] build=RelWithDebInfo fps=136.218 frameMs=7.3412 physicsMs=0.8613 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=7.50196 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=248 recoveredBodies=68859 pendingRecoveryChains=0 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4195 contacts=2862 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=249
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=250
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=251
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=252
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=253
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=254
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=255
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=256
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=257
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=258
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=259
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=260
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=261
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=262
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=263
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=264
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=265
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=266
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=267
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=268
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=269
+[PHYSICS STATS] build=RelWithDebInfo fps=129.131 frameMs=7.7441 physicsMs=0.8624 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=9.3713 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=269 recoveredBodies=74830 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3663 contacts=2299 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=270
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=271
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=272
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=273
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=274
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=275
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=276
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=277
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=278
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=279
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=280
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=281
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=282
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=283
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=284
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=285
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=286
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=287
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=288
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=289
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=290
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=291
+[PHYSICS STATS] build=RelWithDebInfo fps=120.123 frameMs=8.3248 physicsMs=0.9694 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=9.29995 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=291 recoveredBodies=80812 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3678 contacts=2183 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=292
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=293
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=294
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=295
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=296
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=297
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=298
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=299
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=300
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=301
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=302
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=303
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=304
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=305
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=306
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=307
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=308
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=309
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=310
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=311
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=312
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=313
+[PHYSICS STATS] build=RelWithDebInfo fps=492.732 frameMs=2.0295 physicsMs=0.8814 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=11.2816 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=313 recoveredBodies=87064 pendingRecoveryChains=0 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4088 contacts=2852 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=314
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=315
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=316
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=317
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=318
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=319
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=320
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=321
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=322
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=323
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=324
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=325
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=326
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=327
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=328
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=329
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=330
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=331
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=332
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=333
+[PHYSICS STATS] build=RelWithDebInfo fps=539.84 frameMs=1.8524 physicsMs=1.606 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=12.0452 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=333 recoveredBodies=92747 pendingRecoveryChains=0 recoveryCooldownChains=1 active=732 sleeping=0 constraints=1026 manifolds=3722 contacts=2189 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=334
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=335
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=336
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=337
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=338
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=339
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=340
+[MMD RECOVERY] chain=9 bodies=11 reason=joint_violation total=341
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=342
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=343
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=344
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=345
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=346
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=347
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=348
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=349
+[MMD RECOVERY] chain=8 bodies=11 reason=joint_violation total=350
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=351
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=352
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=353
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=354
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=355
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=356
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=357
+[PHYSICS STATS] build=RelWithDebInfo fps=611.247 frameMs=1.636 physicsMs=0.8321 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=14.6548 droppedMs=0 peakDroppedMs=33.6049 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=357 recoveredBodies=98751 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4137 contacts=2606 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=358
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=359
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=360
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=361
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=362
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=363
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=364
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=365
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=366
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=367
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=368
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=369
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=370
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=371
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=372
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=373
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=374
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=375
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=376
+[PHYSICS STATS] build=RelWithDebInfo fps=584.659 frameMs=1.7104 physicsMs=6.2908 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=1.33166 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=376 recoveredBodies=104153 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4030 contacts=2578 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=377
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=378
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=379
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=380
+[MMD RECOVERY] chain=8 bodies=11 reason=joint_violation total=381
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=382
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=383
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=384
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=385
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=386
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=387
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=388
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=389
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=390
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=391
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=392
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=393
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=394
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=395
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=396
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=397
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=398
+[PHYSICS STATS] build=RelWithDebInfo fps=135.048 frameMs=7.4048 physicsMs=0.8819 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=8.18281 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=398 recoveredBodies=110128 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4073 contacts=2539 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=399
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=400
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=401
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=402
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=403
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=404
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=405
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=406
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=407
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=408
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=409
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=410
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=411
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=412
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=413
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=414
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=415
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=416
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=417
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=418
+[PHYSICS STATS] build=RelWithDebInfo fps=135.177 frameMs=7.3977 physicsMs=0.8768 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=8.54935 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=418 recoveredBodies=115811 pendingRecoveryChains=1 recoveryCooldownChains=1 active=732 sleeping=0 constraints=1026 manifolds=3764 contacts=2300 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=419
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=420
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=421
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=422
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=423
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=424
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=425
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=426
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=427
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=428
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=429
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=430
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=431
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=432
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=433
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=434
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=435
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=436
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=437
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=438
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=439
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=440
+[PHYSICS STATS] build=RelWithDebInfo fps=525.928 frameMs=1.9014 physicsMs=0.8333 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=10.3369 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=440 recoveredBodies=122063 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3925 contacts=2503 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=441
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=442
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=443
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=444
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=445
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=446
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=447
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=448
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=449
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=450
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=451
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=452
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=453
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=454
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=455
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=456
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=457
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=458
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=459
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=460
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=461
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=462
+[PHYSICS STATS] build=RelWithDebInfo fps=556.762 frameMs=1.7961 physicsMs=0.7927 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=10.4613 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=462 recoveredBodies=128315 pendingRecoveryChains=0 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=4235 contacts=2943 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=463
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=464
+[MMD INIT STAGE] stage=before-reset steps=0 finite=true maxJointPos=13.6872 maxJointRotDeg=62.3606 maxLinearViolation=0.901063 maxAngularViolationDeg=55.3771 stabilizationLinearViolation=0.901063 stabilizationAngularViolationDeg=45.2298 ignoredWideTravelJoints=75 severeJoints=8 jointIndex=995 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=293 linearViolationJoint="Skirt_2_1B" angularViolationJointIndex=995 angularViolationJoint="S"
+[MMD INIT STAGE] stage=after-reset steps=0 finite=true maxJointPos=12.6183 maxJointRotDeg=94.7507 maxLinearViolation=7.62939e-06 maxAngularViolationDeg=97.4783 stabilizationLinearViolation=7.62939e-06 stabilizationAngularViolationDeg=3.57518e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=9 linearViolationJoint="Ctr_F_HairNewB_02" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT STAGE] stage=pre-warmup-reset steps=0 finite=true maxJointPos=12.6183 maxJointRotDeg=94.7507 maxLinearViolation=7.62939e-06 maxAngularViolationDeg=97.4783 stabilizationLinearViolation=7.62939e-06 stabilizationAngularViolationDeg=3.57518e-05 ignoredWideTravelJoints=75 severeJoints=0 jointIndex=991 joint="S" bodyA="B" bodyB="B" linearViolationJointIndex=9 linearViolationJoint="Ctr_F_HairNewB_02" angularViolationJointIndex=991 angularViolationJoint="S"
+[MMD INIT] warmup=not_required maxLinearViolation=7.62939e-06 maxAngularViolationDeg=3.57518e-05
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=465
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=466
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=467
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=468
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=469
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=470
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=471
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=472
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=473
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=474
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=475
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=476
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=477
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=478
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=479
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=480
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=481
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=482
+[PHYSICS STATS] build=RelWithDebInfo fps=550.327 frameMs=1.8171 physicsMs=0.9028 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=11.6241 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=482 recoveredBodies=133998 pendingRecoveryChains=1 recoveryCooldownChains=1 active=732 sleeping=0 constraints=1026 manifolds=3864 contacts=2529 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=483
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=484
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=485
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=486
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=487
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=488
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=489
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=490
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=491
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=492
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=493
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=494
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=495
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=496
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=497
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=498
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=499
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=500
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=501
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=502
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=503
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=504
+[PHYSICS STATS] build=RelWithDebInfo fps=638.488 frameMs=1.5662 physicsMs=0.7727 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=12.6655 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=504 recoveredBodies=140257 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3967 contacts=2509 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=505
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=506
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=507
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=508
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=509
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=510
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=511
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=512
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=513
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=514
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=515
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=516
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=517
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=518
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=519
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=520
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=521
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=522
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=523
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=524
+[PHYSICS STATS] build=RelWithDebInfo fps=533.732 frameMs=1.8736 physicsMs=0.8284 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=15.0103 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=524 recoveredBodies=145940 pendingRecoveryChains=1 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3804 contacts=2287 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=525
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=526
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=527
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=528
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=529
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=530
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=531
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=532
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=533
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=534
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=535
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=536
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=537
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=538
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=539
+[MMD ALIGN] debug overlay=BIND (1)
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=540
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=541
+[PHYSICS STATS] build=RelWithDebInfo fps=92.3012 frameMs=10.8341 physicsMs=0.8231 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=12.336 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=541 recoveredBodies=150773 pendingRecoveryChains=2 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3081 contacts=1506 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=542
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=543
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=544
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=545
+[MMD ALIGN] debug overlay=RESET (2)
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=546
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=547
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=548
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=549
+[MMD ALIGN] debug overlay=RUNTIME (3)
+[PHYSICS STATS] build=RelWithDebInfo fps=171.712 frameMs=5.8237 physicsMs=5.4158 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=0.849419 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=549 recoveredBodies=153049 pendingRecoveryChains=2 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3065 contacts=1581 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=550
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=551
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=552
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=553
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=554
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=555
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=556
+[MMD RECOVERY] chain=1 bodies=281 reason=high_velocity total=557
+[PHYSICS STATS] build=RelWithDebInfo fps=177.752 frameMs=5.6258 physicsMs=6.6883 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=1 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=2.57347 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=557 recoveredBodies=155325 pendingRecoveryChains=2 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3149 contacts=1573 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=558
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=559
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=560
+[MMD RECOVERY] chain=1 bodies=281 reason=high_velocity total=561
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=562
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=563
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=564
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=565
+[PHYSICS STATS] build=RelWithDebInfo fps=93.8685 frameMs=10.6532 physicsMs=0.8602 peakPhysicsMs=23.1574 fixedMs=16.6667 substeps=0 peakSubsteps=4 stabilizationSubsteps=0 accumulatorMs=13.7526 droppedMs=0 peakDroppedMs=43.5343 catchUpLimited=false bodies=732 static=0 dynamic=692 kinematic=40 ccdBodies=560 boxMarginMin=0.008 boxMarginMax=0.04 solverIterations=15 splitImpulse=true splitImpulseThreshold=-0.02 recoveryChains=11 recoveries=565 recoveredBodies=157601 pendingRecoveryChains=2 recoveryCooldownChains=2 active=732 sleeping=0 constraints=1026 manifolds=3190 contacts=1611 peakContacts=3117 finite=true
+[MMD RECOVERY] chain=0 bodies=288 reason=joint_violation total=566
+[MMD RECOVERY] chain=1 bodies=281 reason=joint_violation total=567
+[INFO] Application was closed

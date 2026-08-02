@@ -51,6 +51,32 @@ void ValidateStepSettings(const PhysicsStepSettings& settings)
             "Physics maxDeltaTime must be finite and positive"
         );
     }
+    if (settings.solverIterations <= 0 || settings.solverIterations > 256)
+    {
+        throw std::invalid_argument(
+            "Physics solverIterations must be between 1 and 256"
+        );
+    }
+    const float solverValues[] = {
+        settings.splitImpulsePenetrationThreshold,
+        settings.splitImpulseTurnErp,
+        settings.solverErp,
+        settings.solverErp2
+    };
+    for (const float value : solverValues)
+    {
+        if (!std::isfinite(value))
+            throw std::invalid_argument("Physics solver setting is non-finite");
+    }
+    if (settings.splitImpulseTurnErp < 0.0f ||
+        settings.splitImpulseTurnErp > 1.0f ||
+        settings.solverErp < 0.0f || settings.solverErp > 1.0f ||
+        settings.solverErp2 < 0.0f || settings.solverErp2 > 1.0f)
+    {
+        throw std::invalid_argument(
+            "Physics solver ERP values must be normalized"
+        );
+    }
 }
 
 void ValidateShape(const PhysicsShapeDesc& shape)
@@ -128,6 +154,41 @@ void ValidateBody(const PhysicsBodyDesc& body)
     }
     if (body.collisionGroup == 0U)
         throw std::invalid_argument("Physics collision group cannot be zero");
+
+    if (!std::isfinite(body.collisionMargin))
+        throw std::invalid_argument("Physics collision margin is non-finite");
+    if (body.collisionMargin >= 0.0f &&
+        body.shape.kind != PhysicsShapeKind::Box)
+    {
+        throw std::invalid_argument(
+            "Explicit collision margin is supported only for box shapes"
+        );
+    }
+    if (!std::isfinite(body.ccdMotionThreshold) ||
+        !std::isfinite(body.ccdSweptSphereRadius) ||
+        body.ccdMotionThreshold < 0.0f ||
+        body.ccdSweptSphereRadius < 0.0f)
+    {
+        throw std::invalid_argument(
+            "CCD threshold and swept radius must be finite and non-negative"
+        );
+    }
+    if (body.enableCcd)
+    {
+        if (body.motionType != PhysicsMotionType::Dynamic)
+        {
+            throw std::invalid_argument(
+                "CCD can only be enabled for dynamic rigid bodies"
+            );
+        }
+        if (body.ccdMotionThreshold <= 0.0f ||
+            body.ccdSweptSphereRadius <= 0.0f)
+        {
+            throw std::invalid_argument(
+                "Enabled CCD requires a positive threshold and swept radius"
+            );
+        }
+    }
 }
 
 bool IsValidLimitPair(
@@ -312,6 +373,41 @@ std::unique_ptr<btCollisionShape> CreateShape(
     }
     throw std::invalid_argument("Unknown physics shape kind");
 }
+
+float ResolveBoxCollisionMargin(const PhysicsBodyDesc& body) noexcept
+{
+    const float minimumHalfExtent = std::min({
+        body.shape.dimensions.x,
+        body.shape.dimensions.y,
+        body.shape.dimensions.z
+    });
+    const float maximumSafeMargin = minimumHalfExtent * 0.2f;
+    if (body.collisionMargin >= 0.0f)
+        return std::min(body.collisionMargin, maximumSafeMargin);
+
+    // Keep the outer box dimensions unchanged while scaling the GJK contact
+    // margin with the smallest feature. This avoids Bullet's fixed 0.04 margin
+    // dominating small MMD skirt/hair boxes.
+    return std::min(
+        maximumSafeMargin,
+        std::min(0.04f, std::max(0.0001f, minimumHalfExtent * 0.08f))
+    );
+}
+
+void ApplySolverSettings(
+    btDiscreteDynamicsWorld& world,
+    const PhysicsStepSettings& settings
+) noexcept
+{
+    btContactSolverInfo& solverInfo = world.getSolverInfo();
+    solverInfo.m_numIterations = settings.solverIterations;
+    solverInfo.m_splitImpulse = settings.splitImpulse;
+    solverInfo.m_splitImpulsePenetrationThreshold =
+        settings.splitImpulsePenetrationThreshold;
+    solverInfo.m_splitImpulseTurnErp = settings.splitImpulseTurnErp;
+    solverInfo.m_erp = settings.solverErp;
+    solverInfo.m_erp2 = settings.solverErp2;
+}
 }
 
 class PhysicsDebugCollector final : public btIDebugDraw
@@ -386,6 +482,7 @@ public:
         std::unique_ptr<btDefaultMotionState> motionState;
         std::unique_ptr<btRigidBody> body;
         PhysicsMotionType motionType = PhysicsMotionType::Static;
+        PhysicsBodyRuntimeSettings runtimeSettings{};
         std::uint32_t generation = 1;
     };
 
@@ -416,6 +513,7 @@ public:
     {
         ValidateStepSettings(settings);
         world->setGravity(btVector3(0.0f, -9.8f, 0.0f));
+        ApplySolverSettings(*world, settings);
         world->setDebugDrawer(&debugCollector);
     }
 
@@ -583,6 +681,7 @@ public:
         slot.motionState.reset();
         slot.shape.reset();
         slot.motionType = PhysicsMotionType::Static;
+        slot.runtimeSettings = {};
         ++slot.generation;
         if (slot.generation == 0)
             slot.generation = 1;
@@ -675,6 +774,7 @@ void PhysicsWorld::SetStepSettings(const PhysicsStepSettings& settings)
 {
     ValidateStepSettings(settings);
     impl->settings = settings;
+    ApplySolverSettings(*impl->world, settings);
 }
 
 const PhysicsStepSettings& PhysicsWorld::StepSettings() const noexcept
@@ -689,6 +789,13 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(
     ValidateBody(description);
 
     std::unique_ptr<btCollisionShape> shape = CreateShape(description.shape);
+    float resolvedCollisionMargin = shape->getMargin();
+    if (description.shape.kind == PhysicsShapeKind::Box)
+    {
+        resolvedCollisionMargin = ResolveBoxCollisionMargin(description);
+        shape->setMargin(resolvedCollisionMargin);
+    }
+
     const btTransform startTransform = PhysicsBulletConversion::ToBullet(
         description.position,
         description.rotation
@@ -721,6 +828,13 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(
     rigidBody->setAngularFactor(
         PhysicsBulletConversion::ToBullet(description.angularFactor)
     );
+    if (description.enableCcd)
+    {
+        rigidBody->setCcdMotionThreshold(description.ccdMotionThreshold);
+        rigidBody->setCcdSweptSphereRadius(
+            description.ccdSweptSphereRadius
+        );
+    }
 
     if (description.motionType == PhysicsMotionType::Kinematic)
     {
@@ -759,6 +873,12 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(
     slot.motionState = std::move(motionState);
     slot.body = std::move(rigidBody);
     slot.motionType = description.motionType;
+    slot.runtimeSettings = PhysicsBodyRuntimeSettings{
+        resolvedCollisionMargin,
+        description.enableCcd,
+        description.enableCcd ? description.ccdMotionThreshold : 0.0f,
+        description.enableCcd ? description.ccdSweptSphereRadius : 0.0f
+    };
 
     impl->world->addRigidBody(
         slot.body.get(),
@@ -1070,6 +1190,11 @@ PhysicsWorldStatistics PhysicsWorld::Statistics() const noexcept
     PhysicsWorldStatistics statistics;
     statistics.bodyCount = impl->bodyCount;
     statistics.constraintCount = impl->constraintCount;
+    statistics.solverIterations = impl->settings.solverIterations;
+    statistics.splitImpulse = impl->settings.splitImpulse;
+    statistics.splitImpulsePenetrationThreshold =
+        impl->settings.splitImpulsePenetrationThreshold;
+    bool hasBoxMargin = false;
 
     for (const Impl::BodySlot& slot : impl->bodies)
     {
@@ -1087,6 +1212,30 @@ PhysicsWorldStatistics PhysicsWorld::Statistics() const noexcept
         case PhysicsMotionType::Kinematic:
             ++statistics.kinematicBodyCount;
             break;
+        }
+
+        if (slot.runtimeSettings.ccdEnabled)
+            ++statistics.ccdBodyCount;
+        if (dynamic_cast<const btBoxShape*>(slot.shape.get()) != nullptr)
+        {
+            const float margin = slot.runtimeSettings.collisionMargin;
+            if (!hasBoxMargin)
+            {
+                statistics.minimumBoxCollisionMargin = margin;
+                statistics.maximumBoxCollisionMargin = margin;
+                hasBoxMargin = true;
+            }
+            else
+            {
+                statistics.minimumBoxCollisionMargin = std::min(
+                    statistics.minimumBoxCollisionMargin,
+                    margin
+                );
+                statistics.maximumBoxCollisionMargin = std::max(
+                    statistics.maximumBoxCollisionMargin,
+                    margin
+                );
+            }
         }
 
         if (slot.motionType != PhysicsMotionType::Static)
@@ -1147,6 +1296,13 @@ PhysicsBodyState PhysicsWorld::State(PhysicsBodyHandle body) const
         PhysicsBulletConversion::FromBullet(slot.body->getAngularVelocity()),
         slot.body->isActive()
     };
+}
+
+PhysicsBodyRuntimeSettings PhysicsWorld::RuntimeSettings(
+    PhysicsBodyHandle body
+) const
+{
+    return impl->Require(body).runtimeSettings;
 }
 
 void PhysicsWorld::SetTransform(

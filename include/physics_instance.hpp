@@ -39,6 +39,15 @@ public:
         (void)fixedTimeStep;
     }
 
+    // Called immediately after each Scene-owned real-time fixed step. This is
+    // intentionally separate from FinishSimulation(), which runs once per
+    // render frame even when no physics tick occurred. Runtime health checks
+    // and other time-based physics bookkeeping belong here.
+    virtual void ObserveSimulationSubstep(float fixedTimeStep)
+    {
+        (void)fixedTimeStep;
+    }
+
     virtual void FinishSimulation() = 0;
     virtual void ResetSimulation() = 0;
 

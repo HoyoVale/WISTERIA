@@ -163,6 +163,17 @@ struct PhysicsBodyDesc
     std::uint16_t collisionGroup = 0x0001U;
     std::uint16_t collisionMask = 0xFFFFU;
     bool disableDeactivation = false;
+
+    // Bullet spheres and capsules use their radius as the convex margin.
+    // Boxes support an independent contact margin; a negative value selects
+    // WISTERIA's size-derived margin policy.
+    float collisionMargin = -1.0f;
+
+    // CCD is opt-in per body. The MMD adapter enables it only for dynamic
+    // bodies whose size/aspect ratio makes discrete tunnelling plausible.
+    bool enableCcd = false;
+    float ccdMotionThreshold = 0.0f;
+    float ccdSweptSphereRadius = 0.0f;
 };
 
 struct PhysicsDebugLine
@@ -181,11 +192,28 @@ struct PhysicsBodyState
     bool active = false;
 };
 
+struct PhysicsBodyRuntimeSettings
+{
+    float collisionMargin = 0.0f;
+    bool ccdEnabled = false;
+    float ccdMotionThreshold = 0.0f;
+    float ccdSweptSphereRadius = 0.0f;
+};
+
 struct PhysicsStepSettings
 {
     int maxSubSteps = 4;
     float fixedTimeStep = 1.0f / 60.0f;
     float maxDeltaTime = 0.1f;
+
+    // Explicitly pin the Bullet solver policy instead of depending on bundled
+    // library defaults that may change between Bullet revisions.
+    int solverIterations = 15;
+    bool splitImpulse = true;
+    float splitImpulsePenetrationThreshold = -0.02f;
+    float splitImpulseTurnErp = 0.1f;
+    float solverErp = 0.2f;
+    float solverErp2 = 0.2f;
 };
 
 struct PhysicsWorldStatistics
@@ -199,6 +227,12 @@ struct PhysicsWorldStatistics
     std::size_t constraintCount = 0U;
     std::size_t contactManifoldCount = 0U;
     std::size_t contactPointCount = 0U;
+    std::size_t ccdBodyCount = 0U;
+    float minimumBoxCollisionMargin = 0.0f;
+    float maximumBoxCollisionMargin = 0.0f;
+    int solverIterations = 0;
+    bool splitImpulse = false;
+    float splitImpulsePenetrationThreshold = 0.0f;
     bool finite = true;
 };
 

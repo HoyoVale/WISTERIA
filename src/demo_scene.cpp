@@ -494,6 +494,12 @@ private:
             const float fps = frame.frameDeltaTime > 0.000001f
                 ? 1.0f / frame.frameDeltaTime
                 : 0.0f;
+            MmdPhysicsRecoveryStatistics recovery;
+            if (const Entity* entity = this->scene.EntityAt(0U);
+                entity != nullptr && entity->HasMmdPhysics())
+            {
+                recovery = entity->GetMmdPhysics().RecoveryStatistics();
+            }
             title << " | [" << WISTERIA_BUILD_CONFIGURATION << "] "
                   << std::setprecision(1) << fps << " FPS"
                   << " | phys " << std::setprecision(2)
@@ -506,6 +512,12 @@ private:
                   << " | bodies " << world.bodyCount
                   << " (D" << world.dynamicBodyCount
                   << "/K" << world.kinematicBodyCount << ')'
+                  << " | CCD " << world.ccdBodyCount
+                  << " | solver " << world.solverIterations
+                  << (world.splitImpulse ? "+SI" : "-SI")
+                  << " | recover " << recovery.totalRecoveries
+                  << " (local<=" << recovery.largestRecoveryRegion
+                  << "/fused" << recovery.fusedChainCount << ')'
                   << " | active " << world.activeBodyCount
                   << " | contacts " << world.contactPointCount
                   << " | finite " << (world.finite ? "OK" : "FAIL");
@@ -521,6 +533,12 @@ private:
         const float fps = frame.frameDeltaTime > 0.000001f
             ? 1.0f / frame.frameDeltaTime
             : 0.0f;
+        MmdPhysicsRecoveryStatistics recovery;
+        if (const Entity* entity = this->scene.EntityAt(0U);
+            entity != nullptr && entity->HasMmdPhysics())
+        {
+            recovery = entity->GetMmdPhysics().RecoveryStatistics();
+        }
         std::cout << "[PHYSICS STATS] build="
                   << WISTERIA_BUILD_CONFIGURATION
                   << " fps=" << fps
@@ -543,6 +561,33 @@ private:
                   << " static=" << world.staticBodyCount
                   << " dynamic=" << world.dynamicBodyCount
                   << " kinematic=" << world.kinematicBodyCount
+                  << " ccdBodies=" << world.ccdBodyCount
+                  << " boxMarginMin="
+                  << world.minimumBoxCollisionMargin
+                  << " boxMarginMax="
+                  << world.maximumBoxCollisionMargin
+                  << " solverIterations=" << world.solverIterations
+                  << " splitImpulse="
+                  << (world.splitImpulse ? "true" : "false")
+                  << " splitImpulseThreshold="
+                  << world.splitImpulsePenetrationThreshold
+                  << " recoveryChains=" << recovery.chainCount
+                  << " recoveryPhysicsTicks="
+                  << recovery.physicsTickCount
+                  << " recoveries=" << recovery.totalRecoveries
+                  << " recoveredBodies=" << recovery.recoveredBodyCount
+                  << " largestRecoveryRegion="
+                  << recovery.largestRecoveryRegion
+                  << " pendingRecoveryChains="
+                  << recovery.pendingAbnormalChainCount
+                  << " recoveryCooldownChains="
+                  << recovery.cooldownChainCount
+                  << " recoveryFusedChains="
+                  << recovery.fusedChainCount
+                  << " recoveryFuseTrips="
+                  << recovery.totalFuseTrips
+                  << " suppressedRecoveries="
+                  << recovery.suppressedRecoveryCount
                   << " active=" << world.activeBodyCount
                   << " sleeping=" << world.sleepingBodyCount
                   << " constraints=" << world.constraintCount

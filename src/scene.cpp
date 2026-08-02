@@ -221,6 +221,8 @@ void Scene::Update(float deltaTime)
             );
         }
         this->physicsWorld->StepFixed(settings.fixedTimeStep);
+        for (const std::unique_ptr<Entity>& entity : this->entities)
+            entity->ObservePhysicsSubstep(settings.fixedTimeStep);
         this->physicsAccumulator -= fixedTimeStep;
     }
     if (this->physicsAccumulator < stepTolerance)
