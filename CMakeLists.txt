@@ -52,6 +52,57 @@ set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
 
 add_subdirectory(third-party/assimp)
 
+# Bullet Physics 3.25 is vendored explicitly by script/setup_bullet.ps1.
+# CMake never downloads dependencies so clean builds remain deterministic.
+set(WISTERIA_BULLET_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/bullet3")
+if(NOT EXISTS "${WISTERIA_BULLET_ROOT}/src/btBulletDynamicsCommon.h")
+    message(FATAL_ERROR
+        "Bullet Physics 3.25 is missing. Run .\\script\\setup_bullet.ps1 "
+        "from the WISTERIA project root, then configure again.")
+endif()
+if(NOT EXISTS "${WISTERIA_BULLET_ROOT}/VERSION")
+    message(FATAL_ERROR "Bullet source is incomplete: VERSION is missing.")
+endif()
+file(STRINGS "${WISTERIA_BULLET_ROOT}/VERSION"
+    WISTERIA_BULLET_VERSION LIMIT_COUNT 1)
+if(NOT WISTERIA_BULLET_VERSION STREQUAL "3.25")
+    message(FATAL_ERROR
+        "WISTERIA requires Bullet 3.25, found ${WISTERIA_BULLET_VERSION}.")
+endif()
+
+set(BULLET_PHYSICS_SOURCE_DIR "${WISTERIA_BULLET_ROOT}")
+set(BULLET_VERSION "3.25")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(INSTALL_LIBS OFF CACHE BOOL "" FORCE)
+set(USE_DOUBLE_PRECISION OFF CACHE BOOL "" FORCE)
+
+# Build only the Bullet 2 rigid-body libraries required by WISTERIA.
+add_subdirectory(
+    "${WISTERIA_BULLET_ROOT}/src/LinearMath"
+    "${CMAKE_BINARY_DIR}/third-party/bullet3/LinearMath"
+    EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+    "${WISTERIA_BULLET_ROOT}/src/BulletCollision"
+    "${CMAKE_BINARY_DIR}/third-party/bullet3/BulletCollision"
+    EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+    "${WISTERIA_BULLET_ROOT}/src/BulletDynamics"
+    "${CMAKE_BINARY_DIR}/third-party/bullet3/BulletDynamics"
+    EXCLUDE_FROM_ALL
+)
+
+if(MSVC)
+    foreach(WISTERIA_BULLET_TARGET LinearMath BulletCollision BulletDynamics)
+        target_compile_options(${WISTERIA_BULLET_TARGET} PRIVATE /FS)
+        set_property(TARGET ${WISTERIA_BULLET_TARGET} PROPERTY
+            MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    endforeach()
+endif()
+
 # reusable project code
 set(WISTERIA_CORE_SOURCES
     src/stb_image.cpp
@@ -74,6 +125,9 @@ set(WISTERIA_CORE_SOURCES
     src/render_part.cpp
     src/model_asset.cpp
     src/mmd_physics_asset.cpp
+    src/physics_types.cpp
+    src/physics_bullet_conversion.cpp
+    src/physics_world.cpp
     src/morph.cpp
     src/skeleton.cpp
     src/pose.cpp
@@ -98,8 +152,11 @@ set(WISTERIA_CORE_SOURCES
 
 add_library(wisteria_core STATIC ${WISTERIA_CORE_SOURCES})
 
-target_include_directories(wisteria_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_include_directories(wisteria_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${WISTERIA_BULLET_ROOT}/src
 )
 
 target_compile_features(wisteria_core PUBLIC
@@ -125,6 +182,9 @@ target_link_libraries(wisteria_core PUBLIC
     glad
     glm_headers
     assimp
+    BulletDynamics
+    BulletCollision
+    LinearMath
 )
 
 # application

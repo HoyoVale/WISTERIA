@@ -310,3 +310,141 @@ RenderTarget保存宽高、颜色附件和深度附件。
 增加 SceneFramebuffer。
 增加最终 Present/FXAA Pass。
 然后再实现 Application 与 WindowManager。
+---
+
+# Physics 2A：Bullet Foundation
+
+本阶段只建立 WISTERIA 与 Bullet 之间的底层边界，不把 PMX 刚体立即接入 Entity。Physics 1 保存的 `MmdPhysicsAsset` 仍是共享、不可变的模型数据；Physics 2B 才会根据这些定义为每个 Entity 创建独立刚体。
+
+## 为什么使用薄封装
+
+Bullet 已经负责刚体积分、碰撞检测、摩擦、反弹、惯性和约束求解。WISTERIA 不重新实现这些算法，只封装：
+
+- 依赖版本和离线构建；
+- GLM 与 Bullet 数学类型转换；
+- 物理世界和对象生命周期；
+- 安全的代际句柄；
+- WISTERIA 风格的形状与刚体描述；
+- 固定时间步和输入验证。
+
+公开头文件不会暴露 `btRigidBody`、`btCollisionShape` 或 `btDiscreteDynamicsWorld`。Bullet 类型只存在于 `physics_world.cpp` 和私有转换层，因此 Renderer、Animator、PMX importer 不依赖 Bullet 头文件。
+
+## 项目内置 Bullet
+
+首次接入执行：
+
+```powershell
+.\script\setup_bullet.ps1
+```
+
+脚本通过 shallow sparse clone 获取官方 Bullet `3.25`，并校验提交：
+
+```text
+2c204c49e56ed15ec5fcfa71d199ab6d6570b3f5
+```
+
+随后只复制 Bullet 的 `src`、`LICENSE.txt` 与 `VERSION`，把核心源码固定到：
+
+```text
+third-party/bullet3/
+```
+
+完成后应把该目录提交到 WISTERIA。CMake 不会在配置阶段联网；如果源码缺失，会明确提示执行安装脚本。
+
+WISTERIA 只构建：
+
+```text
+LinearMath
+BulletCollision
+BulletDynamics
+```
+
+不构建示例、PyBullet、OpenCL、软体和 Bullet 自带测试。
+
+## WISTERIA 物理接口
+
+### 形状
+
+```cpp
+PhysicsShapeDesc::Sphere(radius);
+PhysicsShapeDesc::Box(halfExtents);
+PhysicsShapeDesc::Capsule(radius, cylinderHeight);
+```
+
+Box 参数是半尺寸；Capsule 轴向为 Y，`cylinderHeight` 不包含两端半球。
+
+### 运动类型
+
+```text
+Static     质量为零，由引擎创建后保持不动
+Dynamic    质量必须大于零，由 Bullet 模拟
+Kinematic  质量为零，由 WISTERIA 设置变换，但参与碰撞
+```
+
+### 代际句柄
+
+`PhysicsBodyHandle` 同时保存槽位和 generation。刚体销毁后，即使槽位被新刚体复用，旧句柄也不能访问新对象。这避免 Physics 2B 中 Entity 销毁、模型重载或场景清理留下悬空指针。
+
+### 世界生命周期
+
+`PhysicsWorld` 使用 PIMPL 管理 Bullet 对象，销毁顺序固定为：
+
+```text
+从 btDiscreteDynamicsWorld 移除刚体
+→ 销毁 btRigidBody
+→ 销毁 btMotionState
+→ 销毁 btCollisionShape
+→ 销毁 DynamicsWorld
+→ Solver
+→ Broadphase
+→ Dispatcher
+→ CollisionConfiguration
+```
+
+Bullet 世界不拥有传入的这些组件，因此顺序必须由 WISTERIA 保证。
+
+### 固定时间步
+
+默认设置：
+
+```cpp
+PhysicsStepSettings{
+    .maxSubSteps = 4,
+    .fixedTimeStep = 1.0f / 60.0f,
+    .maxDeltaTime = 0.1f
+};
+```
+
+渲染帧时间会先限制到 `maxDeltaTime`，再交给 Bullet 的 `stepSimulation` 拆分为固定子步。这样 30 FPS 和 60 FPS 下的基础模拟结果应接近，同时防止窗口暂停后单帧补算过多导致物理爆炸。
+
+## 自动化测试范围
+
+Physics 2A 测试覆盖：
+
+- 描述和参数验证；
+- 默认重力与自定义重力；
+- 动态球体、真实盒体和胶囊落地；
+- 碰撞组与掩码；
+- Kinematic 变换；
+- 固定子步的帧率一致性；
+- Central Impulse；
+- 两个 PhysicsWorld 的隔离；
+- 代际句柄和 stale handle 拒绝；
+- 清理与重复销毁安全。
+
+## 下一阶段
+
+Physics 2B 将建立 `MmdPhysicsInstance`：
+
+```text
+MmdPhysicsAsset
+→ 为每个 Entity 创建独立 Bullet shape/body/constraint
+→ Follow Bone 同步到 Kinematic body
+→ Physics body 反写 Pose
+→ Physics With Bone 混合同步
+→ Spring 6DOF
+→ Scene 统一推进 PhysicsWorld
+→ ResetToPose
+```
+
+Impulse Morph 和 after-physics 骨骼仍留到 Physics 3，避免把基础依赖、MMD 同步和物理后求解一次性混在同一个阶段。

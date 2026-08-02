@@ -9,6 +9,7 @@
 #include "manager.hpp"
 #include "model_asset.hpp"
 #include "pose.hpp"
+#include "physics_world.hpp"
 #include "renderer.hpp"
 #include "scene.hpp"
 #include "vmd_importer.hpp"
@@ -3531,6 +3532,270 @@ void TestDirectPmxGroupMorphImportWhenAvailable()
     );
 }
 
+
+void StepPhysics(PhysicsWorld& world, int frameCount)
+{
+    for (int frame = 0; frame < frameCount; ++frame)
+        world.Step(1.0f / 60.0f);
+}
+
+PhysicsBodyDesc StaticGroundDesc()
+{
+    PhysicsBodyDesc ground;
+    ground.shape = PhysicsShapeDesc::Box(glm::vec3(10.0f, 0.5f, 10.0f));
+    ground.motionType = PhysicsMotionType::Static;
+    ground.position = glm::vec3(0.0f, -0.5f, 0.0f);
+    ground.friction = 0.8f;
+    return ground;
+}
+
+PhysicsBodyDesc DynamicBodyDesc(
+    const PhysicsShapeDesc& shape,
+    const glm::vec3& position
+)
+{
+    PhysicsBodyDesc body;
+    body.shape = shape;
+    body.motionType = PhysicsMotionType::Dynamic;
+    body.position = position;
+    body.mass = 1.0f;
+    body.linearDamping = 0.01f;
+    body.angularDamping = 0.01f;
+    body.friction = 0.5f;
+    return body;
+}
+
+void TestBulletFoundationValidation()
+{
+    Require(
+        PhysicsShapeDesc::Sphere(0.5f).kind == PhysicsShapeKind::Sphere,
+        "Physics sphere factory returned the wrong kind"
+    );
+    Require(
+        NearlyEqual(
+            PhysicsShapeDesc::Box(glm::vec3(1.0f, 2.0f, 3.0f)).dimensions,
+            glm::vec3(1.0f, 2.0f, 3.0f)
+        ),
+        "Physics box factory changed the half extents"
+    );
+    Require(
+        NearlyEqual(
+            PhysicsShapeDesc::Capsule(0.25f, 1.5f).dimensions,
+            glm::vec3(0.25f, 1.5f, 0.0f)
+        ),
+        "Physics capsule factory changed its dimensions"
+    );
+
+    PhysicsWorld world;
+    Require(
+        NearlyEqual(world.Gravity(), glm::vec3(0.0f, -9.8f, 0.0f)),
+        "PhysicsWorld default gravity is incorrect"
+    );
+    world.SetGravity(glm::vec3(0.0f, -4.0f, 0.0f));
+    Require(
+        NearlyEqual(world.Gravity(), glm::vec3(0.0f, -4.0f, 0.0f)),
+        "PhysicsWorld did not retain its gravity"
+    );
+
+    bool badMassRejected = false;
+    try
+    {
+        PhysicsBodyDesc body = DynamicBodyDesc(
+            PhysicsShapeDesc::Sphere(0.5f),
+            glm::vec3(0.0f)
+        );
+        body.mass = 0.0f;
+        world.CreateBody(body);
+    }
+    catch (const std::invalid_argument&)
+    {
+        badMassRejected = true;
+    }
+    Require(badMassRejected, "PhysicsWorld accepted a zero-mass dynamic body");
+
+    bool badShapeRejected = false;
+    try
+    {
+        PhysicsBodyDesc body = StaticGroundDesc();
+        body.shape = PhysicsShapeDesc::Box(glm::vec3(1.0f, 0.0f, 1.0f));
+        world.CreateBody(body);
+    }
+    catch (const std::invalid_argument&)
+    {
+        badShapeRejected = true;
+    }
+    Require(badShapeRejected, "PhysicsWorld accepted an invalid box shape");
+
+    bool badStepRejected = false;
+    try
+    {
+        world.SetStepSettings(PhysicsStepSettings{4, 0.0f, 0.1f});
+    }
+    catch (const std::invalid_argument&)
+    {
+        badStepRejected = true;
+    }
+    Require(badStepRejected, "PhysicsWorld accepted a zero fixed time step");
+}
+
+void TestBulletFoundationRigidBodies()
+{
+    PhysicsWorld world;
+    world.CreateBody(StaticGroundDesc());
+    const PhysicsBodyHandle sphere = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(-2.0f, 4.0f, 0.0f)
+    ));
+    const PhysicsBodyHandle box = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Box(glm::vec3(0.5f)),
+        glm::vec3(0.0f, 4.0f, 0.0f)
+    ));
+    const PhysicsBodyHandle capsule = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Capsule(0.35f, 1.0f),
+        glm::vec3(2.0f, 4.0f, 0.0f)
+    ));
+
+    StepPhysics(world, 360);
+    const PhysicsBodyState sphereState = world.State(sphere);
+    const PhysicsBodyState boxState = world.State(box);
+    const PhysicsBodyState capsuleState = world.State(capsule);
+
+    Require(
+        sphereState.position.y > 0.35f && sphereState.position.y < 0.75f,
+        "Bullet sphere did not settle on the ground"
+    );
+    Require(
+        boxState.position.y > 0.35f && boxState.position.y < 0.75f,
+        "Bullet box did not use its real box collision shape"
+    );
+    Require(
+        capsuleState.position.y > 0.65f && capsuleState.position.y < 1.15f,
+        "Bullet capsule did not settle at its expected height"
+    );
+}
+
+void TestBulletFoundationCollisionFilters()
+{
+    PhysicsWorld world;
+    PhysicsBodyDesc ground = StaticGroundDesc();
+    ground.collisionGroup = 0x0001U;
+    ground.collisionMask = 0x0001U;
+    world.CreateBody(ground);
+
+    PhysicsBodyDesc colliding = DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(-1.0f, 3.0f, 0.0f)
+    );
+    colliding.collisionGroup = 0x0001U;
+    colliding.collisionMask = 0x0001U;
+    const PhysicsBodyHandle collidingHandle = world.CreateBody(colliding);
+
+    PhysicsBodyDesc filtered = DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(1.0f, 3.0f, 0.0f)
+    );
+    filtered.collisionGroup = 0x0002U;
+    filtered.collisionMask = 0x0002U;
+    const PhysicsBodyHandle filteredHandle = world.CreateBody(filtered);
+
+    StepPhysics(world, 240);
+    Require(
+        world.State(collidingHandle).position.y > 0.3f,
+        "Matching Bullet collision filters did not collide"
+    );
+    Require(
+        world.State(filteredHandle).position.y < -2.0f,
+        "Separated Bullet collision filters unexpectedly collided"
+    );
+}
+
+void TestBulletFoundationKinematicAndHandles()
+{
+    PhysicsWorld world;
+    PhysicsBodyDesc kinematic;
+    kinematic.shape = PhysicsShapeDesc::Box(glm::vec3(0.5f));
+    kinematic.motionType = PhysicsMotionType::Kinematic;
+    kinematic.position = glm::vec3(0.0f, 1.0f, 0.0f);
+    const PhysicsBodyHandle first = world.CreateBody(kinematic);
+
+    world.SetTransform(
+        first,
+        glm::vec3(3.0f, 2.0f, -1.0f),
+        glm::angleAxis(glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        true
+    );
+    StepPhysics(world, 60);
+    const PhysicsBodyState moved = world.State(first);
+    Require(
+        NearlyEqual(moved.position, glm::vec3(3.0f, 2.0f, -1.0f)),
+        "Kinematic Bullet body did not retain an engine-driven transform"
+    );
+
+    Require(world.DestroyBody(first), "PhysicsWorld failed to destroy a body");
+    Require(!world.Contains(first), "Destroyed physics handle stayed valid");
+    Require(!world.DestroyBody(first), "PhysicsWorld destroyed a stale handle twice");
+
+    const PhysicsBodyHandle second = world.CreateBody(kinematic);
+    Require(
+        second.index == first.index && second.generation != first.generation,
+        "PhysicsWorld did not protect a recycled slot with a generation"
+    );
+    Require(world.BodyCount() == 1U, "PhysicsWorld body count is incorrect");
+
+    bool staleRejected = false;
+    try
+    {
+        world.State(first);
+    }
+    catch (const std::out_of_range&)
+    {
+        staleRejected = true;
+    }
+    Require(staleRejected, "PhysicsWorld accepted a stale body handle");
+
+    world.Clear();
+    Require(world.BodyCount() == 0U, "PhysicsWorld Clear kept live bodies");
+    Require(!world.Contains(second), "PhysicsWorld Clear kept a handle valid");
+}
+
+void TestBulletFoundationFixedStepAndIsolation()
+{
+    PhysicsWorld firstWorld;
+    PhysicsWorld secondWorld;
+    firstWorld.SetGravity(glm::vec3(0.0f, -9.8f, 0.0f));
+    secondWorld.SetGravity(glm::vec3(0.0f, -9.8f, 0.0f));
+
+    const PhysicsBodyDesc falling = DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(0.0f, 10.0f, 0.0f)
+    );
+    const PhysicsBodyHandle first = firstWorld.CreateBody(falling);
+    const PhysicsBodyHandle second = secondWorld.CreateBody(falling);
+
+    for (int frame = 0; frame < 30; ++frame)
+        firstWorld.Step(1.0f / 30.0f);
+    StepPhysics(secondWorld, 60);
+
+    Require(
+        std::abs(
+            firstWorld.State(first).position.y -
+            secondWorld.State(second).position.y
+        ) < 0.08f,
+        "Bullet fixed substeps changed with render frame rate"
+    );
+
+    firstWorld.ApplyCentralImpulse(first, glm::vec3(3.0f, 0.0f, 0.0f));
+    StepPhysics(firstWorld, 10);
+    Require(
+        firstWorld.State(first).position.x > 0.1f,
+        "Bullet central impulse did not affect the target body"
+    );
+    Require(
+        std::abs(secondWorld.State(second).position.x) < Epsilon,
+        "Separate PhysicsWorld instances contaminated each other"
+    );
+}
+
 template<typename Function>
 bool RunTest(const char* name, Function&& function)
 {
@@ -3551,6 +3816,26 @@ bool RunTest(const char* name, Function&& function)
 int main()
 {
     int failures = 0;
+    failures += !RunTest(
+        "Bullet foundation validation",
+        TestBulletFoundationValidation
+    );
+    failures += !RunTest(
+        "Bullet rigid bodies",
+        TestBulletFoundationRigidBodies
+    );
+    failures += !RunTest(
+        "Bullet collision filters",
+        TestBulletFoundationCollisionFilters
+    );
+    failures += !RunTest(
+        "Bullet kinematic bodies and handles",
+        TestBulletFoundationKinematicAndHandles
+    );
+    failures += !RunTest(
+        "Bullet fixed step and world isolation",
+        TestBulletFoundationFixedStepAndIsolation
+    );
     failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
     failures += !RunTest("Skeleton validation", TestSkeletonValidation);
     failures += !RunTest(
