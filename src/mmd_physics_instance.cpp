@@ -469,6 +469,36 @@ const char* OverlayName(MmdPhysicsDebugOverlay overlay) noexcept
     return "UNKNOWN";
 }
 
+const char* FidelityDebugLayerName(
+    MmdPhysicsFidelityDebugLayer layer
+) noexcept
+{
+    switch (layer)
+    {
+    case MmdPhysicsFidelityDebugLayer::Off: return "OFF";
+    case MmdPhysicsFidelityDebugLayer::Bone: return "BONE";
+    case MmdPhysicsFidelityDebugLayer::Vertex: return "VERTEX";
+    case MmdPhysicsFidelityDebugLayer::All: return "ALL";
+    }
+    return "UNKNOWN";
+}
+
+const char* PhysicsWithBoneSyncModeName(
+    MmdPhysicsWithBoneSyncMode mode
+) noexcept
+{
+    switch (mode)
+    {
+    case MmdPhysicsWithBoneSyncMode::RotationOnly:
+        return "ROTATION_ONLY";
+    case MmdPhysicsWithBoneSyncMode::FullBody:
+        return "FULL_BODY";
+    case MmdPhysicsWithBoneSyncMode::TranslationDelta:
+        return "TRANSLATION_DELTA";
+    }
+    return "UNKNOWN";
+}
+
 glm::vec3 AngularVelocityBetween(
     const glm::quat& previous,
     const glm::quat& current,
@@ -508,6 +538,37 @@ void AppendLine(
 )
 {
     lines.push_back(PhysicsDebugLine{from, to, color});
+}
+
+void AppendTransformAxes(
+    std::vector<PhysicsDebugLine>& lines,
+    const glm::mat4& modelTransform,
+    const EntityFrame& entity,
+    float length
+)
+{
+    const RigidTransform world = ModelToWorld(modelTransform, entity);
+    constexpr glm::vec3 AxisXColor{1.0f, 0.30f, 0.0f};
+    constexpr glm::vec3 AxisYColor{1.0f, 0.62f, 0.08f};
+    constexpr glm::vec3 AxisZColor{1.0f, 0.88f, 0.32f};
+    AppendLine(
+        lines,
+        world.position,
+        world.position + world.rotation * glm::vec3(length, 0.0f, 0.0f),
+        AxisXColor
+    );
+    AppendLine(
+        lines,
+        world.position,
+        world.position + world.rotation * glm::vec3(0.0f, length, 0.0f),
+        AxisYColor
+    );
+    AppendLine(
+        lines,
+        world.position,
+        world.position + world.rotation * glm::vec3(0.0f, 0.0f, length),
+        AxisZColor
+    );
 }
 
 void AppendCircle(
@@ -694,6 +755,7 @@ MmdPhysicsInstance::MmdPhysicsInstance(
         boneCount,
         std::numeric_limits<std::size_t>::max()
     );
+    this->drivenBoneModes.assign(boneCount, 0U);
     this->localMatrixScratch.resize(boneCount);
     this->globalMatrixScratch.resize(boneCount);
 
@@ -761,6 +823,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 definition.bone != InvalidBoneIndex)
             {
                 this->drivenRuntimeBodyByBone[definition.bone] = runtimeIndex;
+                this->drivenBoneModes[definition.bone] =
+                    static_cast<std::uint8_t>(definition.mode) + 1U;
             }
         }
 
@@ -1156,8 +1220,14 @@ void MmdPhysicsInstance::AppendDebugLines(
     std::vector<PhysicsDebugLine>& lines
 ) const
 {
-    if (this->debugOverlay == MmdPhysicsDebugOverlay::Off)
+    const bool showFidelityBones =
+        this->fidelityDebugLayer == MmdPhysicsFidelityDebugLayer::Bone ||
+        this->fidelityDebugLayer == MmdPhysicsFidelityDebugLayer::All;
+    if (this->debugOverlay == MmdPhysicsDebugOverlay::Off &&
+        !showFidelityBones)
+    {
         return;
+    }
 
     const EntityFrame entity = ExtractEntityFrame(*this->transform);
     constexpr glm::vec3 SourceBindColor{0.0f, 0.95f, 1.0f};
@@ -1272,6 +1342,87 @@ void MmdPhysicsInstance::AppendDebugLines(
                 AppendLine(lines, target.position, current.position, ErrorColor);
         }
     }
+
+    if (showFidelityBones)
+    {
+        const Skeleton& skeleton = this->pose->GetSkeleton();
+        const std::span<const glm::mat4> finalGlobals =
+            this->pose->GlobalMatrices();
+        constexpr glm::vec3 BonePositionErrorColor{1.0f, 0.0f, 0.65f};
+        constexpr std::size_t MaximumBoneAxes = 160U;
+        const std::size_t invalidRuntimeIndex =
+            std::numeric_limits<std::size_t>::max();
+        const std::size_t drivenCount = static_cast<std::size_t>(std::count_if(
+            this->drivenRuntimeBodyByBone.begin(),
+            this->drivenRuntimeBodyByBone.end(),
+            [invalidRuntimeIndex](std::size_t runtimeIndex)
+            {
+                return runtimeIndex != invalidRuntimeIndex;
+            }
+        ));
+        const std::size_t stride = std::max<std::size_t>(
+            1U,
+            (drivenCount + MaximumBoneAxes - 1U) / MaximumBoneAxes
+        );
+        std::size_t drivenOrdinal = 0U;
+        for (std::size_t boneIndex = 0U;
+             boneIndex < this->drivenRuntimeBodyByBone.size();
+             ++boneIndex)
+        {
+            const std::size_t runtimeIndex =
+                this->drivenRuntimeBodyByBone[boneIndex];
+            if (runtimeIndex == invalidRuntimeIndex)
+                continue;
+            const bool selected = drivenOrdinal % stride == 0U;
+            ++drivenOrdinal;
+            if (!selected)
+                continue;
+
+            const RuntimeBody& runtime = this->rigidBodies[runtimeIndex];
+            const MmdRigidBodyDefinition& definition = *runtime.definition;
+            const glm::mat4 finalBoneModel =
+                skeleton.InverseRootMatrix() * finalGlobals[boneIndex];
+            const float maximumSize = std::max({
+                definition.size.x,
+                definition.size.y,
+                definition.size.z
+            });
+            const float axisLength = std::max(
+                0.035f * entity.scale,
+                0.18f * maximumSize * entity.scale
+            );
+            AppendTransformAxes(
+                lines,
+                finalBoneModel,
+                entity,
+                axisLength
+            );
+
+            const glm::mat4 currentBodyModel = WorldToModel(
+                this->world->State(runtime.handle),
+                entity
+            );
+            const glm::mat4 expectedBoneModel =
+                currentBodyModel * definition.bodyToBone;
+            const RigidTransform expected = ModelToWorld(
+                expectedBoneModel,
+                entity
+            );
+            const RigidTransform actual = ModelToWorld(
+                finalBoneModel,
+                entity
+            );
+            if (glm::distance(expected.position, actual.position) > 0.0005f)
+            {
+                AppendLine(
+                    lines,
+                    expected.position,
+                    actual.position,
+                    BonePositionErrorColor
+                );
+            }
+        }
+    }
 }
 
 void MmdPhysicsInstance::SetDebugOverlay(
@@ -1324,6 +1475,101 @@ const MmdPhysicsRecoveryStatistics&
 MmdPhysicsInstance::RecoveryStatistics() const noexcept
 {
     return this->recoveryStatistics;
+}
+
+void MmdPhysicsInstance::SetFidelityDebugLayer(
+    MmdPhysicsFidelityDebugLayer layer
+) noexcept
+{
+    this->fidelityDebugLayer = layer;
+}
+
+MmdPhysicsFidelityDebugLayer
+MmdPhysicsInstance::FidelityDebugLayer() const noexcept
+{
+    return this->fidelityDebugLayer;
+}
+
+MmdPhysicsFidelityDebugLayer
+MmdPhysicsInstance::CycleFidelityDebugLayer() noexcept
+{
+    switch (this->fidelityDebugLayer)
+    {
+    case MmdPhysicsFidelityDebugLayer::Off:
+        this->fidelityDebugLayer = MmdPhysicsFidelityDebugLayer::Bone;
+        break;
+    case MmdPhysicsFidelityDebugLayer::Bone:
+        this->fidelityDebugLayer = MmdPhysicsFidelityDebugLayer::Vertex;
+        break;
+    case MmdPhysicsFidelityDebugLayer::Vertex:
+        this->fidelityDebugLayer = MmdPhysicsFidelityDebugLayer::All;
+        break;
+    case MmdPhysicsFidelityDebugLayer::All:
+        this->fidelityDebugLayer = MmdPhysicsFidelityDebugLayer::Off;
+        break;
+    }
+    return this->fidelityDebugLayer;
+}
+
+const char* MmdPhysicsInstance::FidelityDebugLayerName() const noexcept
+{
+    return ::FidelityDebugLayerName(this->fidelityDebugLayer);
+}
+
+void MmdPhysicsInstance::SetPhysicsWithBoneSyncMode(
+    MmdPhysicsWithBoneSyncMode mode
+) noexcept
+{
+    this->physicsWithBoneSyncMode = mode;
+}
+
+MmdPhysicsWithBoneSyncMode
+MmdPhysicsInstance::PhysicsWithBoneSyncMode() const noexcept
+{
+    return this->physicsWithBoneSyncMode;
+}
+
+MmdPhysicsWithBoneSyncMode
+MmdPhysicsInstance::CyclePhysicsWithBoneSyncMode() noexcept
+{
+    switch (this->physicsWithBoneSyncMode)
+    {
+    case MmdPhysicsWithBoneSyncMode::RotationOnly:
+        this->physicsWithBoneSyncMode =
+            MmdPhysicsWithBoneSyncMode::FullBody;
+        break;
+    case MmdPhysicsWithBoneSyncMode::FullBody:
+        this->physicsWithBoneSyncMode =
+            MmdPhysicsWithBoneSyncMode::TranslationDelta;
+        break;
+    case MmdPhysicsWithBoneSyncMode::TranslationDelta:
+        this->physicsWithBoneSyncMode =
+            MmdPhysicsWithBoneSyncMode::RotationOnly;
+        break;
+    }
+    return this->physicsWithBoneSyncMode;
+}
+
+const char* MmdPhysicsInstance::PhysicsWithBoneSyncModeName() const noexcept
+{
+    return ::PhysicsWithBoneSyncModeName(this->physicsWithBoneSyncMode);
+}
+
+const MmdPhysicsFidelityStatistics&
+MmdPhysicsInstance::FidelityStatistics() const noexcept
+{
+    return this->fidelityStatistics;
+}
+
+std::span<const std::uint8_t>
+MmdPhysicsInstance::DrivenBoneModes() const noexcept
+{
+    return this->drivenBoneModes;
+}
+
+void MmdPhysicsInstance::SetSampledVertexCount(std::size_t count) noexcept
+{
+    this->fidelityStatistics.sampledVertexCount = count;
 }
 
 bool MmdPhysicsInstance::StabilizationFailed() const noexcept
@@ -1869,19 +2115,49 @@ void MmdPhysicsInstance::PostPhysicsUpdate(const Transform& transform)
             glm::inverse(skeleton.InverseRootMatrix()) * drivenModel;
         if (definition.mode == MmdRigidBodyMode::PhysicsWithBone)
         {
-            // PMX mode 2 keeps the animation-authored bone translation while
-            // taking the final orientation from the freely simulated rigid
-            // body. The Bullet body itself must remain fully dynamic: locking
-            // its linear factor or teleporting it each frame prevents gravity
-            // and joint chains from reproducing MMD hair and clothing motion.
-            BoneTransform animatedBone = BoneTransform::FromMatrix(
+            // PMX mode 2 is intentionally selectable because real-world PMX
+            // files rely on different interpretations of "physics with bone".
+            // The Bullet body always remains fully dynamic; only the transform
+            // written back into Pose changes here.
+            const BoneTransform animatedBone = BoneTransform::FromMatrix(
                 currentGlobals[boneIndex]
             );
             const BoneTransform physicsBone = BoneTransform::FromMatrix(
                 drivenGlobal
             );
-            animatedBone.rotation = physicsBone.rotation;
-            this->globalMatrixScratch[boneIndex] = animatedBone.Matrix();
+
+            switch (this->physicsWithBoneSyncMode)
+            {
+            case MmdPhysicsWithBoneSyncMode::RotationOnly:
+            {
+                BoneTransform result = animatedBone;
+                result.rotation = physicsBone.rotation;
+                this->globalMatrixScratch[boneIndex] = result.Matrix();
+                break;
+            }
+            case MmdPhysicsWithBoneSyncMode::FullBody:
+                this->globalMatrixScratch[boneIndex] = drivenGlobal;
+                break;
+            case MmdPhysicsWithBoneSyncMode::TranslationDelta:
+            {
+                // Apply only Bullet's displacement relative to the animation
+                // target submitted for this body. This preserves the authored
+                // animation/append-transform base while allowing hair and
+                // clothing vertices to follow the body's actual translation.
+                const glm::vec3 bodyTranslationDeltaModel =
+                    glm::vec3(bodyModel[3]) -
+                    glm::vec3(runtime.prePhysicsAnimatedModelTransform[3]);
+                const glm::mat3 modelToSkeletonRoot(
+                    glm::inverse(skeleton.InverseRootMatrix())
+                );
+                BoneTransform result = animatedBone;
+                result.translation +=
+                    modelToSkeletonRoot * bodyTranslationDeltaModel;
+                result.rotation = physicsBone.rotation;
+                this->globalMatrixScratch[boneIndex] = result.Matrix();
+                break;
+            }
+            }
         }
         else
         {
@@ -1892,6 +2168,96 @@ void MmdPhysicsInstance::PostPhysicsUpdate(const Transform& transform)
     }
 
     this->pose->SetLocalMatrices(this->localMatrixScratch);
+    this->UpdateFidelityStatistics();
+}
+
+void MmdPhysicsInstance::UpdateFidelityStatistics()
+{
+    const std::size_t sampledVertexCount =
+        this->fidelityStatistics.sampledVertexCount;
+    this->fidelityStatistics = {};
+    this->fidelityStatistics.sampledVertexCount = sampledVertexCount;
+
+    const EntityFrame entity = ExtractEntityFrame(*this->transform);
+    const Skeleton& skeleton = this->pose->GetSkeleton();
+    const std::span<const glm::mat4> finalGlobals =
+        this->pose->GlobalMatrices();
+
+    float positionErrorSum = 0.0f;
+    float rotationErrorSum = 0.0f;
+    float translationDeltaSum = 0.0f;
+    std::size_t translationDeltaCount = 0U;
+
+    const std::size_t invalidRuntimeIndex =
+        std::numeric_limits<std::size_t>::max();
+    for (std::size_t boneIndex = 0U;
+         boneIndex < this->drivenRuntimeBodyByBone.size();
+         ++boneIndex)
+    {
+        const std::size_t runtimeIndex =
+            this->drivenRuntimeBodyByBone[boneIndex];
+        if (runtimeIndex == invalidRuntimeIndex)
+            continue;
+        const RuntimeBody& runtime = this->rigidBodies[runtimeIndex];
+        const MmdRigidBodyDefinition& definition = *runtime.definition;
+
+        const glm::mat4 bodyModel = WorldToModel(
+            this->world->State(runtime.handle),
+            entity
+        );
+        const glm::mat4 expectedBoneModel =
+            bodyModel * definition.bodyToBone;
+        const glm::mat4 expectedBoneGlobal =
+            glm::inverse(skeleton.InverseRootMatrix()) * expectedBoneModel;
+        const glm::mat4 actualBoneGlobal = finalGlobals[boneIndex];
+        const auto [positionError, rotationError] = TransformError(
+            expectedBoneGlobal,
+            actualBoneGlobal
+        );
+
+        ++this->fidelityStatistics.drivenBoneCount;
+        positionErrorSum += positionError;
+        rotationErrorSum += rotationError;
+        this->fidelityStatistics.maximumBulletToBonePositionError = std::max(
+            this->fidelityStatistics.maximumBulletToBonePositionError,
+            positionError
+        );
+        this->fidelityStatistics.maximumBulletToBoneRotationErrorDegrees =
+            std::max(
+                this->fidelityStatistics.maximumBulletToBoneRotationErrorDegrees,
+                rotationError
+            );
+
+        if (definition.mode == MmdRigidBodyMode::PhysicsWithBone)
+        {
+            ++this->fidelityStatistics.physicsWithBoneCount;
+            const float delta = glm::distance(
+                glm::vec3(bodyModel[3]),
+                glm::vec3(runtime.prePhysicsAnimatedModelTransform[3])
+            );
+            translationDeltaSum += delta;
+            ++translationDeltaCount;
+            this->fidelityStatistics.maximumMode2TranslationDelta = std::max(
+                this->fidelityStatistics.maximumMode2TranslationDelta,
+                delta
+            );
+        }
+    }
+
+    if (this->fidelityStatistics.drivenBoneCount > 0U)
+    {
+        const float inverseCount = 1.0f /
+            static_cast<float>(this->fidelityStatistics.drivenBoneCount);
+        this->fidelityStatistics.averageBulletToBonePositionError =
+            positionErrorSum * inverseCount;
+        this->fidelityStatistics.averageBulletToBoneRotationErrorDegrees =
+            rotationErrorSum * inverseCount;
+    }
+    if (translationDeltaCount > 0U)
+    {
+        this->fidelityStatistics.averageMode2TranslationDelta =
+            translationDeltaSum / static_cast<float>(translationDeltaCount);
+    }
 }
 
 void MmdPhysicsInstance::CaptureConstraintPreservingResetTargets()

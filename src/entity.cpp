@@ -396,6 +396,45 @@ void Entity::ResetPhysicsToCurrentPose()
     }
 }
 
+void Entity::AppendPhysicsDebugLines(
+    std::vector<PhysicsDebugLine>& lines
+)
+{
+    if (this->physicsInstance != nullptr)
+        this->physicsInstance->AppendDebugLines(lines);
+
+    MmdPhysicsInstance* mmd = this->TryGetMmdPhysics();
+    if (mmd == nullptr || this->pose == nullptr)
+        return;
+    const MmdPhysicsFidelityDebugLayer layer = mmd->FidelityDebugLayer();
+    const bool showVertices =
+        layer == MmdPhysicsFidelityDebugLayer::Vertex ||
+        layer == MmdPhysicsFidelityDebugLayer::All;
+    if (!showVertices)
+    {
+        mmd->SetSampledVertexCount(0U);
+        return;
+    }
+
+    constexpr std::size_t MaximumEntitySamples = 128U;
+    std::size_t sampled = 0U;
+    const glm::mat4 entityMatrix = this->transform.Matrix();
+    for (const RenderPart& part : this->renderParts)
+    {
+        if (sampled >= MaximumEntitySamples)
+            break;
+        sampled += part.GetMesh().AppendSkinningDebugLines(
+            lines,
+            *this->pose,
+            mmd->DrivenBoneModes(),
+            entityMatrix * part.LocalTransform(),
+            this->morphState.get(),
+            MaximumEntitySamples - sampled
+        );
+    }
+    mmd->SetSampledVertexCount(sampled);
+}
+
 bool Entity::RemoveBehaviour(Behaviour& behaviour)
 {
     const auto iterator = std::find_if(

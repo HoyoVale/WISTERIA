@@ -22,6 +22,34 @@ enum class MmdPhysicsDebugOverlay : std::uint8_t
     All
 };
 
+enum class MmdPhysicsFidelityDebugLayer : std::uint8_t
+{
+    Off,
+    Bone,
+    Vertex,
+    All
+};
+
+enum class MmdPhysicsWithBoneSyncMode : std::uint8_t
+{
+    RotationOnly,
+    FullBody,
+    TranslationDelta
+};
+
+struct MmdPhysicsFidelityStatistics
+{
+    std::size_t drivenBoneCount = 0U;
+    std::size_t physicsWithBoneCount = 0U;
+    std::size_t sampledVertexCount = 0U;
+    float maximumBulletToBonePositionError = 0.0f;
+    float averageBulletToBonePositionError = 0.0f;
+    float maximumBulletToBoneRotationErrorDegrees = 0.0f;
+    float averageBulletToBoneRotationErrorDegrees = 0.0f;
+    float maximumMode2TranslationDelta = 0.0f;
+    float averageMode2TranslationDelta = 0.0f;
+};
+
 struct MmdPhysicsAlignmentSummary
 {
     std::size_t bodyCount = 0U;
@@ -125,6 +153,23 @@ public:
     const char* DebugOverlayName() const noexcept;
     const MmdPhysicsAlignmentSummary& AlignmentSummary() const noexcept;
     const MmdPhysicsRecoveryStatistics& RecoveryStatistics() const noexcept;
+
+    void SetFidelityDebugLayer(
+        MmdPhysicsFidelityDebugLayer layer
+    ) noexcept;
+    MmdPhysicsFidelityDebugLayer FidelityDebugLayer() const noexcept;
+    MmdPhysicsFidelityDebugLayer CycleFidelityDebugLayer() noexcept;
+    const char* FidelityDebugLayerName() const noexcept;
+
+    void SetPhysicsWithBoneSyncMode(
+        MmdPhysicsWithBoneSyncMode mode
+    ) noexcept;
+    MmdPhysicsWithBoneSyncMode PhysicsWithBoneSyncMode() const noexcept;
+    MmdPhysicsWithBoneSyncMode CyclePhysicsWithBoneSyncMode() noexcept;
+    const char* PhysicsWithBoneSyncModeName() const noexcept;
+    const MmdPhysicsFidelityStatistics& FidelityStatistics() const noexcept;
+    std::span<const std::uint8_t> DrivenBoneModes() const noexcept;
+    void SetSampledVertexCount(std::size_t count) noexcept;
     bool StabilizationFailed() const noexcept;
     std::size_t PendingStabilizationSteps() const noexcept;
     void LogAlignmentReport(std::size_t maximumEntries = 16U) const;
@@ -251,6 +296,7 @@ private:
     void BuildAlignmentDiagnostics();
     void LogAlignmentSummary() const;
     void DestroyRuntime() noexcept;
+    void UpdateFidelityStatistics();
 
     PhysicsWorld* world = nullptr;
     const MmdPhysicsAsset* asset = nullptr;
@@ -260,6 +306,8 @@ private:
     std::vector<RuntimeBody> rigidBodies;
     std::vector<PhysicsConstraintHandle> constraints;
     std::vector<std::size_t> drivenRuntimeBodyByBone;
+    // 0 = not driven by physics, otherwise MmdRigidBodyMode + 1.
+    std::vector<std::uint8_t> drivenBoneModes;
     std::vector<glm::mat4> localMatrixScratch;
     std::vector<glm::mat4> globalMatrixScratch;
     std::vector<MmdRigidBodyImpulse> impulseScratch;
@@ -272,7 +320,12 @@ private:
     JointSnapshot createdJointSnapshot{};
     MmdPhysicsAlignmentSummary alignmentSummary;
     MmdPhysicsRecoveryStatistics recoveryStatistics;
+    MmdPhysicsFidelityStatistics fidelityStatistics;
     MmdPhysicsDebugOverlay debugOverlay = MmdPhysicsDebugOverlay::Off;
+    MmdPhysicsFidelityDebugLayer fidelityDebugLayer =
+        MmdPhysicsFidelityDebugLayer::Off;
+    MmdPhysicsWithBoneSyncMode physicsWithBoneSyncMode =
+        MmdPhysicsWithBoneSyncMode::RotationOnly;
     std::size_t pendingStabilizationSteps = 0U;
     bool resetTargetRefreshPending = false;
     bool stabilizationFailed = false;

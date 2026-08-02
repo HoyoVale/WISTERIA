@@ -17,6 +17,11 @@ Windows PowerShell：
 Space  暂停 / 继续
 R      从头播放并重置物理
 P      开关 Bullet 调试线框
+B      切换 MMD Bind / Reset / Runtime Overlay
+V      切换 Bone / Vertex 物理忠实度调试层
+M      切换 Mode 2 骨骼回写策略
+L      输出 MMD 对齐与物理诊断
+F3     开关物理性能与忠实度统计
 ```
 
 可选 Demo：
@@ -89,10 +94,10 @@ Dynamic 刚体的位置和旋转 → 骨骼
 
 Physics With Bone
 Dynamic 刚体完整参与重力、碰撞和关节
-但回写骨骼时保留动画平移，只采用物理旋转
+骨骼回写可在 RotationOnly、FullBody、TranslationDelta 间切换
 ```
 
-Mode 2 不能通过关闭刚体线性自由度实现。刚体本身必须允许重力和关节推动；“位置对齐”是 MMD 适配器在模拟后写回骨骼时执行的格式语义。
+Mode 2 不能通过关闭刚体线性自由度实现。刚体本身必须允许重力和关节推动；“位置对齐”是 MMD 适配器在模拟后写回骨骼时执行的格式语义。默认仍为兼容旧行为的 `RotationOnly`，人物 Demo 中按 `M` 可实时切换三种策略。
 
 人物 Demo 中按 `P` 开关 Bullet 调试绘制。当前显示内容来自 Bullet：
 
@@ -184,3 +189,17 @@ severeJoints
 P1 的自动恢复已改为只在真实 Bullet 固定步后检测，所有持续时间、冷却和熔断均按物理秒计时。有限 `joint_violation` 必须持续约 0.45 秒；恢复范围从具体 joint/body 开始，在约束图半径 4 内局部选择，默认最多 24 个 Dynamic、32 个总刚体。同一链 12 秒内恢复 3 次会熔断 10 秒，避免重复复位风暴。
 
 完整设计、日志字段和验收方式见 `P1_1_RECOVERY_STABILITY.md`。
+
+## Runtime Physics P1.2 A/B：Physics-to-Skinning Fidelity
+
+新增两条运行时对照能力：
+
+```text
+V  OFF → BONE → VERTEX → ALL → OFF
+M  ROTATION_ONLY → FULL_BODY → TRANSLATION_DELTA → ROTATION_ONLY
+```
+
+`B=RUNTIME` 与 `V=ALL` 组合可同时显示绿色动画目标刚体、白色 Bullet 刚体、橙色最终骨骼和紫色蒙皮顶点样本，从而直接判断误差发生在 Bullet→Bone 还是 Bone→Vertex。`TranslationDelta` 会保留动画骨骼基础位置，同时加入 Bullet 相对本帧动画目标的平移，适合对照 Mode 2 占比较高的裙摆、长发和飘带。
+
+完整颜色、统计字段、策略公式与验收方法见 `P1_2_PHYSICS_TO_SKINNING_AB.md`。
+

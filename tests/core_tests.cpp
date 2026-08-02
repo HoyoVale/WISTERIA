@@ -4540,6 +4540,283 @@ void TestMmdPhysics2BModesAndPoseSync()
 }
 
 
+
+std::unique_ptr<ModelAsset> CreatePhysicsWithBoneFidelityModel()
+{
+    auto model = std::make_unique<ModelAsset>("physicsWithBoneFidelity");
+    model->SetSkeleton(Skeleton({
+        Bone{"mode2", InvalidBoneIndex, glm::mat4(1.0f), glm::mat4(1.0f)}
+    }));
+
+    MmdRigidBodyDefinition body;
+    body.name = "offsetMode2Body";
+    body.bone = 0U;
+    body.shape = MmdRigidBodyShape::Box;
+    body.size = glm::vec3(0.25f);
+    body.mass = 1.0f;
+    body.linearDamping = 0.05f;
+    body.angularDamping = 0.05f;
+    body.mode = MmdRigidBodyMode::PhysicsWithBone;
+    body.position = glm::vec3(1.0f, 0.0f, 0.0f);
+    body.modelBindTransform = glm::translate(
+        glm::mat4(1.0f),
+        body.position
+    );
+    body.boneToBody = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    body.bodyToBone = glm::inverse(body.boneToBody);
+    model->SetMmdPhysics(MmdPhysicsAsset({body}, {}));
+    return model;
+}
+
+void TestMmdPhysicsFidelityModesAndDebugLayers()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysicsWithBoneFidelityModel();
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    scene.Update(0.0f);
+
+    MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+    const PhysicsBodyHandle body = physics.BodyHandleAt(0U);
+    const glm::mat4 authoredBone = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.5f, 2.0f, 0.0f)
+    );
+    const glm::vec3 bodyPosition(3.0f, 4.0f, 0.0f);
+    const glm::quat bodyRotation = glm::angleAxis(
+        glm::half_pi<float>(),
+        glm::vec3(0.0f, 0.0f, 1.0f)
+    );
+    const glm::mat4 bodyMatrix = glm::translate(
+        glm::mat4(1.0f),
+        bodyPosition
+    ) * glm::mat4_cast(bodyRotation);
+    const glm::mat4 bodyToBone = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(-1.0f, 0.0f, 0.0f)
+    );
+
+    const auto evaluate = [&](MmdPhysicsWithBoneSyncMode mode)
+    {
+        physics.SetPhysicsWithBoneSyncMode(mode);
+        entity.GetPose().SetLocalMatrix(0U, authoredBone);
+        scene.Physics().SetTransform(
+            body,
+            bodyPosition,
+            bodyRotation,
+            true
+        );
+        scene.Update(0.0f);
+        return BoneTransform::FromMatrix(
+            entity.GetPose().GlobalMatrix(0U)
+        );
+    };
+
+    const BoneTransform rotationOnly = evaluate(
+        MmdPhysicsWithBoneSyncMode::RotationOnly
+    );
+    Require(
+        glm::distance(
+            rotationOnly.translation,
+            glm::vec3(authoredBone[3])
+        ) < 0.0001f &&
+        NearlySameRotation(rotationOnly.rotation, bodyRotation),
+        "Mode 2 RotationOnly did not preserve authored translation and Bullet rotation"
+    );
+    const MmdPhysicsFidelityStatistics rotationOnlyStats =
+        physics.FidelityStatistics();
+    Require(
+        rotationOnlyStats.drivenBoneCount == 1U &&
+        rotationOnlyStats.physicsWithBoneCount == 1U &&
+        rotationOnlyStats.maximumBulletToBonePositionError > 1.0f,
+        "Mode 2 fidelity statistics missed RotationOnly position divergence"
+    );
+
+    const BoneTransform fullBody = evaluate(
+        MmdPhysicsWithBoneSyncMode::FullBody
+    );
+    const BoneTransform expectedFullBody = BoneTransform::FromMatrix(
+        bodyMatrix * bodyToBone
+    );
+    Require(
+        glm::distance(
+            fullBody.translation,
+            expectedFullBody.translation
+        ) < 0.0001f &&
+        NearlySameRotation(fullBody.rotation, expectedFullBody.rotation),
+        "Mode 2 FullBody did not write the complete Bullet-derived bone transform"
+    );
+    Require(
+        physics.FidelityStatistics().maximumBulletToBonePositionError < 0.0001f,
+        "FullBody mode retained an unexpected Bullet-to-bone position error"
+    );
+
+    const BoneTransform translationDelta = evaluate(
+        MmdPhysicsWithBoneSyncMode::TranslationDelta
+    );
+    const glm::vec3 animatedBodyPosition =
+        glm::vec3(authoredBone[3]) + glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 expectedDeltaPosition =
+        glm::vec3(authoredBone[3]) +
+        (bodyPosition - animatedBodyPosition);
+    Require(
+        glm::distance(
+            translationDelta.translation,
+            expectedDeltaPosition
+        ) < 0.0001f &&
+        NearlySameRotation(translationDelta.rotation, bodyRotation),
+        "Mode 2 TranslationDelta did not preserve the authored pivot while applying body displacement"
+    );
+    Require(
+        glm::distance(
+            translationDelta.translation,
+            fullBody.translation
+        ) > 0.5f,
+        "Mode 2 TranslationDelta unexpectedly collapsed to FullBody semantics"
+    );
+    const MmdPhysicsFidelityStatistics deltaStats =
+        physics.FidelityStatistics();
+    Require(
+        std::abs(
+            deltaStats.maximumMode2TranslationDelta -
+            glm::distance(bodyPosition, animatedBodyPosition)
+        ) < 0.0001f,
+        "Mode 2 translation-delta statistics are inconsistent"
+    );
+
+    physics.SetPhysicsWithBoneSyncMode(
+        MmdPhysicsWithBoneSyncMode::RotationOnly
+    );
+    Require(
+        physics.CyclePhysicsWithBoneSyncMode() ==
+            MmdPhysicsWithBoneSyncMode::FullBody &&
+        physics.CyclePhysicsWithBoneSyncMode() ==
+            MmdPhysicsWithBoneSyncMode::TranslationDelta &&
+        physics.CyclePhysicsWithBoneSyncMode() ==
+            MmdPhysicsWithBoneSyncMode::RotationOnly,
+        "Mode 2 sync strategy cycle order changed"
+    );
+
+    physics.SetFidelityDebugLayer(MmdPhysicsFidelityDebugLayer::Off);
+    Require(
+        physics.CycleFidelityDebugLayer() ==
+            MmdPhysicsFidelityDebugLayer::Bone &&
+        physics.CycleFidelityDebugLayer() ==
+            MmdPhysicsFidelityDebugLayer::Vertex &&
+        physics.CycleFidelityDebugLayer() ==
+            MmdPhysicsFidelityDebugLayer::All &&
+        physics.CycleFidelityDebugLayer() ==
+            MmdPhysicsFidelityDebugLayer::Off,
+        "Physics fidelity debug-layer cycle order changed"
+    );
+
+    physics.SetFidelityDebugLayer(MmdPhysicsFidelityDebugLayer::Bone);
+    physics.SetDebugOverlay(MmdPhysicsDebugOverlay::Off);
+    std::vector<PhysicsDebugLine> lines;
+    physics.AppendDebugLines(lines);
+    const bool hasOrangeBoneAxis = std::any_of(
+        lines.begin(),
+        lines.end(),
+        [](const PhysicsDebugLine& line)
+        {
+            return NearlyEqual(line.color, glm::vec3(1.0f, 0.30f, 0.0f)) ||
+                NearlyEqual(line.color, glm::vec3(1.0f, 0.62f, 0.08f)) ||
+                NearlyEqual(line.color, glm::vec3(1.0f, 0.88f, 0.32f));
+        }
+    );
+    Require(
+        hasOrangeBoneAxis,
+        "Bone fidelity layer did not draw post-physics bone axes"
+    );
+}
+
+void TestMeshSkinningFidelityDebugSamples()
+{
+    Skeleton skeleton({
+        Bone{"root", InvalidBoneIndex, glm::mat4(1.0f), glm::mat4(1.0f)}
+    });
+    Pose pose(skeleton);
+    pose.SetLocalMatrix(
+        0U,
+        glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, 0.0f))
+    );
+
+    DefaultModelData data{
+        {
+            1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f, 0.0f
+        },
+        {0U},
+        {
+            {"position", 3U, FLOAT},
+            {"boneIndices", 4U, FLOAT},
+            {"boneWeights", 4U, FLOAT}
+        }
+    };
+    Mesh mesh(std::move(data), 1U);
+    std::vector<std::uint8_t> drivenModes{3U};
+    std::vector<PhysicsDebugLine> lines;
+    const glm::mat4 modelMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(5.0f, 0.0f, 0.0f)
+    );
+    const std::size_t sampled = mesh.AppendSkinningDebugLines(
+        lines,
+        pose,
+        drivenModes,
+        modelMatrix,
+        nullptr,
+        8U
+    );
+    Require(
+        sampled == 1U && lines.size() == 4U,
+        "Vertex fidelity layer did not sample the skinned vertex"
+    );
+
+    const glm::vec3 expectedWorldPosition(8.0f, 0.0f, 0.0f);
+    const bool hasPurpleVertexCross = std::any_of(
+        lines.begin(),
+        lines.end(),
+        [&expectedWorldPosition](const PhysicsDebugLine& line)
+        {
+            return NearlyEqual(line.color, glm::vec3(0.82f, 0.18f, 1.0f)) &&
+                glm::distance(
+                    (line.from + line.to) * 0.5f,
+                    expectedWorldPosition
+                ) < 0.0001f;
+        }
+    );
+    const bool hasBoneToVertexLink = std::any_of(
+        lines.begin(),
+        lines.end(),
+        [](const PhysicsDebugLine& line)
+        {
+            return NearlyEqual(line.color, glm::vec3(0.48f, 0.08f, 0.68f));
+        }
+    );
+    Require(
+        hasPurpleVertexCross && hasBoneToVertexLink,
+        "Vertex fidelity layer did not match the GPU linear-blend skinning transform"
+    );
+
+    lines.clear();
+    drivenModes[0U] = 0U;
+    Require(
+        mesh.AppendSkinningDebugLines(
+            lines,
+            pose,
+            drivenModes,
+            modelMatrix,
+            nullptr,
+            8U
+        ) == 0U && lines.empty(),
+        "Vertex fidelity layer sampled a vertex without physics-driven influence"
+    );
+}
+
 void TestMmdPhysicsBindAlignmentOverlay()
 {
     const glm::mat4 skeletonRootBind = glm::translate(
@@ -5850,6 +6127,14 @@ int main()
     failures += !RunTest(
         "MMD Physics 2B modes and Pose sync",
         TestMmdPhysics2BModesAndPoseSync
+    );
+    failures += !RunTest(
+        "MMD P1.2 Mode 2 fidelity strategies",
+        TestMmdPhysicsFidelityModesAndDebugLayers
+    );
+    failures += !RunTest(
+        "MMD P1.2 vertex skinning debug samples",
+        TestMeshSkinningFidelityDebugSamples
     );
     failures += !RunTest(
         "MMD bind alignment overlay",

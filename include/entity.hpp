@@ -107,6 +107,7 @@ public:
     void PostPhysicsUpdate();
     void SolveAfterPhysicsPose();
     void ResetPhysicsToCurrentPose();
+    void AppendPhysicsDebugLines(std::vector<PhysicsDebugLine>& lines);
 
     template<typename T, typename... Arguments>
         requires std::derived_from<T, Behaviour>

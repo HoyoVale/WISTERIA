@@ -1,6 +1,7 @@
 #include "pch.hpp"
 #include "mesh.hpp"
 #include "vao.hpp"
+#include "pose.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -122,6 +123,88 @@ Mesh::Mesh(
     }
     this->vertexCount = CalculateVertexCount(this->data);
     this->localBoundsCenter = CalculateBoundsCenter(this->data);
+
+    if (this->requiredBoneCount > 0U)
+    {
+        std::size_t strideBytes = 0U;
+        std::size_t positionOffset = 0U;
+        std::size_t boneIndexOffset = 0U;
+        std::size_t boneWeightOffset = 0U;
+        bool foundPosition = false;
+        bool foundBoneIndices = false;
+        bool foundBoneWeights = false;
+        for (const Layout& attribute : this->data.layout)
+        {
+            if (attribute.name == "position")
+            {
+                if (attribute.type != FLOAT || attribute.size < 3U)
+                    throw std::invalid_argument("Skinned Mesh position layout is invalid");
+                positionOffset = strideBytes;
+                foundPosition = true;
+            }
+            else if (attribute.name == "boneIndices")
+            {
+                if (attribute.type != FLOAT || attribute.size != 4U)
+                    throw std::invalid_argument("Skinned Mesh bone index layout is invalid");
+                boneIndexOffset = strideBytes;
+                foundBoneIndices = true;
+            }
+            else if (attribute.name == "boneWeights")
+            {
+                if (attribute.type != FLOAT || attribute.size != 4U)
+                    throw std::invalid_argument("Skinned Mesh bone weight layout is invalid");
+                boneWeightOffset = strideBytes;
+                foundBoneWeights = true;
+            }
+            strideBytes += attribute.size * DataTypeSize(attribute.type);
+        }
+        if (!foundPosition || !foundBoneIndices || !foundBoneWeights ||
+            strideBytes == 0U)
+        {
+            throw std::invalid_argument(
+                "Skinned Mesh is missing debug-readable skinning attributes"
+            );
+        }
+
+        this->skinningDebugVertices.resize(this->vertexCount);
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(
+            this->data.vertices.data()
+        );
+        for (std::size_t vertexIndex = 0U;
+             vertexIndex < this->vertexCount;
+             ++vertexIndex)
+        {
+            const std::uint8_t* vertex = bytes + vertexIndex * strideBytes;
+            float position[3]{};
+            float indices[4]{};
+            float weights[4]{};
+            std::memcpy(position, vertex + positionOffset, sizeof(position));
+            std::memcpy(indices, vertex + boneIndexOffset, sizeof(indices));
+            std::memcpy(weights, vertex + boneWeightOffset, sizeof(weights));
+
+            SkinningDebugVertex& debugVertex =
+                this->skinningDebugVertices[vertexIndex];
+            debugVertex.position = glm::vec3(
+                position[0], position[1], position[2]
+            );
+            debugVertex.boneWeights = glm::vec4(
+                weights[0], weights[1], weights[2], weights[3]
+            );
+            for (std::size_t influence = 0U; influence < 4U; ++influence)
+            {
+                const float rounded = std::floor(indices[influence] + 0.5f);
+                if (!std::isfinite(rounded) || rounded < 0.0f ||
+                    rounded >= static_cast<float>(this->requiredBoneCount))
+                {
+                    throw std::invalid_argument(
+                        "Skinned Mesh contains an invalid bone index"
+                    );
+                }
+                debugVertex.boneIndices[influence] =
+                    static_cast<BoneIndex>(rounded);
+            }
+        }
+    }
 
     std::unordered_set<MorphIndex> targetIndices;
     for (const MeshMorphTarget& target : this->morphTargets)
@@ -326,4 +409,142 @@ bool Mesh::CalculateMorphDeltas(
             output[offset.vertexIndex].uv[offset.channel] += offset.offset * weight;
     }
     return true;
+}
+
+std::size_t Mesh::AppendSkinningDebugLines(
+    std::vector<PhysicsDebugLine>& lines,
+    const Pose& pose,
+    std::span<const std::uint8_t> drivenBoneModes,
+    const glm::mat4& modelMatrix,
+    const MorphState* morphState,
+    std::size_t maximumSamples
+) const
+{
+    if (!this->IsSkinned() || this->skinningDebugVertices.empty() ||
+        maximumSamples == 0U)
+    {
+        return 0U;
+    }
+    if (pose.BoneCount() < this->requiredBoneCount ||
+        drivenBoneModes.size() < this->requiredBoneCount)
+    {
+        throw std::invalid_argument(
+            "Skinning debug data does not match the Mesh skeleton"
+        );
+    }
+
+    std::vector<glm::vec3> morphOffsets;
+    const bool hasMorphOffsets = morphState != nullptr &&
+        this->CalculateMorphOffsets(
+            morphState->EffectiveWeights(),
+            morphOffsets
+        );
+    const std::span<const glm::mat4> skinningMatrices =
+        pose.SkinningMatrices();
+    const Skeleton& skeleton = pose.GetSkeleton();
+    const std::span<const glm::mat4> globalMatrices = pose.GlobalMatrices();
+
+    const auto drivenInfluence = [&drivenBoneModes](
+        const SkinningDebugVertex& vertex
+    )
+    {
+        for (std::size_t influence = 0U; influence < 4U; ++influence)
+        {
+            const BoneIndex bone = vertex.boneIndices[influence];
+            if (vertex.boneWeights[influence] > 0.05f &&
+                static_cast<std::size_t>(bone) < drivenBoneModes.size() &&
+                drivenBoneModes[bone] != 0U)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    std::size_t candidateCount = 0U;
+    for (const SkinningDebugVertex& vertex : this->skinningDebugVertices)
+        candidateCount += drivenInfluence(vertex) ? 1U : 0U;
+    if (candidateCount == 0U)
+        return 0U;
+
+    const std::size_t candidateStride = std::max<std::size_t>(
+        1U,
+        (candidateCount + maximumSamples - 1U) / maximumSamples
+    );
+    const float basisScale = (
+        glm::length(glm::vec3(modelMatrix[0])) +
+        glm::length(glm::vec3(modelMatrix[1])) +
+        glm::length(glm::vec3(modelMatrix[2]))
+    ) / 3.0f;
+    const float crossSize = std::max(0.0025f, basisScale * 0.0125f);
+    constexpr glm::vec3 VertexColor{0.82f, 0.18f, 1.0f};
+    constexpr glm::vec3 BoneToVertexColor{0.48f, 0.08f, 0.68f};
+
+    std::size_t candidateOrdinal = 0U;
+    std::size_t sampled = 0U;
+    for (std::size_t vertexIndex = 0U;
+         vertexIndex < this->skinningDebugVertices.size() &&
+             sampled < maximumSamples;
+         ++vertexIndex)
+    {
+        const SkinningDebugVertex& vertex =
+            this->skinningDebugVertices[vertexIndex];
+        if (!drivenInfluence(vertex))
+            continue;
+        const bool selected = candidateOrdinal % candidateStride == 0U;
+        ++candidateOrdinal;
+        if (!selected)
+            continue;
+
+        glm::mat4 skinMatrix(0.0f);
+        BoneIndex dominantBone = vertex.boneIndices[0U];
+        float dominantWeight = -1.0f;
+        for (std::size_t influence = 0U; influence < 4U; ++influence)
+        {
+            const BoneIndex bone = vertex.boneIndices[influence];
+            const float weight = vertex.boneWeights[influence];
+            skinMatrix += skinningMatrices[bone] * weight;
+            if (weight > dominantWeight && drivenBoneModes[bone] != 0U)
+            {
+                dominantWeight = weight;
+                dominantBone = bone;
+            }
+        }
+
+        glm::vec3 sourcePosition = vertex.position;
+        if (hasMorphOffsets)
+            sourcePosition += morphOffsets[vertexIndex];
+        const glm::vec3 worldPosition = glm::vec3(
+            modelMatrix * skinMatrix * glm::vec4(sourcePosition, 1.0f)
+        );
+
+        lines.push_back(PhysicsDebugLine{
+            worldPosition - glm::vec3(crossSize, 0.0f, 0.0f),
+            worldPosition + glm::vec3(crossSize, 0.0f, 0.0f),
+            VertexColor
+        });
+        lines.push_back(PhysicsDebugLine{
+            worldPosition - glm::vec3(0.0f, crossSize, 0.0f),
+            worldPosition + glm::vec3(0.0f, crossSize, 0.0f),
+            VertexColor
+        });
+        lines.push_back(PhysicsDebugLine{
+            worldPosition - glm::vec3(0.0f, 0.0f, crossSize),
+            worldPosition + glm::vec3(0.0f, 0.0f, crossSize),
+            VertexColor
+        });
+
+        const glm::mat4 boneModel =
+            skeleton.InverseRootMatrix() * globalMatrices[dominantBone];
+        const glm::vec3 boneWorldPosition = glm::vec3(
+            modelMatrix * glm::vec4(glm::vec3(boneModel[3]), 1.0f)
+        );
+        lines.push_back(PhysicsDebugLine{
+            boneWorldPosition,
+            worldPosition,
+            BoneToVertexColor
+        });
+        ++sampled;
+    }
+    return sampled;
 }

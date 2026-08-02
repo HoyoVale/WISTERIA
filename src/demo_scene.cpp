@@ -416,6 +416,26 @@ public:
         {
             entity.GetMmdPhysics().LogAlignmentReport();
         }
+        if (this->input.WasKeyPressed(InputKey::V) &&
+            entity.HasMmdPhysics())
+        {
+            MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+            physics.CycleFidelityDebugLayer();
+            std::cout << "[MMD FIDELITY] debug="
+                      << physics.FidelityDebugLayerName()
+                      << std::endl;
+            this->titleDirty = true;
+        }
+        if (this->input.WasKeyPressed(InputKey::M) &&
+            entity.HasMmdPhysics())
+        {
+            MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+            physics.CyclePhysicsWithBoneSyncMode();
+            std::cout << "[MMD FIDELITY] mode2="
+                      << physics.PhysicsWithBoneSyncModeName()
+                      << std::endl;
+            this->titleDirty = true;
+        }
         if (this->input.WasKeyPressed(InputKey::F3))
         {
             this->showPhysicsStatistics = !this->showPhysicsStatistics;
@@ -483,6 +503,15 @@ private:
         {
             title << "N/A";
         }
+        if (const Entity* entity = this->scene.EntityAt(0U);
+            entity != nullptr && entity->HasMmdPhysics())
+        {
+            const MmdPhysicsInstance& physics = entity->GetMmdPhysics();
+            title << " | V: fidelity "
+                  << physics.FidelityDebugLayerName()
+                  << " | M: mode2 "
+                  << physics.PhysicsWithBoneSyncModeName();
+        }
         title << " | L: alignment log | F3: stats "
               << (this->showPhysicsStatistics ? "ON" : "OFF");
 
@@ -495,10 +524,12 @@ private:
                 ? 1.0f / frame.frameDeltaTime
                 : 0.0f;
             MmdPhysicsRecoveryStatistics recovery;
+            MmdPhysicsFidelityStatistics fidelity;
             if (const Entity* entity = this->scene.EntityAt(0U);
                 entity != nullptr && entity->HasMmdPhysics())
             {
                 recovery = entity->GetMmdPhysics().RecoveryStatistics();
+                fidelity = entity->GetMmdPhysics().FidelityStatistics();
             }
             title << " | [" << WISTERIA_BUILD_CONFIGURATION << "] "
                   << std::setprecision(1) << fps << " FPS"
@@ -518,6 +549,9 @@ private:
                   << " | recover " << recovery.totalRecoveries
                   << " (local<=" << recovery.largestRecoveryRegion
                   << "/fused" << recovery.fusedChainCount << ')'
+                  << " | B2Bone " << std::setprecision(3)
+                  << fidelity.maximumBulletToBonePositionError
+                  << " | Vtx " << fidelity.sampledVertexCount
                   << " | active " << world.activeBodyCount
                   << " | contacts " << world.contactPointCount
                   << " | finite " << (world.finite ? "OK" : "FAIL");
@@ -534,10 +568,12 @@ private:
             ? 1.0f / frame.frameDeltaTime
             : 0.0f;
         MmdPhysicsRecoveryStatistics recovery;
+        MmdPhysicsFidelityStatistics fidelity;
         if (const Entity* entity = this->scene.EntityAt(0U);
             entity != nullptr && entity->HasMmdPhysics())
         {
             recovery = entity->GetMmdPhysics().RecoveryStatistics();
+            fidelity = entity->GetMmdPhysics().FidelityStatistics();
         }
         std::cout << "[PHYSICS STATS] build="
                   << WISTERIA_BUILD_CONFIGURATION
@@ -588,6 +624,41 @@ private:
                   << recovery.totalFuseTrips
                   << " suppressedRecoveries="
                   << recovery.suppressedRecoveryCount
+                  << " mode2Sync=";
+        if (const Entity* entity = this->scene.EntityAt(0U);
+            entity != nullptr && entity->HasMmdPhysics())
+        {
+            std::cout << entity->GetMmdPhysics().PhysicsWithBoneSyncModeName();
+        }
+        else
+        {
+            std::cout << "N/A";
+        }
+        std::cout << " fidelityDebug=";
+        if (const Entity* entity = this->scene.EntityAt(0U);
+            entity != nullptr && entity->HasMmdPhysics())
+        {
+            std::cout << entity->GetMmdPhysics().FidelityDebugLayerName();
+        }
+        else
+        {
+            std::cout << "N/A";
+        }
+        std::cout << " drivenBones=" << fidelity.drivenBoneCount
+                  << " mode2Bodies=" << fidelity.physicsWithBoneCount
+                  << " sampledVertices=" << fidelity.sampledVertexCount
+                  << " bulletBonePosMax="
+                  << fidelity.maximumBulletToBonePositionError
+                  << " bulletBonePosAvg="
+                  << fidelity.averageBulletToBonePositionError
+                  << " bulletBoneRotMaxDeg="
+                  << fidelity.maximumBulletToBoneRotationErrorDegrees
+                  << " bulletBoneRotAvgDeg="
+                  << fidelity.averageBulletToBoneRotationErrorDegrees
+                  << " mode2DeltaMax="
+                  << fidelity.maximumMode2TranslationDelta
+                  << " mode2DeltaAvg="
+                  << fidelity.averageMode2TranslationDelta
                   << " active=" << world.activeBodyCount
                   << " sleeping=" << world.sleepingBodyCount
                   << " constraints=" << world.constraintCount

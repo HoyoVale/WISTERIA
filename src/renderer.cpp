@@ -813,13 +813,7 @@ void Renderer::DrawPhysicsDebug(
         lines.insert(lines.end(), worldLines.begin(), worldLines.end());
     }
     for (const std::unique_ptr<Entity>& entity : scene.Entities())
-    {
-        if (const PhysicsInstance* instance =
-                entity->TryGetPhysicsInstance())
-        {
-            instance->AppendDebugLines(lines);
-        }
-    }
+        entity->AppendPhysicsDebugLines(lines);
     if (lines.empty())
         return;
 
