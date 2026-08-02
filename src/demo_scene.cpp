@@ -27,10 +27,16 @@ std::filesystem::path DemoModelPath(bool alternate)
         u8"叶瞬光.pmx";
 }
 
-std::filesystem::path DemoMotionPath()
+std::filesystem::path DemoMotionPath1()
 {
     return std::filesystem::current_path() / "assets" / "motions" /
-        "demo.vmd";
+        u8"皮卡皮卡皮卡丘+" / u8"身体动作.vmd";
+}
+
+std::filesystem::path DemoMotionPath2()
+{
+    return std::filesystem::current_path() / "assets" / "motions" /
+        u8"皮卡皮卡皮卡丘+" / u8"表情动作.vmd";
 }
 
 std::optional<BoneIndex> FindBone(
@@ -325,18 +331,18 @@ const AnimationClip& ResolveCharacterMotion(
     {
         return *existing;
     }
-    const std::filesystem::path motionPath = DemoMotionPath();
-    if (std::filesystem::is_regular_file(motionPath))
+    const std::filesystem::path motionPath1 = DemoMotionPath1();
+    if (std::filesystem::is_regular_file(motionPath1))
     {
         try
         {
             const AnimationClip& clip = resources.LoadVmdAnimation(
                 model,
-                motionPath,
+                motionPath1,
                 VmdImportOptions{.clipName = std::string(ExternalMotionName)}
             );
             std::cout << "[INFO] Full-body demo loaded VMD: "
-                      << motionPath.string() << std::endl;
+                      << motionPath1.string() << std::endl;
             return clip;
         }
         catch (const std::exception& error)
