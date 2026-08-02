@@ -124,7 +124,7 @@ Entity& Scene::InstantiateModel(
         if (model.AnimationClipCount() > 0)
             entity.GetAnimator().Play(model.AnimationClipAt(0));
     }
-    if (options.enableMmdPhysics && model.HasMmdPhysics())
+    if (options.enablePhysics && model.HasMmdPhysics())
         entity.SetMmdPhysics(*this->physicsWorld, model.GetMmdPhysics());
     for (const RenderPart& part : model.Parts())
     {

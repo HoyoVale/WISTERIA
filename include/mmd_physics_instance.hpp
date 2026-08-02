@@ -2,6 +2,7 @@
 
 #include "mmd_physics_asset.hpp"
 #include "morph.hpp"
+#include "physics_instance.hpp"
 #include "physics_types.hpp"
 #include <cstddef>
 #include <limits>
@@ -14,14 +15,15 @@ class Transform;
 // Per-Entity runtime bridge between immutable PMX physics metadata and the
 // shared scene PhysicsWorld. Bullet objects remain owned by PhysicsWorld;
 // this object owns only safe WISTERIA handles and MMD synchronization state.
-class MmdPhysicsInstance
+class MmdPhysicsInstance final : public PhysicsInstance
 {
 public:
     MmdPhysicsInstance(
         PhysicsWorld& world,
         const MmdPhysicsAsset& asset,
         Pose& pose,
-        const Transform& transform
+        Transform& transform,
+        const MorphState* morphState = nullptr
     );
     ~MmdPhysicsInstance();
 
@@ -38,9 +40,9 @@ public:
     void ApplyTorqueImpulse(RigidBodyIndex index, const glm::vec3& impulse);
     void ApplyImpulseMorphs(const MorphState& morphState);
 
-    void PrePhysicsUpdate(const Transform& transform, float deltaTime);
-    void PostPhysicsUpdate(const Transform& transform);
-    void ResetToPose(const Transform& transform);
+    void PrepareSimulation(float deltaTime) override;
+    void FinishSimulation() override;
+    void ResetSimulation() override;
 
 private:
     struct RuntimeBody
@@ -52,11 +54,16 @@ private:
         bool hasAnimatedTransform = false;
     };
 
+    void PrePhysicsUpdate(const Transform& transform, float deltaTime);
+    void PostPhysicsUpdate(const Transform& transform);
+    void ResetToPose(const Transform& transform);
     void DestroyRuntime() noexcept;
 
     PhysicsWorld* world = nullptr;
     const MmdPhysicsAsset* asset = nullptr;
     Pose* pose = nullptr;
+    Transform* transform = nullptr;
+    const MorphState* morphState = nullptr;
     std::vector<RuntimeBody> rigidBodies;
     std::vector<PhysicsConstraintHandle> constraints;
     std::vector<std::size_t> drivenRuntimeBodyByBone;

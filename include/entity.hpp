@@ -19,6 +19,7 @@
 
 class MmdPhysicsAsset;
 class MmdPhysicsInstance;
+class PhysicsInstance;
 class PhysicsWorld;
 
 class Entity {
@@ -82,6 +83,15 @@ public:
     const MorphState& GetMorphState() const;
     void SetMorphSet(const MorphSet& morphSet);
 
+    bool HasPhysicsInstance() const noexcept;
+    PhysicsInstance* TryGetPhysicsInstance() noexcept;
+    const PhysicsInstance* TryGetPhysicsInstance() const noexcept;
+    PhysicsInstance& GetPhysicsInstance();
+    const PhysicsInstance& GetPhysicsInstance() const;
+    void SetPhysicsInstance(std::unique_ptr<PhysicsInstance> instance);
+
+    // Transitional typed access for MMD-only features such as Impulse Morph.
+    // Entity lifecycle itself uses PhysicsInstance and is format-agnostic.
     bool HasMmdPhysics() const noexcept;
     MmdPhysicsInstance* TryGetMmdPhysics() noexcept;
     const MmdPhysicsInstance* TryGetMmdPhysics() const noexcept;
@@ -148,7 +158,7 @@ private:
     std::unique_ptr<Pose> pose;
     std::unique_ptr<MorphState> morphState;
     std::unique_ptr<Animator> animator;
-    std::unique_ptr<MmdPhysicsInstance> mmdPhysics;
+    std::unique_ptr<PhysicsInstance> physicsInstance;
     std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;
     std::vector<Behaviour*> pendingBehaviourRemovals;

@@ -1,18 +1,26 @@
 #pragma once
 
+class AnimationClip;
 class ModelAsset;
 class ResourceManager;
 class Scene;
 class Window;
 
-// Builds the current model-viewer scenes. Keeping this outside Window makes
-// the platform window reusable by tests, tools, and future secondary views.
-void SetupDemoScene1(Scene& scene, ResourceManager& resources);
-void SetupDemoScene2(Scene& scene, ResourceManager& resources);
+// The default demo is one complete MMD character pipeline: model import,
+// full-body animation or assets/motions/demo.vmd, Morph, IK, Bullet physics,
+// after-physics pose solving and rendering.
+void SetupMmdCharacterDemo(
+    Scene& scene,
+    ResourceManager& resources,
+    Window& window,
+    bool alternateModel = false
+);
 
-// Creates a small procedural, skinned model containing every supported MMD
-// Morph kind. It is public so automated tests can validate the same asset used
-// by the interactive demo instead of maintaining a separate test-only copy.
+// Creates the procedural fallback used when assets/motions/demo.vmd is absent.
+// Kept public so tests validate the exact clip used by the interactive demo.
+const AnimationClip& CreateMmdFullBodyDemoAnimation(ModelAsset& model);
+
+// Morph Lab remains an opt-in diagnostics scene rather than a default window.
 ModelAsset& CreateMorphLabModel(ResourceManager& resources);
 void SetupMorphDemoScene(
     Scene& scene,

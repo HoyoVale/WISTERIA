@@ -10,6 +10,7 @@
 #include "model_asset.hpp"
 #include "mmd_physics_instance.hpp"
 #include "pose.hpp"
+#include "physics_instance.hpp"
 #include "physics_world.hpp"
 #include "renderer.hpp"
 #include "scene.hpp"
@@ -2295,6 +2296,216 @@ void TestExtendedMmdMorphRuntime()
 }
 
 
+
+struct PhysicsLifecycleCounters
+{
+    int prepareCount = 0;
+    int finishCount = 0;
+    int resetCount = 0;
+    float lastDeltaTime = 0.0f;
+};
+
+class CountingPhysicsInstance final : public PhysicsInstance
+{
+public:
+    explicit CountingPhysicsInstance(PhysicsLifecycleCounters& counters)
+        : counters(&counters)
+    {
+    }
+
+    void PrepareSimulation(float deltaTime) override
+    {
+        ++this->counters->prepareCount;
+        this->counters->lastDeltaTime = deltaTime;
+    }
+
+    void FinishSimulation() override
+    {
+        ++this->counters->finishCount;
+    }
+
+    void ResetSimulation() override
+    {
+        ++this->counters->resetCount;
+    }
+
+private:
+    PhysicsLifecycleCounters* counters = nullptr;
+};
+
+void TestGenericPhysicsInstanceLifecycle()
+{
+    Entity entity;
+    PhysicsLifecycleCounters counters;
+    entity.SetPhysicsInstance(
+        std::make_unique<CountingPhysicsInstance>(counters)
+    );
+    Require(
+        entity.HasPhysicsInstance() &&
+        entity.TryGetPhysicsInstance() != nullptr &&
+        &entity.GetPhysicsInstance() == entity.TryGetPhysicsInstance() &&
+        !entity.HasMmdPhysics(),
+        "Entity generic physics slot still assumes an MMD runtime"
+    );
+
+    entity.PrePhysicsUpdate(0.25f);
+    entity.PostPhysicsUpdate();
+    entity.ResetPhysicsToCurrentPose();
+    Require(
+        counters.prepareCount == 1 &&
+        counters.finishCount == 1 &&
+        counters.resetCount == 1 &&
+        NearlyEqual(counters.lastDeltaTime, 0.25f),
+        "Entity did not route simulation lifecycle through PhysicsInstance"
+    );
+
+    bool duplicateRejected = false;
+    try
+    {
+        entity.SetPhysicsInstance(
+            std::make_unique<CountingPhysicsInstance>(counters)
+        );
+    }
+    catch (const std::logic_error&)
+    {
+        duplicateRejected = true;
+    }
+    Require(
+        duplicateRejected,
+        "Entity accepted a second physics runtime without explicit removal"
+    );
+}
+
+void TestMmdFullBodyDemoAnimation()
+{
+    const std::array<std::string_view, 17U> boneNames{
+        "全ての親", "センター", "グルーブ", "下半身", "上半身",
+        "上半身2", "首", "頭", "左肩", "右肩", "左腕", "右腕",
+        "左ひじ", "右ひじ", "左手首", "左足ＩＫ", "右足ＩＫ"
+    };
+    std::vector<Bone> bones;
+    bones.reserve(boneNames.size());
+    for (std::size_t index = 0; index < boneNames.size(); ++index)
+    {
+        Bone bone;
+        bone.name = std::string(boneNames[index]);
+        bone.parentIndex = index == 0U
+            ? InvalidBoneIndex
+            : static_cast<BoneIndex>(index - 1U);
+        bone.bindLocalMatrix = glm::mat4(1.0f);
+        bone.inverseBindMatrix = glm::mat4(1.0f);
+        bones.push_back(std::move(bone));
+    }
+
+    ModelAsset model("fullBodyDemoRig");
+    model.SetSkeleton(Skeleton(std::move(bones)));
+    model.SetMorphs({
+        MorphDefinition{"まばたき", MorphCategory::Eye},
+        MorphDefinition{"笑い", MorphCategory::Mouth}
+    });
+
+    const AnimationClip& clip = CreateMmdFullBodyDemoAnimation(model);
+    Require(
+        &CreateMmdFullBodyDemoAnimation(model) == &clip &&
+        clip.Name() == "demoFullBodyAction" &&
+        NearlyEqual(clip.Duration(), 8.0f) &&
+        clip.TrackCount() >= 15U &&
+        clip.MorphWeightTrackCount() == 2U,
+        "Full-body demo clip is incomplete or not idempotent"
+    );
+
+    const Skeleton& skeleton = model.GetSkeleton();
+    PoseBuffer sampled(skeleton);
+    clip.Sample(2.0f, sampled);
+    const BoneIndex center = *skeleton.FindBone("センター");
+    const BoneIndex head = *skeleton.FindBone("頭");
+    const BoneIndex leftArm = *skeleton.FindBone("左腕");
+    const BoneIndex leftFootIk = *skeleton.FindBone("左足ＩＫ");
+    Require(
+        glm::length(sampled.TransformAt(center).translation) > 0.1f &&
+        !NearlySameRotation(
+            sampled.TransformAt(head).rotation,
+            BoneTransform::FromMatrix(
+                skeleton.BoneAt(head).bindLocalMatrix
+            ).rotation
+        ) &&
+        !NearlySameRotation(
+            sampled.TransformAt(leftArm).rotation,
+            BoneTransform::FromMatrix(
+                skeleton.BoneAt(leftArm).bindLocalMatrix
+            ).rotation
+        ) &&
+        glm::length(sampled.TransformAt(leftFootIk).translation) > 0.1f,
+        "Full-body demo clip still moves only a local head region"
+    );
+
+    std::vector<float> morphWeights(model.GetMorphSet().MorphCount(), 0.0f);
+    clip.SampleMorphWeights(3.0f, morphWeights);
+    Require(
+        morphWeights[1U] > 0.3f,
+        "Full-body demo clip did not include facial Morph animation"
+    );
+}
+
+void TestMmdFullBodyDemoIntegrationWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("fullBodyDemoIntegration", modelPath);
+    const AnimationClip& clip = CreateMmdFullBodyDemoAnimation(model);
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    entity.GetAnimator().Play(clip, true);
+    const BoneIndex center = *model.GetSkeleton().FindBone("センター");
+    const glm::mat4 startCenter = entity.GetPose().GlobalMatrix(center);
+    std::vector<glm::vec3> initialBodyPositions;
+    initialBodyPositions.reserve(entity.GetMmdPhysics().RigidBodyCount());
+    for (RigidBodyIndex index = 0U;
+         index < entity.GetMmdPhysics().RigidBodyCount();
+         ++index)
+    {
+        initialBodyPositions.push_back(
+            entity.GetMmdPhysics().BodyStateAt(index).position
+        );
+    }
+
+    for (int frame = 0; frame < 180; ++frame)
+        scene.Update(1.0f / 60.0f);
+
+    std::size_t movedBodies = 0U;
+    for (RigidBodyIndex index = 0U;
+         index < entity.GetMmdPhysics().RigidBodyCount();
+         ++index)
+    {
+        const PhysicsBodyState state =
+            entity.GetMmdPhysics().BodyStateAt(index);
+        Require(
+            std::isfinite(state.position.x) &&
+            std::isfinite(state.position.y) &&
+            std::isfinite(state.position.z) &&
+            std::isfinite(state.rotation.w),
+            "Full-body MMD demo produced non-finite Bullet state"
+        );
+        if (glm::length(
+                state.position - initialBodyPositions[index]
+            ) > 0.01f)
+        {
+            ++movedBodies;
+        }
+    }
+    Require(
+        MatrixIdentityDeviation(
+            glm::inverse(startCenter) * entity.GetPose().GlobalMatrix(center)
+        ) > 0.02f && movedBodies > 20U,
+        "Full-body action did not drive animation and rigid-body physics together"
+    );
+}
+
 void TestMorphLabDemoAsset()
 {
     ResourceManager resources;
@@ -2332,7 +2543,7 @@ void TestMorphLabDemoAsset()
     Entity& reference = scene.InstantiateModel(
         model,
         Transform{},
-        ModelInstantiationOptions{.enableMmdPhysics = false}
+        ModelInstantiationOptions{.enablePhysics = false}
     );
     Entity& active = scene.InstantiateModel(model);
     Require(
@@ -4814,6 +5025,18 @@ int main()
     failures += !RunTest(
         "PMX 2.1 Flip/Impulse runtime",
         TestPmx21FlipImpulseMorphRuntime
+    );
+    failures += !RunTest(
+        "Generic PhysicsInstance lifecycle",
+        TestGenericPhysicsInstanceLifecycle
+    );
+    failures += !RunTest(
+        "MMD full-body demo animation",
+        TestMmdFullBodyDemoAnimation
+    );
+    failures += !RunTest(
+        "MMD full-body demo integration",
+        TestMmdFullBodyDemoIntegrationWhenAvailable
     );
     failures += !RunTest("Morph Lab demo asset", TestMorphLabDemoAsset);
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);

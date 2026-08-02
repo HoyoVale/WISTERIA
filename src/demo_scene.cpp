@@ -10,124 +10,446 @@
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string_view>
 
 namespace
 {
-std::filesystem::path DemoModelPath1()
+constexpr float FullBodyActionDuration = 8.0f;
+constexpr std::string_view FullBodyActionName = "demoFullBodyAction";
+constexpr std::string_view ExternalMotionName = "demoExternalVmd";
+
+std::filesystem::path DemoModelPath(bool alternate)
 {
     return std::filesystem::current_path() / "assets" / "models" /
-        "mmd" / u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+        "mmd" /
+        (alternate ? u8"叶瞬光皮肤_pmx" : u8"叶瞬光_pmx") /
+        u8"叶瞬光.pmx";
 }
 
-std::filesystem::path DemoModelPath2()
+std::filesystem::path DemoMotionPath()
 {
-    return std::filesystem::current_path() / "assets" / "models" /
-        "mmd" / u8"叶瞬光皮肤_pmx" / u8"叶瞬光.pmx";
+    return std::filesystem::current_path() / "assets" / "motions" /
+        "demo.vmd";
 }
 
-BoneIndex FindDemoAnimationBone(const Skeleton& skeleton)
+std::optional<BoneIndex> FindBone(
+    const Skeleton& skeleton,
+    std::initializer_list<std::string_view> names
+)
 {
-    // Prefer a small, unmistakable articulated movement. These are standard
-    // MMD bone names; the root fallback keeps the demo useful for other rigs.
-    constexpr std::array<std::string_view, 6> Candidates{
-        "頭",
-        "首",
-        "上半身2",
-        "上半身",
-        "全ての親",
-        "センター"
-    };
-    for (std::string_view name : Candidates)
+    for (std::string_view name : names)
     {
         if (const std::optional<BoneIndex> index = skeleton.FindBone(name))
-            return *index;
+            return index;
     }
-
-    if (skeleton.BoneCount() == 0)
-        throw std::logic_error("Demo animation requires a non-empty Skeleton");
-    return 0U;
+    return std::nullopt;
 }
 
-class DemoAnimationParameterBehaviour final : public Behaviour
+std::optional<MorphIndex> FindMorph(
+    const MorphSet& morphs,
+    std::initializer_list<std::string_view> names
+)
 {
-public:
-    void Update(Entity& entity, float deltaTime) override
+    for (std::string_view name : names)
     {
-        this->elapsed += deltaTime;
-        if (this->elapsed < SwitchInterval)
-            return;
-
-        this->elapsed = std::fmod(this->elapsed, SwitchInterval);
-        Animator& animator = entity.GetAnimator();
-        animator.SetBool(
-            "demoNod",
-            !animator.GetBool("demoNod")
-        );
+        if (const std::optional<MorphIndex> index = morphs.FindMorph(name))
+            return index;
     }
+    return std::nullopt;
+}
 
-private:
-    static constexpr float SwitchInterval = 3.0f;
-
-    float elapsed = 0.0f;
+struct DemoPoseKey
+{
+    float time = 0.0f;
+    glm::vec3 translationDelta{0.0f};
+    glm::vec3 rotationDegrees{0.0f};
 };
 
-class DemoPhysicsPulseBehaviour final : public Behaviour
+AnimationTrack MakeDemoTrack(
+    const Skeleton& skeleton,
+    BoneIndex boneIndex,
+    std::initializer_list<DemoPoseKey> keys
+)
 {
-public:
-    explicit DemoPhysicsPulseBehaviour(RigidBodyIndex bodyIndex)
-        : bodyIndex(bodyIndex)
+    const BoneTransform bind = BoneTransform::FromMatrix(
+        skeleton.BoneAt(boneIndex).bindLocalMatrix
+    );
+    std::vector<VectorKeyframe> translations;
+    std::vector<QuaternionKeyframe> rotations;
+    translations.reserve(keys.size());
+    rotations.reserve(keys.size());
+    glm::quat previous = bind.rotation;
+    for (const DemoPoseKey& key : keys)
     {
-    }
-
-    void Update(Entity& entity, float deltaTime) override
-    {
-        this->elapsed += deltaTime;
-        if (this->elapsed < this->nextPulse)
-            return;
-
-        this->nextPulse += 2.8f;
-        entity.GetMmdPhysics().ApplyTorqueImpulse(
-            this->bodyIndex,
-            glm::vec3(0.0f, 0.0f, 0.16f * this->direction)
+        glm::quat rotation = glm::normalize(
+            bind.rotation * glm::quat(glm::radians(key.rotationDegrees))
         );
-        this->direction = -this->direction;
+        if (glm::dot(previous, rotation) < 0.0f)
+            rotation = -rotation;
+        previous = rotation;
+        translations.push_back(VectorKeyframe{
+            key.time,
+            bind.translation + key.translationDelta
+        });
+        rotations.push_back(QuaternionKeyframe{key.time, rotation});
     }
+    return AnimationTrack(
+        boneIndex,
+        std::move(translations),
+        std::move(rotations)
+    );
+}
 
-private:
-    RigidBodyIndex bodyIndex = InvalidRigidBodyIndex;
-    float elapsed = 0.0f;
-    float nextPulse = 0.6f;
-    float direction = 1.0f;
-};
-
-void EnableDemoPhysicsPulse(Entity& entity, const ModelAsset& model)
+void AddDemoTrack(
+    std::vector<AnimationTrack>& tracks,
+    const Skeleton& skeleton,
+    std::initializer_list<std::string_view> names,
+    std::initializer_list<DemoPoseKey> keys
+)
 {
-    if (!entity.HasMmdPhysics() || !model.HasMmdPhysics())
-        return;
+    if (const std::optional<BoneIndex> bone = FindBone(skeleton, names))
+        tracks.push_back(MakeDemoTrack(skeleton, *bone, keys));
+}
 
-    constexpr std::array<std::string_view, 6> Candidates{
-        "Ctr_F_HairNewB_01",
-        "Ctr_F_HairNewA_01",
-        "Ctr_T_Hair_01",
-        "左胸上",
-        "右胸上",
-        "hair"
-    };
-    const MmdPhysicsAsset& physics = model.GetMmdPhysics();
-    for (std::string_view name : Candidates)
+AnimationClip BuildFullBodyAction(ModelAsset& model)
+{
+    if (!model.HasSkeleton())
+        throw std::logic_error("Full-body MMD demo requires a Skeleton");
+
+    const Skeleton& skeleton = model.GetSkeleton();
+    std::vector<AnimationTrack> tracks;
+    tracks.reserve(16U);
+
+    AddDemoTrack(tracks, skeleton, {"全ての親"}, {
+        {0.0f},
+        {2.0f, {}, {0.0f, 5.0f, 0.0f}},
+        {4.0f},
+        {6.0f, {}, {0.0f, -5.0f, 0.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"センター"}, {
+        {0.0f},
+        {1.0f, {-0.18f, 0.08f, 0.0f}},
+        {2.0f, {-0.34f, 0.16f, 0.04f}},
+        {3.0f, {0.0f, 0.03f, 0.0f}},
+        {4.0f, {0.30f, 0.14f, -0.04f}},
+        {5.0f, {0.12f, 0.07f, 0.0f}},
+        {6.0f, {-0.12f, 0.18f, 0.05f}},
+        {7.0f, {0.08f, 0.05f, 0.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"グルーブ"}, {
+        {0.0f},
+        {1.0f, {0.0f, 0.08f, 0.0f}},
+        {2.0f, {0.0f, -0.04f, 0.0f}},
+        {3.0f, {0.0f, 0.12f, 0.0f}},
+        {4.0f, {0.0f, -0.02f, 0.0f}},
+        {5.0f, {0.0f, 0.10f, 0.0f}},
+        {6.0f, {0.0f, -0.03f, 0.0f}},
+        {7.0f, {0.0f, 0.08f, 0.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"下半身"}, {
+        {0.0f},
+        {2.0f, {}, {0.0f, -10.0f, 2.0f}},
+        {4.0f, {}, {0.0f, 12.0f, -2.0f}},
+        {6.0f, {}, {0.0f, -8.0f, 1.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"上半身"}, {
+        {0.0f},
+        {1.0f, {}, {-4.0f, 7.0f, 4.0f}},
+        {2.0f, {}, {3.0f, 14.0f, 7.0f}},
+        {3.0f, {}, {-3.0f, 2.0f, -3.0f}},
+        {4.0f, {}, {2.0f, -15.0f, -7.0f}},
+        {5.0f, {}, {-4.0f, -7.0f, 4.0f}},
+        {6.0f, {}, {3.0f, 11.0f, 6.0f}},
+        {7.0f, {}, {-2.0f, -3.0f, -3.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"上半身2", "上半身1"}, {
+        {0.0f},
+        {2.0f, {}, {-5.0f, 9.0f, 4.0f}},
+        {4.0f, {}, {4.0f, -10.0f, -4.0f}},
+        {6.0f, {}, {-3.0f, 8.0f, 3.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"首"}, {
+        {0.0f},
+        {2.0f, {}, {4.0f, -8.0f, -3.0f}},
+        {4.0f, {}, {-5.0f, 10.0f, 3.0f}},
+        {6.0f, {}, {3.0f, -6.0f, -2.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"頭"}, {
+        {0.0f},
+        {1.0f, {}, {-5.0f, -10.0f, 0.0f}},
+        {2.0f, {}, {8.0f, -18.0f, -3.0f}},
+        {3.0f, {}, {-3.0f, 0.0f, 0.0f}},
+        {4.0f, {}, {6.0f, 20.0f, 3.0f}},
+        {5.0f, {}, {-7.0f, 8.0f, 0.0f}},
+        {6.0f, {}, {5.0f, -15.0f, -2.0f}},
+        {7.0f, {}, {-3.0f, 3.0f, 0.0f}},
+        {8.0f}
+    });
+
+    AddDemoTrack(tracks, skeleton, {"左肩"}, {
+        {0.0f}, {2.0f, {}, {4.0f, 0.0f, -8.0f}},
+        {4.0f, {}, {-3.0f, 0.0f, 6.0f}},
+        {6.0f, {}, {4.0f, 0.0f, -7.0f}}, {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"右肩"}, {
+        {0.0f}, {2.0f, {}, {-4.0f, 0.0f, 8.0f}},
+        {4.0f, {}, {3.0f, 0.0f, -6.0f}},
+        {6.0f, {}, {-4.0f, 0.0f, 7.0f}}, {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"左腕"}, {
+        {0.0f},
+        {1.0f, {}, {-18.0f, -5.0f, -18.0f}},
+        {2.0f, {}, {-38.0f, -12.0f, -32.0f}},
+        {3.0f, {}, {-8.0f, 8.0f, -14.0f}},
+        {4.0f, {}, {22.0f, 12.0f, -5.0f}},
+        {5.0f, {}, {-30.0f, -6.0f, -28.0f}},
+        {6.0f, {}, {-8.0f, 10.0f, -12.0f}},
+        {7.0f, {}, {15.0f, 4.0f, -8.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"右腕"}, {
+        {0.0f},
+        {1.0f, {}, {18.0f, 5.0f, 18.0f}},
+        {2.0f, {}, {8.0f, -8.0f, 14.0f}},
+        {3.0f, {}, {36.0f, 12.0f, 30.0f}},
+        {4.0f, {}, {-22.0f, -12.0f, 5.0f}},
+        {5.0f, {}, {8.0f, -10.0f, 12.0f}},
+        {6.0f, {}, {32.0f, 6.0f, 28.0f}},
+        {7.0f, {}, {-15.0f, -4.0f, 8.0f}},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"左ひじ"}, {
+        {0.0f}, {2.0f, {}, {0.0f, 0.0f, -38.0f}},
+        {4.0f, {}, {0.0f, 0.0f, -12.0f}},
+        {6.0f, {}, {0.0f, 0.0f, -48.0f}}, {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"右ひじ"}, {
+        {0.0f}, {2.0f, {}, {0.0f, 0.0f, 14.0f}},
+        {4.0f, {}, {0.0f, 0.0f, 42.0f}},
+        {6.0f, {}, {0.0f, 0.0f, 18.0f}}, {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"左手首"}, {
+        {0.0f}, {2.0f, {}, {8.0f, -12.0f, -10.0f}},
+        {4.0f, {}, {-4.0f, 8.0f, 8.0f}},
+        {6.0f, {}, {8.0f, -10.0f, -8.0f}}, {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"右手首"}, {
+        {0.0f}, {2.0f, {}, {-4.0f, -8.0f, -8.0f}},
+        {4.0f, {}, {8.0f, 12.0f, 10.0f}},
+        {6.0f, {}, {-5.0f, -7.0f, -7.0f}}, {8.0f}
+    });
+
+    AddDemoTrack(tracks, skeleton, {"左足ＩＫ", "左足IK"}, {
+        {0.0f},
+        {1.0f, {-0.06f, 0.05f, 0.05f}},
+        {2.0f, {-0.18f, 0.12f, -0.22f}, {0.0f, -4.0f, 0.0f}},
+        {3.0f},
+        {4.0f, {0.05f, 0.02f, 0.04f}},
+        {5.0f},
+        {6.0f, {-0.12f, 0.10f, -0.16f}},
+        {7.0f},
+        {8.0f}
+    });
+    AddDemoTrack(tracks, skeleton, {"右足ＩＫ", "右足IK"}, {
+        {0.0f},
+        {1.0f},
+        {2.0f, {-0.04f, 0.02f, 0.03f}},
+        {3.0f, {0.16f, 0.11f, -0.20f}, {0.0f, 4.0f, 0.0f}},
+        {4.0f},
+        {5.0f, {0.11f, 0.09f, -0.15f}},
+        {6.0f},
+        {7.0f, {0.06f, 0.04f, 0.04f}},
+        {8.0f}
+    });
+
+    std::vector<MorphWeightTrack> morphTracks;
+    if (model.HasMorphs())
     {
-        const std::optional<RigidBodyIndex> index = physics.FindRigidBody(name);
-        if (!index.has_value() ||
-            physics.RigidBodyAt(*index).mode == MmdRigidBodyMode::FollowBone)
+        const MorphSet& morphs = model.GetMorphSet();
+        if (const std::optional<MorphIndex> blink = FindMorph(
+                morphs,
+                {"まばたき", "瞬き", "blink", "Blink"}
+            ))
         {
-            continue;
+            morphTracks.emplace_back(*blink, std::vector<FloatKeyframe>{
+                {0.0f, 0.0f},
+                {1.35f, 0.0f}, {1.45f, 1.0f}, {1.56f, 0.0f},
+                {3.80f, 0.0f}, {3.90f, 1.0f}, {4.02f, 0.0f},
+                {6.65f, 0.0f}, {6.75f, 1.0f}, {6.86f, 0.0f},
+                {8.0f, 0.0f}
+            });
         }
-        entity.AddBehaviour<DemoPhysicsPulseBehaviour>(*index);
-        std::cout << "[INFO] Demo physics pulse uses rigid body: "
-                  << physics.RigidBodyAt(*index).name << std::endl;
-        return;
+        if (const std::optional<MorphIndex> smile = FindMorph(
+                morphs,
+                {"笑い", "にこり", "smile", "Smile"}
+            ))
+        {
+            morphTracks.emplace_back(*smile, std::vector<FloatKeyframe>{
+                {0.0f, 0.0f}, {1.5f, 0.18f}, {3.0f, 0.48f},
+                {5.0f, 0.68f}, {6.8f, 0.25f}, {8.0f, 0.0f}
+            });
+        }
     }
+
+    if (tracks.size() < 8U)
+    {
+        throw std::runtime_error(
+            "MMD demo rig does not contain enough standard full-body bones"
+        );
+    }
+    return AnimationClip(
+        std::string(FullBodyActionName),
+        FullBodyActionDuration,
+        std::move(tracks),
+        {},
+        std::move(morphTracks)
+    );
+}
+
+const AnimationClip& ResolveCharacterMotion(
+    ResourceManager& resources,
+    ModelAsset& model
+)
+{
+    if (const AnimationClip* existing = model.FindAnimationClip(
+            std::string(ExternalMotionName)
+        ))
+    {
+        return *existing;
+    }
+    const std::filesystem::path motionPath = DemoMotionPath();
+    if (std::filesystem::is_regular_file(motionPath))
+    {
+        try
+        {
+            const AnimationClip& clip = resources.LoadVmdAnimation(
+                model,
+                motionPath,
+                VmdImportOptions{.clipName = std::string(ExternalMotionName)}
+            );
+            std::cout << "[INFO] Full-body demo loaded VMD: "
+                      << motionPath.string() << std::endl;
+            return clip;
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "[WARN] Cannot use assets/motions/demo.vmd: "
+                      << error.what() << "\n"
+                      << "[WARN] Falling back to the built-in full-body action"
+                      << std::endl;
+        }
+    }
+    if (const AnimationClip* existing = model.FindAnimationClip(
+            std::string(FullBodyActionName)
+        ))
+    {
+        return *existing;
+    }
+    return model.AddAnimationClip(BuildFullBodyAction(model));
+}
+
+class CharacterDemoBehaviour final : public Behaviour
+{
+public:
+    CharacterDemoBehaviour(
+        Scene& scene,
+        Window& window,
+        Input& input,
+        const AnimationClip& clip
+    )
+        : scene(scene), window(window), input(input), clip(&clip)
+    {
+    }
+
+    void Update(Entity& entity, float deltaTime) override
+    {
+        Animator& animator = entity.GetAnimator();
+        if (this->input.WasKeyPressed(InputKey::Space))
+        {
+            if (animator.IsPaused())
+                animator.Resume();
+            else
+                animator.Pause();
+            this->titleDirty = true;
+        }
+        if (this->input.WasKeyPressed(InputKey::R))
+        {
+            animator.Play(*this->clip, true);
+            entity.ResetPhysicsToCurrentPose();
+            this->titleDirty = true;
+        }
+        if (this->input.WasKeyPressed(InputKey::P))
+        {
+            this->scene.Physics().SetDebugDrawEnabled(
+                !this->scene.Physics().DebugDrawEnabled()
+            );
+            this->titleDirty = true;
+        }
+
+        this->titleElapsed += deltaTime;
+        if (this->titleDirty || this->titleElapsed >= 0.2f)
+        {
+            this->titleElapsed = 0.0f;
+            this->UpdateTitle(animator);
+            this->titleDirty = false;
+        }
+    }
+
+private:
+    void UpdateTitle(const Animator& animator)
+    {
+        std::string title = "FLORAL WISTERIA - MMD FULL ACTION - ";
+        title += this->clip->Name();
+        title += " | ";
+        title += std::to_string(animator.Time()).substr(0U, 4U);
+        title += " / ";
+        title += std::to_string(this->clip->Duration()).substr(0U, 4U);
+        if (animator.IsPaused())
+            title += " [PAUSED]";
+        title += " | Space: pause | R: restart | P: physics debug ";
+        title += this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF";
+        this->window.SetTitle(std::move(title));
+    }
+
+    Scene& scene;
+    Window& window;
+    Input& input;
+    const AnimationClip* clip = nullptr;
+    float titleElapsed = 0.0f;
+    bool titleDirty = true;
+};
+
+void ConfigureCharacterLighting(Scene& scene)
+{
+    scene.CreateDirectionalLight(DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = {1.0f, 0.96f, 0.92f},
+        .Intensity = 0.75f
+    });
+    scene.CreatePointLight(PointLightData{
+        .Position = {5.0f, 13.0f, 9.0f},
+        .Color = {1.0f, 0.88f, 0.78f},
+        .Intensity = 2.4f,
+        .Range = 35.0f,
+        .Linear = 0.035f,
+        .Quadratic = 0.006f
+    });
+    scene.CreatePointLight(PointLightData{
+        .Position = {-6.0f, 9.0f, 5.0f},
+        .Color = {0.62f, 0.72f, 1.0f},
+        .Intensity = 1.3f,
+        .Range = 30.0f,
+        .Linear = 0.045f,
+        .Quadratic = 0.008f
+    });
 }
 
 class MorphLabPhysicsBehaviour final : public Behaviour
@@ -151,173 +473,6 @@ private:
     float nextPulse = 0.35f;
     float direction = 1.0f;
 };
-
-class DemoBlinkBehaviour final : public Behaviour
-{
-public:
-    explicit DemoBlinkBehaviour(MorphIndex morphIndex)
-        : morphIndex(morphIndex)
-    {
-    }
-
-    void Update(Entity& entity, float deltaTime) override
-    {
-        this->elapsed = std::fmod(this->elapsed + deltaTime, 4.0f);
-        float weight = 0.0f;
-        if (this->elapsed < 0.12f)
-            weight = this->elapsed / 0.12f;
-        else if (this->elapsed < 0.24f)
-            weight = 1.0f - (this->elapsed - 0.12f) / 0.12f;
-        entity.GetMorphState().SetWeight(this->morphIndex, weight);
-    }
-
-private:
-    MorphIndex morphIndex = InvalidMorphIndex;
-    float elapsed = 0.0f;
-};
-
-void EnableDemoBlink(Entity& entity, const ModelAsset& model)
-{
-    if (!entity.HasMorphState() || !model.HasMorphs())
-        return;
-    constexpr std::array<std::string_view, 5> Candidates{
-        "まばたき",
-        "瞬き",
-        "眨眼",
-        "blink",
-        "Blink"
-    };
-    for (std::string_view name : Candidates)
-    {
-        if (const std::optional<MorphIndex> index =
-                model.GetMorphSet().FindMorph(name))
-        {
-            entity.AddBehaviour<DemoBlinkBehaviour>(*index);
-            std::cout << "[INFO] Demo blink uses morph: "
-                      << model.GetMorphSet().DefinitionAt(*index).name
-                      << std::endl;
-            return;
-        }
-    }
-}
-
-void EnsureDemoAnimation(ModelAsset& model)
-{
-    if (!model.HasSkeleton() || model.AnimationClipCount() != 0)
-        return;
-
-    const Skeleton& skeleton = model.GetSkeleton();
-    const BoneIndex boneIndex = FindDemoAnimationBone(skeleton);
-    const BoneTransform bindTransform = BoneTransform::FromMatrix(
-        skeleton.BoneAt(boneIndex).bindLocalMatrix
-    );
-    const auto rotated = [&bindTransform](
-        float degrees,
-        const glm::vec3& axis
-    )
-    {
-        return glm::normalize(
-            bindTransform.rotation * glm::angleAxis(
-                glm::radians(degrees),
-                axis
-            )
-        );
-    };
-
-    model.AddAnimationClip(AnimationClip(
-        "demoHeadTurn",
-        4.0f,
-        {AnimationTrack(
-            boneIndex,
-            {},
-            {
-                QuaternionKeyframe{0.0f, bindTransform.rotation},
-                QuaternionKeyframe{
-                    1.0f,
-                    rotated(25.0f, glm::vec3(0.0f, 1.0f, 0.0f))
-                },
-                QuaternionKeyframe{2.0f, bindTransform.rotation},
-                QuaternionKeyframe{
-                    3.0f,
-                    rotated(-25.0f, glm::vec3(0.0f, 1.0f, 0.0f))
-                },
-                QuaternionKeyframe{4.0f, bindTransform.rotation}
-            }
-        )}
-    ));
-    model.AddAnimationClip(AnimationClip(
-        "demoHeadNod",
-        4.0f,
-        {AnimationTrack(
-            boneIndex,
-            {},
-            {
-                QuaternionKeyframe{0.0f, bindTransform.rotation},
-                QuaternionKeyframe{
-                    1.0f,
-                    rotated(16.0f, glm::vec3(1.0f, 0.0f, 0.0f))
-                },
-                QuaternionKeyframe{2.0f, bindTransform.rotation},
-                QuaternionKeyframe{
-                    3.0f,
-                    rotated(-12.0f, glm::vec3(1.0f, 0.0f, 0.0f))
-                },
-                QuaternionKeyframe{4.0f, bindTransform.rotation}
-            }
-        )}
-    ));
-
-    std::cout << "[INFO] Demo animation uses bone: "
-              << skeleton.BoneAt(boneIndex).name << std::endl;
-}
-
-void EnableDemoStateMachine(Entity& entity, const ModelAsset& model)
-{
-    const AnimationClip* headTurn =
-        model.FindAnimationClip("demoHeadTurn");
-    const AnimationClip* headNod =
-        model.FindAnimationClip("demoHeadNod");
-    if (headTurn != nullptr && headNod != nullptr)
-    {
-        Animator& animator = entity.GetAnimator();
-        animator.SetBool("demoNod", false);
-
-        AnimationStateMachine& stateMachine = animator.GetStateMachine();
-        stateMachine.AddState(AnimationState{
-            "HeadTurn",
-            headTurn,
-            1.0f,
-            true
-        });
-        stateMachine.AddState(AnimationState{
-            "HeadNod",
-            headNod,
-            1.0f,
-            true
-        });
-        stateMachine.AddTransition(AnimationTransitionRule{
-            "HeadTurn",
-            "HeadNod",
-            1.0f,
-            [](const Animator& currentAnimator)
-            {
-                return currentAnimator.GetBool("demoNod");
-            }
-        });
-        stateMachine.AddTransition(AnimationTransitionRule{
-            "HeadNod",
-            "HeadTurn",
-            1.0f,
-            [](const Animator& currentAnimator)
-            {
-                return !currentAnimator.GetBool("demoNod");
-            }
-        });
-        stateMachine.SetState("HeadTurn");
-        entity.AddBehaviour<DemoAnimationParameterBehaviour>();
-    }
-}
-
 
 enum class MorphLabStage : std::size_t
 {
@@ -726,48 +881,23 @@ private:
 
 }
 
-void SetupDemoScene1(Scene& scene, ResourceManager& resources)
+const AnimationClip& CreateMmdFullBodyDemoAnimation(ModelAsset& model)
 {
-    EnvironmentMap* existingEnvironment =
-        resources.FindEnvironment("defaultSky");
-    EnvironmentMap& environment = existingEnvironment != nullptr
-        ? *existingEnvironment
-        : resources.CreateEnvironment(
-            "defaultSky",
-            EnvironmentMapData::ProceduralSky()
-        );
-    scene.SetEnvironment(&environment);
-
-    ModelAsset& Model = resources.LoadModel("yixuan1",DemoModelPath1());
-    EnsureDemoAnimation(Model);
-    Entity& Entity = scene.InstantiateModel(
-        Model,
-        Transform(
-            glm::vec3(0.0f, 0.0f, 0.1f),
-            glm::vec3(0.0f),
-            glm::vec3(1.0f)
-        )
-    );
-
-    EnableDemoStateMachine(Entity, Model);
-    EnableDemoBlink(Entity, Model);
-    EnableDemoPhysicsPulse(Entity, Model);
-    Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
-
-    scene.ActiveCamera().SetParam(CameraParam{
-        .Position = {0.0f, 16.1f, 10.5f},
-        .Target = {0.0f, 16.1f, 0.25f},
-        .Up = {0.0f, 1.0f, 0.0f}
-    });
-    scene.CreatePointLight(PointLightData{
-        .Position = {2.5f, 1.5f, 2.5f},
-        .Color = {1.0f, 1.0f, 1.0f},
-        .Intensity = 1.6f,
-        .Range = 8.0f
-    });
+    if (const AnimationClip* existing = model.FindAnimationClip(
+            std::string(FullBodyActionName)
+        ))
+    {
+        return *existing;
+    }
+    return model.AddAnimationClip(BuildFullBodyAction(model));
 }
 
-void SetupDemoScene2(Scene& scene, ResourceManager& resources)
+void SetupMmdCharacterDemo(
+    Scene& scene,
+    ResourceManager& resources,
+    Window& window,
+    bool alternateModel
+)
 {
     EnvironmentMap* existingEnvironment =
         resources.FindEnvironment("defaultSky");
@@ -779,33 +909,42 @@ void SetupDemoScene2(Scene& scene, ResourceManager& resources)
         );
     scene.SetEnvironment(&environment);
 
-    ModelAsset& Model = resources.LoadModel("yixuan2",DemoModelPath2());
-    EnsureDemoAnimation(Model);
-    Entity& Entity = scene.InstantiateModel(
-        Model,
+    ModelAsset& model = resources.LoadModel(
+        alternateModel ? "mmdCharacterAlt" : "mmdCharacter",
+        DemoModelPath(alternateModel)
+    );
+    const AnimationClip& clip = ResolveCharacterMotion(resources, model);
+    Entity& entity = scene.InstantiateModel(
+        model,
         Transform(
             glm::vec3(0.0f, 0.0f, 0.1f),
             glm::vec3(0.0f),
             glm::vec3(1.0f)
         )
     );
-
-    EnableDemoStateMachine(Entity, Model);
-    EnableDemoBlink(Entity, Model);
-    EnableDemoPhysicsPulse(Entity, Model);
-    Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
+    Animator& animator = entity.GetAnimator();
+    animator.SetLooping(true);
+    animator.Play(clip, true);
+    entity.AddBehaviour<CharacterDemoBehaviour>(
+        scene,
+        window,
+        window.GetInput(),
+        clip
+    );
 
     scene.ActiveCamera().SetParam(CameraParam{
-        .Position = {0.0f, 16.1f, 10.5f},
-        .Target = {0.0f, 16.1f, 0.25f},
+        .Position = {0.0f, 9.0f, 27.0f},
+        .Target = {0.0f, 9.0f, 0.3f},
         .Up = {0.0f, 1.0f, 0.0f}
     });
-    scene.CreatePointLight(PointLightData{
-        .Position = {2.5f, 1.5f, 2.5f},
-        .Color = {1.0f, 1.0f, 1.0f},
-        .Intensity = 1.6f,
-        .Range = 8.0f
-    });
+    ConfigureCharacterLighting(scene);
+    std::cout << "[INFO] MMD full-body demo: " << clip.Name()
+              << " | tracks=" << clip.TrackCount()
+              << " | rigidBodies="
+              << (entity.HasMmdPhysics()
+                    ? entity.GetMmdPhysics().RigidBodyCount()
+                    : 0U)
+              << std::endl;
 }
 
 
@@ -924,7 +1063,7 @@ void SetupMorphDemoScene(
             glm::vec3(0.0f),
             glm::vec3(0.92f)
         ),
-        ModelInstantiationOptions{.enableMmdPhysics = false}
+        ModelInstantiationOptions{.enablePhysics = false}
     );
     Entity& active = scene.InstantiateModel(
         model,

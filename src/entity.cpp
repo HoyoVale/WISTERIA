@@ -1,6 +1,7 @@
 #include "pch.hpp"
 #include "entity.hpp"
 #include "mmd_physics_instance.hpp"
+#include "physics_instance.hpp"
 #include "physics_world.hpp"
 #include <algorithm>
 #include <cmath>
@@ -24,7 +25,7 @@ Entity::Entity(
 Entity::~Entity()
 {
     this->ClearBehaviours();
-    this->mmdPhysics.reset();
+    this->physicsInstance.reset();
 }
 
 Transform& Entity::GetTransform() noexcept
@@ -250,33 +251,75 @@ void Entity::SetMorphSet(const MorphSet& morphSet)
         this->animator->SetMorphState(*this->morphState);
 }
 
+bool Entity::HasPhysicsInstance() const noexcept
+{
+    return this->physicsInstance != nullptr;
+}
+
+PhysicsInstance* Entity::TryGetPhysicsInstance() noexcept
+{
+    return this->physicsInstance.get();
+}
+
+const PhysicsInstance* Entity::TryGetPhysicsInstance() const noexcept
+{
+    return this->physicsInstance.get();
+}
+
+PhysicsInstance& Entity::GetPhysicsInstance()
+{
+    if (this->physicsInstance == nullptr)
+        throw std::logic_error("Entity has no physics instance");
+    return *this->physicsInstance;
+}
+
+const PhysicsInstance& Entity::GetPhysicsInstance() const
+{
+    if (this->physicsInstance == nullptr)
+        throw std::logic_error("Entity has no physics instance");
+    return *this->physicsInstance;
+}
+
+void Entity::SetPhysicsInstance(std::unique_ptr<PhysicsInstance> instance)
+{
+    if (instance == nullptr)
+        throw std::invalid_argument("Entity physics instance must not be null");
+    if (this->physicsInstance != nullptr)
+        throw std::logic_error("Entity physics instance is already set");
+    this->physicsInstance = std::move(instance);
+}
+
 bool Entity::HasMmdPhysics() const noexcept
 {
-    return this->mmdPhysics != nullptr;
+    return this->TryGetMmdPhysics() != nullptr;
 }
 
 MmdPhysicsInstance* Entity::TryGetMmdPhysics() noexcept
 {
-    return this->mmdPhysics.get();
+    return dynamic_cast<MmdPhysicsInstance*>(this->physicsInstance.get());
 }
 
 const MmdPhysicsInstance* Entity::TryGetMmdPhysics() const noexcept
 {
-    return this->mmdPhysics.get();
+    return dynamic_cast<const MmdPhysicsInstance*>(
+        this->physicsInstance.get()
+    );
 }
 
 MmdPhysicsInstance& Entity::GetMmdPhysics()
 {
-    if (this->mmdPhysics == nullptr)
+    MmdPhysicsInstance* result = this->TryGetMmdPhysics();
+    if (result == nullptr)
         throw std::logic_error("Entity has no MMD physics instance");
-    return *this->mmdPhysics;
+    return *result;
 }
 
 const MmdPhysicsInstance& Entity::GetMmdPhysics() const
 {
-    if (this->mmdPhysics == nullptr)
+    const MmdPhysicsInstance* result = this->TryGetMmdPhysics();
+    if (result == nullptr)
         throw std::logic_error("Entity has no MMD physics instance");
-    return *this->mmdPhysics;
+    return *result;
 }
 
 void Entity::SetMmdPhysics(
@@ -284,44 +327,38 @@ void Entity::SetMmdPhysics(
     const MmdPhysicsAsset& physics
 )
 {
-    if (this->mmdPhysics != nullptr)
-        throw std::logic_error("Entity MMD physics is already set");
-    if (this->pose == nullptr)
-        throw std::logic_error("Entity requires a Pose before MMD physics");
-    this->mmdPhysics = std::make_unique<MmdPhysicsInstance>(
+    if (!this->HasPose())
+    {
+        throw std::logic_error(
+            "MMD physics requires an Entity skeleton pose"
+        );
+    }
+    this->SetPhysicsInstance(std::make_unique<MmdPhysicsInstance>(
         world,
         physics,
         *this->pose,
-        this->transform
-    );
-    if (this->animator != nullptr)
-    {
-        this->observedAnimatorDiscontinuityRevision =
-            this->animator->DiscontinuityRevision();
-    }
+        this->transform,
+        this->morphState.get()
+    ));
+    this->physicsResetPending = false;
 }
 
 void Entity::PrePhysicsUpdate(float deltaTime)
 {
-    if (this->mmdPhysics == nullptr)
+    if (this->physicsInstance == nullptr)
         return;
     if (this->physicsResetPending)
     {
-        this->mmdPhysics->ResetToPose(this->transform);
+        this->physicsInstance->ResetSimulation();
         this->physicsResetPending = false;
     }
-    this->mmdPhysics->PrePhysicsUpdate(this->transform, deltaTime);
-    if (this->morphState != nullptr &&
-        this->morphState->GetMorphSet().HasKind(MorphKind::Impulse))
-    {
-        this->mmdPhysics->ApplyImpulseMorphs(*this->morphState);
-    }
+    this->physicsInstance->PrepareSimulation(deltaTime);
 }
 
 void Entity::PostPhysicsUpdate()
 {
-    if (this->mmdPhysics != nullptr)
-        this->mmdPhysics->PostPhysicsUpdate(this->transform);
+    if (this->physicsInstance != nullptr)
+        this->physicsInstance->FinishSimulation();
 }
 
 void Entity::SolveAfterPhysicsPose()
@@ -332,9 +369,9 @@ void Entity::SolveAfterPhysicsPose()
 
 void Entity::ResetPhysicsToCurrentPose()
 {
-    if (this->mmdPhysics != nullptr)
+    if (this->physicsInstance != nullptr)
     {
-        this->mmdPhysics->ResetToPose(this->transform);
+        this->physicsInstance->ResetSimulation();
         this->physicsResetPending = false;
     }
 }
@@ -406,7 +443,7 @@ void Entity::Update(float deltaTime)
         if (discontinuity != this->observedAnimatorDiscontinuityRevision)
         {
             this->observedAnimatorDiscontinuityRevision = discontinuity;
-            this->physicsResetPending = this->mmdPhysics != nullptr;
+            this->physicsResetPending = this->physicsInstance != nullptr;
         }
         const RootMotionDelta rootMotion =
             this->animator->ConsumeRootMotion();

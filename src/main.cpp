@@ -48,8 +48,8 @@ public:
             });
             const std::shared_ptr<Camera> camera =
                 this->windowManager.CreateCamera(CameraParam{
-                    .Position = {3.5f, 1.1f, 0.25f},
-                    .Target = {0.0f, 1.1f, 0.25f},
+                    .Position = {18.0f, 9.0f, 8.0f},
+                    .Target = {0.0f, 9.0f, 0.3f},
                     .Up = {0.0f, 1.0f, 0.0f}
                 });
             this->windowManager.BindRenderView(window, this->scene, camera);
@@ -87,67 +87,71 @@ int main(int argumentCount, char* arguments[])
     {
         Application application;
         WindowManager& windowManager = application.GetWindowManager();
-        Window& window1 = windowManager.CreateWindow(WindowConfig{
-            .width = 600,
-            .height = 600,
-            .title = "FLORAL WISTERIA - CHARACTER"
+        const bool morphLab = HasArgument(
+            argumentCount,
+            arguments,
+            "--morph-lab"
+        );
+        const bool alternateModel = HasArgument(
+            argumentCount,
+            arguments,
+            "--alternate-model"
+        ) || HasArgument(argumentCount, arguments, "--character-pair");
+
+        Window& primaryWindow = windowManager.CreateWindow(WindowConfig{
+            .width = 720,
+            .height = 720,
+            .title = morphLab
+                ? "FLORAL WISTERIA - MORPH LAB"
+                : "FLORAL WISTERIA - MMD FULL ACTION"
         });
-        Window& window2 = windowManager.CreateWindow(WindowConfig{
-            .width = 600,
-            .height = 600,
-            .title = "FLORAL WISTERIA - MORPH LAB"
-        });
-        const std::shared_ptr<Scene> Scene1 = windowManager.CreateScene();
-        const std::shared_ptr<Scene> Scene2 = windowManager.CreateScene();
-        SetupDemoScene1(*Scene1, application.GetResources());
-        if (HasArgument(argumentCount, arguments, "--character-pair"))
+        const std::shared_ptr<Scene> scene = windowManager.CreateScene();
+        if (morphLab)
         {
-            window2.SetTitle("FLORAL WISTERIA - CHARACTER ALT");
-            SetupDemoScene2(*Scene2, application.GetResources());
+            SetupMorphDemoScene(
+                *scene,
+                application.GetResources(),
+                primaryWindow
+            );
         }
         else
         {
-            SetupMorphDemoScene(
-                *Scene2,
+            SetupMmdCharacterDemo(
+                *scene,
                 application.GetResources(),
-                window2
+                primaryWindow,
+                alternateModel
             );
         }
-        windowManager.BindScene(window1, Scene1);
-        windowManager.EnableFreeCameraController(window1);
-        windowManager.BindScene(window2, Scene2);
-        windowManager.EnableFreeCameraController(window2);
+        windowManager.BindScene(primaryWindow, scene);
+        windowManager.EnableFreeCameraController(primaryWindow);
 
         if (HasArgument(argumentCount, arguments, "--multi-window"))
         {
             Window& secondWindow = windowManager.CreateWindow(WindowConfig{
                 .width = 600,
                 .height = 600,
-                .title = "WINDOW 1 - SECOND VIEW"
+                .title = "FLORAL WISTERIA - SECOND VIEW"
             });
             const std::shared_ptr<Camera> sideCamera =
                 windowManager.CreateCamera(CameraParam{
-                    .Position = {3.5f, 1.1f, 0.25f},
-                    .Target = {0.0f, 1.1f, 0.25f},
+                    .Position = {18.0f, 9.0f, 8.0f},
+                    .Target = {0.0f, 9.0f, 0.3f},
                     .Up = {0.0f, 1.0f, 0.0f}
                 });
-            windowManager.BindRenderView(
-                secondWindow,
-                Scene1,
-                sideCamera
-            );
+            windowManager.BindRenderView(secondWindow, scene, sideCamera);
             windowManager.EnableFreeCameraController(secondWindow);
         }
 
         if (HasArgument(argumentCount, arguments, "--dynamic-window"))
         {
-            Entity* host = Scene1->EntityAt(0);
+            Entity* host = scene->EntityAt(0);
             if (host == nullptr)
                 throw std::runtime_error("Dynamic window demo requires an Entity");
             host->AddBehaviour<DynamicWindowDemoBehaviour>(
                 windowManager,
-                window1,
-                Scene1
+                primaryWindow,
+                scene
             );
         }
 

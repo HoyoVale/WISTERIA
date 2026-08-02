@@ -13,7 +13,7 @@ class EnvironmentMap;
 
 struct ModelInstantiationOptions
 {
-    bool enableMmdPhysics = true;
+    bool enablePhysics = true;
 };
 
 // Scene owns scene objects. Mesh and Material stay externally owned resources.

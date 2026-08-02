@@ -137,9 +137,14 @@ MmdPhysicsInstance::MmdPhysicsInstance(
     PhysicsWorld& world,
     const MmdPhysicsAsset& asset,
     Pose& pose,
-    const Transform& transform
+    Transform& transform,
+    const MorphState* morphState
 )
-    : world(&world), asset(&asset), pose(&pose)
+    : world(&world),
+      asset(&asset),
+      pose(&pose),
+      transform(&transform),
+      morphState(morphState)
 {
     const EntityFrame entity = ExtractEntityFrame(transform);
     this->rigidBodies.reserve(asset.RigidBodyCount());
@@ -365,6 +370,26 @@ MmdPhysicsInstance::MmdPhysicsInstance(
 MmdPhysicsInstance::~MmdPhysicsInstance()
 {
     this->DestroyRuntime();
+}
+
+void MmdPhysicsInstance::PrepareSimulation(float deltaTime)
+{
+    this->PrePhysicsUpdate(*this->transform, deltaTime);
+    if (this->morphState != nullptr &&
+        this->morphState->GetMorphSet().HasKind(MorphKind::Impulse))
+    {
+        this->ApplyImpulseMorphs(*this->morphState);
+    }
+}
+
+void MmdPhysicsInstance::FinishSimulation()
+{
+    this->PostPhysicsUpdate(*this->transform);
+}
+
+void MmdPhysicsInstance::ResetSimulation()
+{
+    this->ResetToPose(*this->transform);
 }
 
 std::size_t MmdPhysicsInstance::RigidBodyCount() const noexcept

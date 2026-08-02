@@ -690,7 +690,7 @@ FollowBone Anchor
 Dynamic Tip
 ```
 
-左侧参考实例通过 `ModelInstantiationOptions::enableMmdPhysics = false` 禁用物理；右侧活动实例同时展示 Morph 和动态摆动。Impulse Morph 的刚体索引也改为指向动态 Tip，为 Physics 3 接入真实 Impulse 做准备。
+左侧参考实例通过 `ModelInstantiationOptions::enablePhysics = false` 禁用物理；右侧活动实例同时展示 Morph 和动态摆动。Impulse Morph 的刚体索引也改为指向动态 Tip，为 Physics 3 接入真实 Impulse 做准备。
 
 ## ModelInstantiationOptions
 
@@ -698,7 +698,7 @@ Dynamic Tip
 
 ```cpp
 ModelInstantiationOptions{
-    .enableMmdPhysics = false
+    .enablePhysics = false
 }
 ```
 
@@ -895,3 +895,144 @@ PMX 2.1 Soft Body（独立阶段）
 ```
 
 Soft Body 不应混入当前刚体运行时；它需要 BulletSoftBody、不同世界类型、网格顶点同步和单独的性能策略。
+
+# Demo Cleanup：完整 MMD 人物纵向链路与通用 PhysicsInstance
+
+Physics 3 之后，默认 Demo 不再同时打开“头部局部动作”和 Morph Lab 两个窗口。项目当前目标是先证明一个人物从模型资源到最终画面的完整链路，因此默认入口收敛为单窗口全身人物 Demo：
+
+```text
+PMX 导入
+→ ModelAsset / Skeleton / MorphSet / MmdPhysicsAsset
+→ Entity / Pose / Animator / PhysicsInstance
+→ 全身动作与面部 Morph
+→ before-physics MMD 骨骼求解
+→ Bullet 刚体与关节
+→ after-physics MMD 骨骼求解
+→ Renderer
+```
+
+Morph Lab 仍然保留，但改为显式的 `--morph-lab` 诊断模式。它用于检查单项 Morph、Impulse 和 Bullet wireframe，不再代表产品默认效果。
+
+## 全身动作 Demo
+
+默认场景先检查：
+
+```text
+assets/motions/demo.vmd
+```
+
+存在时通过现有 `VmdImporter` 加载，并把骨骼轨道、Morph 轨道和 IK 开关交给 Animator。加载失败时不会让程序退出，而是打印原因并回退到内置动作。
+
+内置动作持续 8 秒，首尾姿态一致，可循环播放。它不是简单地扩大头部摆动，而是为标准 MMD 骨骼建立多轨道 Clip：
+
+```text
+全ての親
+センター
+グルーブ
+下半身
+上半身 / 上半身2
+首 / 頭
+左右肩、腕、肘、手首
+左右足 IK
+まばたき / 笑い Morph
+```
+
+全身中心位移和躯干转动会自然带动 Kinematic 身体刚体，随后通过碰撞和关节把惯性传给刘海、长发、衣物和饰品。默认 Demo 删除了人为定时施加的头发扭矩，因此现在看到的摆动来自人物动作本身，而不是测试脉冲。
+
+镜头从头部特写调整为全身构图，灯光范围也覆盖完整角色。控制键：
+
+```text
+Space  Pause / Resume
+R      Restart animation + reset physics
+P      Toggle Bullet debug draw
+```
+
+Animator 在循环回绕和 `R` 重播时仍会触发 discontinuity revision，Entity 会在下一物理步前重置刚体，避免上一轮动作速度污染新一轮。
+
+## 为什么先抽象 PhysicsInstance，而不是重写物理框架
+
+此前 Entity 直接拥有：
+
+```cpp
+std::unique_ptr<MmdPhysicsInstance> mmdPhysics;
+```
+
+这让 Scene 的通用物理生命周期看起来像只服务于 PMX。现在增加最小接口：
+
+```cpp
+class PhysicsInstance
+{
+public:
+    virtual ~PhysicsInstance() = default;
+    virtual void PrepareSimulation(float deltaTime) = 0;
+    virtual void FinishSimulation() = 0;
+    virtual void ResetSimulation() = 0;
+};
+```
+
+Entity 改为拥有：
+
+```cpp
+std::unique_ptr<PhysicsInstance> physicsInstance;
+```
+
+Scene 的顺序没有任何 MMD 类型：
+
+```text
+所有 Entity 更新动画和行为
+→ 所有 PhysicsInstance::PrepareSimulation
+→ PhysicsWorld::Step
+→ 所有 PhysicsInstance::FinishSimulation
+→ Animator after-physics phase
+```
+
+`MmdPhysicsInstance` 继承 `PhysicsInstance`，内部继续处理：
+
+- PMX 三种刚体模式；
+- 骨骼到刚体与刚体到骨骼同步；
+- PMX 关节映射；
+- Impulse Morph；
+- 动画跳转后的物理重置。
+
+Impulse Morph 也被下沉到 `MmdPhysicsInstance::PrepareSimulation()`，Entity 的通用生命周期不再判断 MorphKind 或调用 MMD 方法。
+
+## 仍然保留的 MMD 专用边界
+
+当前不会为了“看起来通用”而删除所有 MMD 类型。以下能力本来就是格式语义，应继续留在适配器：
+
+```text
+MmdPhysicsAsset
+MmdPhysicsInstance
+MmdPoseSolver
+PMX rigid-body modes
+PMX joint definitions
+Impulse Morph
+before / after-physics deform order
+```
+
+Entity 暂时保留 `TryGetMmdPhysics()` / `GetMmdPhysics()`，用于调试器、测试和 MMD 编辑工具访问刚体索引；正常 Scene 模拟不依赖这些接口。
+
+## 后续多格式方向
+
+当 MMD 人物表现和兼容性稳定后，可以按真实需求增加：
+
+```text
+GltfPhysicsInstance
+VehiclePhysicsInstance
+RagdollPhysicsInstance
+SoftBodyInstance
+```
+
+它们共享 PhysicsWorld 和 PhysicsInstance 生命周期，但各自维护模型格式到通用物理资源的映射。动画层也应采用相同策略：先出现第二种真实动画运行时，再从 Animator 中抽取共同接口，而不是预先设计一个无法验证的万能骨骼系统。
+
+## 自动化测试
+
+本阶段新增：
+
+- Generic PhysicsInstance 生命周期与重复挂载保护；
+- 全身 Demo Clip 的轨道数量、循环时长和幂等性；
+- 中心、头部、手臂和足 IK 必须同时产生动作；
+- 眨眼和微笑 Morph 轨道；
+- 真实 605 骨骼 / 495 刚体人物连续模拟；
+- 全身骨骼动作与至少多组刚体必须同时发生位移；
+- 所有 Bullet 状态保持有限值。
