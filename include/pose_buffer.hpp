@@ -16,6 +16,7 @@ public:
     std::size_t BoneCount() const noexcept;
 
     void ResetToBindPose();
+    void CaptureFrom(const Pose& pose);
     const BoneTransform& TransformAt(BoneIndex boneIndex) const;
     std::span<const BoneTransform> BindTransforms() const noexcept;
     void SetTransform(BoneIndex boneIndex, const BoneTransform& transform);

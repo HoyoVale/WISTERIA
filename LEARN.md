@@ -582,9 +582,9 @@ Physics 2B 新增测试覆盖：
 - 非均匀缩放拒绝与失败回滚；
 - 真实叶瞬光 PMX 的 495 个刚体、568 条关节定义；其中 565 条有效非自引用 Spring 6DOF 成功实例化并完成一帧模拟。
 
-## 尚未进入本阶段
+## Physics 2B 当时尚未进入的范围
 
-以下内容继续留在 Physics 3：
+以下内容在 Physics 2B 时留给 Physics 3；现已由本文后续章节完成：
 
 ```text
 Impulse Morph → Bullet impulse
@@ -710,3 +710,188 @@ ModelInstantiationOptions{
 - 性能对照测试。
 
 共享 `ModelAsset` 不会因此被修改，只有对应 Entity 不创建 `MmdPhysicsInstance`。
+
+---
+
+# Physics 3：完整 MMD 物理运行顺序
+
+Physics 3 在 Physics 2B 的真实 Bullet 刚体与关节基础上，完成了 MMD 物理管线中剩余的运行时语义：Impulse Morph、物理后骨骼、动画时间不连续重置、PMX 2.1 其他关节，以及可选调试绘制。
+
+最终每帧顺序为：
+
+```text
+Animator 采样动画、Bone Morph
+→ before-physics Append / Grant / IK
+→ FollowBone 与 PhysicsWithBone 同步到 Bullet
+→ Impulse Morph：先 Reset，再施加 Global / Local impulse
+→ Bullet 固定子步模拟
+→ Dynamic body 批量回写 Pose
+→ after-physics Append / Grant / IK
+→ Renderer 使用最终 Pose
+→ 可选 Bullet wireframe / constraint debug draw
+```
+
+## Impulse Morph
+
+`MorphState::EvaluateImpulseMorphs()` 继续负责将 Group、Flip 和直接 Impulse 权重汇总为每刚体命令；`MmdPhysicsInstance::ApplyImpulseMorphs()` 负责把命令交给 Bullet。
+
+执行顺序必须为：
+
+1. 遍历全部命令，先处理 `reset`；
+2. 清除刚体线速度、角速度和累计力；
+3. 再遍历命令施加线性冲量与扭矩冲量；
+4. Local 通道使用刚体当前世界旋转转换为世界方向；
+5. Global 通道直接作为世界方向使用。
+
+```cpp
+world.ClearDynamics(body);
+world.ApplyCentralImpulse(
+    body,
+    globalLinear + bodyRotation * localLinear
+);
+world.ApplyTorqueImpulse(
+    body,
+    globalTorque + bodyRotation * localTorque
+);
+```
+
+FollowBone 刚体不是 Dynamic body，因此 Bullet 封装会安全忽略对它们的冲量。Impulse Morph 保持非零权重时会在每个物理帧持续施加，这是 PMX Morph 作为连续控制量的运行方式。
+
+## before-physics 与 after-physics 骨骼
+
+PMX 骨骼的 `deformAfterPhysics` 标志现在真正参与求解阶段划分。`Skeleton` 在构造时保存三份顺序：
+
+```text
+MmdConstraintOrder
+MmdBeforePhysicsConstraintOrder
+MmdAfterPhysicsConstraintOrder
+```
+
+`MmdPoseSolver::Solve()` 接收：
+
+```cpp
+enum class MmdPosePhase
+{
+    BeforePhysics,
+    AfterPhysics
+};
+```
+
+Animator 在动画采样后只执行 BeforePhysics；Scene 在 Bullet 回写之后调用 `Animator::SolveAfterPhysics()`。
+
+after-physics 结果不能成为下一帧的动画输入，否则 Append 会逐帧重复累加。Animator 因此缓存 `beforePhysicsPose`：
+
+```text
+上一帧 after-physics 最终 Pose
+→ 下一帧 Animator::Update 开始时恢复 beforePhysicsPose
+→ 重新采样动画与 before-physics 约束
+→ Bullet 回写
+→ 重新计算 after-physics 约束
+```
+
+Bullet 刚体状态独立存在于 PhysicsWorld，因此恢复动画 Pose 不会清除头发、裙摆等动态状态。
+
+## 动画时间不连续与自动 Reset
+
+Animator 维护单调递增的 `DiscontinuityRevision`。以下操作会增加 revision：
+
+- 播放不同动画；
+- 使用 `Play(..., restart=true)` 重播；
+- CrossFade 开始；
+- Stop；
+- `SetTime()` 跳转；
+- 循环动画跨越结尾回到开头。
+
+Entity 每帧检测 revision。当发现变化时，在下一次物理同步前执行：
+
+```text
+ResetToPose
+→ 清空速度和力
+→ 将全部刚体对齐当前动画 Pose
+→ 再进行正常 PrePhysicsUpdate
+```
+
+因此 Seek、循环回绕和动画切换不再保留旧帧的裙摆速度，也不会要求 Demo 或调用方手动补 Reset。显式的 `Entity::ResetPhysicsToCurrentPose()` 仍可用于模型瞬移、编辑器操作等非 Animator 事件。
+
+## PMX 2.1 其他关节
+
+PhysicsWorld 的 WISTERIA 接口新增：
+
+```cpp
+CreateSixDofConstraint(...)
+CreatePointToPointConstraint(...)
+CreateConeTwistConstraint(...)
+CreateSliderConstraint(...)
+CreateHingeConstraint(...)
+```
+
+内部 Bullet 映射为：
+
+```text
+PMX Spring 6DOF → btGeneric6DofSpring2Constraint
+PMX 6DOF        → btGeneric6DofConstraint
+PMX P2P         → btPoint2PointConstraint
+PMX Cone Twist  → btConeTwistConstraint
+PMX Slider      → btSliderConstraint
+PMX Hinge       → btHingeConstraint
+```
+
+接口仍只暴露 GLM、描述结构和代际句柄，不向 Entity、Scene 或 PMX importer 泄露 `bt*` 类型。
+
+PMX 对部分非 type-0 关节的六轴字段定义比 Bullet 对应约束更宽，因此运行时采用明确映射：
+
+- Slider 使用关节局部 X 轴的线性与角度限制；
+- Hinge 使用关节 frame 的局部 Z 轴，读取 PMX Z 角限制；
+- Cone Twist：X 对应 twist，Y/Z 对应两个 swing span，并取上下限绝对值的较大者；
+- Point-to-point 只使用两个刚体局部 pivot；
+- 指向同一刚体两端的自约束继续安全跳过。
+
+## 物理调试绘制
+
+`PhysicsWorld` 增加默认关闭的调试收集器：
+
+```cpp
+world.SetDebugDrawEnabled(true);
+std::span<const PhysicsDebugLine> lines = world.DebugLines();
+```
+
+内部实现 `btIDebugDraw`，收集：
+
+- 碰撞形状 wireframe；
+- 关节 frame；
+- 约束限制。
+
+Renderer 使用独立的轻量 `GL_LINES` shader 绘制这些线，不进入材质、阴影或 OIT 管线。关闭时不收集、不上传，也不会影响正常渲染性能。
+
+Morph Lab 中按 `P` 可切换调试绘制。窗口标题会显示 `physics ON/OFF`。左侧仍是关闭物理的参考实例，右侧是带 Bullet 刚体和 Spring 6DOF 的活动实例。
+
+## Physics 3 自动化测试
+
+新增测试覆盖：
+
+- Global Impulse Morph；
+- Local Impulse 随刚体旋转转换；
+- Reset 与同帧 impulse 的先后顺序；
+- before/after-physics Append 阶段隔离；
+- after-physics 结果不得跨帧累加；
+- `SetTime()` 自动重置；
+- 动画 loop wrap 自动重置；
+- Bullet 6DOF、P2P、Cone Twist、Slider、Hinge；
+- MMD Runtime 六类 PMX 关节全部实例化；
+- Bullet debug line 采集与关闭清理；
+- 原有 Physics 1、2A、2B、Morph、动画、导入和 Demo 回归。
+
+## 后续边界
+
+Physics 3 完成后，MMD 刚体主链已经完整。后续不再需要继续扩张核心物理层，优先工作应转向：
+
+```text
+Windows 实机视觉调参
+MMD / MikuMikuDance 行为对比
+不同模型的关节轴兼容性
+物理参数预设与编辑器 UI
+调试绘制颜色、筛选和选中高亮
+PMX 2.1 Soft Body（独立阶段）
+```
+
+Soft Body 不应混入当前刚体运行时；它需要 BulletSoftBody、不同世界类型、网格顶点同步和单独的性能策略。

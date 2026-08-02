@@ -26,6 +26,7 @@ public:
     void Resume() noexcept;
     void Update(float deltaTime);
     void Evaluate();
+    void SolveAfterPhysics();
 
     bool IsPlaying() const noexcept;
     bool IsPaused() const noexcept;
@@ -36,6 +37,7 @@ public:
     void SetTime(float time);
     float Speed() const noexcept;
     void SetSpeed(float speed);
+    std::uint64_t DiscontinuityRevision() const noexcept;
 
     void SetRootMotionBone(BoneIndex boneIndex);
     void ClearRootMotionBone();
@@ -111,6 +113,7 @@ private:
     void ApplyEvaluatedMorphWeights(std::span<const float> weights);
     bool EvaluateMmdIkState(BoneIndex controllerBone) const;
     void ResetRootMotion() noexcept;
+    void MarkDiscontinuity() noexcept;
 
     Pose* pose = nullptr;
     MorphState* morphState = nullptr;
@@ -119,6 +122,7 @@ private:
     PoseBuffer transitionSourcePose;
     PoseBuffer blendedPose;
     PoseBuffer outputPose;
+    PoseBuffer beforePhysicsPose;
     MmdPoseSolver mmdPoseSolver;
     std::vector<float> sampledMorphWeights;
     std::vector<float> transitionSourceMorphWeights;
@@ -134,6 +138,7 @@ private:
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
     std::uint64_t lastAppliedMorphRevision =
         std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t discontinuityRevision = 0U;
     float currentTime = 0.0f;
     float speed = 1.0f;
     bool playing = false;

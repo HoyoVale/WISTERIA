@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mmd_physics_asset.hpp"
+#include "morph.hpp"
 #include "physics_types.hpp"
 #include <cstddef>
 #include <limits>
@@ -35,6 +36,7 @@ public:
     PhysicsBodyState BodyStateAt(RigidBodyIndex index) const;
     void ApplyCentralImpulse(RigidBodyIndex index, const glm::vec3& impulse);
     void ApplyTorqueImpulse(RigidBodyIndex index, const glm::vec3& impulse);
+    void ApplyImpulseMorphs(const MorphState& morphState);
 
     void PrePhysicsUpdate(const Transform& transform, float deltaTime);
     void PostPhysicsUpdate(const Transform& transform);
@@ -60,4 +62,5 @@ private:
     std::vector<std::size_t> drivenRuntimeBodyByBone;
     std::vector<glm::mat4> localMatrixScratch;
     std::vector<glm::mat4> globalMatrixScratch;
+    std::vector<MmdRigidBodyImpulse> impulseScratch;
 };

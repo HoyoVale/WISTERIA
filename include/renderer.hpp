@@ -76,6 +76,12 @@ private:
     );
     void EnsureOitResources(const SceneFramebuffer& target);
     void EnsurePresentResources();
+    void EnsurePhysicsDebugResources();
+    void DrawPhysicsDebug(
+        const Scene& scene,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
     VAO& VertexArrayFor(Mesh& mesh);
     VAO& SkyboxVertexArrayFor(EnvironmentMap& environment);
     void BeginOitPass(const SceneFramebuffer& target);
@@ -151,6 +157,11 @@ private:
     std::unique_ptr<Program> oitCompositeProgram;
     std::unique_ptr<Shader> presentShader;
     std::unique_ptr<Program> presentProgram;
+    std::unique_ptr<Shader> physicsDebugShader;
+    std::unique_ptr<Program> physicsDebugProgram;
+    GLuint physicsDebugVao = 0;
+    GLuint physicsDebugBuffer = 0;
+    std::size_t physicsDebugCapacityBytes = 0;
     FxaaSettings fxaaSettings;
     std::unordered_map<const Mesh*, std::unique_ptr<VAO>> meshVertexArrays;
     std::unordered_map<const EnvironmentMap*, std::unique_ptr<VAO>>

@@ -76,6 +76,8 @@ void Scene::Update(float deltaTime)
     this->physicsWorld->Step(deltaTime);
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->PostPhysicsUpdate();
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+        entity->SolveAfterPhysicsPose();
 }
 
 void Scene::Clear() noexcept

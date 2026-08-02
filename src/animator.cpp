@@ -82,7 +82,8 @@ Animator::Animator(Pose& pose, MorphState* morphState)
       sampledPose(pose.GetSkeleton()),
       transitionSourcePose(pose.GetSkeleton()),
       blendedPose(pose.GetSkeleton()),
-      outputPose(pose.GetSkeleton())
+      outputPose(pose.GetSkeleton()),
+      beforePhysicsPose(pose.GetSkeleton())
 {
     if (this->morphState != nullptr)
     {
@@ -97,9 +98,12 @@ void Animator::Play(const AnimationClip& clip, bool restart)
 {
     this->ValidateClip(clip);
     this->transition.reset();
-    if (this->currentClip != &clip || restart)
+    const bool discontinuous = this->currentClip != &clip || restart;
+    if (discontinuous)
         this->currentTime = 0.0f;
     this->currentClip = &clip;
+    if (discontinuous)
+        this->MarkDiscontinuity();
     this->playing = true;
     this->paused = false;
     this->ResetRootMotion();
@@ -155,6 +159,7 @@ void Animator::CrossFade(
 
     this->transition = nextTransition;
     this->currentClip = &destination;
+    this->MarkDiscontinuity();
     this->currentTime = 0.0f;
     this->playing = true;
     this->paused = false;
@@ -164,18 +169,23 @@ void Animator::CrossFade(
 
 void Animator::Stop(bool resetPose)
 {
+    const bool hadPlayback = this->currentClip != nullptr ||
+        this->transition.has_value();
     this->transition.reset();
     this->currentClip = nullptr;
     this->currentTime = 0.0f;
     this->playing = false;
     this->paused = false;
     this->ResetRootMotion();
+    if (hadPlayback || resetPose)
+        this->MarkDiscontinuity();
     if (resetPose)
     {
         if (this->morphState != nullptr)
             this->morphState->Reset();
         this->sampledPose.ResetToBindPose();
         this->pose->ResetToBindPose();
+        this->beforePhysicsPose.CaptureFrom(*this->pose);
         this->lastAppliedMorphRevision = this->morphState != nullptr
             ? this->morphState->Revision()
             : 0U;
@@ -205,6 +215,11 @@ void Animator::Update(float deltaTime)
             "Animator delta time must be finite and non-negative"
         );
     }
+    // Remove the previous frame's after-physics Append/IK result before
+    // sampling the next animation pose. Dynamic Bullet bodies keep their own
+    // state and will write their current transforms back later in the frame.
+    if (this->pose->GetSkeleton().HasMmdAfterPhysicsConstraints())
+        this->beforePhysicsPose.ApplyTo(*this->pose);
     try
     {
         this->stateMachine.Update(*this);
@@ -262,6 +277,8 @@ void Animator::Update(float deltaTime)
             this->currentTime,
             this->playing
         );
+        if (destinationAdvance.loopCount > 0U)
+            this->MarkDiscontinuity();
         activeTransition.elapsed = std::min(
             activeTransition.duration,
             activeTransition.elapsed + deltaTime
@@ -303,6 +320,8 @@ void Animator::Update(float deltaTime)
         this->currentTime,
         this->playing
     );
+    if (advance.loopCount > 0U)
+        this->MarkDiscontinuity();
     this->AccumulateRootMotion(
         this->ExtractRootMotion(*this->currentClip, advance)
     );
@@ -374,6 +393,23 @@ void Animator::Evaluate()
     this->ApplyEvaluatedPose(this->blendedPose);
 }
 
+void Animator::SolveAfterPhysics()
+{
+    const Skeleton& skeleton = this->pose->GetSkeleton();
+    if (!skeleton.HasMmdAfterPhysicsConstraints())
+        return;
+    this->outputPose.CaptureFrom(*this->pose);
+    this->mmdPoseSolver.Solve(
+        this->outputPose,
+        MmdPosePhase::AfterPhysics,
+        [this](BoneIndex controllerBone)
+        {
+            return this->IsMmdIkEnabled(controllerBone);
+        }
+    );
+    this->outputPose.ApplyTo(*this->pose);
+}
+
 bool Animator::IsPlaying() const noexcept
 {
     return (this->playing || this->transition.has_value()) && !this->paused;
@@ -405,11 +441,14 @@ void Animator::SetTime(float time)
         throw std::logic_error("Animator has no current clip");
     if (!std::isfinite(time))
         throw std::invalid_argument("Animator time must be finite");
-    this->currentTime = std::clamp(
+    const float nextTime = std::clamp(
         time,
         0.0f,
         this->currentClip->Duration()
     );
+    if (nextTime != this->currentTime)
+        this->MarkDiscontinuity();
+    this->currentTime = nextTime;
     this->ResetRootMotion();
     this->Evaluate();
 }
@@ -417,6 +456,11 @@ void Animator::SetTime(float time)
 float Animator::Speed() const noexcept
 {
     return this->speed;
+}
+
+std::uint64_t Animator::DiscontinuityRevision() const noexcept
+{
+    return this->discontinuityRevision;
 }
 
 void Animator::SetSpeed(float speed)
@@ -768,6 +812,7 @@ void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
         !hasBoneMorphs)
     {
         evaluatedPose.ApplyTo(*this->pose);
+        this->beforePhysicsPose.CaptureFrom(*this->pose);
         this->lastAppliedMorphRevision = this->morphState != nullptr
             ? this->morphState->Revision()
             : 0U;
@@ -786,6 +831,7 @@ void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
     {
         this->mmdPoseSolver.Solve(
             this->outputPose,
+            MmdPosePhase::BeforePhysics,
             [this](BoneIndex controllerBone)
             {
                 return this->IsMmdIkEnabled(controllerBone);
@@ -804,6 +850,7 @@ void Animator::ApplyEvaluatedPose(const PoseBuffer& evaluatedPose)
         this->outputPose.SetTransform(boneIndex, transform);
     }
     this->outputPose.ApplyTo(*this->pose);
+    this->beforePhysicsPose.CaptureFrom(*this->pose);
     this->lastAppliedMorphRevision = this->morphState != nullptr
         ? this->morphState->Revision()
         : 0U;
@@ -876,6 +923,11 @@ bool Animator::EvaluateMmdIkState(BoneIndex controllerBone) const
 void Animator::ResetRootMotion() noexcept
 {
     this->pendingRootMotion = {};
+}
+
+void Animator::MarkDiscontinuity() noexcept
+{
+    ++this->discontinuityRevision;
 }
 
 void Animator::ValidateClip(const AnimationClip& clip) const

@@ -3927,6 +3927,114 @@ std::unique_ptr<ModelAsset> CreatePhysics2BSpringModel()
     return model;
 }
 
+
+std::unique_ptr<ModelAsset> CreatePhysics3AllJointModel()
+{
+    auto model = std::make_unique<ModelAsset>("physics3AllJoints");
+    model->SetSkeleton(Skeleton({Bone{"root"}}));
+
+    std::vector<MmdRigidBodyDefinition> bodies(2U);
+    const glm::vec3 positions[] = {
+        glm::vec3(-0.5f, 2.0f, 0.0f),
+        glm::vec3(0.5f, 2.0f, 0.0f)
+    };
+    for (std::size_t index = 0; index < bodies.size(); ++index)
+    {
+        bodies[index].name = "jointBody" + std::to_string(index);
+        bodies[index].shape = MmdRigidBodyShape::Sphere;
+        bodies[index].size = glm::vec3(0.18f, 0.0f, 0.0f);
+        bodies[index].position = positions[index];
+        bodies[index].mass = 1.0f;
+        bodies[index].mode = MmdRigidBodyMode::Physics;
+        bodies[index].modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            positions[index]
+        );
+    }
+
+    const std::array<MmdJointType, 6U> types{
+        MmdJointType::Spring6Dof,
+        MmdJointType::SixDof,
+        MmdJointType::PointToPoint,
+        MmdJointType::ConeTwist,
+        MmdJointType::Slider,
+        MmdJointType::Hinge
+    };
+    std::vector<MmdJointDefinition> joints;
+    joints.reserve(types.size());
+    for (std::size_t index = 0; index < types.size(); ++index)
+    {
+        MmdJointDefinition joint;
+        joint.name = "joint" + std::to_string(index);
+        joint.type = types[index];
+        joint.bodyA = 0U;
+        joint.bodyB = 1U;
+        joint.position = glm::vec3(0.0f, 2.0f, 0.0f);
+        joint.modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joint.position
+        );
+        joint.linearLower = glm::vec3(-0.05f);
+        joint.linearUpper = glm::vec3(0.05f);
+        joint.angularLower = glm::vec3(-0.2f);
+        joint.angularUpper = glm::vec3(0.2f);
+        if (joint.type == MmdJointType::Spring6Dof)
+        {
+            joint.linearSpring = glm::vec3(8.0f);
+            joint.angularSpring = glm::vec3(3.0f);
+        }
+        joints.push_back(std::move(joint));
+    }
+
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
+std::unique_ptr<ModelAsset> CreatePhysics3ImpulseModel()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics2BModeModel();
+
+    MorphDefinition global;
+    global.name = "globalImpulse";
+    global.kind = MorphKind::Impulse;
+    global.impulseOffsets.push_back(ImpulseMorphOffset{
+        1U,
+        false,
+        glm::vec3(2.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f)
+    });
+
+    MorphDefinition local;
+    local.name = "localImpulse";
+    local.kind = MorphKind::Impulse;
+    local.impulseOffsets.push_back(ImpulseMorphOffset{
+        1U,
+        true,
+        glm::vec3(1.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    });
+
+    MorphDefinition reset;
+    reset.name = "resetImpulse";
+    reset.kind = MorphKind::Impulse;
+    reset.impulseOffsets.push_back(ImpulseMorphOffset{
+        1U,
+        false,
+        glm::vec3(0.0f),
+        glm::vec3(0.0f)
+    });
+
+    model->SetMorphs({
+        std::move(global),
+        std::move(local),
+        std::move(reset)
+    });
+    return model;
+}
+
 void TestBulletSpring6DofFoundation()
 {
     PhysicsWorld world;
@@ -4139,7 +4247,20 @@ void TestDemoPmxPhysics2BRuntimeWhenAvailable()
     if (!std::filesystem::is_regular_file(modelPath))
         return;
 
-    ImportedModelData imported = ModelImporter().Import(modelPath);
+    ImportedModelData imported;
+    try
+    {
+        imported = ModelImporter().Import(modelPath);
+    }
+    catch (const std::runtime_error& error)
+    {
+        if (std::string(error.what()).find("texture was not found") !=
+            std::string::npos)
+        {
+            return;
+        }
+        throw;
+    }
     Require(
         imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
         "Demo PMX lost the data required by Physics 2B"
@@ -4150,9 +4271,8 @@ void TestDemoPmxPhysics2BRuntimeWhenAvailable()
             imported.mmdPhysics->Joints().end(),
             [](const MmdJointDefinition& joint)
             {
-                return joint.type == MmdJointType::Spring6Dof &&
-                    (joint.bodyA == InvalidRigidBodyIndex ||
-                        joint.bodyA != joint.bodyB);
+                return joint.bodyA == InvalidRigidBodyIndex ||
+                    joint.bodyA != joint.bodyB;
             }
         )
     );
@@ -4189,6 +4309,363 @@ void TestDemoPmxPhysics2BRuntimeWhenAvailable()
     );
 }
 
+
+
+void TestBulletAdditionalConstraintsAndDebugDraw()
+{
+    PhysicsWorld world;
+    world.SetGravity(glm::vec3(0.0f));
+
+    std::array<PhysicsBodyHandle, 10U> bodies{};
+    for (std::size_t index = 0; index < bodies.size(); ++index)
+    {
+        bodies[index] = world.CreateBody(DynamicBodyDesc(
+            PhysicsShapeDesc::Sphere(0.12f),
+            glm::vec3(
+                static_cast<float>(index / 2U) * 3.0f,
+                2.0f,
+                static_cast<float>(index % 2U)
+            )
+        ));
+    }
+
+    PhysicsSixDofDesc sixDof;
+    sixDof.bodyA = bodies[0U];
+    sixDof.bodyB = bodies[1U];
+    sixDof.linearLower = glm::vec3(-0.1f);
+    sixDof.linearUpper = glm::vec3(0.1f);
+    sixDof.angularLower = glm::vec3(-0.2f);
+    sixDof.angularUpper = glm::vec3(0.2f);
+    const PhysicsConstraintHandle sixDofHandle =
+        world.CreateSixDofConstraint(sixDof);
+
+    PhysicsPointToPointDesc point;
+    point.bodyA = bodies[2U];
+    point.bodyB = bodies[3U];
+    point.pivotA = glm::vec3(0.0f, 0.0f, 0.5f);
+    point.pivotB = glm::vec3(0.0f, 0.0f, -0.5f);
+    const PhysicsConstraintHandle pointHandle =
+        world.CreatePointToPointConstraint(point);
+
+    PhysicsConeTwistDesc cone;
+    cone.bodyA = bodies[4U];
+    cone.bodyB = bodies[5U];
+    cone.swingSpan1 = 0.4f;
+    cone.swingSpan2 = 0.35f;
+    cone.twistSpan = 0.25f;
+    const PhysicsConstraintHandle coneHandle =
+        world.CreateConeTwistConstraint(cone);
+
+    PhysicsSliderDesc slider;
+    slider.bodyA = bodies[6U];
+    slider.bodyB = bodies[7U];
+    slider.linearLower = -0.25f;
+    slider.linearUpper = 0.25f;
+    slider.angularLower = -0.15f;
+    slider.angularUpper = 0.15f;
+    const PhysicsConstraintHandle sliderHandle =
+        world.CreateSliderConstraint(slider);
+
+    PhysicsHingeDesc hinge;
+    hinge.bodyA = bodies[8U];
+    hinge.bodyB = bodies[9U];
+    hinge.lowerAngle = -0.35f;
+    hinge.upperAngle = 0.35f;
+    const PhysicsConstraintHandle hingeHandle =
+        world.CreateHingeConstraint(hinge);
+
+    Require(
+        world.ConstraintCount() == 5U &&
+        world.Contains(sixDofHandle) &&
+        world.Contains(pointHandle) &&
+        world.Contains(coneHandle) &&
+        world.Contains(sliderHandle) &&
+        world.Contains(hingeHandle),
+        "PhysicsWorld did not retain every PMX 2.1 constraint type"
+    );
+
+    world.SetDebugDrawEnabled(true);
+    world.Step(1.0f / 60.0f);
+    Require(
+        !world.DebugLines().empty(),
+        "Bullet debug draw did not collect any wireframe or constraint lines"
+    );
+    for (PhysicsBodyHandle body : bodies)
+    {
+        const PhysicsBodyState state = world.State(body);
+        Require(
+            std::isfinite(state.position.x) &&
+            std::isfinite(state.rotation.w),
+            "An additional Bullet constraint produced non-finite state"
+        );
+    }
+    world.SetDebugDrawEnabled(false);
+    Require(
+        world.DebugLines().empty(),
+        "Disabling physics debug draw retained stale lines"
+    );
+}
+
+void TestMmdPhysics3AllJointInstantiation()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics3AllJointModel();
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    Require(
+        entity.GetMmdPhysics().RigidBodyCount() == 2U &&
+        entity.GetMmdPhysics().ConstraintCount() == 6U &&
+        scene.Physics().ConstraintCount() == 6U,
+        "MMD runtime did not instantiate all PMX 2.1 joint kinds"
+    );
+    scene.Physics().SetGravity(glm::vec3(0.0f));
+    scene.Update(1.0f / 60.0f);
+    Require(
+        std::isfinite(entity.GetMmdPhysics().BodyStateAt(0U).position.x) &&
+        std::isfinite(entity.GetMmdPhysics().BodyStateAt(1U).position.x),
+        "PMX 2.1 joint runtime produced non-finite state"
+    );
+}
+
+void TestMmdPhysics3ImpulseMorphs()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics3ImpulseModel();
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    scene.Physics().SetGravity(glm::vec3(0.0f));
+    MorphState& morphState = entity.GetMorphState();
+    MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+    const PhysicsBodyHandle body = physics.BodyHandleAt(1U);
+    const PhysicsBodyState initial = scene.Physics().State(body);
+
+    scene.Physics().SetTransform(
+        body,
+        initial.position,
+        glm::angleAxis(
+            glm::radians(90.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        ),
+        true
+    );
+    morphState.SetWeight("localImpulse", 1.0f);
+    physics.ApplyImpulseMorphs(morphState);
+    PhysicsBodyState state = scene.Physics().State(body);
+    Require(
+        std::abs(state.linearVelocity.y) > 0.5f &&
+        std::abs(state.linearVelocity.x) < 0.15f &&
+        std::abs(state.angularVelocity.x) > 0.2f,
+        "Local Impulse Morph was not rotated by the rigid body transform"
+    );
+
+    morphState.Reset();
+    scene.Physics().SetLinearVelocity(body, glm::vec3(9.0f, 8.0f, 7.0f));
+    scene.Physics().SetAngularVelocity(body, glm::vec3(6.0f, 5.0f, 4.0f));
+    morphState.SetWeight("globalImpulse", 1.0f);
+    morphState.SetWeight("resetImpulse", 1.0f);
+    physics.ApplyImpulseMorphs(morphState);
+    state = scene.Physics().State(body);
+    Require(
+        state.linearVelocity.x > 1.0f &&
+        std::abs(state.linearVelocity.y) < 0.1f &&
+        std::abs(state.linearVelocity.z) < 0.1f &&
+        state.angularVelocity.z > 0.2f &&
+        std::abs(state.angularVelocity.x) < 0.1f &&
+        std::abs(state.angularVelocity.y) < 0.1f,
+        "Impulse Morph reset was not processed before the same-frame impulse"
+    );
+}
+
+void TestMmdPhysics3AfterPhysicsPhase()
+{
+    Bone source;
+    source.name = "source";
+
+    Bone before;
+    before.name = "before";
+    before.appendTransform = MmdAppendTransform{
+        0U,
+        1.0f,
+        false,
+        true
+    };
+
+    Bone after;
+    after.name = "after";
+    after.deformAfterPhysics = true;
+    after.appendTransform = MmdAppendTransform{
+        0U,
+        1.0f,
+        false,
+        true
+    };
+
+    Skeleton skeleton({source, before, after});
+    Require(
+        skeleton.MmdBeforePhysicsConstraintOrder().size() == 1U &&
+        skeleton.MmdAfterPhysicsConstraintOrder().size() == 1U,
+        "Skeleton did not partition before/after-physics constraints"
+    );
+
+    PoseBuffer buffer(skeleton);
+    BoneTransform animatedSource = buffer.TransformAt(0U);
+    animatedSource.translation = glm::vec3(2.0f, 0.0f, 0.0f);
+    buffer.SetTransform(0U, animatedSource);
+
+    MmdPoseSolver solver;
+    solver.Solve(buffer, MmdPosePhase::BeforePhysics);
+    Require(
+        NearlyEqual(
+            buffer.TransformAt(1U).translation,
+            glm::vec3(2.0f, 0.0f, 0.0f)
+        ) &&
+        NearlyEqual(buffer.TransformAt(2U).translation, glm::vec3(0.0f)),
+        "Before-physics solve executed an after-physics append constraint"
+    );
+
+    solver.Solve(buffer, MmdPosePhase::AfterPhysics);
+    Require(
+        NearlyEqual(
+            buffer.TransformAt(2U).translation,
+            glm::vec3(2.0f, 0.0f, 0.0f)
+        ),
+        "After-physics solve did not execute its append constraint"
+    );
+
+    Pose pose(skeleton);
+    Animator animator(pose);
+    const AnimationClip clip(
+        "afterPhase",
+        1.0f,
+        {
+            AnimationTrack(
+                0U,
+                {VectorKeyframe{0.0f, glm::vec3(2.0f, 0.0f, 0.0f)}}
+            )
+        }
+    );
+    animator.Play(clip);
+    animator.Update(0.0f);
+    animator.SolveAfterPhysics();
+    const glm::vec3 firstAfter = BoneTransform::FromMatrix(
+        pose.LocalMatrix(2U)
+    ).translation;
+    animator.Update(0.0f);
+    animator.SolveAfterPhysics();
+    const glm::vec3 secondAfter = BoneTransform::FromMatrix(
+        pose.LocalMatrix(2U)
+    ).translation;
+    Require(
+        NearlyEqual(firstAfter, glm::vec3(2.0f, 0.0f, 0.0f)) &&
+        NearlyEqual(secondAfter, firstAfter),
+        "After-physics constraints accumulated across frames"
+    );
+
+    Bone ikLink;
+    ikLink.name = "afterIkLink";
+    Bone ikEffector;
+    ikEffector.name = "afterIkEffector";
+    ikEffector.parentIndex = 0U;
+    ikEffector.bindLocalMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    ikEffector.inverseBindMatrix = glm::inverse(
+        ikEffector.bindLocalMatrix
+    );
+    Bone ikController;
+    ikController.name = "afterIkController";
+    ikController.bindLocalMatrix = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    ikController.inverseBindMatrix = glm::inverse(
+        ikController.bindLocalMatrix
+    );
+    ikController.deformAfterPhysics = true;
+    ikController.ikConstraint = MmdIkConstraint{
+        1U,
+        8U,
+        glm::radians(45.0f),
+        {MmdIkLink{0U}}
+    };
+    Skeleton ikSkeleton({ikLink, ikEffector, ikController});
+    Pose ikPose(ikSkeleton);
+    Animator ikAnimator(ikPose);
+    const AnimationClip ikClip(
+        "afterIk",
+        1.0f,
+        {
+            AnimationTrack(
+                2U,
+                {VectorKeyframe{0.0f, glm::vec3(0.0f, 1.0f, 0.0f)}}
+            )
+        }
+    );
+    ikAnimator.Play(ikClip);
+    Require(
+        glm::distance(
+            glm::vec3(ikPose.GlobalMatrix(1U)[3]),
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        ) < 0.001f,
+        "After-physics IK executed during the before-physics phase"
+    );
+    ikAnimator.SolveAfterPhysics();
+    Require(
+        glm::distance(
+            glm::vec3(ikPose.GlobalMatrix(1U)[3]),
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        ) < 0.001f,
+        "After-physics IK did not solve after the physics phase"
+    );
+}
+
+void TestMmdPhysics3AutomaticReset()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics2BModeModel();
+    AnimationClip& clip = model->AddAnimationClip(AnimationClip(
+        "resetClip",
+        1.0f,
+        {
+            AnimationTrack(
+                0U,
+                {
+                    VectorKeyframe{0.0f, glm::vec3(0.0f)},
+                    VectorKeyframe{1.0f, glm::vec3(0.2f, 0.0f, 0.0f)}
+                }
+            )
+        }
+    ));
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    scene.Physics().SetGravity(glm::vec3(0.0f));
+    Animator& animator = entity.GetAnimator();
+    animator.Play(clip);
+    scene.Update(0.0f);
+
+    const PhysicsBodyHandle body = entity.GetMmdPhysics().BodyHandleAt(1U);
+    scene.Physics().ApplyCentralImpulse(body, glm::vec3(4.0f, 0.0f, 0.0f));
+    Require(
+        glm::length(scene.Physics().State(body).linearVelocity) > 0.5f,
+        "Automatic-reset test failed to establish body velocity"
+    );
+    animator.SetTime(0.5f);
+    scene.Update(0.0f);
+    Require(
+        glm::length(scene.Physics().State(body).linearVelocity) < Epsilon,
+        "Animator SetTime did not automatically reset MMD physics"
+    );
+
+    animator.SetLooping(true);
+    animator.SetTime(0.95f);
+    scene.Update(0.0f);
+    scene.Physics().ApplyCentralImpulse(body, glm::vec3(4.0f, 0.0f, 0.0f));
+    scene.Update(0.10f);
+    Require(
+        animator.Time() < 0.2f &&
+        glm::length(scene.Physics().State(body).linearVelocity) < Epsilon,
+        "Animation loop wrap did not automatically reset MMD physics"
+    );
+}
 
 void TestMmdPhysics2BSceneMoveAssignment()
 {
@@ -4259,6 +4736,26 @@ int main()
     failures += !RunTest(
         "Bullet Spring 6DOF foundation",
         TestBulletSpring6DofFoundation
+    );
+    failures += !RunTest(
+        "Bullet additional constraints and debug draw",
+        TestBulletAdditionalConstraintsAndDebugDraw
+    );
+    failures += !RunTest(
+        "MMD Physics 3 all joint types",
+        TestMmdPhysics3AllJointInstantiation
+    );
+    failures += !RunTest(
+        "MMD Physics 3 Impulse Morphs",
+        TestMmdPhysics3ImpulseMorphs
+    );
+    failures += !RunTest(
+        "MMD Physics 3 after-physics phase",
+        TestMmdPhysics3AfterPhysicsPhase
+    );
+    failures += !RunTest(
+        "MMD Physics 3 automatic reset",
+        TestMmdPhysics3AutomaticReset
     );
     failures += !RunTest(
         "MMD Physics 2B modes and Pose sync",

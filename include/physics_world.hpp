@@ -3,6 +3,7 @@
 #include "physics_types.hpp"
 #include <cstddef>
 #include <memory>
+#include <span>
 
 // WISTERIA-facing rigid-body world. Bullet types are intentionally hidden
 // behind the implementation boundary so engine code does not depend on bt*.
@@ -29,6 +30,21 @@ public:
 
     PhysicsConstraintHandle CreateSpring6DofConstraint(
         const PhysicsSpring6DofDesc& description
+    );
+    PhysicsConstraintHandle CreateSixDofConstraint(
+        const PhysicsSixDofDesc& description
+    );
+    PhysicsConstraintHandle CreatePointToPointConstraint(
+        const PhysicsPointToPointDesc& description
+    );
+    PhysicsConstraintHandle CreateConeTwistConstraint(
+        const PhysicsConeTwistDesc& description
+    );
+    PhysicsConstraintHandle CreateSliderConstraint(
+        const PhysicsSliderDesc& description
+    );
+    PhysicsConstraintHandle CreateHingeConstraint(
+        const PhysicsHingeDesc& description
     );
     bool DestroyConstraint(PhysicsConstraintHandle constraint) noexcept;
     bool Contains(PhysicsConstraintHandle constraint) const noexcept;
@@ -61,7 +77,12 @@ public:
         PhysicsBodyHandle body,
         const glm::vec3& impulse
     );
+    void ClearDynamics(PhysicsBodyHandle body);
     void Activate(PhysicsBodyHandle body);
+
+    void SetDebugDrawEnabled(bool enabled) noexcept;
+    bool DebugDrawEnabled() const noexcept;
+    std::span<const PhysicsDebugLine> DebugLines() const noexcept;
 
     void Step(float deltaTime);
 

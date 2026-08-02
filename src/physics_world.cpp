@@ -1,11 +1,18 @@
 #include "physics_world.hpp"
 #include "physics_bullet_conversion.hpp"
+#include <BulletDynamics/ConstraintSolver/btConeTwistConstraint.h>
+#include <BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h>
 #include <BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.h>
+#include <BulletDynamics/ConstraintSolver/btHingeConstraint.h>
+#include <BulletDynamics/ConstraintSolver/btPoint2PointConstraint.h>
+#include <BulletDynamics/ConstraintSolver/btSliderConstraint.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -189,6 +196,102 @@ void ValidateSpring6Dof(const PhysicsSpring6DofDesc& constraint)
     }
 }
 
+void ValidateConstraintBodies(
+    PhysicsBodyHandle bodyA,
+    PhysicsBodyHandle bodyB,
+    std::string_view name
+)
+{
+    if (!bodyA.IsValid() && !bodyB.IsValid())
+    {
+        throw std::invalid_argument(
+            std::string(name) + " requires at least one rigid body"
+        );
+    }
+}
+
+void ValidateSixDof(const PhysicsSixDofDesc& constraint)
+{
+    ValidateConstraintBodies(constraint.bodyA, constraint.bodyB, "6DOF constraint");
+    ValidateConstraintFrame(constraint.frameA);
+    ValidateConstraintFrame(constraint.frameB);
+    if (!IsFinite(constraint.linearLower) || !IsFinite(constraint.linearUpper) ||
+        !IsFinite(constraint.angularLower) || !IsFinite(constraint.angularUpper) ||
+        !IsValidLimitPair(constraint.linearLower, constraint.linearUpper) ||
+        !IsValidLimitPair(constraint.angularLower, constraint.angularUpper))
+    {
+        throw std::invalid_argument("6DOF constraint limits are invalid");
+    }
+}
+
+void ValidatePointToPoint(const PhysicsPointToPointDesc& constraint)
+{
+    ValidateConstraintBodies(
+        constraint.bodyA,
+        constraint.bodyB,
+        "Point-to-point constraint"
+    );
+    if (!IsFinite(constraint.pivotA) || !IsFinite(constraint.pivotB))
+        throw std::invalid_argument("Point-to-point pivot is non-finite");
+}
+
+void ValidateConeTwist(const PhysicsConeTwistDesc& constraint)
+{
+    ValidateConstraintBodies(
+        constraint.bodyA,
+        constraint.bodyB,
+        "Cone-twist constraint"
+    );
+    ValidateConstraintFrame(constraint.frameA);
+    ValidateConstraintFrame(constraint.frameB);
+    const float spans[] = {
+        constraint.swingSpan1,
+        constraint.swingSpan2,
+        constraint.twistSpan
+    };
+    for (float span : spans)
+    {
+        if (!std::isfinite(span) || span < 0.0f)
+            throw std::invalid_argument("Cone-twist span is invalid");
+    }
+}
+
+void ValidateSlider(const PhysicsSliderDesc& constraint)
+{
+    ValidateConstraintBodies(constraint.bodyA, constraint.bodyB, "Slider constraint");
+    ValidateConstraintFrame(constraint.frameA);
+    ValidateConstraintFrame(constraint.frameB);
+    const float values[] = {
+        constraint.linearLower,
+        constraint.linearUpper,
+        constraint.angularLower,
+        constraint.angularUpper
+    };
+    for (float value : values)
+    {
+        if (!std::isfinite(value))
+            throw std::invalid_argument("Slider limit is non-finite");
+    }
+    if (constraint.linearLower > constraint.linearUpper ||
+        constraint.angularLower > constraint.angularUpper)
+    {
+        throw std::invalid_argument("Slider lower limit exceeds upper limit");
+    }
+}
+
+void ValidateHinge(const PhysicsHingeDesc& constraint)
+{
+    ValidateConstraintBodies(constraint.bodyA, constraint.bodyB, "Hinge constraint");
+    ValidateConstraintFrame(constraint.frameA);
+    ValidateConstraintFrame(constraint.frameB);
+    if (!std::isfinite(constraint.lowerAngle) ||
+        !std::isfinite(constraint.upperAngle) ||
+        constraint.lowerAngle > constraint.upperAngle)
+    {
+        throw std::invalid_argument("Hinge limits are invalid");
+    }
+}
+
 std::unique_ptr<btCollisionShape> CreateShape(
     const PhysicsShapeDesc& shape
 )
@@ -210,6 +313,69 @@ std::unique_ptr<btCollisionShape> CreateShape(
     throw std::invalid_argument("Unknown physics shape kind");
 }
 }
+
+class PhysicsDebugCollector final : public btIDebugDraw
+{
+public:
+    void drawLine(
+        const btVector3& from,
+        const btVector3& to,
+        const btVector3& color
+    ) override
+    {
+        this->lines.push_back(PhysicsDebugLine{
+            PhysicsBulletConversion::FromBullet(from),
+            PhysicsBulletConversion::FromBullet(to),
+            PhysicsBulletConversion::FromBullet(color)
+        });
+    }
+
+    void drawContactPoint(
+        const btVector3& pointOnB,
+        const btVector3& normalOnB,
+        btScalar distance,
+        int,
+        const btVector3& color
+    ) override
+    {
+        this->drawLine(
+            pointOnB,
+            pointOnB + normalOnB * distance,
+            color
+        );
+    }
+
+    void reportErrorWarning(const char* warningString) override
+    {
+        std::cerr << "[Bullet debug] " << warningString << std::endl;
+    }
+
+    void draw3dText(const btVector3&, const char*) override
+    {
+    }
+
+    void setDebugMode(int mode) override
+    {
+        this->mode = mode;
+    }
+
+    int getDebugMode() const override
+    {
+        return this->mode;
+    }
+
+    void Clear() noexcept
+    {
+        this->lines.clear();
+    }
+
+    std::vector<PhysicsDebugLine> lines;
+
+private:
+    int mode = btIDebugDraw::DBG_DrawWireframe |
+        btIDebugDraw::DBG_DrawConstraints |
+        btIDebugDraw::DBG_DrawConstraintLimits;
+};
 
 class PhysicsWorld::Impl
 {
@@ -250,6 +416,7 @@ public:
     {
         ValidateStepSettings(settings);
         world->setGravity(btVector3(0.0f, -9.8f, 0.0f));
+        world->setDebugDrawer(&debugCollector);
     }
 
     ~Impl()
@@ -323,6 +490,57 @@ public:
             );
         }
         return *slot;
+    }
+
+    std::pair<BodySlot*, BodySlot*> ResolveConstraintBodies(
+        PhysicsBodyHandle bodyA,
+        PhysicsBodyHandle bodyB,
+        std::string_view name
+    )
+    {
+        BodySlot* first = bodyA.IsValid() ? Find(bodyA) : nullptr;
+        BodySlot* second = bodyB.IsValid() ? Find(bodyB) : nullptr;
+        if (bodyA.IsValid() && first == nullptr)
+            throw std::out_of_range(std::string(name) + " bodyA handle is invalid");
+        if (bodyB.IsValid() && second == nullptr)
+            throw std::out_of_range(std::string(name) + " bodyB handle is invalid");
+        if (first != nullptr && second != nullptr && first == second)
+            throw std::invalid_argument(std::string(name) + " cannot connect a body to itself");
+        return {first, second};
+    }
+
+    PhysicsConstraintHandle StoreConstraint(
+        std::unique_ptr<btTypedConstraint> next,
+        PhysicsBodyHandle bodyA,
+        PhysicsBodyHandle bodyB,
+        bool disableCollisions
+    )
+    {
+        std::uint32_t index = 0U;
+        if (!freeConstraintSlots.empty())
+        {
+            index = freeConstraintSlots.back();
+            freeConstraintSlots.pop_back();
+        }
+        else
+        {
+            if (constraints.size() >= static_cast<std::size_t>(
+                    std::numeric_limits<std::uint32_t>::max()))
+            {
+                throw std::overflow_error(
+                    "Physics constraint handle space exhausted"
+                );
+            }
+            index = static_cast<std::uint32_t>(constraints.size());
+            constraints.emplace_back();
+        }
+        ConstraintSlot& slot = constraints[index];
+        slot.constraint = std::move(next);
+        slot.bodyA = bodyA;
+        slot.bodyB = bodyB;
+        world->addConstraint(slot.constraint.get(), disableCollisions);
+        ++constraintCount;
+        return PhysicsConstraintHandle{index, slot.generation};
     }
 
     void ReleaseConstraint(std::uint32_t index) noexcept
@@ -420,6 +638,7 @@ public:
     std::unique_ptr<btCollisionDispatcher> dispatcher;
     std::unique_ptr<btBroadphaseInterface> broadphase;
     std::unique_ptr<btSequentialImpulseConstraintSolver> solver;
+    PhysicsDebugCollector debugCollector;
     std::unique_ptr<btDiscreteDynamicsWorld> world;
     PhysicsStepSettings settings;
     std::vector<BodySlot> bodies;
@@ -428,6 +647,7 @@ public:
     std::vector<ConstraintSlot> constraints;
     std::vector<std::uint32_t> freeConstraintSlots;
     std::size_t constraintCount = 0;
+    bool debugDrawEnabled = false;
 };
 
 PhysicsWorld::PhysicsWorld(const PhysicsStepSettings& settings)
@@ -567,18 +787,11 @@ PhysicsConstraintHandle PhysicsWorld::CreateSpring6DofConstraint(
 )
 {
     ValidateSpring6Dof(description);
-    Impl::BodySlot* bodyA = description.bodyA.IsValid()
-        ? impl->Find(description.bodyA)
-        : nullptr;
-    Impl::BodySlot* bodyB = description.bodyB.IsValid()
-        ? impl->Find(description.bodyB)
-        : nullptr;
-    if (description.bodyA.IsValid() && bodyA == nullptr)
-        throw std::out_of_range("Spring 6DOF bodyA handle is invalid");
-    if (description.bodyB.IsValid() && bodyB == nullptr)
-        throw std::out_of_range("Spring 6DOF bodyB handle is invalid");
-    if (bodyA != nullptr && bodyB != nullptr && bodyA == bodyB)
-        throw std::invalid_argument("Spring 6DOF cannot connect a body to itself");
+    const auto [bodyA, bodyB] = impl->ResolveConstraintBodies(
+        description.bodyA,
+        description.bodyB,
+        "Spring 6DOF"
+    );
 
     const btTransform frameA = PhysicsBulletConversion::ToBullet(
         description.frameA.position,
@@ -657,33 +870,169 @@ PhysicsConstraintHandle PhysicsWorld::CreateSpring6DofConstraint(
     }
     constraint->setEquilibriumPoint();
 
-    std::uint32_t index = 0U;
-    if (!impl->freeConstraintSlots.empty())
+    return impl->StoreConstraint(
+        std::move(constraint),
+        description.bodyA,
+        description.bodyB,
+        description.disableCollisionsBetweenLinkedBodies
+    );
+}
+
+PhysicsConstraintHandle PhysicsWorld::CreateSixDofConstraint(
+    const PhysicsSixDofDesc& description
+)
+{
+    ValidateSixDof(description);
+    const auto [bodyA, bodyB] = impl->ResolveConstraintBodies(
+        description.bodyA,
+        description.bodyB,
+        "6DOF"
+    );
+    const btTransform frameA = PhysicsBulletConversion::ToBullet(
+        description.frameA.position,
+        description.frameA.rotation
+    );
+    const btTransform frameB = PhysicsBulletConversion::ToBullet(
+        description.frameB.position,
+        description.frameB.rotation
+    );
+    std::unique_ptr<btGeneric6DofConstraint> constraint;
+    if (bodyA != nullptr && bodyB != nullptr)
     {
-        index = impl->freeConstraintSlots.back();
-        impl->freeConstraintSlots.pop_back();
+        constraint = std::make_unique<btGeneric6DofConstraint>(
+            *bodyA->body, *bodyB->body, frameA, frameB, true
+        );
+    }
+    else if (bodyA != nullptr)
+    {
+        constraint = std::make_unique<btGeneric6DofConstraint>(
+            *bodyA->body, frameA, true
+        );
     }
     else
     {
-        if (impl->constraints.size() >= static_cast<std::size_t>(
-                std::numeric_limits<std::uint32_t>::max()))
-        {
-            throw std::overflow_error("Physics constraint handle space exhausted");
-        }
-        index = static_cast<std::uint32_t>(impl->constraints.size());
-        impl->constraints.emplace_back();
+        constraint = std::make_unique<btGeneric6DofConstraint>(
+            *bodyB->body, frameB, true
+        );
     }
-
-    Impl::ConstraintSlot& slot = impl->constraints[index];
-    slot.constraint = std::move(constraint);
-    slot.bodyA = description.bodyA;
-    slot.bodyB = description.bodyB;
-    impl->world->addConstraint(
-        slot.constraint.get(),
+    constraint->setLinearLowerLimit(
+        PhysicsBulletConversion::ToBullet(description.linearLower)
+    );
+    constraint->setLinearUpperLimit(
+        PhysicsBulletConversion::ToBullet(description.linearUpper)
+    );
+    constraint->setAngularLowerLimit(
+        PhysicsBulletConversion::ToBullet(description.angularLower)
+    );
+    constraint->setAngularUpperLimit(
+        PhysicsBulletConversion::ToBullet(description.angularUpper)
+    );
+    return impl->StoreConstraint(
+        std::move(constraint), description.bodyA, description.bodyB,
         description.disableCollisionsBetweenLinkedBodies
     );
-    ++impl->constraintCount;
-    return PhysicsConstraintHandle{index, slot.generation};
+}
+
+PhysicsConstraintHandle PhysicsWorld::CreatePointToPointConstraint(
+    const PhysicsPointToPointDesc& description
+)
+{
+    ValidatePointToPoint(description);
+    const auto [bodyA, bodyB] = impl->ResolveConstraintBodies(
+        description.bodyA, description.bodyB, "Point-to-point"
+    );
+    const btVector3 pivotA = PhysicsBulletConversion::ToBullet(description.pivotA);
+    const btVector3 pivotB = PhysicsBulletConversion::ToBullet(description.pivotB);
+    std::unique_ptr<btPoint2PointConstraint> constraint;
+    if (bodyA != nullptr && bodyB != nullptr)
+        constraint = std::make_unique<btPoint2PointConstraint>(*bodyA->body, *bodyB->body, pivotA, pivotB);
+    else if (bodyA != nullptr)
+        constraint = std::make_unique<btPoint2PointConstraint>(*bodyA->body, pivotA);
+    else
+        constraint = std::make_unique<btPoint2PointConstraint>(*bodyB->body, pivotB);
+    return impl->StoreConstraint(
+        std::move(constraint), description.bodyA, description.bodyB,
+        description.disableCollisionsBetweenLinkedBodies
+    );
+}
+
+PhysicsConstraintHandle PhysicsWorld::CreateConeTwistConstraint(
+    const PhysicsConeTwistDesc& description
+)
+{
+    ValidateConeTwist(description);
+    const auto [bodyA, bodyB] = impl->ResolveConstraintBodies(
+        description.bodyA, description.bodyB, "Cone-twist"
+    );
+    const btTransform frameA = PhysicsBulletConversion::ToBullet(description.frameA.position, description.frameA.rotation);
+    const btTransform frameB = PhysicsBulletConversion::ToBullet(description.frameB.position, description.frameB.rotation);
+    std::unique_ptr<btConeTwistConstraint> constraint;
+    if (bodyA != nullptr && bodyB != nullptr)
+        constraint = std::make_unique<btConeTwistConstraint>(*bodyA->body, *bodyB->body, frameA, frameB);
+    else if (bodyA != nullptr)
+        constraint = std::make_unique<btConeTwistConstraint>(*bodyA->body, frameA);
+    else
+        constraint = std::make_unique<btConeTwistConstraint>(*bodyB->body, frameB);
+    constraint->setLimit(
+        description.swingSpan1,
+        description.swingSpan2,
+        description.twistSpan
+    );
+    return impl->StoreConstraint(
+        std::move(constraint), description.bodyA, description.bodyB,
+        description.disableCollisionsBetweenLinkedBodies
+    );
+}
+
+PhysicsConstraintHandle PhysicsWorld::CreateSliderConstraint(
+    const PhysicsSliderDesc& description
+)
+{
+    ValidateSlider(description);
+    const auto [bodyA, bodyB] = impl->ResolveConstraintBodies(
+        description.bodyA, description.bodyB, "Slider"
+    );
+    const btTransform frameA = PhysicsBulletConversion::ToBullet(description.frameA.position, description.frameA.rotation);
+    const btTransform frameB = PhysicsBulletConversion::ToBullet(description.frameB.position, description.frameB.rotation);
+    std::unique_ptr<btSliderConstraint> constraint;
+    if (bodyA != nullptr && bodyB != nullptr)
+        constraint = std::make_unique<btSliderConstraint>(*bodyA->body, *bodyB->body, frameA, frameB, true);
+    else if (bodyA != nullptr)
+        constraint = std::make_unique<btSliderConstraint>(*bodyA->body, frameA, true);
+    else
+        constraint = std::make_unique<btSliderConstraint>(*bodyB->body, frameB, true);
+    constraint->setLowerLinLimit(description.linearLower);
+    constraint->setUpperLinLimit(description.linearUpper);
+    constraint->setLowerAngLimit(description.angularLower);
+    constraint->setUpperAngLimit(description.angularUpper);
+    return impl->StoreConstraint(
+        std::move(constraint), description.bodyA, description.bodyB,
+        description.disableCollisionsBetweenLinkedBodies
+    );
+}
+
+PhysicsConstraintHandle PhysicsWorld::CreateHingeConstraint(
+    const PhysicsHingeDesc& description
+)
+{
+    ValidateHinge(description);
+    const auto [bodyA, bodyB] = impl->ResolveConstraintBodies(
+        description.bodyA, description.bodyB, "Hinge"
+    );
+    const btTransform frameA = PhysicsBulletConversion::ToBullet(description.frameA.position, description.frameA.rotation);
+    const btTransform frameB = PhysicsBulletConversion::ToBullet(description.frameB.position, description.frameB.rotation);
+    std::unique_ptr<btHingeConstraint> constraint;
+    if (bodyA != nullptr && bodyB != nullptr)
+        constraint = std::make_unique<btHingeConstraint>(*bodyA->body, *bodyB->body, frameA, frameB, true);
+    else if (bodyA != nullptr)
+        constraint = std::make_unique<btHingeConstraint>(*bodyA->body, frameA, true);
+    else
+        constraint = std::make_unique<btHingeConstraint>(*bodyB->body, frameB, true);
+    constraint->setLimit(description.lowerAngle, description.upperAngle);
+    return impl->StoreConstraint(
+        std::move(constraint), description.bodyA, description.bodyB,
+        description.disableCollisionsBetweenLinkedBodies
+    );
 }
 
 bool PhysicsWorld::DestroyConstraint(
@@ -814,9 +1163,35 @@ void PhysicsWorld::ApplyTorqueImpulse(
     slot.body->activate(true);
 }
 
+void PhysicsWorld::ClearDynamics(PhysicsBodyHandle body)
+{
+    Impl::BodySlot& slot = impl->Require(body);
+    slot.body->setLinearVelocity(btVector3(0.0, 0.0, 0.0));
+    slot.body->setAngularVelocity(btVector3(0.0, 0.0, 0.0));
+    slot.body->clearForces();
+    slot.body->activate(true);
+}
+
 void PhysicsWorld::Activate(PhysicsBodyHandle body)
 {
     impl->Require(body).body->activate(true);
+}
+
+void PhysicsWorld::SetDebugDrawEnabled(bool enabled) noexcept
+{
+    impl->debugDrawEnabled = enabled;
+    if (!enabled)
+        impl->debugCollector.Clear();
+}
+
+bool PhysicsWorld::DebugDrawEnabled() const noexcept
+{
+    return impl->debugDrawEnabled;
+}
+
+std::span<const PhysicsDebugLine> PhysicsWorld::DebugLines() const noexcept
+{
+    return impl->debugCollector.lines;
 }
 
 void PhysicsWorld::Step(float deltaTime)
@@ -835,4 +1210,9 @@ void PhysicsWorld::Step(float deltaTime)
         impl->settings.maxSubSteps,
         impl->settings.fixedTimeStep
     );
+    if (impl->debugDrawEnabled)
+    {
+        impl->debugCollector.Clear();
+        impl->world->debugDrawWorld();
+    }
 }

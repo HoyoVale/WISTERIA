@@ -93,6 +93,7 @@ public:
     );
     void PrePhysicsUpdate(float deltaTime);
     void PostPhysicsUpdate();
+    void SolveAfterPhysicsPose();
     void ResetPhysicsToCurrentPose();
 
     template<typename T, typename... Arguments>
@@ -153,5 +154,7 @@ private:
     std::vector<Behaviour*> pendingBehaviourRemovals;
     bool processingBehaviours = false;
     bool clearBehavioursRequested = false;
+    bool physicsResetPending = false;
+    std::uint64_t observedAnimatorDiscontinuityRevision = 0U;
     bool visible = true;
 };

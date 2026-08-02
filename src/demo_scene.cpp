@@ -350,7 +350,7 @@ const char* MorphLabStageName(MorphLabStage stage) noexcept
     case MorphLabStage::Material: return "Material Morph";
     case MorphLabStage::Group: return "Group Morph";
     case MorphLabStage::Flip: return "PMX 2.1 Flip Morph";
-    case MorphLabStage::Impulse: return "PMX 2.1 Impulse Morph (physics pending)";
+    case MorphLabStage::Impulse: return "PMX 2.1 Impulse Morph";
     case MorphLabStage::Count: break;
     }
     return "Unknown Morph";
@@ -588,8 +588,8 @@ std::vector<MorphDefinition> CreateMorphLabDefinitions()
 class MorphLabBehaviour final : public Behaviour
 {
 public:
-    MorphLabBehaviour(Window& window, Input& input)
-        : window(window), input(input)
+    MorphLabBehaviour(Scene& scene, Window& window, Input& input)
+        : scene(scene), window(window), input(input)
     {
     }
 
@@ -598,6 +598,12 @@ public:
         if (this->input.WasKeyPressed(InputKey::Space))
         {
             this->paused = !this->paused;
+            this->titleDirty = true;
+        }
+        if (this->input.WasKeyPressed(InputKey::P))
+        {
+            const bool enabled = !this->scene.Physics().DebugDrawEnabled();
+            this->scene.Physics().SetDebugDrawEnabled(enabled);
             this->titleDirty = true;
         }
         if (this->input.WasKeyPressed(InputKey::Right))
@@ -682,7 +688,8 @@ private:
         std::string title = "FLORAL WISTERIA - MORPH LAB - ";
         title += MorphLabStageName(this->stage);
         title += this->paused ? " [PAUSED]" : "";
-        title += " | Left/Right: switch | Space: pause";
+        title += " | Left/Right: switch | Space: pause | P: debug ";
+        title += this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF";
         this->window.SetTitle(std::move(title));
 
         std::cout << "[MORPH LAB] " << MorphLabStageName(this->stage);
@@ -708,6 +715,7 @@ private:
         std::cout << std::endl;
     }
 
+    Scene& scene;
     Window& window;
     Input& input;
     MorphLabStage stage = MorphLabStage::Vertex;
@@ -926,7 +934,11 @@ void SetupMorphDemoScene(
             glm::vec3(0.92f)
         )
     );
-    active.AddBehaviour<MorphLabBehaviour>(window, window.GetInput());
+    active.AddBehaviour<MorphLabBehaviour>(
+        scene,
+        window,
+        window.GetInput()
+    );
     active.AddBehaviour<MorphLabPhysicsBehaviour>();
 
     scene.ActiveCamera().SetParam(CameraParam{

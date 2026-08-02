@@ -45,6 +45,22 @@ void PoseBuffer::ResetToBindPose()
     }
 }
 
+void PoseBuffer::CaptureFrom(const Pose& pose)
+{
+    if (&pose.GetSkeleton() != this->skeleton)
+    {
+        throw std::invalid_argument(
+            "PoseBuffer and Pose must reference the same Skeleton"
+        );
+    }
+    const std::span<const glm::mat4> matrices = pose.LocalMatrices();
+    for (std::size_t index = 0; index < matrices.size(); ++index)
+    {
+        this->localMatrices[index] = matrices[index];
+        this->transforms[index] = BoneTransform::FromMatrix(matrices[index]);
+    }
+}
+
 const BoneTransform& PoseBuffer::TransformAt(BoneIndex boneIndex) const
 {
     return this->transforms[this->CheckedIndex(boneIndex)];

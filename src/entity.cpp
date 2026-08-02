@@ -294,12 +294,28 @@ void Entity::SetMmdPhysics(
         *this->pose,
         this->transform
     );
+    if (this->animator != nullptr)
+    {
+        this->observedAnimatorDiscontinuityRevision =
+            this->animator->DiscontinuityRevision();
+    }
 }
 
 void Entity::PrePhysicsUpdate(float deltaTime)
 {
-    if (this->mmdPhysics != nullptr)
-        this->mmdPhysics->PrePhysicsUpdate(this->transform, deltaTime);
+    if (this->mmdPhysics == nullptr)
+        return;
+    if (this->physicsResetPending)
+    {
+        this->mmdPhysics->ResetToPose(this->transform);
+        this->physicsResetPending = false;
+    }
+    this->mmdPhysics->PrePhysicsUpdate(this->transform, deltaTime);
+    if (this->morphState != nullptr &&
+        this->morphState->GetMorphSet().HasKind(MorphKind::Impulse))
+    {
+        this->mmdPhysics->ApplyImpulseMorphs(*this->morphState);
+    }
 }
 
 void Entity::PostPhysicsUpdate()
@@ -308,10 +324,19 @@ void Entity::PostPhysicsUpdate()
         this->mmdPhysics->PostPhysicsUpdate(this->transform);
 }
 
+void Entity::SolveAfterPhysicsPose()
+{
+    if (this->animator != nullptr)
+        this->animator->SolveAfterPhysics();
+}
+
 void Entity::ResetPhysicsToCurrentPose()
 {
     if (this->mmdPhysics != nullptr)
+    {
         this->mmdPhysics->ResetToPose(this->transform);
+        this->physicsResetPending = false;
+    }
 }
 
 bool Entity::RemoveBehaviour(Behaviour& behaviour)
@@ -376,6 +401,13 @@ void Entity::Update(float deltaTime)
     if (this->animator != nullptr)
     {
         this->animator->Update(deltaTime);
+        const std::uint64_t discontinuity =
+            this->animator->DiscontinuityRevision();
+        if (discontinuity != this->observedAnimatorDiscontinuityRevision)
+        {
+            this->observedAnimatorDiscontinuityRevision = discontinuity;
+            this->physicsResetPending = this->mmdPhysics != nullptr;
+        }
         const RootMotionDelta rootMotion =
             this->animator->ConsumeRootMotion();
         if (!rootMotion.IsIdentity())

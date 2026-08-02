@@ -85,6 +85,64 @@ struct PhysicsSpring6DofDesc
     bool disableCollisionsBetweenLinkedBodies = true;
 };
 
+struct PhysicsSixDofDesc
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    PhysicsConstraintFrame frameA{};
+    PhysicsConstraintFrame frameB{};
+    glm::vec3 linearLower{0.0f};
+    glm::vec3 linearUpper{0.0f};
+    glm::vec3 angularLower{0.0f};
+    glm::vec3 angularUpper{0.0f};
+    bool disableCollisionsBetweenLinkedBodies = true;
+};
+
+struct PhysicsPointToPointDesc
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    glm::vec3 pivotA{0.0f};
+    glm::vec3 pivotB{0.0f};
+    bool disableCollisionsBetweenLinkedBodies = true;
+};
+
+struct PhysicsConeTwistDesc
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    PhysicsConstraintFrame frameA{};
+    PhysicsConstraintFrame frameB{};
+    float swingSpan1 = 0.0f;
+    float swingSpan2 = 0.0f;
+    float twistSpan = 0.0f;
+    bool disableCollisionsBetweenLinkedBodies = true;
+};
+
+struct PhysicsSliderDesc
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    PhysicsConstraintFrame frameA{};
+    PhysicsConstraintFrame frameB{};
+    float linearLower = 0.0f;
+    float linearUpper = 0.0f;
+    float angularLower = 0.0f;
+    float angularUpper = 0.0f;
+    bool disableCollisionsBetweenLinkedBodies = true;
+};
+
+struct PhysicsHingeDesc
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    PhysicsConstraintFrame frameA{};
+    PhysicsConstraintFrame frameB{};
+    float lowerAngle = 0.0f;
+    float upperAngle = 0.0f;
+    bool disableCollisionsBetweenLinkedBodies = true;
+};
+
 struct PhysicsBodyDesc
 {
     PhysicsShapeDesc shape{};
@@ -104,6 +162,13 @@ struct PhysicsBodyDesc
     std::uint16_t collisionGroup = 0x0001U;
     std::uint16_t collisionMask = 0xFFFFU;
     bool disableDeactivation = false;
+};
+
+struct PhysicsDebugLine
+{
+    glm::vec3 from{0.0f};
+    glm::vec3 to{0.0f};
+    glm::vec3 color{1.0f};
 };
 
 struct PhysicsBodyState

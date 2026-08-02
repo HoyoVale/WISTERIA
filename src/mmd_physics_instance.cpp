@@ -212,35 +212,33 @@ MmdPhysicsInstance::MmdPhysicsInstance(
 
         for (const MmdJointDefinition& joint : asset.Joints())
         {
-            if (joint.type != MmdJointType::Spring6Dof ||
-                (joint.bodyA != InvalidRigidBodyIndex &&
-                    joint.bodyA == joint.bodyB))
+            if (joint.bodyA != InvalidRigidBodyIndex &&
+                joint.bodyA == joint.bodyB)
             {
                 continue;
             }
 
-            PhysicsSpring6DofDesc description;
+            PhysicsBodyHandle bodyA{};
+            PhysicsBodyHandle bodyB{};
             if (joint.bodyA != InvalidRigidBodyIndex)
-            {
-                description.bodyA = this->BodyHandleAt(joint.bodyA);
-            }
+                bodyA = this->BodyHandleAt(joint.bodyA);
             if (joint.bodyB != InvalidRigidBodyIndex)
-            {
-                description.bodyB = this->BodyHandleAt(joint.bodyB);
-            }
+                bodyB = this->BodyHandleAt(joint.bodyB);
 
             const RigidTransform jointWorld = ModelToWorld(
                 joint.modelBindTransform,
                 entity
             );
             const glm::mat4 jointWorldMatrix = ToMatrix(jointWorld);
+            PhysicsConstraintFrame frameA{};
+            PhysicsConstraintFrame frameB{};
             if (joint.bodyA != InvalidRigidBodyIndex)
             {
                 const RigidTransform bodyWorld = ModelToWorld(
                     asset.RigidBodyAt(joint.bodyA).modelBindTransform,
                     entity
                 );
-                description.frameA = ConstraintFrameFromMatrix(
+                frameA = ConstraintFrameFromMatrix(
                     glm::inverse(ToMatrix(bodyWorld)) * jointWorldMatrix
                 );
             }
@@ -250,19 +248,110 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                     asset.RigidBodyAt(joint.bodyB).modelBindTransform,
                     entity
                 );
-                description.frameB = ConstraintFrameFromMatrix(
+                frameB = ConstraintFrameFromMatrix(
                     glm::inverse(ToMatrix(bodyWorld)) * jointWorldMatrix
                 );
             }
-            description.linearLower = joint.linearLower * entity.scale;
-            description.linearUpper = joint.linearUpper * entity.scale;
-            description.angularLower = joint.angularLower;
-            description.angularUpper = joint.angularUpper;
-            description.linearStiffness = joint.linearSpring;
-            description.angularStiffness = joint.angularSpring;
-            this->constraints.push_back(
-                world.CreateSpring6DofConstraint(description)
-            );
+
+            PhysicsConstraintHandle handle{};
+            switch (joint.type)
+            {
+            case MmdJointType::Spring6Dof:
+            {
+                PhysicsSpring6DofDesc description;
+                description.bodyA = bodyA;
+                description.bodyB = bodyB;
+                description.frameA = frameA;
+                description.frameB = frameB;
+                description.linearLower = joint.linearLower * entity.scale;
+                description.linearUpper = joint.linearUpper * entity.scale;
+                description.angularLower = joint.angularLower;
+                description.angularUpper = joint.angularUpper;
+                description.linearStiffness = joint.linearSpring;
+                description.angularStiffness = joint.angularSpring;
+                handle = world.CreateSpring6DofConstraint(description);
+                break;
+            }
+            case MmdJointType::SixDof:
+            {
+                PhysicsSixDofDesc description;
+                description.bodyA = bodyA;
+                description.bodyB = bodyB;
+                description.frameA = frameA;
+                description.frameB = frameB;
+                description.linearLower = joint.linearLower * entity.scale;
+                description.linearUpper = joint.linearUpper * entity.scale;
+                description.angularLower = joint.angularLower;
+                description.angularUpper = joint.angularUpper;
+                handle = world.CreateSixDofConstraint(description);
+                break;
+            }
+            case MmdJointType::PointToPoint:
+            {
+                PhysicsPointToPointDesc description;
+                description.bodyA = bodyA;
+                description.bodyB = bodyB;
+                description.pivotA = frameA.position;
+                description.pivotB = frameB.position;
+                handle = world.CreatePointToPointConstraint(description);
+                break;
+            }
+            case MmdJointType::ConeTwist:
+            {
+                const auto span = [](float lower, float upper)
+                {
+                    return std::max(std::abs(lower), std::abs(upper));
+                };
+                PhysicsConeTwistDesc description;
+                description.bodyA = bodyA;
+                description.bodyB = bodyB;
+                description.frameA = frameA;
+                description.frameB = frameB;
+                description.twistSpan = span(
+                    joint.angularLower.x,
+                    joint.angularUpper.x
+                );
+                description.swingSpan1 = span(
+                    joint.angularLower.y,
+                    joint.angularUpper.y
+                );
+                description.swingSpan2 = span(
+                    joint.angularLower.z,
+                    joint.angularUpper.z
+                );
+                handle = world.CreateConeTwistConstraint(description);
+                break;
+            }
+            case MmdJointType::Slider:
+            {
+                PhysicsSliderDesc description;
+                description.bodyA = bodyA;
+                description.bodyB = bodyB;
+                description.frameA = frameA;
+                description.frameB = frameB;
+                // Bullet's slider axis is local X.
+                description.linearLower = joint.linearLower.x * entity.scale;
+                description.linearUpper = joint.linearUpper.x * entity.scale;
+                description.angularLower = joint.angularLower.x;
+                description.angularUpper = joint.angularUpper.x;
+                handle = world.CreateSliderConstraint(description);
+                break;
+            }
+            case MmdJointType::Hinge:
+            {
+                PhysicsHingeDesc description;
+                description.bodyA = bodyA;
+                description.bodyB = bodyB;
+                description.frameA = frameA;
+                description.frameB = frameB;
+                // btHingeConstraint uses the frame's local Z axis.
+                description.lowerAngle = joint.angularLower.z;
+                description.upperAngle = joint.angularUpper.z;
+                handle = world.CreateHingeConstraint(description);
+                break;
+            }
+            }
+            this->constraints.push_back(handle);
         }
         this->ResetToPose(transform);
     }
@@ -316,6 +405,35 @@ void MmdPhysicsInstance::ApplyTorqueImpulse(
 )
 {
     this->world->ApplyTorqueImpulse(this->BodyHandleAt(index), impulse);
+}
+
+void MmdPhysicsInstance::ApplyImpulseMorphs(const MorphState& morphState)
+{
+    morphState.EvaluateImpulseMorphs(this->impulseScratch);
+
+    // PMX reset controls are processed first so an impulse in the same frame
+    // starts from a deterministic zero-velocity state.
+    for (const MmdRigidBodyImpulse& command : this->impulseScratch)
+    {
+        if (command.reset)
+            this->world->ClearDynamics(this->BodyHandleAt(command.rigidBodyIndex));
+    }
+
+    for (const MmdRigidBodyImpulse& command : this->impulseScratch)
+    {
+        const PhysicsBodyHandle body = this->BodyHandleAt(
+            command.rigidBodyIndex
+        );
+        const PhysicsBodyState state = this->world->State(body);
+        const glm::vec3 linearImpulse = command.globalLinearImpulse +
+            state.rotation * command.localLinearImpulse;
+        const glm::vec3 torqueImpulse = command.globalTorqueImpulse +
+            state.rotation * command.localTorqueImpulse;
+        if (linearImpulse != glm::vec3(0.0f))
+            this->world->ApplyCentralImpulse(body, linearImpulse);
+        if (torqueImpulse != glm::vec3(0.0f))
+            this->world->ApplyTorqueImpulse(body, torqueImpulse);
+    }
 }
 
 void MmdPhysicsInstance::PrePhysicsUpdate(

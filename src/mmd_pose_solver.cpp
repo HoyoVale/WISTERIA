@@ -94,11 +94,16 @@ void ClampIkRotation(
 
 void MmdPoseSolver::Solve(
     PoseBuffer& pose,
+    MmdPosePhase phase,
     const IkEnabledPredicate& ikEnabled
 )
 {
     const Skeleton& skeleton = pose.GetSkeleton();
-    if (!skeleton.HasMmdConstraints())
+    const std::span<const BoneIndex> constraintOrder =
+        phase == MmdPosePhase::BeforePhysics
+            ? skeleton.MmdBeforePhysicsConstraintOrder()
+            : skeleton.MmdAfterPhysicsConstraintOrder();
+    if (constraintOrder.empty())
         return;
 
     this->transforms.assign(
@@ -124,7 +129,7 @@ void MmdPoseSolver::Solve(
         globalsInitialized = true;
     };
 
-    for (BoneIndex constrainedBone : skeleton.MmdConstraintOrder())
+    for (BoneIndex constrainedBone : constraintOrder)
     {
         const Bone& bone = skeleton.BoneAt(constrainedBone);
         if (bone.appendTransform.has_value())

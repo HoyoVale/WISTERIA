@@ -5,6 +5,12 @@
 #include <functional>
 #include <vector>
 
+enum class MmdPosePhase : std::uint8_t
+{
+    BeforePhysics,
+    AfterPhysics
+};
+
 class MmdPoseSolver
 {
 public:
@@ -12,6 +18,7 @@ public:
 
     void Solve(
         PoseBuffer& pose,
+        MmdPosePhase phase,
         const IkEnabledPredicate& ikEnabled = {}
     );
 

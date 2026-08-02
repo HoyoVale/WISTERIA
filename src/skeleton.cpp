@@ -175,6 +175,13 @@ Skeleton::Skeleton(
             return leftBone.sourceOrder < rightBone.sourceOrder;
         }
     );
+    for (BoneIndex boneIndex : this->mmdConstraintOrder)
+    {
+        if (this->bones[boneIndex].deformAfterPhysics)
+            this->mmdAfterPhysicsConstraintOrder.push_back(boneIndex);
+        else
+            this->mmdBeforePhysicsConstraintOrder.push_back(boneIndex);
+    }
 
     if (this->rootCount == 0)
         throw std::invalid_argument("Skeleton must contain a root bone");
@@ -250,7 +257,27 @@ bool Skeleton::HasMmdConstraints() const noexcept
     return !this->mmdConstraintOrder.empty();
 }
 
+bool Skeleton::HasMmdBeforePhysicsConstraints() const noexcept
+{
+    return !this->mmdBeforePhysicsConstraintOrder.empty();
+}
+
+bool Skeleton::HasMmdAfterPhysicsConstraints() const noexcept
+{
+    return !this->mmdAfterPhysicsConstraintOrder.empty();
+}
+
 std::span<const BoneIndex> Skeleton::MmdConstraintOrder() const noexcept
 {
     return this->mmdConstraintOrder;
+}
+
+std::span<const BoneIndex> Skeleton::MmdBeforePhysicsConstraintOrder() const noexcept
+{
+    return this->mmdBeforePhysicsConstraintOrder;
+}
+
+std::span<const BoneIndex> Skeleton::MmdAfterPhysicsConstraintOrder() const noexcept
+{
+    return this->mmdAfterPhysicsConstraintOrder;
 }

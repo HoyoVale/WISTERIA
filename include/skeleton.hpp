@@ -30,7 +30,11 @@ public:
     std::span<const glm::mat4> BindGlobalMatrices() const noexcept;
     const glm::mat4& InverseRootMatrix() const noexcept;
     bool HasMmdConstraints() const noexcept;
+    bool HasMmdBeforePhysicsConstraints() const noexcept;
+    bool HasMmdAfterPhysicsConstraints() const noexcept;
     std::span<const BoneIndex> MmdConstraintOrder() const noexcept;
+    std::span<const BoneIndex> MmdBeforePhysicsConstraintOrder() const noexcept;
+    std::span<const BoneIndex> MmdAfterPhysicsConstraintOrder() const noexcept;
 
 private:
     std::vector<Bone> bones;
@@ -39,6 +43,8 @@ private:
     std::vector<std::vector<BoneIndex>> children;
     std::vector<glm::mat4> bindGlobalMatrices;
     std::vector<BoneIndex> mmdConstraintOrder;
+    std::vector<BoneIndex> mmdBeforePhysicsConstraintOrder;
+    std::vector<BoneIndex> mmdAfterPhysicsConstraintOrder;
     glm::mat4 inverseRootMatrix{1.0f};
     std::size_t rootCount = 0;
 };
