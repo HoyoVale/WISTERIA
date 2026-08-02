@@ -49,6 +49,42 @@ struct PhysicsBodyHandle
     ) noexcept = default;
 };
 
+struct PhysicsConstraintHandle
+{
+    std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t generation = 0;
+
+    bool IsValid() const noexcept;
+
+    friend bool operator==(
+        const PhysicsConstraintHandle& left,
+        const PhysicsConstraintHandle& right
+    ) noexcept = default;
+};
+
+struct PhysicsConstraintFrame
+{
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct PhysicsSpring6DofDesc
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    PhysicsConstraintFrame frameA{};
+    PhysicsConstraintFrame frameB{};
+    glm::vec3 linearLower{0.0f};
+    glm::vec3 linearUpper{0.0f};
+    glm::vec3 angularLower{0.0f};
+    glm::vec3 angularUpper{0.0f};
+    glm::vec3 linearStiffness{0.0f};
+    glm::vec3 angularStiffness{0.0f};
+    glm::vec3 linearDamping{0.5f};
+    glm::vec3 angularDamping{0.5f};
+    bool disableCollisionsBetweenLinkedBodies = true;
+};
+
 struct PhysicsBodyDesc
 {
     PhysicsShapeDesc shape{};
@@ -62,6 +98,8 @@ struct PhysicsBodyDesc
     float angularDamping = 0.0f;
     float restitution = 0.0f;
     float friction = 0.5f;
+    glm::vec3 linearFactor{1.0f};
+    glm::vec3 angularFactor{1.0f};
 
     std::uint16_t collisionGroup = 0x0001U;
     std::uint16_t collisionMask = 0xFFFFU;

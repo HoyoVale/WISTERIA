@@ -17,6 +17,10 @@
 #include <utility>
 #include <vector>
 
+class MmdPhysicsAsset;
+class MmdPhysicsInstance;
+class PhysicsWorld;
+
 class Entity {
 public:
     explicit Entity(const Transform& transform = {});
@@ -78,6 +82,19 @@ public:
     const MorphState& GetMorphState() const;
     void SetMorphSet(const MorphSet& morphSet);
 
+    bool HasMmdPhysics() const noexcept;
+    MmdPhysicsInstance* TryGetMmdPhysics() noexcept;
+    const MmdPhysicsInstance* TryGetMmdPhysics() const noexcept;
+    MmdPhysicsInstance& GetMmdPhysics();
+    const MmdPhysicsInstance& GetMmdPhysics() const;
+    void SetMmdPhysics(
+        PhysicsWorld& world,
+        const MmdPhysicsAsset& physics
+    );
+    void PrePhysicsUpdate(float deltaTime);
+    void PostPhysicsUpdate();
+    void ResetPhysicsToCurrentPose();
+
     template<typename T, typename... Arguments>
         requires std::derived_from<T, Behaviour>
     T& AddBehaviour(Arguments&&... arguments)
@@ -130,6 +147,7 @@ private:
     std::unique_ptr<Pose> pose;
     std::unique_ptr<MorphState> morphState;
     std::unique_ptr<Animator> animator;
+    std::unique_ptr<MmdPhysicsInstance> mmdPhysics;
     std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;
     std::vector<Behaviour*> pendingBehaviourRemovals;

@@ -1,0 +1,475 @@
+#include "pch.hpp"
+#include "mmd_physics_instance.hpp"
+#include "physics_world.hpp"
+#include "pose.hpp"
+#include "transform.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <optional>
+#include <stdexcept>
+
+namespace
+{
+struct RigidTransform
+{
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct EntityFrame
+{
+    RigidTransform rigid;
+    float scale = 1.0f;
+};
+
+RigidTransform ExtractRigidTransform(const glm::mat4& matrix)
+{
+    const BoneTransform transform = BoneTransform::FromMatrix(matrix);
+    return RigidTransform{
+        transform.translation,
+        glm::normalize(transform.rotation)
+    };
+}
+
+glm::mat4 ToMatrix(const RigidTransform& transform)
+{
+    return glm::translate(glm::mat4(1.0f), transform.position) *
+        glm::mat4_cast(glm::normalize(transform.rotation));
+}
+
+EntityFrame ExtractEntityFrame(const Transform& transform)
+{
+    const glm::vec3& scale = transform.Scale();
+    constexpr float tolerance = 0.0001f;
+    if (scale.x <= 0.0f || scale.y <= 0.0f || scale.z <= 0.0f ||
+        std::abs(scale.x - scale.y) > tolerance ||
+        std::abs(scale.x - scale.z) > tolerance)
+    {
+        throw std::invalid_argument(
+            "MMD physics requires positive uniform Entity scale"
+        );
+    }
+    const BoneTransform decomposed = BoneTransform::FromMatrix(
+        transform.Matrix()
+    );
+    return EntityFrame{
+        RigidTransform{
+            decomposed.translation,
+            glm::normalize(decomposed.rotation)
+        },
+        scale.x
+    };
+}
+
+RigidTransform ModelToWorld(
+    const glm::mat4& modelTransform,
+    const EntityFrame& entity
+)
+{
+    const RigidTransform model = ExtractRigidTransform(modelTransform);
+    return RigidTransform{
+        entity.rigid.position + entity.rigid.rotation *
+            (model.position * entity.scale),
+        glm::normalize(entity.rigid.rotation * model.rotation)
+    };
+}
+
+glm::mat4 WorldToModel(
+    const PhysicsBodyState& worldState,
+    const EntityFrame& entity
+)
+{
+    const glm::quat inverseRotation = glm::inverse(entity.rigid.rotation);
+    const RigidTransform model{
+        inverseRotation * (worldState.position - entity.rigid.position) /
+            entity.scale,
+        glm::normalize(inverseRotation * worldState.rotation)
+    };
+    return ToMatrix(model);
+}
+
+PhysicsConstraintFrame ConstraintFrameFromMatrix(const glm::mat4& matrix)
+{
+    const RigidTransform transform = ExtractRigidTransform(matrix);
+    return PhysicsConstraintFrame{transform.position, transform.rotation};
+}
+
+PhysicsShapeDesc MakeShape(
+    const MmdRigidBodyDefinition& definition,
+    float scale
+)
+{
+    switch (definition.shape)
+    {
+    case MmdRigidBodyShape::Sphere:
+        return PhysicsShapeDesc::Sphere(definition.size.x * scale);
+    case MmdRigidBodyShape::Box:
+        return PhysicsShapeDesc::Box(definition.size * scale);
+    case MmdRigidBodyShape::Capsule:
+        return PhysicsShapeDesc::Capsule(
+            definition.size.x * scale,
+            definition.size.y * scale
+        );
+    }
+    throw std::invalid_argument("Unknown MMD rigid-body shape");
+}
+
+PhysicsMotionType MakeMotionType(MmdRigidBodyMode mode)
+{
+    return mode == MmdRigidBodyMode::FollowBone
+        ? PhysicsMotionType::Kinematic
+        : PhysicsMotionType::Dynamic;
+}
+
+glm::mat4 AnimatedBodyModelTransform(
+    const MmdRigidBodyDefinition& definition,
+    const Pose& pose
+)
+{
+    if (definition.bone == InvalidBoneIndex)
+        return definition.modelBindTransform;
+    return pose.GlobalMatrix(definition.bone) * definition.boneToBody;
+}
+}
+
+MmdPhysicsInstance::MmdPhysicsInstance(
+    PhysicsWorld& world,
+    const MmdPhysicsAsset& asset,
+    Pose& pose,
+    const Transform& transform
+)
+    : world(&world), asset(&asset), pose(&pose)
+{
+    const EntityFrame entity = ExtractEntityFrame(transform);
+    this->rigidBodies.reserve(asset.RigidBodyCount());
+    this->constraints.reserve(asset.JointCount());
+    const std::size_t boneCount = pose.GetSkeleton().BoneCount();
+    this->drivenRuntimeBodyByBone.assign(
+        boneCount,
+        std::numeric_limits<std::size_t>::max()
+    );
+    this->localMatrixScratch.resize(boneCount);
+    this->globalMatrixScratch.resize(boneCount);
+
+    try
+    {
+        for (const MmdRigidBodyDefinition& definition : asset.RigidBodies())
+        {
+            if (definition.mode != MmdRigidBodyMode::FollowBone &&
+                definition.mass <= 0.0f)
+            {
+                throw std::invalid_argument(
+                    "Dynamic MMD rigid body must have positive mass: " +
+                    definition.name
+                );
+            }
+
+            const RigidTransform initial = ModelToWorld(
+                definition.modelBindTransform,
+                entity
+            );
+            PhysicsBodyDesc description;
+            description.shape = MakeShape(definition, entity.scale);
+            description.motionType = MakeMotionType(definition.mode);
+            description.position = initial.position;
+            description.rotation = initial.rotation;
+            description.mass = definition.mass;
+            description.linearDamping = std::clamp(
+                definition.linearDamping,
+                0.0f,
+                1.0f
+            );
+            description.angularDamping = std::clamp(
+                definition.angularDamping,
+                0.0f,
+                1.0f
+            );
+            description.restitution = definition.restitution;
+            description.friction = definition.friction;
+            if (definition.mode == MmdRigidBodyMode::PhysicsWithBone)
+                description.linearFactor = glm::vec3(0.0f);
+            description.collisionGroup = static_cast<std::uint16_t>(
+                1U << definition.collisionGroup
+            );
+            description.collisionMask = static_cast<std::uint16_t>(
+                ~definition.nonCollisionMask
+            );
+            const std::size_t runtimeIndex = this->rigidBodies.size();
+            this->rigidBodies.push_back(RuntimeBody{
+                &definition,
+                world.CreateBody(description),
+                initial.position,
+                initial.rotation,
+                true
+            });
+            if (definition.mode != MmdRigidBodyMode::FollowBone &&
+                definition.bone != InvalidBoneIndex)
+            {
+                this->drivenRuntimeBodyByBone[definition.bone] = runtimeIndex;
+            }
+        }
+
+        for (const MmdJointDefinition& joint : asset.Joints())
+        {
+            if (joint.type != MmdJointType::Spring6Dof ||
+                (joint.bodyA != InvalidRigidBodyIndex &&
+                    joint.bodyA == joint.bodyB))
+            {
+                continue;
+            }
+
+            PhysicsSpring6DofDesc description;
+            if (joint.bodyA != InvalidRigidBodyIndex)
+            {
+                description.bodyA = this->BodyHandleAt(joint.bodyA);
+            }
+            if (joint.bodyB != InvalidRigidBodyIndex)
+            {
+                description.bodyB = this->BodyHandleAt(joint.bodyB);
+            }
+
+            const RigidTransform jointWorld = ModelToWorld(
+                joint.modelBindTransform,
+                entity
+            );
+            const glm::mat4 jointWorldMatrix = ToMatrix(jointWorld);
+            if (joint.bodyA != InvalidRigidBodyIndex)
+            {
+                const RigidTransform bodyWorld = ModelToWorld(
+                    asset.RigidBodyAt(joint.bodyA).modelBindTransform,
+                    entity
+                );
+                description.frameA = ConstraintFrameFromMatrix(
+                    glm::inverse(ToMatrix(bodyWorld)) * jointWorldMatrix
+                );
+            }
+            if (joint.bodyB != InvalidRigidBodyIndex)
+            {
+                const RigidTransform bodyWorld = ModelToWorld(
+                    asset.RigidBodyAt(joint.bodyB).modelBindTransform,
+                    entity
+                );
+                description.frameB = ConstraintFrameFromMatrix(
+                    glm::inverse(ToMatrix(bodyWorld)) * jointWorldMatrix
+                );
+            }
+            description.linearLower = joint.linearLower * entity.scale;
+            description.linearUpper = joint.linearUpper * entity.scale;
+            description.angularLower = joint.angularLower;
+            description.angularUpper = joint.angularUpper;
+            description.linearStiffness = joint.linearSpring;
+            description.angularStiffness = joint.angularSpring;
+            this->constraints.push_back(
+                world.CreateSpring6DofConstraint(description)
+            );
+        }
+        this->ResetToPose(transform);
+    }
+    catch (...)
+    {
+        this->DestroyRuntime();
+        throw;
+    }
+}
+
+MmdPhysicsInstance::~MmdPhysicsInstance()
+{
+    this->DestroyRuntime();
+}
+
+std::size_t MmdPhysicsInstance::RigidBodyCount() const noexcept
+{
+    return this->rigidBodies.size();
+}
+
+std::size_t MmdPhysicsInstance::ConstraintCount() const noexcept
+{
+    return this->constraints.size();
+}
+
+PhysicsBodyHandle MmdPhysicsInstance::BodyHandleAt(
+    RigidBodyIndex index
+) const
+{
+    if (static_cast<std::size_t>(index) >= this->rigidBodies.size())
+        throw std::out_of_range("MMD runtime rigid-body index is out of range");
+    return this->rigidBodies[index].handle;
+}
+
+PhysicsBodyState MmdPhysicsInstance::BodyStateAt(RigidBodyIndex index) const
+{
+    return this->world->State(this->BodyHandleAt(index));
+}
+
+void MmdPhysicsInstance::ApplyCentralImpulse(
+    RigidBodyIndex index,
+    const glm::vec3& impulse
+)
+{
+    this->world->ApplyCentralImpulse(this->BodyHandleAt(index), impulse);
+}
+
+void MmdPhysicsInstance::ApplyTorqueImpulse(
+    RigidBodyIndex index,
+    const glm::vec3& impulse
+)
+{
+    this->world->ApplyTorqueImpulse(this->BodyHandleAt(index), impulse);
+}
+
+void MmdPhysicsInstance::PrePhysicsUpdate(
+    const Transform& transform,
+    float deltaTime
+)
+{
+    if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
+    {
+        throw std::invalid_argument(
+            "MMD physics delta time must be finite and non-negative"
+        );
+    }
+    (void)deltaTime;
+    constexpr float positionEpsilonSquared = 0.000001f;
+    constexpr float rotationDotEpsilon = 0.000001f;
+    const EntityFrame entity = ExtractEntityFrame(transform);
+    for (RuntimeBody& runtime : this->rigidBodies)
+    {
+        const MmdRigidBodyDefinition& definition = *runtime.definition;
+        if (definition.mode == MmdRigidBodyMode::Physics)
+            continue;
+
+        const RigidTransform animated = ModelToWorld(
+            AnimatedBodyModelTransform(definition, *this->pose),
+            entity
+        );
+        const glm::vec3 positionDelta =
+            animated.position - runtime.lastAnimatedPosition;
+        const bool positionChanged = !runtime.hasAnimatedTransform ||
+            glm::dot(positionDelta, positionDelta) > positionEpsilonSquared;
+        const bool rotationChanged = !runtime.hasAnimatedTransform ||
+            1.0f - std::abs(glm::dot(
+                animated.rotation,
+                runtime.lastAnimatedRotation
+            )) > rotationDotEpsilon;
+
+        if (definition.mode == MmdRigidBodyMode::FollowBone)
+        {
+            if (positionChanged || rotationChanged)
+            {
+                this->world->SetTransform(
+                    runtime.handle,
+                    animated.position,
+                    animated.rotation,
+                    false
+                );
+            }
+        }
+        else if (positionChanged)
+        {
+            const PhysicsBodyState current = this->world->State(runtime.handle);
+            this->world->SetTransform(
+                runtime.handle,
+                animated.position,
+                current.rotation,
+                false
+            );
+        }
+
+        runtime.lastAnimatedPosition = animated.position;
+        runtime.lastAnimatedRotation = animated.rotation;
+        runtime.hasAnimatedTransform = true;
+    }
+}
+
+void MmdPhysicsInstance::PostPhysicsUpdate(const Transform& transform)
+{
+    const EntityFrame entity = ExtractEntityFrame(transform);
+    const Skeleton& skeleton = this->pose->GetSkeleton();
+    const std::span<const glm::mat4> currentLocals =
+        this->pose->LocalMatrices();
+    const std::span<const glm::mat4> currentGlobals =
+        this->pose->GlobalMatrices();
+    std::copy(
+        currentLocals.begin(),
+        currentLocals.end(),
+        this->localMatrixScratch.begin()
+    );
+    std::copy(
+        currentGlobals.begin(),
+        currentGlobals.end(),
+        this->globalMatrixScratch.begin()
+    );
+
+    const std::size_t invalidRuntimeIndex =
+        std::numeric_limits<std::size_t>::max();
+    for (BoneIndex boneIndex : skeleton.EvaluationOrder())
+    {
+        const Bone& bone = skeleton.BoneAt(boneIndex);
+        const glm::mat4 parentGlobal = bone.parentIndex == InvalidBoneIndex
+            ? glm::mat4(1.0f)
+            : this->globalMatrixScratch[bone.parentIndex];
+        const std::size_t runtimeIndex =
+            this->drivenRuntimeBodyByBone[boneIndex];
+        if (runtimeIndex == invalidRuntimeIndex)
+        {
+            this->globalMatrixScratch[boneIndex] =
+                parentGlobal * this->localMatrixScratch[boneIndex];
+            continue;
+        }
+
+        const RuntimeBody& runtime = this->rigidBodies[runtimeIndex];
+        const MmdRigidBodyDefinition& definition = *runtime.definition;
+        const glm::mat4 bodyModel = WorldToModel(
+            this->world->State(runtime.handle),
+            entity
+        );
+        const glm::mat4 drivenGlobal = bodyModel * definition.bodyToBone;
+        this->globalMatrixScratch[boneIndex] = drivenGlobal;
+        this->localMatrixScratch[boneIndex] =
+            glm::inverse(parentGlobal) * drivenGlobal;
+    }
+
+    this->pose->SetLocalMatrices(this->localMatrixScratch);
+}
+
+void MmdPhysicsInstance::ResetToPose(const Transform& transform)
+{
+    const EntityFrame entity = ExtractEntityFrame(transform);
+    for (RuntimeBody& runtime : this->rigidBodies)
+    {
+        const RigidTransform target = ModelToWorld(
+            AnimatedBodyModelTransform(*runtime.definition, *this->pose),
+            entity
+        );
+        this->world->SetTransform(
+            runtime.handle,
+            target.position,
+            target.rotation,
+            true
+        );
+        runtime.lastAnimatedPosition = target.position;
+        runtime.lastAnimatedRotation = target.rotation;
+        runtime.hasAnimatedTransform = true;
+    }
+}
+
+void MmdPhysicsInstance::DestroyRuntime() noexcept
+{
+    if (this->world == nullptr)
+        return;
+    for (auto iterator = this->constraints.rbegin();
+         iterator != this->constraints.rend();
+         ++iterator)
+    {
+        this->world->DestroyConstraint(*iterator);
+    }
+    this->constraints.clear();
+    for (auto iterator = this->rigidBodies.rbegin();
+         iterator != this->rigidBodies.rend();
+         ++iterator)
+    {
+        this->world->DestroyBody(iterator->handle);
+    }
+    this->rigidBodies.clear();
+}

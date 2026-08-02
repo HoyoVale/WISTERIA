@@ -76,7 +76,7 @@ struct MmdJointDefinition
 };
 
 // Immutable model-level PMX physics metadata. Runtime Bullet objects and
-// mutable velocities belong to a future per-Entity MmdPhysicsInstance.
+// mutable velocities belong to each Entity's MmdPhysicsInstance.
 class MmdPhysicsAsset
 {
 public:

@@ -27,6 +27,26 @@ bool RemoveOwnedObject(
 }
 }
 
+Scene& Scene::operator=(Scene&& other) noexcept
+{
+    if (this == &other)
+        return *this;
+
+    // Entity physics instances must unregister from the old world before that
+    // world is replaced. The incoming PhysicsWorld is heap-owned so moving a
+    // Scene preserves the address stored by every incoming instance.
+    this->Clear();
+    this->activeCamera = std::move(other.activeCamera);
+    this->physicsWorld = std::move(other.physicsWorld);
+    this->entities = std::move(other.entities);
+    this->pointLights = std::move(other.pointLights);
+    this->directionalLights = std::move(other.directionalLights);
+    this->spotLights = std::move(other.spotLights);
+    this->environment = other.environment;
+    other.environment = nullptr;
+    return *this;
+}
+
 Camera& Scene::ActiveCamera() noexcept
 {
     return this->activeCamera;
@@ -37,10 +57,25 @@ const Camera& Scene::ActiveCamera() const noexcept
     return this->activeCamera;
 }
 
+PhysicsWorld& Scene::Physics() noexcept
+{
+    return *this->physicsWorld;
+}
+
+const PhysicsWorld& Scene::Physics() const noexcept
+{
+    return *this->physicsWorld;
+}
+
 void Scene::Update(float deltaTime)
 {
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->Update(deltaTime);
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+        entity->PrePhysicsUpdate(deltaTime);
+    this->physicsWorld->Step(deltaTime);
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+        entity->PostPhysicsUpdate();
 }
 
 void Scene::Clear() noexcept
@@ -74,7 +109,8 @@ Entity& Scene::CreateEntity(
 
 Entity& Scene::InstantiateModel(
     const ModelAsset& model,
-    const Transform& transform
+    const Transform& transform,
+    const ModelInstantiationOptions& options
 )
 {
     Entity& entity = this->CreateEntity(transform);
@@ -86,6 +122,8 @@ Entity& Scene::InstantiateModel(
         if (model.AnimationClipCount() > 0)
             entity.GetAnimator().Play(model.AnimationClipAt(0));
     }
+    if (options.enableMmdPhysics && model.HasMmdPhysics())
+        entity.SetMmdPhysics(*this->physicsWorld, model.GetMmdPhysics());
     for (const RenderPart& part : model.Parts())
     {
         entity.AddRenderPart(

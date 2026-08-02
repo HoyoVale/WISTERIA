@@ -34,3 +34,10 @@ bool PhysicsBodyHandle::IsValid() const noexcept
     return index != std::numeric_limits<std::uint32_t>::max() &&
         generation != 0;
 }
+
+
+bool PhysicsConstraintHandle::IsValid() const noexcept
+{
+    return this->index != std::numeric_limits<std::uint32_t>::max() &&
+        this->generation != 0U;
+}

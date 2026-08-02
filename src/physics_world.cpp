@@ -1,5 +1,6 @@
 #include "physics_world.hpp"
 #include "physics_bullet_conversion.hpp"
+#include <BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -109,8 +110,83 @@ void ValidateBody(const PhysicsBodyDesc& body)
     }
     if (body.linearDamping > 1.0f || body.angularDamping > 1.0f)
         throw std::invalid_argument("Physics damping must not exceed one");
+    if (!IsFinite(body.linearFactor) || !IsFinite(body.angularFactor) ||
+        body.linearFactor.x < 0.0f || body.linearFactor.y < 0.0f ||
+        body.linearFactor.z < 0.0f || body.angularFactor.x < 0.0f ||
+        body.angularFactor.y < 0.0f || body.angularFactor.z < 0.0f)
+    {
+        throw std::invalid_argument(
+            "Physics motion factors must be finite and non-negative"
+        );
+    }
     if (body.collisionGroup == 0U)
         throw std::invalid_argument("Physics collision group cannot be zero");
+}
+
+bool IsValidLimitPair(
+    const glm::vec3& lower,
+    const glm::vec3& upper
+) noexcept
+{
+    return lower.x <= upper.x && lower.y <= upper.y && lower.z <= upper.z;
+}
+
+void ValidateConstraintFrame(const PhysicsConstraintFrame& frame)
+{
+    if (!IsFinite(frame.position) || !IsFinite(frame.rotation))
+        throw std::invalid_argument("Physics constraint frame is non-finite");
+    const float length = glm::length(frame.rotation);
+    if (!std::isfinite(length) || length <= 0.000001f)
+        throw std::invalid_argument("Physics constraint rotation is invalid");
+}
+
+void ValidateSpring6Dof(const PhysicsSpring6DofDesc& constraint)
+{
+    if (!constraint.bodyA.IsValid() && !constraint.bodyB.IsValid())
+    {
+        throw std::invalid_argument(
+            "Spring 6DOF constraint requires at least one rigid body"
+        );
+    }
+    ValidateConstraintFrame(constraint.frameA);
+    ValidateConstraintFrame(constraint.frameB);
+    const glm::vec3 vectors[] = {
+        constraint.linearLower,
+        constraint.linearUpper,
+        constraint.angularLower,
+        constraint.angularUpper,
+        constraint.linearStiffness,
+        constraint.angularStiffness,
+        constraint.linearDamping,
+        constraint.angularDamping
+    };
+    for (const glm::vec3& vector : vectors)
+    {
+        if (!IsFinite(vector))
+            throw std::invalid_argument("Physics constraint contains non-finite data");
+    }
+    if (!IsValidLimitPair(constraint.linearLower, constraint.linearUpper) ||
+        !IsValidLimitPair(constraint.angularLower, constraint.angularUpper))
+    {
+        throw std::invalid_argument(
+            "Physics constraint lower limit exceeds its upper limit"
+        );
+    }
+    const glm::vec3 nonNegative[] = {
+        constraint.linearStiffness,
+        constraint.angularStiffness,
+        constraint.linearDamping,
+        constraint.angularDamping
+    };
+    for (const glm::vec3& vector : nonNegative)
+    {
+        if (vector.x < 0.0f || vector.y < 0.0f || vector.z < 0.0f)
+        {
+            throw std::invalid_argument(
+                "Physics spring stiffness and damping must be non-negative"
+            );
+        }
+    }
 }
 
 std::unique_ptr<btCollisionShape> CreateShape(
@@ -144,6 +220,14 @@ public:
         std::unique_ptr<btDefaultMotionState> motionState;
         std::unique_ptr<btRigidBody> body;
         PhysicsMotionType motionType = PhysicsMotionType::Static;
+        std::uint32_t generation = 1;
+    };
+
+    struct ConstraintSlot
+    {
+        std::unique_ptr<btTypedConstraint> constraint;
+        PhysicsBodyHandle bodyA{};
+        PhysicsBodyHandle bodyB{};
         std::uint32_t generation = 1;
     };
 
@@ -209,12 +293,73 @@ public:
         return *slot;
     }
 
+    ConstraintSlot* Find(PhysicsConstraintHandle handle) noexcept
+    {
+        if (!handle.IsValid() || handle.index >= constraints.size())
+            return nullptr;
+        ConstraintSlot& slot = constraints[handle.index];
+        if (!slot.constraint || slot.generation != handle.generation)
+            return nullptr;
+        return &slot;
+    }
+
+    const ConstraintSlot* Find(PhysicsConstraintHandle handle) const noexcept
+    {
+        if (!handle.IsValid() || handle.index >= constraints.size())
+            return nullptr;
+        const ConstraintSlot& slot = constraints[handle.index];
+        if (!slot.constraint || slot.generation != handle.generation)
+            return nullptr;
+        return &slot;
+    }
+
+    ConstraintSlot& Require(PhysicsConstraintHandle handle)
+    {
+        ConstraintSlot* slot = Find(handle);
+        if (!slot)
+        {
+            throw std::out_of_range(
+                "Physics constraint handle is stale or invalid"
+            );
+        }
+        return *slot;
+    }
+
+    void ReleaseConstraint(std::uint32_t index) noexcept
+    {
+        ConstraintSlot& slot = constraints[index];
+        if (!slot.constraint)
+            return;
+        world->removeConstraint(slot.constraint.get());
+        slot.constraint.reset();
+        slot.bodyA = {};
+        slot.bodyB = {};
+        ++slot.generation;
+        if (slot.generation == 0U)
+            slot.generation = 1U;
+        freeConstraintSlots.push_back(index);
+        --constraintCount;
+    }
+
+    void ReleaseConstraintsReferencing(PhysicsBodyHandle body) noexcept
+    {
+        for (std::uint32_t index = 0;
+             index < static_cast<std::uint32_t>(constraints.size());
+             ++index)
+        {
+            ConstraintSlot& slot = constraints[index];
+            if (slot.constraint && (slot.bodyA == body || slot.bodyB == body))
+                ReleaseConstraint(index);
+        }
+    }
+
     void Release(std::uint32_t index) noexcept
     {
         BodySlot& slot = bodies[index];
         if (!slot.body)
             return;
 
+        ReleaseConstraintsReferencing(PhysicsBodyHandle{index, slot.generation});
         world->removeRigidBody(slot.body.get());
         slot.body.reset();
         slot.motionState.reset();
@@ -229,6 +374,26 @@ public:
 
     void Clear() noexcept
     {
+        freeConstraintSlots.clear();
+        for (std::uint32_t index = 0;
+             index < static_cast<std::uint32_t>(constraints.size());
+             ++index)
+        {
+            ConstraintSlot& slot = constraints[index];
+            if (slot.constraint)
+            {
+                world->removeConstraint(slot.constraint.get());
+                slot.constraint.reset();
+                slot.bodyA = {};
+                slot.bodyB = {};
+                ++slot.generation;
+                if (slot.generation == 0U)
+                    slot.generation = 1U;
+            }
+            freeConstraintSlots.push_back(index);
+        }
+        constraintCount = 0;
+
         freeSlots.clear();
         for (std::uint32_t index = 0;
             index < static_cast<std::uint32_t>(bodies.size());
@@ -260,6 +425,9 @@ public:
     std::vector<BodySlot> bodies;
     std::vector<std::uint32_t> freeSlots;
     std::size_t bodyCount = 0;
+    std::vector<ConstraintSlot> constraints;
+    std::vector<std::uint32_t> freeConstraintSlots;
+    std::size_t constraintCount = 0;
 };
 
 PhysicsWorld::PhysicsWorld(const PhysicsStepSettings& settings)
@@ -327,6 +495,12 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(
 
     auto rigidBody = std::make_unique<btRigidBody>(construction);
     rigidBody->setWorldTransform(startTransform);
+    rigidBody->setLinearFactor(
+        PhysicsBulletConversion::ToBullet(description.linearFactor)
+    );
+    rigidBody->setAngularFactor(
+        PhysicsBulletConversion::ToBullet(description.angularFactor)
+    );
 
     if (description.motionType == PhysicsMotionType::Kinematic)
     {
@@ -388,6 +562,150 @@ void PhysicsWorld::Clear() noexcept
     impl->Clear();
 }
 
+PhysicsConstraintHandle PhysicsWorld::CreateSpring6DofConstraint(
+    const PhysicsSpring6DofDesc& description
+)
+{
+    ValidateSpring6Dof(description);
+    Impl::BodySlot* bodyA = description.bodyA.IsValid()
+        ? impl->Find(description.bodyA)
+        : nullptr;
+    Impl::BodySlot* bodyB = description.bodyB.IsValid()
+        ? impl->Find(description.bodyB)
+        : nullptr;
+    if (description.bodyA.IsValid() && bodyA == nullptr)
+        throw std::out_of_range("Spring 6DOF bodyA handle is invalid");
+    if (description.bodyB.IsValid() && bodyB == nullptr)
+        throw std::out_of_range("Spring 6DOF bodyB handle is invalid");
+    if (bodyA != nullptr && bodyB != nullptr && bodyA == bodyB)
+        throw std::invalid_argument("Spring 6DOF cannot connect a body to itself");
+
+    const btTransform frameA = PhysicsBulletConversion::ToBullet(
+        description.frameA.position,
+        description.frameA.rotation
+    );
+    const btTransform frameB = PhysicsBulletConversion::ToBullet(
+        description.frameB.position,
+        description.frameB.rotation
+    );
+
+    std::unique_ptr<btGeneric6DofSpring2Constraint> constraint;
+    if (bodyA != nullptr && bodyB != nullptr)
+    {
+        constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
+            *bodyA->body,
+            *bodyB->body,
+            frameA,
+            frameB,
+            RO_XYZ
+        );
+    }
+    else if (bodyA != nullptr)
+    {
+        constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
+            *bodyA->body,
+            frameA,
+            RO_XYZ
+        );
+    }
+    else
+    {
+        constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
+            *bodyB->body,
+            frameB,
+            RO_XYZ
+        );
+    }
+
+    constraint->setLinearLowerLimit(
+        PhysicsBulletConversion::ToBullet(description.linearLower)
+    );
+    constraint->setLinearUpperLimit(
+        PhysicsBulletConversion::ToBullet(description.linearUpper)
+    );
+    constraint->setAngularLowerLimit(
+        PhysicsBulletConversion::ToBullet(description.angularLower)
+    );
+    constraint->setAngularUpperLimit(
+        PhysicsBulletConversion::ToBullet(description.angularUpper)
+    );
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float stiffness = description.linearStiffness[axis];
+        if (stiffness > 0.0f)
+        {
+            constraint->enableSpring(axis, true);
+            constraint->setStiffness(axis, stiffness, true);
+            constraint->setDamping(
+                axis,
+                description.linearDamping[axis],
+                true
+            );
+        }
+        const float angularStiffness = description.angularStiffness[axis];
+        if (angularStiffness > 0.0f)
+        {
+            const int angularAxis = axis + 3;
+            constraint->enableSpring(angularAxis, true);
+            constraint->setStiffness(angularAxis, angularStiffness, true);
+            constraint->setDamping(
+                angularAxis,
+                description.angularDamping[axis],
+                true
+            );
+        }
+    }
+    constraint->setEquilibriumPoint();
+
+    std::uint32_t index = 0U;
+    if (!impl->freeConstraintSlots.empty())
+    {
+        index = impl->freeConstraintSlots.back();
+        impl->freeConstraintSlots.pop_back();
+    }
+    else
+    {
+        if (impl->constraints.size() >= static_cast<std::size_t>(
+                std::numeric_limits<std::uint32_t>::max()))
+        {
+            throw std::overflow_error("Physics constraint handle space exhausted");
+        }
+        index = static_cast<std::uint32_t>(impl->constraints.size());
+        impl->constraints.emplace_back();
+    }
+
+    Impl::ConstraintSlot& slot = impl->constraints[index];
+    slot.constraint = std::move(constraint);
+    slot.bodyA = description.bodyA;
+    slot.bodyB = description.bodyB;
+    impl->world->addConstraint(
+        slot.constraint.get(),
+        description.disableCollisionsBetweenLinkedBodies
+    );
+    ++impl->constraintCount;
+    return PhysicsConstraintHandle{index, slot.generation};
+}
+
+bool PhysicsWorld::DestroyConstraint(
+    PhysicsConstraintHandle constraint
+) noexcept
+{
+    if (!impl->Find(constraint))
+        return false;
+    impl->ReleaseConstraint(constraint.index);
+    return true;
+}
+
+bool PhysicsWorld::Contains(PhysicsConstraintHandle constraint) const noexcept
+{
+    return impl->Find(constraint) != nullptr;
+}
+
+std::size_t PhysicsWorld::ConstraintCount() const noexcept
+{
+    return impl->constraintCount;
+}
+
 bool PhysicsWorld::Contains(PhysicsBodyHandle body) const noexcept
 {
     return impl->Find(body) != nullptr;
@@ -430,7 +748,8 @@ void PhysicsWorld::SetTransform(
         rotation
     );
     slot.body->setWorldTransform(transform);
-    slot.body->setInterpolationWorldTransform(transform);
+    if (clearVelocity || slot.motionType != PhysicsMotionType::Kinematic)
+        slot.body->setInterpolationWorldTransform(transform);
     if (slot.motionState)
         slot.motionState->setWorldTransform(transform);
     if (clearVelocity)

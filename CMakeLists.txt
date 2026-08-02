@@ -125,6 +125,7 @@ set(WISTERIA_CORE_SOURCES
     src/render_part.cpp
     src/model_asset.cpp
     src/mmd_physics_asset.cpp
+    src/mmd_physics_instance.cpp
     src/physics_types.cpp
     src/physics_bullet_conversion.cpp
     src/physics_world.cpp

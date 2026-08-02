@@ -4,11 +4,17 @@
 #include "entity.hpp"
 #include "light.hpp"
 #include "model_asset.hpp"
+#include "physics_world.hpp"
 #include <cstddef>
 #include <memory>
 #include <vector>
 
 class EnvironmentMap;
+
+struct ModelInstantiationOptions
+{
+    bool enableMmdPhysics = true;
+};
 
 // Scene owns scene objects. Mesh and Material stay externally owned resources.
 class Scene
@@ -20,10 +26,12 @@ public:
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
     Scene(Scene&&) noexcept = default;
-    Scene& operator=(Scene&&) noexcept = default;
+    Scene& operator=(Scene&& other) noexcept;
 
     Camera& ActiveCamera() noexcept;
     const Camera& ActiveCamera() const noexcept;
+    PhysicsWorld& Physics() noexcept;
+    const PhysicsWorld& Physics() const noexcept;
 
     void Update(float deltaTime);
     void Clear() noexcept;
@@ -36,7 +44,8 @@ public:
     );
     Entity& InstantiateModel(
         const ModelAsset& model,
-        const Transform& transform = {}
+        const Transform& transform = {},
+        const ModelInstantiationOptions& options = {}
     );
     bool RemoveEntity(const Entity& entity);
     void ClearEntities() noexcept;
@@ -73,6 +82,8 @@ public:
 
 private:
     Camera activeCamera;
+    std::unique_ptr<PhysicsWorld> physicsWorld =
+        std::make_unique<PhysicsWorld>();
     std::vector<std::unique_ptr<Entity>> entities;
     std::vector<std::unique_ptr<PointLight>> pointLights;
     std::vector<std::unique_ptr<DirectionalLight>> directionalLights;

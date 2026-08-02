@@ -16,4 +16,6 @@ btTransform ToBullet(
     const glm::vec3& position,
     const glm::quat& rotation
 ) noexcept;
+
+glm::mat4 FromBullet(const btTransform& transform) noexcept;
 }

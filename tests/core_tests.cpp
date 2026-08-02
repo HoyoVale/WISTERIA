@@ -8,6 +8,7 @@
 #include "input.hpp"
 #include "manager.hpp"
 #include "model_asset.hpp"
+#include "mmd_physics_instance.hpp"
 #include "pose.hpp"
 #include "physics_world.hpp"
 #include "renderer.hpp"
@@ -2308,7 +2309,8 @@ void TestMorphLabDemoAsset()
         model.GetSkeleton().BoneCount() == 2U &&
         model.HasMorphs() &&
         model.GetMorphSet().MorphCount() == 7U &&
-        model.MmdRigidBodyCount() == 1U,
+        model.MmdRigidBodyCount() == 2U &&
+        model.GetMmdPhysics().JointCount() == 1U,
         "Morph Lab model structure is incomplete"
     );
     for (MorphKind kind : {
@@ -2327,8 +2329,18 @@ void TestMorphLabDemoAsset()
     }
 
     Scene scene;
-    Entity& reference = scene.InstantiateModel(model);
+    Entity& reference = scene.InstantiateModel(
+        model,
+        Transform{},
+        ModelInstantiationOptions{.enableMmdPhysics = false}
+    );
     Entity& active = scene.InstantiateModel(model);
+    Require(
+        !reference.HasMmdPhysics() && active.HasMmdPhysics() &&
+        scene.Physics().BodyCount() == 2U &&
+        scene.Physics().ConstraintCount() == 1U,
+        "Morph Lab physics opt-out or active runtime is incorrect"
+    );
     MorphState& state = active.GetMorphState();
     const MorphSet& morphSet = model.GetMorphSet();
 
@@ -2422,7 +2434,7 @@ void TestMorphLabDemoAsset()
     state.EvaluateImpulseMorphs(impulses);
     Require(
         impulses.size() == 1U &&
-        impulses[0U].rigidBodyIndex == 0U &&
+        impulses[0U].rigidBodyIndex == 1U &&
         NearlyEqual(
             impulses[0U].globalLinearImpulse,
             glm::vec3(1.5f, 2.0f, 0.0f)
@@ -2432,6 +2444,23 @@ void TestMorphLabDemoAsset()
     Require(
         reference.GetMorphState().EffectiveWeights()[0U] == 0.0f,
         "Morph Lab reference and active instances share Morph state"
+    );
+
+    state.Reset();
+    active.Update(0.0f);
+    active.ResetPhysicsToCurrentPose();
+    const glm::mat4 physicsStart = active.GetPose().GlobalMatrix(1U);
+    active.GetMmdPhysics().ApplyTorqueImpulse(
+        1U,
+        glm::vec3(0.0f, 0.0f, 0.75f)
+    );
+    for (int frame = 0; frame < 45; ++frame)
+        scene.Update(1.0f / 60.0f);
+    Require(
+        MatrixIdentityDeviation(
+            glm::inverse(physicsStart) * active.GetPose().GlobalMatrix(1U)
+        ) > 0.02f,
+        "Morph Lab dynamic tip did not produce a visible Bullet motion"
     );
 }
 
@@ -3796,6 +3825,397 @@ void TestBulletFoundationFixedStepAndIsolation()
     );
 }
 
+std::unique_ptr<ModelAsset> CreatePhysics2BModeModel()
+{
+    const glm::mat4 dynamicBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 4.0f, 0.0f)
+    );
+    const glm::mat4 hybridBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(3.0f, 3.0f, 0.0f)
+    );
+    auto model = std::make_unique<ModelAsset>("physics2bModes");
+    model->SetSkeleton(Skeleton({
+        Bone{"follow", InvalidBoneIndex, glm::mat4(1.0f), glm::mat4(1.0f)},
+        Bone{"dynamic", InvalidBoneIndex, dynamicBind, glm::inverse(dynamicBind)},
+        Bone{"hybrid", InvalidBoneIndex, hybridBind, glm::inverse(hybridBind)}
+    }));
+
+    std::vector<MmdRigidBodyDefinition> bodies(3U);
+    bodies[0U].name = "followBody";
+    bodies[0U].bone = 0U;
+    bodies[0U].shape = MmdRigidBodyShape::Sphere;
+    bodies[0U].size = glm::vec3(0.3f, 0.0f, 0.0f);
+    bodies[0U].mode = MmdRigidBodyMode::FollowBone;
+    bodies[0U].modelBindTransform = glm::mat4(1.0f);
+    bodies[0U].boneToBody = glm::mat4(1.0f);
+    bodies[0U].bodyToBone = glm::mat4(1.0f);
+
+    bodies[1U].name = "dynamicBody";
+    bodies[1U].bone = 1U;
+    bodies[1U].shape = MmdRigidBodyShape::Sphere;
+    bodies[1U].size = glm::vec3(0.3f, 0.0f, 0.0f);
+    bodies[1U].mass = 1.0f;
+    bodies[1U].linearDamping = 0.05f;
+    bodies[1U].angularDamping = 0.05f;
+    bodies[1U].mode = MmdRigidBodyMode::Physics;
+    bodies[1U].position = glm::vec3(dynamicBind[3]);
+    bodies[1U].modelBindTransform = dynamicBind;
+    bodies[1U].boneToBody = glm::mat4(1.0f);
+    bodies[1U].bodyToBone = glm::mat4(1.0f);
+
+    bodies[2U].name = "hybridBody";
+    bodies[2U].bone = 2U;
+    bodies[2U].shape = MmdRigidBodyShape::Box;
+    bodies[2U].size = glm::vec3(0.25f);
+    bodies[2U].mass = 1.0f;
+    bodies[2U].linearDamping = 0.05f;
+    bodies[2U].angularDamping = 0.05f;
+    bodies[2U].mode = MmdRigidBodyMode::PhysicsWithBone;
+    bodies[2U].position = glm::vec3(hybridBind[3]);
+    bodies[2U].modelBindTransform = hybridBind;
+    bodies[2U].boneToBody = glm::mat4(1.0f);
+    bodies[2U].bodyToBone = glm::mat4(1.0f);
+
+    model->SetMmdPhysics(MmdPhysicsAsset(std::move(bodies), {}));
+    return model;
+}
+
+std::unique_ptr<ModelAsset> CreatePhysics2BSpringModel()
+{
+    auto model = std::make_unique<ModelAsset>("physics2bSpring");
+    model->SetSkeleton(Skeleton({Bone{"root"}}));
+
+    std::vector<MmdRigidBodyDefinition> bodies(2U);
+    const glm::vec3 positions[] = {
+        glm::vec3(-0.5f, 3.0f, 0.0f),
+        glm::vec3(0.5f, 3.0f, 0.0f)
+    };
+    for (std::size_t index = 0; index < bodies.size(); ++index)
+    {
+        bodies[index].name = "springBody" + std::to_string(index);
+        bodies[index].shape = MmdRigidBodyShape::Sphere;
+        bodies[index].size = glm::vec3(0.2f, 0.0f, 0.0f);
+        bodies[index].position = positions[index];
+        bodies[index].mass = 1.0f;
+        bodies[index].mode = MmdRigidBodyMode::Physics;
+        bodies[index].modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            positions[index]
+        );
+    }
+
+    MmdJointDefinition joint;
+    joint.name = "springJoint";
+    joint.type = MmdJointType::Spring6Dof;
+    joint.bodyA = 0U;
+    joint.bodyB = 1U;
+    joint.position = glm::vec3(0.0f, 3.0f, 0.0f);
+    joint.modelBindTransform = glm::translate(
+        glm::mat4(1.0f),
+        joint.position
+    );
+    joint.linearLower = glm::vec3(0.0f);
+    joint.linearUpper = glm::vec3(0.0f);
+    joint.angularLower = glm::vec3(0.0f);
+    joint.angularUpper = glm::vec3(0.0f);
+    joint.linearSpring = glm::vec3(20.0f);
+    joint.angularSpring = glm::vec3(5.0f);
+
+    model->SetMmdPhysics(MmdPhysicsAsset(std::move(bodies), {joint}));
+    return model;
+}
+
+void TestBulletSpring6DofFoundation()
+{
+    PhysicsWorld world;
+    world.SetGravity(glm::vec3(0.0f));
+    const PhysicsBodyHandle firstBody = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.2f),
+        glm::vec3(-0.5f, 0.0f, 0.0f)
+    ));
+    const PhysicsBodyHandle secondBody = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.2f),
+        glm::vec3(0.5f, 0.0f, 0.0f)
+    ));
+
+    PhysicsSpring6DofDesc constraint;
+    constraint.bodyA = firstBody;
+    constraint.bodyB = secondBody;
+    constraint.frameA.position = glm::vec3(0.5f, 0.0f, 0.0f);
+    constraint.frameB.position = glm::vec3(-0.5f, 0.0f, 0.0f);
+    const PhysicsConstraintHandle handle =
+        world.CreateSpring6DofConstraint(constraint);
+    Require(
+        world.ConstraintCount() == 1U && world.Contains(handle),
+        "PhysicsWorld did not retain a Spring 6DOF constraint"
+    );
+
+    world.ApplyCentralImpulse(firstBody, glm::vec3(-4.0f, 0.0f, 0.0f));
+    world.ApplyCentralImpulse(secondBody, glm::vec3(4.0f, 0.0f, 0.0f));
+    StepPhysics(world, 120);
+    const float separation = glm::distance(
+        world.State(firstBody).position,
+        world.State(secondBody).position
+    );
+    Require(
+        std::abs(separation - 1.0f) < 0.15f,
+        "Bullet Spring 6DOF did not preserve its locked anchor distance"
+    );
+
+    Require(world.DestroyBody(firstBody), "Failed to destroy constrained body");
+    Require(
+        world.ConstraintCount() == 0U && !world.Contains(handle),
+        "DestroyBody did not remove constraints referencing the body"
+    );
+}
+
+void TestMmdPhysics2BModesAndPoseSync()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics2BModeModel();
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    Require(
+        entity.HasMmdPhysics() &&
+        entity.GetMmdPhysics().RigidBodyCount() == 3U &&
+        scene.Physics().BodyCount() == 3U,
+        "Scene did not instantiate per-Entity MMD rigid bodies"
+    );
+
+    entity.GetPose().SetLocalMatrix(
+        0U,
+        glm::translate(glm::mat4(1.0f), glm::vec3(1.5f, 0.0f, 0.0f))
+    );
+    const std::uint64_t revisionBeforePhysics = entity.GetPose().Revision();
+    scene.Update(1.0f / 60.0f);
+    Require(
+        entity.GetPose().Revision() == revisionBeforePhysics + 1U,
+        "MMD physics did not batch its Pose write-back into one revision"
+    );
+    Require(
+        std::abs(entity.GetMmdPhysics().BodyStateAt(0U).position.x - 1.5f) < 0.02f,
+        "FollowBone rigid body did not follow the animated bone"
+    );
+
+    const float dynamicStartY = entity.GetMmdPhysics().BodyStateAt(1U).position.y;
+    for (int frame = 0; frame < 30; ++frame)
+        scene.Update(1.0f / 60.0f);
+    const PhysicsBodyState dynamicState = entity.GetMmdPhysics().BodyStateAt(1U);
+    Require(
+        dynamicState.position.y < dynamicStartY - 0.5f,
+        "Physics rigid body did not fall under Bullet gravity"
+    );
+    Require(
+        std::abs(entity.GetPose().GlobalMatrix(1U)[3].y - dynamicState.position.y) < 0.03f,
+        "Physics rigid body did not write its transform back to Pose"
+    );
+
+    entity.GetPose().SetLocalMatrix(
+        2U,
+        glm::translate(glm::mat4(1.0f), glm::vec3(4.0f, 3.0f, 0.0f))
+    );
+    scene.Physics().ApplyTorqueImpulse(
+        entity.GetMmdPhysics().BodyHandleAt(2U),
+        glm::vec3(0.0f, 0.0f, 2.0f)
+    );
+    for (int frame = 0; frame < 20; ++frame)
+        scene.Update(1.0f / 60.0f);
+    const PhysicsBodyState hybridState = entity.GetMmdPhysics().BodyStateAt(2U);
+    Require(
+        std::abs(hybridState.position.x - 4.0f) < 0.05f,
+        "PhysicsWithBone did not retain the animated bone position"
+    );
+    const BoneTransform hybridPose = BoneTransform::FromMatrix(
+        entity.GetPose().GlobalMatrix(2U)
+    );
+    Require(
+        !NearlySameRotation(hybridState.rotation, glm::quat(1.0f, 0.0f, 0.0f, 0.0f)) &&
+        NearlySameRotation(hybridPose.rotation, hybridState.rotation),
+        "PhysicsWithBone did not preserve Bullet rotation in Pose"
+    );
+
+    scene.Physics().ApplyCentralImpulse(
+        entity.GetMmdPhysics().BodyHandleAt(1U),
+        glm::vec3(3.0f, 0.0f, 0.0f)
+    );
+    scene.Update(1.0f / 60.0f);
+    entity.ResetPhysicsToCurrentPose();
+    const PhysicsBodyState resetState = entity.GetMmdPhysics().BodyStateAt(1U);
+    Require(
+        glm::length(resetState.linearVelocity) < 0.0001f &&
+        glm::length(resetState.angularVelocity) < 0.0001f,
+        "MMD physics Reset did not clear Bullet velocity"
+    );
+}
+
+void TestMmdPhysics2BSpringAndLifecycle()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics2BSpringModel();
+    Scene scene;
+    Entity& first = scene.InstantiateModel(*model);
+    Entity& second = scene.InstantiateModel(
+        *model,
+        Transform(glm::vec3(4.0f, 0.0f, 0.0f))
+    );
+    Require(
+        first.GetMmdPhysics().ConstraintCount() == 1U &&
+        second.GetMmdPhysics().ConstraintCount() == 1U &&
+        scene.Physics().BodyCount() == 4U &&
+        scene.Physics().ConstraintCount() == 2U,
+        "MMD physics instances did not create isolated bodies and joints"
+    );
+
+    scene.Physics().SetGravity(glm::vec3(0.0f));
+    scene.Physics().ApplyCentralImpulse(
+        first.GetMmdPhysics().BodyHandleAt(0U),
+        glm::vec3(-4.0f, 0.0f, 0.0f)
+    );
+    scene.Physics().ApplyCentralImpulse(
+        first.GetMmdPhysics().BodyHandleAt(1U),
+        glm::vec3(4.0f, 0.0f, 0.0f)
+    );
+    for (int frame = 0; frame < 120; ++frame)
+        scene.Update(1.0f / 60.0f);
+    const float firstDistance = glm::distance(
+        first.GetMmdPhysics().BodyStateAt(0U).position,
+        first.GetMmdPhysics().BodyStateAt(1U).position
+    );
+    Require(
+        std::abs(firstDistance - 1.0f) < 0.2f,
+        "MMD Spring 6DOF failed to constrain its rigid bodies"
+    );
+    Require(
+        std::abs(second.GetMmdPhysics().BodyStateAt(0U).position.x - 3.5f) < 0.1f,
+        "One MMD physics instance contaminated another instance"
+    );
+
+    Require(scene.RemoveEntity(first), "Scene failed to remove MMD physics Entity");
+    Require(
+        scene.Physics().BodyCount() == 2U &&
+        scene.Physics().ConstraintCount() == 1U,
+        "Removing an Entity did not unregister its Bullet runtime"
+    );
+}
+
+void TestMmdPhysics2BScaleValidation()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics2BModeModel();
+    Scene scene;
+    bool rejected = false;
+    try
+    {
+        scene.InstantiateModel(
+            *model,
+            Transform(
+                glm::vec3(0.0f),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f, 2.0f, 1.0f)
+            )
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected = true;
+    }
+    Require(
+        rejected && scene.Physics().BodyCount() == 0U,
+        "MMD physics accepted non-uniform Entity scale or leaked bodies"
+    );
+}
+
+
+void TestDemoPmxPhysics2BRuntimeWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
+        "Demo PMX lost the data required by Physics 2B"
+    );
+    const std::size_t expectedConstraints = static_cast<std::size_t>(
+        std::count_if(
+            imported.mmdPhysics->Joints().begin(),
+            imported.mmdPhysics->Joints().end(),
+            [](const MmdJointDefinition& joint)
+            {
+                return joint.type == MmdJointType::Spring6Dof &&
+                    (joint.bodyA == InvalidRigidBodyIndex ||
+                        joint.bodyA != joint.bodyB);
+            }
+        )
+    );
+    ModelAsset model("demoPhysics2B");
+    model.SetSkeleton(std::move(*imported.skeleton));
+    model.SetMmdPhysics(std::move(*imported.mmdPhysics));
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    Require(
+        entity.GetMmdPhysics().RigidBodyCount() == 495U &&
+        entity.GetMmdPhysics().ConstraintCount() == expectedConstraints &&
+        scene.Physics().BodyCount() == 495U &&
+        scene.Physics().ConstraintCount() == expectedConstraints,
+        "Demo PMX did not create its complete supported Bullet runtime"
+    );
+    scene.Update(1.0f / 60.0f);
+    for (RigidBodyIndex index = 0U; index < 495U; index += 47U)
+    {
+        const PhysicsBodyState state = entity.GetMmdPhysics().BodyStateAt(index);
+        Require(
+            std::isfinite(state.position.x) &&
+            std::isfinite(state.position.y) &&
+            std::isfinite(state.position.z) &&
+            std::isfinite(state.rotation.w),
+            "Demo PMX Bullet runtime produced non-finite state"
+        );
+    }
+    Require(scene.RemoveEntity(entity), "Failed to remove demo Physics 2B Entity");
+    Require(
+        scene.Physics().BodyCount() == 0U &&
+        scene.Physics().ConstraintCount() == 0U,
+        "Demo Physics 2B runtime leaked Bullet objects"
+    );
+}
+
+
+void TestMmdPhysics2BSceneMoveAssignment()
+{
+    std::unique_ptr<ModelAsset> model = CreatePhysics2BSpringModel();
+    Scene source;
+    Entity& sourceEntity = source.InstantiateModel(*model);
+    const PhysicsBodyHandle sourceBody =
+        sourceEntity.GetMmdPhysics().BodyHandleAt(0U);
+
+    Scene destination;
+    destination.InstantiateModel(*model);
+    destination = std::move(source);
+    Require(
+        destination.Physics().BodyCount() == 2U &&
+        destination.Physics().ConstraintCount() == 1U &&
+        destination.Physics().Contains(sourceBody),
+        "Scene move assignment invalidated incoming MMD physics handles"
+    );
+    destination.Update(1.0f / 60.0f);
+    destination.ClearEntities();
+    Require(
+        destination.Physics().BodyCount() == 0U &&
+        destination.Physics().ConstraintCount() == 0U,
+        "Moved Scene did not release its MMD physics runtime"
+    );
+}
+
 template<typename Function>
 bool RunTest(const char* name, Function&& function)
 {
@@ -3835,6 +4255,30 @@ int main()
     failures += !RunTest(
         "Bullet fixed step and world isolation",
         TestBulletFoundationFixedStepAndIsolation
+    );
+    failures += !RunTest(
+        "Bullet Spring 6DOF foundation",
+        TestBulletSpring6DofFoundation
+    );
+    failures += !RunTest(
+        "MMD Physics 2B modes and Pose sync",
+        TestMmdPhysics2BModesAndPoseSync
+    );
+    failures += !RunTest(
+        "MMD Physics 2B Spring and lifecycle",
+        TestMmdPhysics2BSpringAndLifecycle
+    );
+    failures += !RunTest(
+        "MMD Physics 2B scale validation",
+        TestMmdPhysics2BScaleValidation
+    );
+    failures += !RunTest(
+        "MMD Physics 2B Scene move assignment",
+        TestMmdPhysics2BSceneMoveAssignment
+    );
+    failures += !RunTest(
+        "Demo PMX Physics 2B runtime",
+        TestDemoPmxPhysics2BRuntimeWhenAvailable
     );
     failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
     failures += !RunTest("Skeleton validation", TestSkeletonValidation);

@@ -1,5 +1,7 @@
 #include "physics_bullet_conversion.hpp"
 #include <glm/geometric.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace PhysicsBulletConversion
 {
@@ -40,5 +42,13 @@ btTransform ToBullet(
 ) noexcept
 {
     return btTransform(ToBullet(rotation), ToBullet(position));
+}
+
+glm::mat4 FromBullet(const btTransform& transform) noexcept
+{
+    return glm::translate(
+        glm::mat4(1.0f),
+        FromBullet(transform.getOrigin())
+    ) * glm::mat4_cast(FromBullet(transform.getRotation()));
 }
 }

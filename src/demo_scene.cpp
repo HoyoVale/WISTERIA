@@ -2,6 +2,7 @@
 #include "demo_scene.hpp"
 #include "behaviour.hpp"
 #include "manager.hpp"
+#include "mmd_physics_instance.hpp"
 #include "scene.hpp"
 #include "window.hpp"
 #include <algorithm>
@@ -69,6 +70,86 @@ private:
     static constexpr float SwitchInterval = 3.0f;
 
     float elapsed = 0.0f;
+};
+
+class DemoPhysicsPulseBehaviour final : public Behaviour
+{
+public:
+    explicit DemoPhysicsPulseBehaviour(RigidBodyIndex bodyIndex)
+        : bodyIndex(bodyIndex)
+    {
+    }
+
+    void Update(Entity& entity, float deltaTime) override
+    {
+        this->elapsed += deltaTime;
+        if (this->elapsed < this->nextPulse)
+            return;
+
+        this->nextPulse += 2.8f;
+        entity.GetMmdPhysics().ApplyTorqueImpulse(
+            this->bodyIndex,
+            glm::vec3(0.0f, 0.0f, 0.16f * this->direction)
+        );
+        this->direction = -this->direction;
+    }
+
+private:
+    RigidBodyIndex bodyIndex = InvalidRigidBodyIndex;
+    float elapsed = 0.0f;
+    float nextPulse = 0.6f;
+    float direction = 1.0f;
+};
+
+void EnableDemoPhysicsPulse(Entity& entity, const ModelAsset& model)
+{
+    if (!entity.HasMmdPhysics() || !model.HasMmdPhysics())
+        return;
+
+    constexpr std::array<std::string_view, 6> Candidates{
+        "Ctr_F_HairNewB_01",
+        "Ctr_F_HairNewA_01",
+        "Ctr_T_Hair_01",
+        "左胸上",
+        "右胸上",
+        "hair"
+    };
+    const MmdPhysicsAsset& physics = model.GetMmdPhysics();
+    for (std::string_view name : Candidates)
+    {
+        const std::optional<RigidBodyIndex> index = physics.FindRigidBody(name);
+        if (!index.has_value() ||
+            physics.RigidBodyAt(*index).mode == MmdRigidBodyMode::FollowBone)
+        {
+            continue;
+        }
+        entity.AddBehaviour<DemoPhysicsPulseBehaviour>(*index);
+        std::cout << "[INFO] Demo physics pulse uses rigid body: "
+                  << physics.RigidBodyAt(*index).name << std::endl;
+        return;
+    }
+}
+
+class MorphLabPhysicsBehaviour final : public Behaviour
+{
+public:
+    void Update(Entity& entity, float deltaTime) override
+    {
+        this->elapsed += deltaTime;
+        if (this->elapsed < this->nextPulse)
+            return;
+        this->nextPulse += 3.2f;
+        entity.GetMmdPhysics().ApplyTorqueImpulse(
+            1U,
+            glm::vec3(0.0f, 0.0f, 0.55f * this->direction)
+        );
+        this->direction = -this->direction;
+    }
+
+private:
+    float elapsed = 0.0f;
+    float nextPulse = 0.35f;
+    float direction = 1.0f;
 };
 
 class DemoBlinkBehaviour final : public Behaviour
@@ -487,7 +568,7 @@ std::vector<MorphDefinition> CreateMorphLabDefinitions()
     impulse.name = "Lab Impulse";
     impulse.kind = MorphKind::Impulse;
     impulse.impulseOffsets.push_back(ImpulseMorphOffset{
-        0U,
+        1U,
         false,
         glm::vec3(1.5f, 2.0f, 0.0f),
         glm::vec3(0.0f, 0.0f, 0.8f)
@@ -662,6 +743,7 @@ void SetupDemoScene1(Scene& scene, ResourceManager& resources)
 
     EnableDemoStateMachine(Entity, Model);
     EnableDemoBlink(Entity, Model);
+    EnableDemoPhysicsPulse(Entity, Model);
     Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
 
     scene.ActiveCamera().SetParam(CameraParam{
@@ -702,6 +784,7 @@ void SetupDemoScene2(Scene& scene, ResourceManager& resources)
 
     EnableDemoStateMachine(Entity, Model);
     EnableDemoBlink(Entity, Model);
+    EnableDemoPhysicsPulse(Entity, Model);
     Entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f));
 
     scene.ActiveCamera().SetParam(CameraParam{
@@ -765,19 +848,47 @@ ModelAsset& CreateMorphLabModel(ResourceManager& resources)
     ModelAsset& model = resources.CreateModel("morphLab");
     model.SetSkeleton(CreateMorphLabSkeleton());
     model.SetMorphs(CreateMorphLabDefinitions());
-    MmdRigidBodyDefinition demoBody;
-    demoBody.name = "morphLabBody";
-    demoBody.bone = 0U;
-    demoBody.shape = MmdRigidBodyShape::Sphere;
-    demoBody.size = glm::vec3(0.5f);
-    demoBody.position = glm::vec3(0.0f, 1.0f, 0.0f);
-    demoBody.modelBindTransform = glm::translate(
+    MmdRigidBodyDefinition anchorBody;
+    anchorBody.name = "morphLabAnchor";
+    anchorBody.bone = 0U;
+    anchorBody.shape = MmdRigidBodyShape::Sphere;
+    anchorBody.size = glm::vec3(0.20f);
+    anchorBody.modelBindTransform = glm::mat4(1.0f);
+    anchorBody.boneToBody = glm::mat4(1.0f);
+    anchorBody.bodyToBone = glm::mat4(1.0f);
+
+    MmdRigidBodyDefinition dynamicBody;
+    dynamicBody.name = "morphLabDynamicTip";
+    dynamicBody.bone = 1U;
+    dynamicBody.shape = MmdRigidBodyShape::Sphere;
+    dynamicBody.size = glm::vec3(0.34f);
+    dynamicBody.position = glm::vec3(0.42f, 0.62f, 0.0f);
+    dynamicBody.modelBindTransform = glm::translate(
         glm::mat4(1.0f),
-        demoBody.position
+        dynamicBody.position
     );
-    demoBody.boneToBody = demoBody.modelBindTransform;
-    demoBody.bodyToBone = glm::inverse(demoBody.modelBindTransform);
-    model.SetMmdPhysics(MmdPhysicsAsset({std::move(demoBody)}, {}));
+    dynamicBody.boneToBody = dynamicBody.modelBindTransform;
+    dynamicBody.bodyToBone = glm::inverse(dynamicBody.modelBindTransform);
+    dynamicBody.mass = 0.65f;
+    dynamicBody.linearDamping = 0.08f;
+    dynamicBody.angularDamping = 0.12f;
+    dynamicBody.friction = 0.5f;
+    dynamicBody.mode = MmdRigidBodyMode::Physics;
+
+    MmdJointDefinition joint;
+    joint.name = "morphLabPendulum";
+    joint.bodyA = 0U;
+    joint.bodyB = 1U;
+    joint.modelBindTransform = glm::mat4(1.0f);
+    joint.linearLower = glm::vec3(0.0f);
+    joint.linearUpper = glm::vec3(0.0f);
+    joint.angularLower = glm::vec3(0.0f, 0.0f, -0.85f);
+    joint.angularUpper = glm::vec3(0.0f, 0.0f, 0.85f);
+    joint.angularSpring = glm::vec3(0.0f, 0.0f, 3.0f);
+    model.SetMmdPhysics(MmdPhysicsAsset(
+        {std::move(anchorBody), std::move(dynamicBody)},
+        {std::move(joint)}
+    ));
     model.AddPart(mesh, material, glm::mat4(1.0f), 0U);
     return model;
 }
@@ -799,13 +910,13 @@ void SetupMorphDemoScene(
     scene.SetEnvironment(&environment);
 
     ModelAsset& model = CreateMorphLabModel(resources);
-    scene.InstantiateModel(
-        model,
+    scene.InstantiateModel(model,
         Transform(
             glm::vec3(-1.25f, 0.0f, 0.0f),
             glm::vec3(0.0f),
             glm::vec3(0.92f)
-        )
+        ),
+        ModelInstantiationOptions{.enableMmdPhysics = false}
     );
     Entity& active = scene.InstantiateModel(
         model,
@@ -816,6 +927,7 @@ void SetupMorphDemoScene(
         )
     );
     active.AddBehaviour<MorphLabBehaviour>(window, window.GetInput());
+    active.AddBehaviour<MorphLabPhysicsBehaviour>();
 
     scene.ActiveCamera().SetParam(CameraParam{
         .Position = {0.0f, 0.0f, 6.2f},

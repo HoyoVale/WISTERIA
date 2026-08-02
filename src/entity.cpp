@@ -1,5 +1,7 @@
 #include "pch.hpp"
 #include "entity.hpp"
+#include "mmd_physics_instance.hpp"
+#include "physics_world.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -22,6 +24,7 @@ Entity::Entity(
 Entity::~Entity()
 {
     this->ClearBehaviours();
+    this->mmdPhysics.reset();
 }
 
 Transform& Entity::GetTransform() noexcept
@@ -245,6 +248,70 @@ void Entity::SetMorphSet(const MorphSet& morphSet)
     this->morphState = std::make_unique<MorphState>(morphSet);
     if (this->animator != nullptr)
         this->animator->SetMorphState(*this->morphState);
+}
+
+bool Entity::HasMmdPhysics() const noexcept
+{
+    return this->mmdPhysics != nullptr;
+}
+
+MmdPhysicsInstance* Entity::TryGetMmdPhysics() noexcept
+{
+    return this->mmdPhysics.get();
+}
+
+const MmdPhysicsInstance* Entity::TryGetMmdPhysics() const noexcept
+{
+    return this->mmdPhysics.get();
+}
+
+MmdPhysicsInstance& Entity::GetMmdPhysics()
+{
+    if (this->mmdPhysics == nullptr)
+        throw std::logic_error("Entity has no MMD physics instance");
+    return *this->mmdPhysics;
+}
+
+const MmdPhysicsInstance& Entity::GetMmdPhysics() const
+{
+    if (this->mmdPhysics == nullptr)
+        throw std::logic_error("Entity has no MMD physics instance");
+    return *this->mmdPhysics;
+}
+
+void Entity::SetMmdPhysics(
+    PhysicsWorld& world,
+    const MmdPhysicsAsset& physics
+)
+{
+    if (this->mmdPhysics != nullptr)
+        throw std::logic_error("Entity MMD physics is already set");
+    if (this->pose == nullptr)
+        throw std::logic_error("Entity requires a Pose before MMD physics");
+    this->mmdPhysics = std::make_unique<MmdPhysicsInstance>(
+        world,
+        physics,
+        *this->pose,
+        this->transform
+    );
+}
+
+void Entity::PrePhysicsUpdate(float deltaTime)
+{
+    if (this->mmdPhysics != nullptr)
+        this->mmdPhysics->PrePhysicsUpdate(this->transform, deltaTime);
+}
+
+void Entity::PostPhysicsUpdate()
+{
+    if (this->mmdPhysics != nullptr)
+        this->mmdPhysics->PostPhysicsUpdate(this->transform);
+}
+
+void Entity::ResetPhysicsToCurrentPose()
+{
+    if (this->mmdPhysics != nullptr)
+        this->mmdPhysics->ResetToPose(this->transform);
 }
 
 bool Entity::RemoveBehaviour(Behaviour& behaviour)

@@ -448,3 +448,265 @@ MmdPhysicsAsset
 ```
 
 Impulse Morph 和 after-physics 骨骼仍留到 Physics 3，避免把基础依赖、MMD 同步和物理后求解一次性混在同一个阶段。
+
+---
+
+# Physics 2B：MMD Bullet Runtime
+
+Physics 2B 将 Physics 1 的不可变 PMX 刚体/关节定义与 Physics 2A 的 Bullet Foundation 接起来。本阶段不重新实现碰撞、积分或约束求解；这些底层工作继续由 Bullet 完成。WISTERIA 负责模型实例、骨骼姿态与 Bullet 对象之间的生命周期和数据同步。
+
+## 运行时所有权
+
+物理数据仍遵守共享资源与实例状态分离：
+
+```text
+ModelAsset
+└─ MmdPhysicsAsset
+   ├─ MmdRigidBodyDefinition[]
+   └─ MmdJointDefinition[]
+
+Scene
+└─ PhysicsWorld
+   └─ Bullet dynamics world
+
+Entity
+└─ MmdPhysicsInstance
+   ├─ PhysicsBodyHandle[]
+   └─ PhysicsConstraintHandle[]
+```
+
+`ModelAsset` 只保存 PMX 定义，可以被多个 Entity 共享。每个 Entity 都创建独立刚体、速度和关节状态，因此相同模型的两个角色不会共享裙摆或头发物理。
+
+`PhysicsWorld` 由 Scene 统一拥有。Scene 使用堆上 `PhysicsWorld`，使 Scene 移动后世界地址保持不变；自定义移动赋值会先释放旧 Entity，再替换物理世界，避免实例留下悬空指针。
+
+## Scene 更新顺序
+
+```text
+所有 Entity 更新 Animator 与 Behaviour
+→ FollowBone / PhysicsWithBone 同步到 Bullet
+→ Scene 只调用一次 PhysicsWorld::Step
+→ Dynamic / PhysicsWithBone 从 Bullet 回写 Pose
+→ Renderer 读取最终 Pose
+```
+
+物理世界不能由 Renderer 或每个 Entity 单独推进，否则多窗口会重复模拟，同一场景中的角色也无法正确碰撞。
+
+## 三种 PMX 刚体模式
+
+### Follow Bone
+
+映射为 Bullet Kinematic body：
+
+```text
+Pose bone global
+× boneToBody
+→ model body transform
+→ Entity transform
+→ Bullet world transform
+```
+
+它跟随动画并参与碰撞，但不会反向修改骨骼。
+
+### Physics
+
+映射为 Bullet Dynamic body。物理步骤后执行：
+
+```text
+Bullet world transform
+→ 去除 Entity transform 与统一缩放
+→ model body transform
+× bodyToBone
+→ desired bone global
+→ parent inverse × global
+→ Pose local matrix
+```
+
+### Physics With Bone
+
+动画在物理前校正刚体中心位置，Bullet 保留旋转和角速度；物理后再把完整结果写回 Pose。它不会退化为完全 Kinematic，也不会让重力持续拉走动画指定的位置。
+
+## Spring 6DOF
+
+Physics 2A 的公开接口新增：
+
+```cpp
+PhysicsConstraintHandle
+PhysicsConstraintFrame
+PhysicsSpring6DofDesc
+PhysicsWorld::CreateSpring6DofConstraint(...)
+```
+
+Bullet 类型仍不出现在公开头文件中。内部使用 `btGeneric6DofSpring2Constraint`，支持：
+
+- 两刚体约束；
+- 单刚体连接世界；
+- 平移与旋转上下限；
+- 三轴平移弹簧；
+- 三轴旋转弹簧；
+- 连接刚体之间关闭碰撞；
+- 约束代际句柄；
+- 销毁刚体时自动销毁引用它的约束。
+
+当前 MMD Runtime 只实例化 PMX type 0 `Spring6Dof`。Physics 1 保存的其他 PMX 2.1 关节类型仍保留在资产中，留给后续阶段接入。指向同一刚体两端的无效自约束会被安全跳过。
+
+## Entity 缩放
+
+Physics 2B 只接受正数统一缩放：
+
+```text
+scale.x == scale.y == scale.z > 0
+```
+
+刚体尺寸、模型空间位置、关节位置与线性限制会乘统一缩放。非均匀缩放会改变球体、胶囊与旋转盒体的几何意义，因此在创建任何 Bullet 对象前明确拒绝，并保证失败时不泄漏刚体。
+
+## Reset
+
+```cpp
+entity.ResetPhysicsToCurrentPose();
+```
+
+Reset 会把所有刚体重新对齐当前 Pose，同时清空线速度、角速度与累计力。后续在动画 Seek、循环回绕、切换动画和模型瞬移时应调用该接口。
+
+## 自动化测试范围
+
+Physics 2B 新增测试覆盖：
+
+- PhysicsWorld Spring 6DOF 创建、约束和代际生命周期；
+- FollowBone 骨骼到 Kinematic body；
+- Physics 重力下落与 Bullet 到 Pose 回写；
+- PhysicsWithBone 位置同步和物理旋转；
+- Reset 清除速度；
+- 每 Entity 独立刚体和约束；
+- Entity 移除后的 Bullet 注销；
+- Scene 移动赋值后的世界地址稳定性；
+- 非均匀缩放拒绝与失败回滚；
+- 真实叶瞬光 PMX 的 495 个刚体、568 条关节定义；其中 565 条有效非自引用 Spring 6DOF 成功实例化并完成一帧模拟。
+
+## 尚未进入本阶段
+
+以下内容继续留在 Physics 3：
+
+```text
+Impulse Morph → Bullet impulse
+Local / Global impulse conversion
+Impulse reset command
+after-physics Append / Grant / IK
+动画 Seek、循环与切换时的自动 Reset
+PMX 2.1 其他关节运行时
+物理碰撞形状调试绘制
+```
+
+---
+
+# Physics 2B 稳定化：可见效果与性能
+
+真实 PMX 接入 Bullet 后，性能问题不能只看 `stepSimulation()`。一次场景物理更新实际包含：
+
+```text
+动画 Pose
+→ FollowBone / PhysicsWithBone 同步到 Bullet
+→ Bullet 固定子步
+→ 动态刚体结果回写 Pose
+→ Renderer 上传最终蒙皮矩阵
+```
+
+## 本次发现的性能根因
+
+“叶瞬光”模型包含 495 个刚体和 568 个关节定义。初版运行时把每一个动态刚体都设置为永不休眠，并且在物理结果回写时，对每根物理骨骼分别调用 `Pose::SetLocalMatrix()`。
+
+`SetLocalMatrix()` 会使 Pose 变脏；下一根骨骼读取父级全局矩阵时，又会触发整套 Skeleton 重算。真实模型有 464 根物理驱动骨骼，因此该流程接近：
+
+```text
+物理骨骼数量 × 完整骨架重算
+```
+
+形成二次复杂度。Linux 辅助基准中，修复前三帧约为：
+
+```text
+总耗时约 1874 ms
+Bullet stepSimulation 约 71 ms
+Pose 回写约 1793 ms
+```
+
+说明主要瓶颈不在 Bullet，而在 WISTERIA 的 Pose 同步层。
+
+## 批量 Pose 回写
+
+`MmdPhysicsInstance` 现在预分配：
+
+```text
+drivenRuntimeBodyByBone
+localMatrixScratch
+globalMatrixScratch
+```
+
+每帧只进行一次骨骼 EvaluationOrder 遍历：
+
+1. 复制当前局部矩阵；
+2. 为物理驱动骨骼读取 Bullet 结果；
+3. 使用已解析的父级全局矩阵计算局部矩阵；
+4. 非物理骨骼继续继承最终父级矩阵；
+5. 最后只调用一次 `Pose::SetLocalMatrices()`。
+
+这样 Pose 每个物理帧只增加一次 revision，复杂度恢复为线性。
+
+同一辅助基准修复后三帧约为：
+
+```text
+总耗时约 77 ms
+Bullet stepSimulation 约 64 ms
+Pose 回写约 7 ms
+```
+
+测试环境中的完整帧耗时降低约 24 倍。该数字只用于定位相对变化，不能替代 Windows 实机 FPS。
+
+## PhysicsWithBone 的线性锁定
+
+PMX `PhysicsWithBone` 的位置由动画骨骼控制，旋转由物理控制。若仍让 Bullet 对其施加普通线性重力，再每帧把位置传送回骨骼位置，会导致：
+
+- 383 个刚体持续被激活；
+- 每帧更新大量 AABB；
+- 重力位移与位置校正互相抵消；
+- 约束网络无法稳定休眠。
+
+Physics 2B 现在为这类刚体设置：
+
+```cpp
+linearFactor = glm::vec3(0.0f);
+angularFactor = glm::vec3(1.0f);
+```
+
+只有动画目标位置实际变化时才同步位置；旋转仍由 Bullet、碰撞和 Spring 6DOF 求解。普通 `Physics` 刚体不再默认 `DISABLE_DEACTIVATION`，允许 Bullet 在稳定后自行休眠。
+
+## Demo 中明确展示物理
+
+角色 Demo 会周期性对一条头发刚体施加小幅交替扭矩，使头发物理效果容易观察。该激励只存在于 Demo Behaviour，不属于 PMX 或引擎默认行为。
+
+Morph Lab 现在使用两刚体结构：
+
+```text
+FollowBone Anchor
+        ↓ Spring 6DOF
+Dynamic Tip
+```
+
+左侧参考实例通过 `ModelInstantiationOptions::enableMmdPhysics = false` 禁用物理；右侧活动实例同时展示 Morph 和动态摆动。Impulse Morph 的刚体索引也改为指向动态 Tip，为 Physics 3 接入真实 Impulse 做准备。
+
+## ModelInstantiationOptions
+
+场景实例化增加：
+
+```cpp
+ModelInstantiationOptions{
+    .enableMmdPhysics = false
+}
+```
+
+它适用于：
+
+- 静态对照模型；
+- 预览缩略图；
+- 编辑器中暂时关闭物理；
+- 性能对照测试。
+
+共享 `ModelAsset` 不会因此被修改，只有对应 Entity 不创建 `MmdPhysicsInstance`。

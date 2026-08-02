@@ -27,6 +27,13 @@ public:
     bool DestroyBody(PhysicsBodyHandle body) noexcept;
     void Clear() noexcept;
 
+    PhysicsConstraintHandle CreateSpring6DofConstraint(
+        const PhysicsSpring6DofDesc& description
+    );
+    bool DestroyConstraint(PhysicsConstraintHandle constraint) noexcept;
+    bool Contains(PhysicsConstraintHandle constraint) const noexcept;
+    std::size_t ConstraintCount() const noexcept;
+
     bool Contains(PhysicsBodyHandle body) const noexcept;
     std::size_t BodyCount() const noexcept;
 
