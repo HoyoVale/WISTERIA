@@ -765,7 +765,19 @@ ModelAsset& CreateMorphLabModel(ResourceManager& resources)
     ModelAsset& model = resources.CreateModel("morphLab");
     model.SetSkeleton(CreateMorphLabSkeleton());
     model.SetMorphs(CreateMorphLabDefinitions());
-    model.SetMmdRigidBodyCount(1U);
+    MmdRigidBodyDefinition demoBody;
+    demoBody.name = "morphLabBody";
+    demoBody.bone = 0U;
+    demoBody.shape = MmdRigidBodyShape::Sphere;
+    demoBody.size = glm::vec3(0.5f);
+    demoBody.position = glm::vec3(0.0f, 1.0f, 0.0f);
+    demoBody.modelBindTransform = glm::translate(
+        glm::mat4(1.0f),
+        demoBody.position
+    );
+    demoBody.boneToBody = demoBody.modelBindTransform;
+    demoBody.bodyToBone = glm::inverse(demoBody.modelBindTransform);
+    model.SetMmdPhysics(MmdPhysicsAsset({std::move(demoBody)}, {}));
     model.AddPart(mesh, material, glm::mat4(1.0f), 0U);
     return model;
 }

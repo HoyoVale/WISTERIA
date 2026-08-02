@@ -6,6 +6,7 @@
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <glm/gtc/quaternion.hpp>
 #include <stb_image.h>
 
 #include <algorithm>
@@ -84,9 +85,44 @@ struct PmxMetadata
         std::vector<std::pair<std::uint32_t, glm::vec4>> offsets;
     };
 
+    struct RigidBodyMetadata
+    {
+        std::string name;
+        int boneIndex = -1;
+        std::uint8_t collisionGroup = 0U;
+        std::uint16_t nonCollisionMask = 0U;
+        MmdRigidBodyShape shape = MmdRigidBodyShape::Sphere;
+        glm::vec3 size{0.0f};
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        float mass = 0.0f;
+        float linearDamping = 0.0f;
+        float angularDamping = 0.0f;
+        float restitution = 0.0f;
+        float friction = 0.0f;
+        MmdRigidBodyMode mode = MmdRigidBodyMode::FollowBone;
+    };
+
+    struct JointMetadata
+    {
+        std::string name;
+        MmdJointType type = MmdJointType::Spring6Dof;
+        int bodyA = -1;
+        int bodyB = -1;
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 linearLower{0.0f};
+        glm::vec3 linearUpper{0.0f};
+        glm::vec3 angularLower{0.0f};
+        glm::vec3 angularUpper{0.0f};
+        glm::vec3 linearSpring{0.0f};
+        glm::vec3 angularSpring{0.0f};
+    };
+
     std::vector<BoneMetadata> bones;
     std::vector<std::uint8_t> assimpCompatibleBytes;
-    std::size_t rigidBodyCount = 0U;
+    std::vector<RigidBodyMetadata> rigidBodies;
+    std::vector<JointMetadata> joints;
     std::vector<MorphDefinition> morphDefinitions;
     std::vector<VertexMorphMetadata> vertexMorphs;
     std::vector<UvMorphMetadata> uvMorphs;
@@ -127,6 +163,11 @@ public:
     std::size_t Position() const noexcept
     {
         return this->offset;
+    }
+
+    std::size_t Remaining() const noexcept
+    {
+        return this->bytes.size() - std::min(this->offset, this->bytes.size());
     }
 
     template<typename T>
@@ -267,6 +308,79 @@ glm::quat ReadPmxQuaternion(PmxReader& reader)
     if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
         throw std::runtime_error("PMX morph contains an invalid quaternion");
     return glm::normalize(converted);
+}
+
+
+bool IsFinitePmx(const glm::vec3& value) noexcept
+{
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+glm::vec3 ConvertPmxPosition(const glm::vec3& value)
+{
+    if (!IsFinitePmx(value))
+        throw std::runtime_error("PMX contains a non-finite vector");
+    return glm::vec3(value.x, value.y, -value.z);
+}
+
+glm::quat ConvertPmxEulerRotation(const glm::vec3& euler)
+{
+    if (!IsFinitePmx(euler))
+        throw std::runtime_error("PMX contains a non-finite rotation");
+
+    const glm::mat4 reflection(
+        glm::vec4(1.0f, 0.0f, 0.0f, 0.0f),
+        glm::vec4(0.0f, 1.0f, 0.0f, 0.0f),
+        glm::vec4(0.0f, 0.0f, -1.0f, 0.0f),
+        glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
+    );
+    glm::mat4 source(1.0f);
+    source = glm::rotate(source, euler.x, glm::vec3(1.0f, 0.0f, 0.0f));
+    source = glm::rotate(source, euler.y, glm::vec3(0.0f, 1.0f, 0.0f));
+    source = glm::rotate(source, euler.z, glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::mat3 converted = glm::mat3(reflection * source * reflection);
+    const glm::quat result = glm::normalize(glm::quat_cast(converted));
+    const float lengthSquared = glm::dot(result, result);
+    if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
+        throw std::runtime_error("PMX contains an invalid Euler rotation");
+    return result;
+}
+
+std::pair<glm::vec3, glm::vec3> ConvertPmxLinearLimits(
+    const glm::vec3& lower,
+    const glm::vec3& upper
+)
+{
+    const glm::vec3 convertedLower = ConvertPmxPosition(lower);
+    const glm::vec3 convertedUpper = ConvertPmxPosition(upper);
+    return {
+        glm::min(convertedLower, convertedUpper),
+        glm::max(convertedLower, convertedUpper)
+    };
+}
+
+std::pair<glm::vec3, glm::vec3> ConvertPmxAngularLimits(
+    const glm::vec3& lower,
+    const glm::vec3& upper
+)
+{
+    if (!IsFinitePmx(lower) || !IsFinitePmx(upper))
+        throw std::runtime_error("PMX joint contains non-finite angular limits");
+    const glm::vec3 convertedLower(-lower.x, -lower.y, lower.z);
+    const glm::vec3 convertedUpper(-upper.x, -upper.y, upper.z);
+    return {
+        glm::min(convertedLower, convertedUpper),
+        glm::max(convertedLower, convertedUpper)
+    };
+}
+
+glm::mat4 MakePmxModelTransform(
+    const glm::vec3& position,
+    const glm::quat& rotation
+)
+{
+    return glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation);
 }
 
 std::optional<std::string> PmxTexturePath(
@@ -885,21 +999,173 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         }
     }
 
+    const auto finiteScalar = [](float value) noexcept
+    {
+        return std::isfinite(value);
+    };
+    const auto physicsName = [](std::string local,
+                                std::string english,
+                                std::string_view prefix,
+                                std::int32_t index)
+    {
+        if (!local.empty())
+            return local;
+        if (!english.empty())
+            return english;
+        return std::string(prefix) + " " + std::to_string(index);
+    };
+
     const std::int32_t rigidBodyCount = reader.Read<std::int32_t>();
     if (rigidBodyCount < 0)
         throw std::runtime_error("PMX contains a negative rigid-body count");
-    result.rigidBodyCount = static_cast<std::size_t>(rigidBodyCount);
+    result.rigidBodies.reserve(static_cast<std::size_t>(rigidBodyCount));
+    for (std::int32_t bodyIndex = 0;
+         bodyIndex < rigidBodyCount;
+         ++bodyIndex)
+    {
+        PmxMetadata::RigidBodyMetadata body;
+        body.name = physicsName(
+            reader.ReadText(encoding),
+            reader.ReadText(encoding),
+            "Rigid Body",
+            bodyIndex
+        );
+        body.boneIndex = reader.ReadIndex(boneIndexSize);
+        if (body.boneIndex < -1 || body.boneIndex >= boneCount)
+        {
+            throw std::runtime_error(
+                "PMX rigid body references an invalid bone"
+            );
+        }
+        body.collisionGroup = reader.Read<std::uint8_t>();
+        if (body.collisionGroup >= 16U)
+        {
+            throw std::runtime_error(
+                "PMX rigid-body collision group is out of range"
+            );
+        }
+        body.nonCollisionMask = reader.Read<std::uint16_t>();
+        const std::uint8_t shape = reader.Read<std::uint8_t>();
+        if (shape > static_cast<std::uint8_t>(MmdRigidBodyShape::Capsule))
+            throw std::runtime_error("PMX rigid-body shape is invalid");
+        body.shape = static_cast<MmdRigidBodyShape>(shape);
+        body.size = ReadPmxVec3(reader);
+        if (!IsFinitePmx(body.size) ||
+            body.size.x < 0.0f || body.size.y < 0.0f || body.size.z < 0.0f)
+        {
+            throw std::runtime_error("PMX rigid-body size is invalid");
+        }
+        body.position = ConvertPmxPosition(ReadPmxVec3(reader));
+        body.rotation = ConvertPmxEulerRotation(ReadPmxVec3(reader));
+        body.mass = reader.Read<float>();
+        body.linearDamping = reader.Read<float>();
+        body.angularDamping = reader.Read<float>();
+        body.restitution = reader.Read<float>();
+        body.friction = reader.Read<float>();
+        if (!finiteScalar(body.mass) || body.mass < 0.0f ||
+            !finiteScalar(body.linearDamping) || body.linearDamping < 0.0f ||
+            !finiteScalar(body.angularDamping) || body.angularDamping < 0.0f ||
+            !finiteScalar(body.restitution) || body.restitution < 0.0f ||
+            !finiteScalar(body.friction) || body.friction < 0.0f)
+        {
+            throw std::runtime_error(
+                "PMX rigid-body physical parameters are invalid"
+            );
+        }
+        const std::uint8_t mode = reader.Read<std::uint8_t>();
+        if (mode > static_cast<std::uint8_t>(
+                MmdRigidBodyMode::PhysicsWithBone
+            ))
+        {
+            throw std::runtime_error("PMX rigid-body mode is invalid");
+        }
+        body.mode = static_cast<MmdRigidBodyMode>(mode);
+        result.rigidBodies.push_back(std::move(body));
+    }
+
     for (const PendingMorph& pending : pendingMorphs)
     {
         for (const ImpulseMorphOffset& offset : pending.impulseOffsets)
         {
             if (static_cast<std::size_t>(offset.rigidBodyIndex) >=
-                result.rigidBodyCount)
+                result.rigidBodies.size())
             {
                 throw std::runtime_error(
                     "PMX Impulse morph references an invalid rigid body"
                 );
             }
+        }
+    }
+
+    const std::int32_t jointCount = reader.Read<std::int32_t>();
+    if (jointCount < 0)
+        throw std::runtime_error("PMX contains a negative joint count");
+    result.joints.reserve(static_cast<std::size_t>(jointCount));
+    for (std::int32_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+    {
+        PmxMetadata::JointMetadata joint;
+        joint.name = physicsName(
+            reader.ReadText(encoding),
+            reader.ReadText(encoding),
+            "Joint",
+            jointIndex
+        );
+        const std::uint8_t type = reader.Read<std::uint8_t>();
+        if (type > static_cast<std::uint8_t>(MmdJointType::Hinge) ||
+            (version < 2.1f && type != 0U))
+        {
+            throw std::runtime_error("PMX joint type is invalid");
+        }
+        joint.type = static_cast<MmdJointType>(type);
+        joint.bodyA = reader.ReadIndex(rigidBodyIndexSize);
+        joint.bodyB = reader.ReadIndex(rigidBodyIndexSize);
+        const auto validBody = [&result](int index) noexcept
+        {
+            return index == -1 ||
+                (index >= 0 && static_cast<std::size_t>(index) <
+                    result.rigidBodies.size());
+        };
+        if (!validBody(joint.bodyA) || !validBody(joint.bodyB) ||
+            (joint.bodyA < 0 && joint.bodyB < 0))
+        {
+            throw std::runtime_error(
+                "PMX joint references an invalid rigid body"
+            );
+        }
+        joint.position = ConvertPmxPosition(ReadPmxVec3(reader));
+        joint.rotation = ConvertPmxEulerRotation(ReadPmxVec3(reader));
+        const auto [linearLower, linearUpper] = ConvertPmxLinearLimits(
+            ReadPmxVec3(reader),
+            ReadPmxVec3(reader)
+        );
+        joint.linearLower = linearLower;
+        joint.linearUpper = linearUpper;
+        const auto [angularLower, angularUpper] = ConvertPmxAngularLimits(
+            ReadPmxVec3(reader),
+            ReadPmxVec3(reader)
+        );
+        joint.angularLower = angularLower;
+        joint.angularUpper = angularUpper;
+        joint.linearSpring = ReadPmxVec3(reader);
+        joint.angularSpring = ReadPmxVec3(reader);
+        if (!IsFinitePmx(joint.linearSpring) ||
+            !IsFinitePmx(joint.angularSpring))
+        {
+            throw std::runtime_error("PMX joint spring values are invalid");
+        }
+        result.joints.push_back(std::move(joint));
+    }
+
+    if (version >= 2.1f && reader.Remaining() >= sizeof(std::int32_t))
+    {
+        const std::int32_t softBodyCount = reader.Read<std::int32_t>();
+        if (softBodyCount < 0)
+            throw std::runtime_error("PMX contains a negative soft-body count");
+        if (softBodyCount > 0)
+        {
+            throw std::runtime_error(
+                "PMX 2.1 Soft Body is not supported by Physics 1"
+            );
         }
     }
 
@@ -1370,6 +1636,8 @@ void ApplyPmxBoneMetadata(
         Bone& destination = bones[pmxToSkeleton[index]];
         destination.deformLayer = source.deformLayer;
         destination.sourceOrder = static_cast<std::uint32_t>(index);
+        destination.deformAfterPhysics =
+            (source.flags & 0x1000U) != 0U;
 
         if ((source.flags & (0x0100U | 0x0200U)) != 0U)
         {
@@ -1446,6 +1714,97 @@ void RemapPmxBoneMorphs(
             offset.boneIndex = pmxToSkeleton[offset.boneIndex];
         }
     }
+}
+
+MmdPhysicsAsset BuildPmxPhysicsAsset(
+    const PmxMetadata& metadata,
+    const std::optional<Skeleton>& skeleton
+)
+{
+    std::vector<MmdRigidBodyDefinition> rigidBodies;
+    rigidBodies.reserve(metadata.rigidBodies.size());
+    for (const PmxMetadata::RigidBodyMetadata& source : metadata.rigidBodies)
+    {
+        MmdRigidBodyDefinition body;
+        body.name = source.name;
+        body.collisionGroup = source.collisionGroup;
+        body.nonCollisionMask = source.nonCollisionMask;
+        body.shape = source.shape;
+        body.size = source.size;
+        body.position = source.position;
+        body.rotation = source.rotation;
+        body.mass = source.mass;
+        body.linearDamping = source.linearDamping;
+        body.angularDamping = source.angularDamping;
+        body.restitution = source.restitution;
+        body.friction = source.friction;
+        body.mode = source.mode;
+        body.modelBindTransform = MakePmxModelTransform(
+            body.position,
+            body.rotation
+        );
+
+        if (source.boneIndex >= 0)
+        {
+            if (!skeleton.has_value() ||
+                static_cast<std::size_t>(source.boneIndex) >=
+                    metadata.bones.size())
+            {
+                throw std::runtime_error(
+                    "PMX rigid body requires an imported Skeleton"
+                );
+            }
+            const std::string& boneName = metadata.bones[
+                static_cast<std::size_t>(source.boneIndex)
+            ].name;
+            const std::optional<BoneIndex> mapped = skeleton->FindBone(boneName);
+            if (!mapped.has_value())
+            {
+                throw std::runtime_error(
+                    "PMX rigid body has no matching Skeleton bone: " +
+                    boneName
+                );
+            }
+            body.bone = *mapped;
+            const glm::mat4& boneBind =
+                skeleton->BindGlobalMatrices()[body.bone];
+            body.boneToBody = glm::inverse(boneBind) *
+                body.modelBindTransform;
+            body.bodyToBone = glm::inverse(body.modelBindTransform) *
+                boneBind;
+        }
+        rigidBodies.push_back(std::move(body));
+    }
+
+    std::vector<MmdJointDefinition> joints;
+    joints.reserve(metadata.joints.size());
+    for (const PmxMetadata::JointMetadata& source : metadata.joints)
+    {
+        MmdJointDefinition joint;
+        joint.name = source.name;
+        joint.type = source.type;
+        joint.bodyA = source.bodyA < 0
+            ? InvalidRigidBodyIndex
+            : static_cast<RigidBodyIndex>(source.bodyA);
+        joint.bodyB = source.bodyB < 0
+            ? InvalidRigidBodyIndex
+            : static_cast<RigidBodyIndex>(source.bodyB);
+        joint.position = source.position;
+        joint.rotation = source.rotation;
+        joint.linearLower = source.linearLower;
+        joint.linearUpper = source.linearUpper;
+        joint.angularLower = source.angularLower;
+        joint.angularUpper = source.angularUpper;
+        joint.linearSpring = source.linearSpring;
+        joint.angularSpring = source.angularSpring;
+        joint.modelBindTransform = MakePmxModelTransform(
+            joint.position,
+            joint.rotation
+        );
+        joints.push_back(std::move(joint));
+    }
+
+    return MmdPhysicsAsset(std::move(rigidBodies), std::move(joints));
 }
 
 std::optional<Skeleton> ImportSkeleton(
@@ -2741,7 +3100,12 @@ ImportedModelData ModelImporter::Import(
     );
     if (pmxMetadata.has_value())
     {
-        result.rigidBodyCount = pmxMetadata->rigidBodyCount;
+        if (!pmxMetadata->rigidBodies.empty() || !pmxMetadata->joints.empty())
+        {
+            result.mmdPhysics.emplace(
+                BuildPmxPhysicsAsset(*pmxMetadata, result.skeleton)
+            );
+        }
         result.morphs = pmxMetadata->morphDefinitions;
         const bool hasBoneMorph = std::any_of(
             result.morphs.begin(),

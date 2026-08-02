@@ -376,9 +376,10 @@ ModelAsset& ResourceManager::LoadModel(
     }
 
     auto model = std::make_unique<ModelAsset>(name);
-    model->SetMmdRigidBodyCount(imported.rigidBodyCount);
     if (imported.skeleton.has_value())
         model->SetSkeleton(std::move(*imported.skeleton));
+    if (imported.mmdPhysics.has_value())
+        model->SetMmdPhysics(std::move(*imported.mmdPhysics));
     if (!imported.morphs.empty())
         model->SetMorphs(std::move(imported.morphs));
     for (AnimationClip& clip : imported.animations)

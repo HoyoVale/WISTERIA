@@ -2,6 +2,7 @@
 
 #include "animation.hpp"
 #include "morph.hpp"
+#include "mmd_physics_asset.hpp"
 #include "render_part.hpp"
 #include "skeleton.hpp"
 #include <cstddef>
@@ -39,8 +40,11 @@ public:
     const MorphSet& GetMorphSet() const;
     void SetMorphs(std::vector<MorphDefinition> definitions);
 
+    bool HasMmdPhysics() const noexcept;
+    const MmdPhysicsAsset* TryGetMmdPhysics() const noexcept;
+    const MmdPhysicsAsset& GetMmdPhysics() const;
+    void SetMmdPhysics(MmdPhysicsAsset physics);
     std::size_t MmdRigidBodyCount() const noexcept;
-    void SetMmdRigidBodyCount(std::size_t count) noexcept;
 
     std::size_t AnimationClipCount() const noexcept;
     const AnimationClip& AnimationClipAt(std::size_t index) const;
@@ -59,7 +63,7 @@ private:
     std::vector<RenderPart> parts;
     std::optional<Skeleton> skeleton;
     std::optional<MorphSet> morphSet;
-    std::size_t mmdRigidBodyCount = 0U;
+    std::optional<MmdPhysicsAsset> mmdPhysics;
     // Stable clip addresses are required because Animator stores a pointer to
     // its current shared clip while more clips may still be added.
     std::vector<std::unique_ptr<AnimationClip>> animationClips;

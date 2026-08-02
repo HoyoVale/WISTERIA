@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bone.hpp"
+#include "mmd_physics_types.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <array>
@@ -15,12 +16,8 @@
 #include <vector>
 
 using MorphIndex = std::uint32_t;
-using RigidBodyIndex = std::uint32_t;
-
 inline constexpr MorphIndex InvalidMorphIndex =
     static_cast<MorphIndex>(-1);
-inline constexpr RigidBodyIndex InvalidRigidBodyIndex =
-    static_cast<RigidBodyIndex>(-1);
 inline constexpr std::uint32_t AllMaterialMorphTargets =
     std::numeric_limits<std::uint32_t>::max();
 inline constexpr std::size_t MmdUvChannelCount = 5U;

@@ -74,14 +74,47 @@ void ModelAsset::SetMorphs(std::vector<MorphDefinition> definitions)
     this->morphSet.emplace(std::move(definitions));
 }
 
-std::size_t ModelAsset::MmdRigidBodyCount() const noexcept
+bool ModelAsset::HasMmdPhysics() const noexcept
 {
-    return this->mmdRigidBodyCount;
+    return this->mmdPhysics.has_value();
 }
 
-void ModelAsset::SetMmdRigidBodyCount(std::size_t count) noexcept
+const MmdPhysicsAsset* ModelAsset::TryGetMmdPhysics() const noexcept
 {
-    this->mmdRigidBodyCount = count;
+    return this->mmdPhysics.has_value() ? &*this->mmdPhysics : nullptr;
+}
+
+const MmdPhysicsAsset& ModelAsset::GetMmdPhysics() const
+{
+    if (!this->mmdPhysics.has_value())
+        throw std::logic_error("ModelAsset has no MMD physics metadata");
+    return *this->mmdPhysics;
+}
+
+void ModelAsset::SetMmdPhysics(MmdPhysicsAsset physics)
+{
+    if (this->mmdPhysics.has_value())
+        throw std::logic_error("ModelAsset MMD physics metadata is already set");
+    for (const MmdRigidBodyDefinition& body : physics.RigidBodies())
+    {
+        if (body.bone != InvalidBoneIndex &&
+            (!this->skeleton.has_value() ||
+                static_cast<std::size_t>(body.bone) >=
+                    this->skeleton->BoneCount()))
+        {
+            throw std::invalid_argument(
+                "ModelAsset MMD rigid body references an invalid bone"
+            );
+        }
+    }
+    this->mmdPhysics.emplace(std::move(physics));
+}
+
+std::size_t ModelAsset::MmdRigidBodyCount() const noexcept
+{
+    return this->mmdPhysics.has_value()
+        ? this->mmdPhysics->RigidBodyCount()
+        : 0U;
 }
 
 std::size_t ModelAsset::AnimationClipCount() const noexcept

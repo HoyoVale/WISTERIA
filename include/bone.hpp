@@ -46,6 +46,7 @@ struct Bone
     glm::mat4 inverseBindMatrix{1.0f};
     std::int32_t deformLayer = 0;
     std::uint32_t sourceOrder = 0U;
+    bool deformAfterPhysics = false;
     std::optional<MmdAppendTransform> appendTransform;
     std::optional<MmdIkConstraint> ikConstraint;
 };

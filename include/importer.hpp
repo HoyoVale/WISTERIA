@@ -2,6 +2,7 @@
 
 #include "animation.hpp"
 #include "material.hpp"
+#include "mmd_physics_asset.hpp"
 #include "model.hpp"
 #include "morph.hpp"
 #include "skeleton.hpp"
@@ -72,7 +73,7 @@ struct ImportedModelData
     std::vector<ImportedMeshData> meshes;
     std::vector<ImportedPartData> parts;
     std::optional<Skeleton> skeleton;
-    std::size_t rigidBodyCount = 0U;
+    std::optional<MmdPhysicsAsset> mmdPhysics;
     std::vector<MorphDefinition> morphs;
     std::vector<AnimationClip> animations;
 };

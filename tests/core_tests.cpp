@@ -1801,7 +1801,8 @@ void TestPmx21FlipImpulseImporter()
         "pmx21_flip_impulse.pmx";
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
-        imported.rigidBodyCount == 1U &&
+        imported.mmdPhysics.has_value() &&
+        imported.mmdPhysics->RigidBodyCount() == 1U &&
         imported.morphs.size() == 7U,
         "PMX 2.1 fixture changed its rigid-body or morph count"
     );
@@ -1864,6 +1865,208 @@ void TestPmx21FlipImpulseImporter()
             glm::vec3(0.67f, 0.0f, 0.67f)
         ),
         "Imported PMX Impulse Morph did not produce runtime impulses"
+    );
+}
+
+void TestPmxPhysicsImporter()
+{
+    const std::filesystem::path modelPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) / "pmx_physics.pmx";
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
+        "PMX Physics 1 fixture lost its Skeleton or physics metadata"
+    );
+
+    const MmdPhysicsAsset& physics = *imported.mmdPhysics;
+    Require(
+        physics.RigidBodyCount() == 3U && physics.JointCount() == 6U,
+        "PMX Physics 1 fixture changed its rigid-body or joint count"
+    );
+    const auto sphereIndex = physics.FindRigidBody("followSphere");
+    const auto boxIndex = physics.FindRigidBody("dynamicBox");
+    const auto capsuleIndex = physics.FindRigidBody("mergeCapsule");
+    Require(
+        sphereIndex == std::optional<RigidBodyIndex>(0U) &&
+        boxIndex == std::optional<RigidBodyIndex>(1U) &&
+        capsuleIndex == std::optional<RigidBodyIndex>(2U),
+        "PMX rigid-body name lookup changed"
+    );
+
+    const MmdRigidBodyDefinition& sphere = physics.RigidBodyAt(*sphereIndex);
+    const MmdRigidBodyDefinition& box = physics.RigidBodyAt(*boxIndex);
+    const MmdRigidBodyDefinition& capsule = physics.RigidBodyAt(*capsuleIndex);
+    const std::optional<BoneIndex> root = imported.skeleton->FindBone("root");
+    Require(
+        root.has_value() &&
+        imported.skeleton->BoneAt(*root).deformAfterPhysics,
+        "PMX deform-after-physics bone flag was not preserved"
+    );
+    Require(
+        root.has_value() && sphere.bone == *root &&
+        capsule.bone == *root && box.bone == InvalidBoneIndex,
+        "PMX rigid-body bone indices were not mapped to the runtime Skeleton"
+    );
+    Require(
+        sphere.shape == MmdRigidBodyShape::Sphere &&
+        box.shape == MmdRigidBodyShape::Box &&
+        capsule.shape == MmdRigidBodyShape::Capsule &&
+        sphere.mode == MmdRigidBodyMode::FollowBone &&
+        box.mode == MmdRigidBodyMode::Physics &&
+        capsule.mode == MmdRigidBodyMode::PhysicsWithBone,
+        "PMX rigid-body shape or mode mapping changed"
+    );
+    Require(
+        sphere.collisionGroup == 0U && sphere.nonCollisionMask == 0x0002U &&
+        box.collisionGroup == 1U && box.nonCollisionMask == 0x0001U &&
+        capsule.collisionGroup == 15U &&
+        capsule.nonCollisionMask == 0x00F0U,
+        "PMX rigid-body collision filters changed"
+    );
+    Require(
+        NearlyEqual(sphere.size, glm::vec3(1.0f, 2.0f, 3.0f)) &&
+        NearlyEqual(sphere.position, glm::vec3(1.0f, 2.0f, -3.0f)) &&
+        NearlyEqual(box.position, glm::vec3(-1.0f, 4.0f, 2.0f)) &&
+        NearlyEqual(capsule.position, glm::vec3(0.0f, 3.0f, -1.0f)),
+        "PMX rigid-body size or coordinate conversion changed"
+    );
+    Require(
+        NearlySameRotation(
+            sphere.rotation,
+            glm::angleAxis(-0.25f, glm::vec3(1.0f, 0.0f, 0.0f))
+        ) &&
+        NearlySameRotation(
+            box.rotation,
+            glm::angleAxis(-0.5f, glm::vec3(0.0f, 1.0f, 0.0f))
+        ) &&
+        NearlySameRotation(
+            capsule.rotation,
+            glm::angleAxis(0.75f, glm::vec3(0.0f, 0.0f, 1.0f))
+        ),
+        "PMX rigid-body rotation conversion changed"
+    );
+    Require(
+        NearlyEqual(sphere.modelBindTransform[3],
+            glm::vec4(1.0f, 2.0f, -3.0f, 1.0f)) &&
+        MatrixIdentityDeviation(sphere.boneToBody * sphere.bodyToBone) <
+            Epsilon,
+        "PMX rigid-body bind offsets are inconsistent"
+    );
+    Require(
+        NearlyEqual(box.mass, 2.0f) &&
+        NearlyEqual(box.linearDamping, 0.25f) &&
+        NearlyEqual(box.angularDamping, 0.35f) &&
+        NearlyEqual(box.restitution, 0.45f) &&
+        NearlyEqual(box.friction, 0.55f),
+        "PMX rigid-body physical parameters changed"
+    );
+
+    for (std::size_t index = 0; index < physics.JointCount(); ++index)
+    {
+        Require(
+            physics.JointAt(index).type ==
+                static_cast<MmdJointType>(index),
+            "PMX 2.1 joint type mapping changed"
+        );
+    }
+    const MmdJointDefinition& joint = physics.JointAt(0U);
+    Require(
+        joint.bodyA == 0U && joint.bodyB == 1U &&
+        NearlyEqual(joint.position, glm::vec3(1.0f, 2.0f, 3.0f)) &&
+        NearlyEqual(joint.linearLower, glm::vec3(-1.0f, -2.0f, -6.0f)) &&
+        NearlyEqual(joint.linearUpper, glm::vec3(4.0f, 5.0f, 3.0f)) &&
+        NearlyEqual(joint.angularLower, glm::vec3(-0.4f, -0.5f, -0.3f)) &&
+        NearlyEqual(joint.angularUpper, glm::vec3(0.1f, 0.2f, 0.6f)) &&
+        NearlyEqual(joint.linearSpring, glm::vec3(1.0f, 2.0f, 3.0f)) &&
+        NearlyEqual(joint.angularSpring, glm::vec3(4.0f, 5.0f, 6.0f)),
+        "PMX joint limits, springs, or coordinate conversion changed"
+    );
+}
+
+void TestPmxPhysicsImporterValidation()
+{
+    const auto rejected = [](const char* fileName)
+    {
+        try
+        {
+            const std::filesystem::path path =
+                std::filesystem::path(WISTERIA_TEST_DATA_DIR) / fileName;
+            (void)ModelImporter().Import(path);
+            return false;
+        }
+        catch (const std::runtime_error&)
+        {
+            return true;
+        }
+    };
+
+    Require(
+        rejected("pmx_physics_invalid_group.pmx"),
+        "PMX importer accepted collision group 16"
+    );
+    Require(
+        rejected("pmx_physics_invalid_joint.pmx"),
+        "PMX importer accepted an out-of-range joint rigid body"
+    );
+    Require(
+        rejected("pmx_physics_softbody.pmx"),
+        "PMX importer silently accepted unsupported Soft Body data"
+    );
+}
+
+void TestMmdPhysicsAssetValidation()
+{
+    MmdRigidBodyDefinition bodyA;
+    bodyA.name = "bodyA";
+    MmdRigidBodyDefinition bodyB;
+    bodyB.name = "bodyB";
+    MmdJointDefinition joint;
+    joint.name = "joint";
+    joint.bodyA = 0U;
+    joint.bodyB = 1U;
+    MmdPhysicsAsset physics({bodyA, bodyB}, {joint});
+    Require(
+        physics.RigidBodyCount() == 2U && physics.JointCount() == 1U &&
+        physics.FindRigidBody("bodyB") ==
+            std::optional<RigidBodyIndex>(1U),
+        "MmdPhysicsAsset did not preserve valid definitions"
+    );
+
+    bool invalidGroupRejected = false;
+    try
+    {
+        MmdRigidBodyDefinition invalid;
+        invalid.name = "invalid";
+        invalid.collisionGroup = 16U;
+        MmdPhysicsAsset rejected({invalid}, {});
+        (void)rejected;
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidGroupRejected = true;
+    }
+    Require(
+        invalidGroupRejected,
+        "MmdPhysicsAsset accepted an invalid collision group"
+    );
+
+    bool invalidJointRejected = false;
+    try
+    {
+        MmdJointDefinition invalid;
+        invalid.name = "invalidJoint";
+        invalid.bodyA = InvalidRigidBodyIndex;
+        invalid.bodyB = InvalidRigidBodyIndex;
+        MmdPhysicsAsset rejected({bodyA}, {invalid});
+        (void)rejected;
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidJointRejected = true;
+    }
+    Require(
+        invalidJointRejected,
+        "MmdPhysicsAsset accepted a joint without a rigid-body endpoint"
     );
 }
 
@@ -2241,13 +2444,19 @@ void TestRenderPartAndModelAsset()
     );
 
     ModelAsset model("testModel");
-    model.SetMmdRigidBodyCount(3U);
+    std::vector<MmdRigidBodyDefinition> bodies(3U);
+    for (std::size_t index = 0; index < bodies.size(); ++index)
+        bodies[index].name = "body" + std::to_string(index);
+    model.SetMmdPhysics(MmdPhysicsAsset(std::move(bodies), {}));
     model.AddPart(mesh, material, localTransform);
 
     Require(model.Name() == "testModel", "ModelAsset name was not preserved");
     Require(
-        model.MmdRigidBodyCount() == 3U,
-        "ModelAsset did not preserve PMX rigid-body metadata"
+        model.HasMmdPhysics() &&
+        model.TryGetMmdPhysics() == &model.GetMmdPhysics() &&
+        model.MmdRigidBodyCount() == 3U &&
+        model.GetMmdPhysics().JointCount() == 0U,
+        "ModelAsset did not preserve PMX physics metadata"
     );
     Require(model.PartCount() == 1, "ModelAsset did not store its part");
     Require(&model.Parts()[0].GetMesh() == &mesh, "ModelAsset mesh reference changed");
@@ -3071,6 +3280,58 @@ void TestRiggedGlbImportWhenAvailable()
     );
 }
 
+void TestDemoPmxPhysicsImportWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.mmdPhysics.has_value() && imported.skeleton.has_value(),
+        "Demo PMX lost its Physics 1 metadata"
+    );
+    const MmdPhysicsAsset& physics = *imported.mmdPhysics;
+    Require(
+        physics.RigidBodyCount() == 495U && physics.JointCount() == 568U,
+        "Demo PMX rigid-body or joint count changed"
+    );
+
+    std::array<std::size_t, 3U> shapeCounts{};
+    std::array<std::size_t, 3U> modeCounts{};
+    for (const MmdRigidBodyDefinition& body : physics.RigidBodies())
+    {
+        ++shapeCounts[static_cast<std::size_t>(body.shape)];
+        ++modeCounts[static_cast<std::size_t>(body.mode)];
+        Require(
+            body.bone == InvalidBoneIndex ||
+                static_cast<std::size_t>(body.bone) <
+                    imported.skeleton->BoneCount(),
+            "Demo PMX rigid body references an invalid runtime bone"
+        );
+    }
+    Require(
+        std::all_of(shapeCounts.begin(), shapeCounts.end(),
+            [](std::size_t count) { return count > 0U; }) &&
+        std::all_of(modeCounts.begin(), modeCounts.end(),
+            [](std::size_t count) { return count > 0U; }),
+        "Demo PMX did not exercise every rigid-body shape and mode"
+    );
+    Require(
+        std::all_of(
+            physics.Joints().begin(),
+            physics.Joints().end(),
+            [](const MmdJointDefinition& joint)
+            {
+                return joint.type == MmdJointType::Spring6Dof;
+            }
+        ),
+        "Demo PMX joint types changed unexpectedly"
+    );
+}
+
 void TestDirectPmxMaterialImportWhenAvailable()
 {
     const std::filesystem::path modelPath =
@@ -3307,6 +3568,15 @@ int main()
         "PMX 2.1 Flip/Impulse importer",
         TestPmx21FlipImpulseImporter
     );
+    failures += !RunTest("PMX Physics 1 importer", TestPmxPhysicsImporter);
+    failures += !RunTest(
+        "PMX Physics 1 importer validation",
+        TestPmxPhysicsImporterValidation
+    );
+    failures += !RunTest(
+        "MMD physics asset validation",
+        TestMmdPhysicsAssetValidation
+    );
     failures += !RunTest("VMD importer", TestVmdImporter);
     failures += !RunTest("VMD asset integration", TestVmdAssetWhenAvailable);
     failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
@@ -3343,6 +3613,10 @@ int main()
     failures += !RunTest("Converted MMD GLB integration", TestConvertedMmdGlbWhenAvailable);
     failures += !RunTest("Converted MMD OBJ integration", TestConvertedMmdObjWhenAvailable);
     failures += !RunTest("Rigged GLB skin integration", TestRiggedGlbImportWhenAvailable);
+    failures += !RunTest(
+        "Demo PMX Physics 1 integration",
+        TestDemoPmxPhysicsImportWhenAvailable
+    );
     failures += !RunTest(
         "Direct PMX material integration",
         TestDirectPmxMaterialImportWhenAvailable
