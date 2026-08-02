@@ -2,6 +2,7 @@
 #include "scene.hpp"
 #include "physics_instance.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
@@ -46,7 +47,11 @@ Scene& Scene::operator=(Scene&& other) noexcept
     this->directionalLights = std::move(other.directionalLights);
     this->spotLights = std::move(other.spotLights);
     this->environment = other.environment;
+    this->physicsAccumulator = other.physicsAccumulator;
+    this->physicsFrameStatistics = other.physicsFrameStatistics;
     other.environment = nullptr;
+    other.physicsAccumulator = 0.0;
+    other.physicsFrameStatistics = {};
     return *this;
 }
 
@@ -70,10 +75,25 @@ const PhysicsWorld& Scene::Physics() const noexcept
     return *this->physicsWorld;
 }
 
+const PhysicsFrameStatistics&
+Scene::LastPhysicsFrameStatistics() const noexcept
+{
+    return this->physicsFrameStatistics;
+}
+
 void Scene::Update(float deltaTime)
 {
+    if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
+    {
+        throw std::invalid_argument(
+            "Scene delta time must be finite and non-negative"
+        );
+    }
+
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->Update(deltaTime);
+
+    const auto physicsBegin = std::chrono::steady_clock::now();
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->PrePhysicsUpdate(deltaTime);
 
@@ -84,7 +104,7 @@ void Scene::Update(float deltaTime)
     };
     std::vector<PendingStabilization> pending;
     pending.reserve(this->entities.size());
-    std::size_t maximumSteps = 0U;
+    std::size_t maximumStabilizationSteps = 0U;
     float stabilizationStep = 1.0f / 60.0f;
     bool hasStabilizationStep = false;
     for (const std::unique_ptr<Entity>& entity : this->entities)
@@ -103,7 +123,10 @@ void Scene::Update(float deltaTime)
                 "Physics stabilization time step must be finite and positive"
             );
         }
-        maximumSteps = std::max(maximumSteps, request.steps);
+        maximumStabilizationSteps = std::max(
+            maximumStabilizationSteps,
+            request.steps
+        );
         stabilizationStep = hasStabilizationStep
             ? std::min(stabilizationStep, request.fixedTimeStep)
             : request.fixedTimeStep;
@@ -111,18 +134,19 @@ void Scene::Update(float deltaTime)
         pending.push_back(PendingStabilization{instance, request});
     }
 
-    // Hidden fixed-step settling is scene-owned because the PhysicsWorld is
-    // shared. Model adapters keep their animation-driven bodies at a frozen
-    // target while Bullet resolves constraints; no adapter advances the world
-    // behind Scene's back.
-    for (std::size_t step = 0U; step < maximumSteps; ++step)
+    // Hidden settling remains separate from the real-time accumulator. It is
+    // deterministic setup work and must not consume or create render-frame
+    // catch-up debt.
+    for (std::size_t step = 0U;
+         step < maximumStabilizationSteps;
+         ++step)
     {
         for (const PendingStabilization& item : pending)
         {
             if (step < item.request.steps)
                 item.instance->PrepareStabilizationStep(stabilizationStep);
         }
-        this->physicsWorld->Step(stabilizationStep);
+        this->physicsWorld->StepFixed(stabilizationStep);
         for (const PendingStabilization& item : pending)
         {
             if (step < item.request.steps)
@@ -132,15 +156,108 @@ void Scene::Update(float deltaTime)
     for (const PendingStabilization& item : pending)
         item.instance->CompleteStabilization();
 
-    this->physicsWorld->Step(deltaTime);
+    const PhysicsStepSettings& settings =
+        this->physicsWorld->StepSettings();
+    const double fixedTimeStep =
+        static_cast<double>(settings.fixedTimeStep);
+    const double maximumFrameDelta =
+        static_cast<double>(settings.maxDeltaTime);
+    const double inputDelta = static_cast<double>(deltaTime);
+    const double safeFrameDelta = std::min(inputDelta, maximumFrameDelta);
+    double droppedTime = std::max(0.0, inputDelta - safeFrameDelta);
+
+    const double accumulatorAtFrameStart = this->physicsAccumulator;
+    this->physicsAccumulator += safeFrameDelta;
+    const double maximumAccumulatedTime = fixedTimeStep *
+        static_cast<double>(settings.maxSubSteps);
+    if (this->physicsAccumulator > maximumAccumulatedTime)
+    {
+        droppedTime += this->physicsAccumulator - maximumAccumulatedTime;
+        this->physicsAccumulator = maximumAccumulatedTime;
+    }
+
+    const double stepTolerance = fixedTimeStep * 0.000001;
+    std::size_t substepCount = static_cast<std::size_t>(std::floor(
+        (this->physicsAccumulator + stepTolerance) / fixedTimeStep
+    ));
+    substepCount = std::min(
+        substepCount,
+        static_cast<std::size_t>(settings.maxSubSteps)
+    );
+
+    for (std::size_t step = 0U; step < substepCount; ++step)
+    {
+        float alpha = 1.0f;
+        if (droppedTime > 0.0 || safeFrameDelta <= stepTolerance)
+        {
+            // A clamped catch-up frame intentionally spans the complete
+            // render-frame target over the bounded number of fixed ticks.
+            // This avoids both a one-tick teleport and leaving kinematic
+            // bodies permanently behind an animation timeline we dropped.
+            alpha = static_cast<float>(step + 1U) /
+                static_cast<float>(substepCount);
+        }
+        else
+        {
+            // The accumulator may already contain a fractional fixed tick.
+            // Sample the animation at the exact tick time inside this render
+            // interval instead of distributing ticks uniformly. At 144 FPS,
+            // for example, the first 60 Hz tick lands partway through the
+            // third render frame rather than at that frame's endpoint.
+            const double timeInsideFrame =
+                fixedTimeStep * static_cast<double>(step + 1U) -
+                accumulatorAtFrameStart;
+            alpha = static_cast<float>(std::clamp(
+                timeInsideFrame / safeFrameDelta,
+                0.0,
+                1.0
+            ));
+        }
+        for (const std::unique_ptr<Entity>& entity : this->entities)
+        {
+            entity->PreparePhysicsSubstep(
+                alpha,
+                settings.fixedTimeStep
+            );
+        }
+        this->physicsWorld->StepFixed(settings.fixedTimeStep);
+        this->physicsAccumulator -= fixedTimeStep;
+    }
+    if (this->physicsAccumulator < stepTolerance)
+        this->physicsAccumulator = 0.0;
+
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->PostPhysicsUpdate();
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->SolveAfterPhysicsPose();
+
+    const auto physicsEnd = std::chrono::steady_clock::now();
+    this->physicsFrameStatistics.frameDeltaTime = deltaTime;
+    this->physicsFrameStatistics.simulatedDeltaTime = static_cast<float>(
+        fixedTimeStep * static_cast<double>(substepCount)
+    );
+    this->physicsFrameStatistics.fixedTimeStep = settings.fixedTimeStep;
+    this->physicsFrameStatistics.accumulatorTime = static_cast<float>(
+        this->physicsAccumulator
+    );
+    this->physicsFrameStatistics.droppedTime =
+        static_cast<float>(droppedTime);
+    this->physicsFrameStatistics.physicsCpuMilliseconds =
+        std::chrono::duration<double, std::milli>(
+            physicsEnd - physicsBegin
+        ).count();
+    this->physicsFrameStatistics.substepCount = substepCount;
+    this->physicsFrameStatistics.stabilizationSubstepCount =
+        maximumStabilizationSteps;
+    this->physicsFrameStatistics.catchUpLimited = droppedTime > 0.0;
+    this->physicsFrameStatistics.world =
+        this->physicsWorld->Statistics();
 }
 
 void Scene::Clear() noexcept
 {
+    this->physicsAccumulator = 0.0;
+    this->physicsFrameStatistics = {};
     this->ClearEntities();
     this->ClearPointLights();
     this->ClearDirectionalLights();

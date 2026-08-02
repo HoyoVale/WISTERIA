@@ -2300,9 +2300,13 @@ void TestExtendedMmdMorphRuntime()
 struct PhysicsLifecycleCounters
 {
     int prepareCount = 0;
+    int substepCount = 0;
     int finishCount = 0;
     int resetCount = 0;
     float lastDeltaTime = 0.0f;
+    float lastSubstepAlpha = 0.0f;
+    float lastFixedTimeStep = 0.0f;
+    std::vector<float> substepAlphas;
 };
 
 class CountingPhysicsInstance final : public PhysicsInstance
@@ -2317,6 +2321,17 @@ public:
     {
         ++this->counters->prepareCount;
         this->counters->lastDeltaTime = deltaTime;
+    }
+
+    void PrepareSimulationSubstep(
+        float alpha,
+        float fixedTimeStep
+    ) override
+    {
+        ++this->counters->substepCount;
+        this->counters->lastSubstepAlpha = alpha;
+        this->counters->lastFixedTimeStep = fixedTimeStep;
+        this->counters->substepAlphas.push_back(alpha);
     }
 
     void FinishSimulation() override
@@ -2349,13 +2364,17 @@ void TestGenericPhysicsInstanceLifecycle()
     );
 
     entity.PrePhysicsUpdate(0.25f);
+    entity.PreparePhysicsSubstep(0.5f, 1.0f / 60.0f);
     entity.PostPhysicsUpdate();
     entity.ResetPhysicsToCurrentPose();
     Require(
         counters.prepareCount == 1 &&
+        counters.substepCount == 1 &&
         counters.finishCount == 1 &&
         counters.resetCount == 1 &&
-        NearlyEqual(counters.lastDeltaTime, 0.25f),
+        NearlyEqual(counters.lastDeltaTime, 0.25f) &&
+        NearlyEqual(counters.lastSubstepAlpha, 0.5f) &&
+        NearlyEqual(counters.lastFixedTimeStep, 1.0f / 60.0f),
         "Entity did not route simulation lifecycle through PhysicsInstance"
     );
 
@@ -4000,10 +4019,15 @@ void TestBulletFoundationKinematicAndHandles()
 
 void TestBulletFoundationFixedStepAndIsolation()
 {
-    PhysicsWorld firstWorld;
-    PhysicsWorld secondWorld;
+    Scene firstScene;
+    Scene secondScene;
+    Scene thirdScene;
+    PhysicsWorld& firstWorld = firstScene.Physics();
+    PhysicsWorld& secondWorld = secondScene.Physics();
+    PhysicsWorld& thirdWorld = thirdScene.Physics();
     firstWorld.SetGravity(glm::vec3(0.0f, -9.8f, 0.0f));
     secondWorld.SetGravity(glm::vec3(0.0f, -9.8f, 0.0f));
+    thirdWorld.SetGravity(glm::vec3(0.0f, -9.8f, 0.0f));
 
     const PhysicsBodyDesc falling = DynamicBodyDesc(
         PhysicsShapeDesc::Sphere(0.5f),
@@ -4011,21 +4035,35 @@ void TestBulletFoundationFixedStepAndIsolation()
     );
     const PhysicsBodyHandle first = firstWorld.CreateBody(falling);
     const PhysicsBodyHandle second = secondWorld.CreateBody(falling);
+    const PhysicsBodyHandle third = thirdWorld.CreateBody(falling);
 
     for (int frame = 0; frame < 30; ++frame)
-        firstWorld.Step(1.0f / 30.0f);
-    StepPhysics(secondWorld, 60);
+        firstScene.Update(1.0f / 30.0f);
+    for (int frame = 0; frame < 60; ++frame)
+        secondScene.Update(1.0f / 60.0f);
+    for (int frame = 0; frame < 144; ++frame)
+        thirdScene.Update(1.0f / 144.0f);
 
     Require(
         std::abs(
             firstWorld.State(first).position.y -
             secondWorld.State(second).position.y
+        ) < 0.08f &&
+        std::abs(
+            secondWorld.State(second).position.y -
+            thirdWorld.State(third).position.y
         ) < 0.08f,
-        "Bullet fixed substeps changed with render frame rate"
+        "WISTERIA fixed substeps changed across 30/60/144 FPS"
+    );
+    Require(
+        firstScene.LastPhysicsFrameStatistics().substepCount == 2U &&
+        secondScene.LastPhysicsFrameStatistics().substepCount == 1U,
+        "Scene did not expose render-rate-independent fixed substep counts"
     );
 
     firstWorld.ApplyCentralImpulse(first, glm::vec3(3.0f, 0.0f, 0.0f));
-    StepPhysics(firstWorld, 10);
+    for (int frame = 0; frame < 10; ++frame)
+        firstScene.Update(1.0f / 60.0f);
     Require(
         firstWorld.State(first).position.x > 0.1f,
         "Bullet central impulse did not affect the target body"
@@ -4033,6 +4071,72 @@ void TestBulletFoundationFixedStepAndIsolation()
     Require(
         std::abs(secondWorld.State(second).position.x) < Epsilon,
         "Separate PhysicsWorld instances contaminated each other"
+    );
+}
+
+void TestScenePhysicsAccumulatorAndStatistics()
+{
+    Scene scene;
+    Entity& entity = scene.CreateEntity();
+    PhysicsLifecycleCounters counters;
+    entity.SetPhysicsInstance(
+        std::make_unique<CountingPhysicsInstance>(counters)
+    );
+
+    scene.Update(1.0f / 30.0f);
+    const PhysicsFrameStatistics regular =
+        scene.LastPhysicsFrameStatistics();
+    Require(
+        counters.prepareCount == 1 &&
+        counters.substepCount == 2 &&
+        counters.finishCount == 1 &&
+        counters.substepAlphas.size() == 2U &&
+        NearlyEqual(counters.substepAlphas[0U], 0.5f) &&
+        NearlyEqual(counters.substepAlphas[1U], 1.0f),
+        "Scene did not bracket a 30 FPS frame with two interpolated substeps"
+    );
+    Require(
+        regular.substepCount == 2U &&
+        NearlyEqual(regular.simulatedDeltaTime, 1.0f / 30.0f) &&
+        regular.droppedTime < Epsilon &&
+        regular.world.finite,
+        "Scene fixed-step statistics are incorrect for a normal frame"
+    );
+
+    scene.Update(1.0f);
+    const PhysicsFrameStatistics longFrame =
+        scene.LastPhysicsFrameStatistics();
+    Require(
+        longFrame.substepCount == 4U &&
+        longFrame.catchUpLimited &&
+        longFrame.droppedTime > 0.9f &&
+        longFrame.accumulatorTime < Epsilon,
+        "Long frame did not cap catch-up work and report dropped time"
+    );
+
+    const PhysicsWorldStatistics world = scene.Physics().Statistics();
+    Require(
+        world.bodyCount == 0U &&
+        world.constraintCount == 0U &&
+        world.contactPointCount == 0U &&
+        world.finite,
+        "Empty PhysicsWorld statistics are inconsistent"
+    );
+
+    Scene highRateScene;
+    Entity& highRateEntity = highRateScene.CreateEntity();
+    PhysicsLifecycleCounters highRateCounters;
+    highRateEntity.SetPhysicsInstance(
+        std::make_unique<CountingPhysicsInstance>(highRateCounters)
+    );
+    highRateScene.Update(1.0f / 144.0f);
+    highRateScene.Update(1.0f / 144.0f);
+    highRateScene.Update(1.0f / 144.0f);
+    Require(
+        highRateCounters.substepCount == 1U &&
+        highRateCounters.substepAlphas.size() == 1U &&
+        std::abs(highRateCounters.substepAlphas.front() - 0.4f) < 0.001f,
+        "High-rate render frames did not sample the exact 60 Hz tick time"
     );
 }
 
@@ -5334,6 +5438,10 @@ int main()
     failures += !RunTest(
         "Bullet fixed step and world isolation",
         TestBulletFoundationFixedStepAndIsolation
+    );
+    failures += !RunTest(
+        "Scene physics accumulator and statistics",
+        TestScenePhysicsAccumulatorAndStatistics
     );
     failures += !RunTest(
         "Bullet Spring 6DOF foundation",

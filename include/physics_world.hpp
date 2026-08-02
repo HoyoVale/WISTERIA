@@ -52,6 +52,7 @@ public:
 
     bool Contains(PhysicsBodyHandle body) const noexcept;
     std::size_t BodyCount() const noexcept;
+    PhysicsWorldStatistics Statistics() const noexcept;
 
     PhysicsBodyState State(PhysicsBodyHandle body) const;
     void SetTransform(
@@ -92,6 +93,13 @@ public:
     bool DebugDrawEnabled() const noexcept;
     std::span<const PhysicsDebugLine> DebugLines() const noexcept;
 
+    // Advances Bullet by exactly one solver tick. Scene owns accumulation and
+    // calls this once per WISTERIA fixed substep.
+    void StepFixed(float fixedTimeStep);
+
+    // Compatibility helper for tests and low-level callers. It advances one
+    // exact tick after applying maxDeltaTime; it does not use Bullet's internal
+    // accumulator.
     void Step(float deltaTime);
 
 private:

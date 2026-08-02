@@ -3,6 +3,9 @@ param(
     [ValidateSet('run', 'build', 'compile', 'test', 'clean')]
     [string]$Action = 'run',
 
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
+    [string]$Configuration = 'RelWithDebInfo',
+
     [string[]]$ApplicationArguments = @()
 )
 
@@ -12,13 +15,20 @@ $ProjectRoot = $PSScriptRoot
 $BuildScript = Join-Path $ProjectRoot 'script/build.ps1'
 $ClearScript = Join-Path $ProjectRoot 'script/clear_build.ps1'
 $BuildPath = Join-Path $ProjectRoot 'build'
-$Executable = Join-Path $BuildPath 'Debug/wisteria.exe'
+$ExecutableCandidates = @(
+    (Join-Path $BuildPath "$Configuration/wisteria.exe"),
+    (Join-Path $BuildPath 'wisteria.exe')
+)
 
 function Start-Application {
-    if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
-        throw "可执行文件未生成：$Executable"
+    $Executable = $ExecutableCandidates |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($Executable)) {
+        throw "可执行文件未生成。已检查：$($ExecutableCandidates -join ', ')"
     }
 
+    Write-Host "正在运行 WISTERIA [$Configuration]..." -ForegroundColor Green
     # 让程序的当前工作目录固定为项目根目录，便于使用相对资源路径。
     Push-Location $ProjectRoot
     try {
@@ -40,21 +50,21 @@ switch ($Action) {
 
     'build' {
         & $ClearScript -BuildPath $BuildPath
-        & $BuildScript -Action configure
+        & $BuildScript -Action configure -Configuration $Configuration
     }
 
     'compile' {
-        & $BuildScript -Action compile
+        & $BuildScript -Action compile -Configuration $Configuration
         Start-Application
     }
 
     'test' {
-        & $BuildScript -Action test
+        & $BuildScript -Action test -Configuration $Configuration
     }
 
     'run' {
         & $ClearScript -BuildPath $BuildPath
-        & $BuildScript -Action all
+        & $BuildScript -Action all -Configuration $Configuration
         Start-Application
     }
 }

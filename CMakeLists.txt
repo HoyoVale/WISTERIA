@@ -176,6 +176,7 @@ target_precompile_headers(wisteria_core PRIVATE
 
 target_compile_definitions(wisteria_core PUBLIC
     GLFW_INCLUDE_NONE
+    WISTERIA_BUILD_CONFIGURATION="$<CONFIG>"
 )
 
 target_link_libraries(wisteria_core PUBLIC

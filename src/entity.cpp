@@ -355,6 +355,20 @@ void Entity::PrePhysicsUpdate(float deltaTime)
     this->physicsInstance->PrepareSimulation(deltaTime);
 }
 
+void Entity::PreparePhysicsSubstep(
+    float alpha,
+    float fixedTimeStep
+)
+{
+    if (this->physicsInstance != nullptr)
+    {
+        this->physicsInstance->PrepareSimulationSubstep(
+            alpha,
+            fixedTimeStep
+        );
+    }
+}
+
 void Entity::PostPhysicsUpdate()
 {
     if (this->physicsInstance != nullptr)

@@ -32,6 +32,7 @@ public:
     const Camera& ActiveCamera() const noexcept;
     PhysicsWorld& Physics() noexcept;
     const PhysicsWorld& Physics() const noexcept;
+    const PhysicsFrameStatistics& LastPhysicsFrameStatistics() const noexcept;
 
     void Update(float deltaTime);
     void Clear() noexcept;
@@ -89,4 +90,6 @@ private:
     std::vector<std::unique_ptr<DirectionalLight>> directionalLights;
     std::vector<std::unique_ptr<SpotLight>> spotLights;
     EnvironmentMap* environment = nullptr;
+    double physicsAccumulator = 0.0;
+    PhysicsFrameStatistics physicsFrameStatistics{};
 };

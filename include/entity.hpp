@@ -102,6 +102,7 @@ public:
         const MmdPhysicsAsset& physics
     );
     void PrePhysicsUpdate(float deltaTime);
+    void PreparePhysicsSubstep(float alpha, float fixedTimeStep);
     void PostPhysicsUpdate();
     void SolveAfterPhysicsPose();
     void ResetPhysicsToCurrentPose();

@@ -3,6 +3,9 @@ param(
     [ValidateSet('configure', 'compile', 'test', 'all')]
     [string]$Action = 'all',
 
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
+    [string]$Configuration = 'RelWithDebInfo',
+
     [string]$CMakePath
 )
 
@@ -40,25 +43,27 @@ function Invoke-CMake {
 }
 
 function Configure-Project {
-    Write-Host "正在配置项目..." -ForegroundColor Cyan
+    Write-Host "正在配置项目 [$Configuration]..." -ForegroundColor Cyan
 
     Invoke-CMake @(
         '-S', $ProjectRoot,
-        '-B', $BuildPath
+        '-B', $BuildPath,
+        "-DCMAKE_BUILD_TYPE=$Configuration"
     )
 }
 
 function Compile-Project {
-    if (-not (Test-Path -LiteralPath (Join-Path $BuildPath 'CMakeCache.txt'))) {
-        Configure-Project
-    }
+    # Always reconfigure so switching Debug/Release/RelWithDebInfo cannot
+    # silently reuse a single-config generator's previous CMAKE_BUILD_TYPE.
+    Configure-Project
 
-    Write-Host "正在编译项目..." -ForegroundColor Cyan
+    Write-Host "正在编译项目 [$Configuration]..." -ForegroundColor Cyan
 
-    # Visual Studio 是多配置生成器，必须明确指定 Debug/Release。
+    # Visual Studio 是多配置生成器，必须明确指定配置；单配置生成器也
+    # 会安全忽略 --config 之外的多配置语义。
     Invoke-CMake @(
         '--build', $BuildPath,
-        '--config', 'Debug',
+        '--config', $Configuration,
         '--parallel'
     )
 }
@@ -71,10 +76,10 @@ function Test-Project {
         throw "找不到 CTest：$CTestPath"
     }
 
-    Write-Host "正在运行自动化测试..." -ForegroundColor Cyan
+    Write-Host "正在运行自动化测试 [$Configuration]..." -ForegroundColor Cyan
     $CTestArguments = @(
         '--test-dir', $BuildPath,
-        '-C', 'Debug',
+        '-C', $Configuration,
         '--output-on-failure'
     )
     & $CTestPath @CTestArguments
@@ -98,7 +103,6 @@ switch ($Action) {
     }
 
     'all' {
-        Configure-Project
         Compile-Project
     }
 }

@@ -25,6 +25,20 @@ public:
     PhysicsInstance& operator=(PhysicsInstance&&) = delete;
 
     virtual void PrepareSimulation(float deltaTime) = 0;
+
+    // Called immediately before every Scene-owned fixed substep. The alpha
+    // value progresses from 0 to 1 across the substeps performed for the
+    // current render frame, allowing animation-driven bodies to move smoothly
+    // instead of teleporting to the final frame target before Bullet runs.
+    virtual void PrepareSimulationSubstep(
+        float alpha,
+        float fixedTimeStep
+    )
+    {
+        (void)alpha;
+        (void)fixedTimeStep;
+    }
+
     virtual void FinishSimulation() = 0;
     virtual void ResetSimulation() = 0;
 

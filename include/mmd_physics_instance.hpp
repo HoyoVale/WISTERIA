@@ -65,6 +65,10 @@ public:
     void ApplyImpulseMorphs(const MorphState& morphState);
 
     void PrepareSimulation(float deltaTime) override;
+    void PrepareSimulationSubstep(
+        float alpha,
+        float fixedTimeStep
+    ) override;
     void FinishSimulation() override;
     void ResetSimulation() override;
     PhysicsStabilizationRequest StabilizationRequest() const noexcept override;
@@ -126,8 +130,17 @@ private:
     {
         const MmdRigidBodyDefinition* definition = nullptr;
         PhysicsBodyHandle handle{};
+        // Last target actually submitted before a Bullet fixed tick.
         glm::vec3 lastAnimatedPosition{0.0f};
         glm::quat lastAnimatedRotation{1.0f, 0.0f, 0.0f, 0.0f};
+        // Immutable previous/current render-frame animation endpoints. Every
+        // fixed tick samples these at its exact time inside the render frame,
+        // while lastAnimated* remains the previous submitted physics sample
+        // for velocity calculation.
+        glm::vec3 frameStartAnimatedPosition{0.0f};
+        glm::quat frameStartAnimatedRotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 frameTargetAnimatedPosition{0.0f};
+        glm::quat frameTargetAnimatedRotation{1.0f, 0.0f, 0.0f, 0.0f};
         bool hasAnimatedTransform = false;
         glm::mat4 createdBulletBindModelTransform{1.0f};
         glm::mat4 resetTargetModelTransform{1.0f};

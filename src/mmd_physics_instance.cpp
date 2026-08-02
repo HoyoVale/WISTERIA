@@ -346,6 +346,29 @@ const char* OverlayName(MmdPhysicsDebugOverlay overlay) noexcept
     return "UNKNOWN";
 }
 
+glm::vec3 AngularVelocityBetween(
+    const glm::quat& previous,
+    const glm::quat& current,
+    float deltaTime
+) noexcept
+{
+    if (deltaTime <= 0.0f)
+        return glm::vec3(0.0f);
+
+    glm::quat delta = glm::normalize(current * glm::conjugate(previous));
+    if (delta.w < 0.0f)
+        delta = -delta;
+
+    const float cosine = std::clamp(delta.w, -1.0f, 1.0f);
+    const float angle = 2.0f * std::acos(cosine);
+    const float sine = std::sqrt(std::max(0.0f, 1.0f - cosine * cosine));
+    if (angle <= 0.000001f || sine <= 0.000001f)
+        return glm::vec3(0.0f);
+
+    const glm::vec3 axis(delta.x / sine, delta.y / sine, delta.z / sine);
+    return axis * (angle / deltaTime);
+}
+
 glm::vec3 TransformPoint(
     const RigidTransform& transform,
     const glm::vec3& point
@@ -797,6 +820,81 @@ void MmdPhysicsInstance::PrepareSimulation(float deltaTime)
         this->ApplyImpulseMorphs(*this->morphState);
     }
     this->suppressImpulseMorphOnce = false;
+}
+
+void MmdPhysicsInstance::PrepareSimulationSubstep(
+    float alpha,
+    float fixedTimeStep
+)
+{
+    if (!std::isfinite(alpha) || alpha < 0.0f || alpha > 1.0f)
+    {
+        throw std::invalid_argument(
+            "MMD physics substep alpha must be finite and normalized"
+        );
+    }
+    if (!std::isfinite(fixedTimeStep) || fixedTimeStep <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "MMD physics substep must be finite and positive"
+        );
+    }
+
+    for (RuntimeBody& runtime : this->rigidBodies)
+    {
+        const bool driveBody = this->stabilizationFailed ||
+            runtime.definition->mode == MmdRigidBodyMode::FollowBone;
+        if (!driveBody || !runtime.hasAnimatedTransform)
+            continue;
+
+        const glm::vec3 position = glm::mix(
+            runtime.frameStartAnimatedPosition,
+            runtime.frameTargetAnimatedPosition,
+            alpha
+        );
+        const glm::quat rotation = glm::normalize(glm::slerp(
+            runtime.frameStartAnimatedRotation,
+            runtime.frameTargetAnimatedRotation,
+            alpha
+        ));
+        const glm::vec3 linearVelocity =
+            (position - runtime.lastAnimatedPosition) / fixedTimeStep;
+        const glm::vec3 angularVelocity = AngularVelocityBetween(
+            runtime.lastAnimatedRotation,
+            rotation,
+            fixedTimeStep
+        );
+
+        if (this->stabilizationFailed)
+        {
+            this->world->SetTransform(
+                runtime.handle,
+                position,
+                rotation,
+                true
+            );
+        }
+        else
+        {
+            this->world->SetTransform(
+                runtime.handle,
+                position,
+                rotation,
+                false
+            );
+            this->world->SetLinearVelocity(
+                runtime.handle,
+                linearVelocity
+            );
+            this->world->SetAngularVelocity(
+                runtime.handle,
+                angularVelocity
+            );
+        }
+
+        runtime.lastAnimatedPosition = position;
+        runtime.lastAnimatedRotation = rotation;
+    }
 }
 
 void MmdPhysicsInstance::FinishSimulation()
@@ -1494,8 +1592,6 @@ void MmdPhysicsInstance::PrePhysicsUpdate(
         );
     }
     (void)deltaTime;
-    constexpr float positionEpsilonSquared = 0.000001f;
-    constexpr float rotationDotEpsilon = 0.000001f;
     const EntityFrame entity = ExtractEntityFrame(transform);
 
     for (RuntimeBody& runtime : this->rigidBodies)
@@ -1560,29 +1656,22 @@ void MmdPhysicsInstance::PrePhysicsUpdate(
         if (!driveBody)
             continue;
 
-        const glm::vec3 positionDelta =
-            animated.position - runtime.lastAnimatedPosition;
-        const bool positionChanged = !runtime.hasAnimatedTransform ||
-            glm::dot(positionDelta, positionDelta) > positionEpsilonSquared;
-        const bool rotationChanged = !runtime.hasAnimatedTransform ||
-            1.0f - std::abs(glm::dot(
-                animated.rotation,
-                runtime.lastAnimatedRotation
-            )) > rotationDotEpsilon;
-
-        if (positionChanged || rotationChanged || this->stabilizationFailed)
+        if (!runtime.hasAnimatedTransform)
         {
-            this->world->SetTransform(
-                runtime.handle,
-                animated.position,
-                animated.rotation,
-                this->stabilizationFailed
-            );
+            runtime.lastAnimatedPosition = animated.position;
+            runtime.lastAnimatedRotation = animated.rotation;
+            runtime.frameStartAnimatedPosition = animated.position;
+            runtime.frameStartAnimatedRotation = animated.rotation;
+            runtime.frameTargetAnimatedPosition = animated.position;
+            runtime.frameTargetAnimatedRotation = animated.rotation;
+            runtime.hasAnimatedTransform = true;
         }
-
-        runtime.lastAnimatedPosition = animated.position;
-        runtime.lastAnimatedRotation = animated.rotation;
-        runtime.hasAnimatedTransform = true;
+        runtime.frameStartAnimatedPosition =
+            runtime.frameTargetAnimatedPosition;
+        runtime.frameStartAnimatedRotation =
+            runtime.frameTargetAnimatedRotation;
+        runtime.frameTargetAnimatedPosition = animated.position;
+        runtime.frameTargetAnimatedRotation = animated.rotation;
     }
 }
 
@@ -1794,6 +1883,10 @@ void MmdPhysicsInstance::ApplyResetTargets(const Transform& transform)
         );
         runtime.lastAnimatedPosition = target.position;
         runtime.lastAnimatedRotation = target.rotation;
+        runtime.frameStartAnimatedPosition = target.position;
+        runtime.frameStartAnimatedRotation = target.rotation;
+        runtime.frameTargetAnimatedPosition = target.position;
+        runtime.frameTargetAnimatedRotation = target.rotation;
         runtime.hasAnimatedTransform = true;
     }
 }

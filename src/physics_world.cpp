@@ -35,8 +35,8 @@ bool IsFinite(const glm::quat& value) noexcept
 
 void ValidateStepSettings(const PhysicsStepSettings& settings)
 {
-    if (settings.maxSubSteps < 0)
-        throw std::invalid_argument("Physics maxSubSteps cannot be negative");
+    if (settings.maxSubSteps <= 0)
+        throw std::invalid_argument("Physics maxSubSteps must be positive");
     if (!std::isfinite(settings.fixedTimeStep) ||
         settings.fixedTimeStep <= 0.0f)
     {
@@ -1065,6 +1065,77 @@ std::size_t PhysicsWorld::BodyCount() const noexcept
     return impl->bodyCount;
 }
 
+PhysicsWorldStatistics PhysicsWorld::Statistics() const noexcept
+{
+    PhysicsWorldStatistics statistics;
+    statistics.bodyCount = impl->bodyCount;
+    statistics.constraintCount = impl->constraintCount;
+
+    for (const Impl::BodySlot& slot : impl->bodies)
+    {
+        if (!slot.body)
+            continue;
+
+        switch (slot.motionType)
+        {
+        case PhysicsMotionType::Static:
+            ++statistics.staticBodyCount;
+            break;
+        case PhysicsMotionType::Dynamic:
+            ++statistics.dynamicBodyCount;
+            break;
+        case PhysicsMotionType::Kinematic:
+            ++statistics.kinematicBodyCount;
+            break;
+        }
+
+        if (slot.motionType != PhysicsMotionType::Static)
+        {
+            if (slot.body->isActive())
+                ++statistics.activeBodyCount;
+            else
+                ++statistics.sleepingBodyCount;
+        }
+
+        const btTransform& transform = slot.body->getWorldTransform();
+        const btVector3& position = transform.getOrigin();
+        const btQuaternion rotation = transform.getRotation();
+        const btVector3& linearVelocity = slot.body->getLinearVelocity();
+        const btVector3& angularVelocity = slot.body->getAngularVelocity();
+        const btScalar values[] = {
+            position.x(), position.y(), position.z(),
+            rotation.w(), rotation.x(), rotation.y(), rotation.z(),
+            linearVelocity.x(), linearVelocity.y(), linearVelocity.z(),
+            angularVelocity.x(), angularVelocity.y(), angularVelocity.z()
+        };
+        for (const btScalar value : values)
+        {
+            if (!std::isfinite(static_cast<double>(value)))
+            {
+                statistics.finite = false;
+                break;
+            }
+        }
+    }
+
+    const int manifoldCount = impl->dispatcher->getNumManifolds();
+    statistics.contactManifoldCount = manifoldCount > 0
+        ? static_cast<std::size_t>(manifoldCount)
+        : 0U;
+    for (int index = 0; index < manifoldCount; ++index)
+    {
+        const btPersistentManifold* manifold =
+            impl->dispatcher->getManifoldByIndexInternal(index);
+        if (manifold != nullptr && manifold->getNumContacts() > 0)
+        {
+            statistics.contactPointCount += static_cast<std::size_t>(
+                manifold->getNumContacts()
+            );
+        }
+    }
+    return statistics;
+}
+
 PhysicsBodyState PhysicsWorld::State(PhysicsBodyHandle body) const
 {
     const Impl::BodySlot& slot = impl->Require(body);
@@ -1218,25 +1289,31 @@ std::span<const PhysicsDebugLine> PhysicsWorld::DebugLines() const noexcept
     return impl->debugCollector.lines;
 }
 
+void PhysicsWorld::StepFixed(float fixedTimeStep)
+{
+    if (!std::isfinite(fixedTimeStep) || fixedTimeStep <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "Physics fixed step must be finite and positive"
+        );
+    }
+
+    // maxSubSteps=0 disables Bullet's internal accumulator. WISTERIA's Scene
+    // owns the accumulator so model adapters can update kinematic targets
+    // before every individual solver tick.
+    impl->world->stepSimulation(fixedTimeStep, 0, fixedTimeStep);
+    if (impl->debugDrawEnabled)
+    {
+        impl->debugCollector.Clear();
+        impl->world->debugDrawWorld();
+    }
+}
+
 void PhysicsWorld::Step(float deltaTime)
 {
     if (!std::isfinite(deltaTime))
         throw std::invalid_argument("Physics deltaTime is non-finite");
     if (deltaTime <= 0.0f)
         return;
-
-    const float safeDeltaTime = std::min(
-        deltaTime,
-        impl->settings.maxDeltaTime
-    );
-    impl->world->stepSimulation(
-        safeDeltaTime,
-        impl->settings.maxSubSteps,
-        impl->settings.fixedTimeStep
-    );
-    if (impl->debugDrawEnabled)
-    {
-        impl->debugCollector.Clear();
-        impl->world->debugDrawWorld();
-    }
+    this->StepFixed(std::min(deltaTime, impl->settings.maxDeltaTime));
 }

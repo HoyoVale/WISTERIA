@@ -10,8 +10,15 @@
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
+#include <iomanip>
+#include <iostream>
 #include <optional>
+#include <sstream>
 #include <string_view>
+
+#ifndef WISTERIA_BUILD_CONFIGURATION
+#define WISTERIA_BUILD_CONFIGURATION "Unknown"
+#endif
 
 namespace
 {
@@ -409,6 +416,39 @@ public:
         {
             entity.GetMmdPhysics().LogAlignmentReport();
         }
+        if (this->input.WasKeyPressed(InputKey::F3))
+        {
+            this->showPhysicsStatistics = !this->showPhysicsStatistics;
+            this->statisticsLogElapsed = 1.0f;
+            this->titleDirty = true;
+        }
+
+        const PhysicsFrameStatistics& previousFrame =
+            this->scene.LastPhysicsFrameStatistics();
+        this->peakPhysicsCpuMilliseconds = std::max(
+            this->peakPhysicsCpuMilliseconds,
+            previousFrame.physicsCpuMilliseconds
+        );
+        this->peakSubstepCount = std::max(
+            this->peakSubstepCount,
+            previousFrame.substepCount
+        );
+        this->peakDroppedTime = std::max(
+            this->peakDroppedTime,
+            previousFrame.droppedTime
+        );
+        this->peakContactPointCount = std::max(
+            this->peakContactPointCount,
+            previousFrame.world.contactPointCount
+        );
+
+        this->statisticsLogElapsed += deltaTime;
+        if (this->showPhysicsStatistics &&
+            this->statisticsLogElapsed >= 1.0f)
+        {
+            this->statisticsLogElapsed = 0.0f;
+            this->LogPhysicsStatistics();
+        }
 
         this->titleElapsed += deltaTime;
         if (this->titleDirty || this->titleElapsed >= 0.2f)
@@ -422,30 +462,95 @@ public:
 private:
     void UpdateTitle(const Animator& animator)
     {
-        std::string title = "FLORAL WISTERIA - MMD FULL ACTION - ";
-        title += this->clip->Name();
-        title += " | ";
-        title += std::to_string(animator.Time()).substr(0U, 4U);
-        title += " / ";
-        title += std::to_string(this->clip->Duration()).substr(0U, 4U);
+        std::ostringstream title;
+        title << "FLORAL WISTERIA - MMD FULL ACTION - "
+              << this->clip->Name() << " | "
+              << std::fixed << std::setprecision(2)
+              << animator.Time() << " / " << this->clip->Duration();
         if (animator.IsPaused())
-            title += " [PAUSED]";
-        title += " | Space: pause | R: restart | P: Bullet ";
-        title += this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF";
-        title += " | B: overlay ";
+            title << " [PAUSED]";
+        title << " | Space: pause | R: restart | P: Bullet "
+              << (this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF")
+              << " | B: overlay ";
         if (const Entity* entity = this->scene.EntityAt(0U);
             entity != nullptr && entity->HasMmdPhysics())
         {
-            title += entity->GetMmdPhysics().DebugOverlayName();
+            title << entity->GetMmdPhysics().DebugOverlayName();
             if (entity->GetMmdPhysics().StabilizationFailed())
-                title += " [PHYSICS SAFE FREEZE]";
+                title << " [PHYSICS SAFE FREEZE]";
         }
         else
         {
-            title += "N/A";
+            title << "N/A";
         }
-        title += " | L: alignment log";
-        this->window.SetTitle(std::move(title));
+        title << " | L: alignment log | F3: stats "
+              << (this->showPhysicsStatistics ? "ON" : "OFF");
+
+        if (this->showPhysicsStatistics)
+        {
+            const PhysicsFrameStatistics& frame =
+                this->scene.LastPhysicsFrameStatistics();
+            const PhysicsWorldStatistics& world = frame.world;
+            const float fps = frame.frameDeltaTime > 0.000001f
+                ? 1.0f / frame.frameDeltaTime
+                : 0.0f;
+            title << " | [" << WISTERIA_BUILD_CONFIGURATION << "] "
+                  << std::setprecision(1) << fps << " FPS"
+                  << " | phys " << std::setprecision(2)
+                  << frame.physicsCpuMilliseconds << " ms"
+                  << " (peak " << this->peakPhysicsCpuMilliseconds << ')'
+                  << " | steps " << frame.substepCount << '/'
+                  << this->scene.Physics().StepSettings().maxSubSteps
+                  << " | acc " << frame.accumulatorTime * 1000.0f << " ms"
+                  << " | drop " << frame.droppedTime * 1000.0f << " ms"
+                  << " | bodies " << world.bodyCount
+                  << " (D" << world.dynamicBodyCount
+                  << "/K" << world.kinematicBodyCount << ')'
+                  << " | active " << world.activeBodyCount
+                  << " | contacts " << world.contactPointCount
+                  << " | finite " << (world.finite ? "OK" : "FAIL");
+        }
+        this->window.SetTitle(title.str());
+    }
+
+    void LogPhysicsStatistics() const
+    {
+        const PhysicsFrameStatistics& frame =
+            this->scene.LastPhysicsFrameStatistics();
+        const PhysicsWorldStatistics& world = frame.world;
+        const float fps = frame.frameDeltaTime > 0.000001f
+            ? 1.0f / frame.frameDeltaTime
+            : 0.0f;
+        std::cout << "[PHYSICS STATS] build="
+                  << WISTERIA_BUILD_CONFIGURATION
+                  << " fps=" << fps
+                  << " frameMs=" << frame.frameDeltaTime * 1000.0f
+                  << " physicsMs=" << frame.physicsCpuMilliseconds
+                  << " peakPhysicsMs="
+                  << this->peakPhysicsCpuMilliseconds
+                  << " fixedMs=" << frame.fixedTimeStep * 1000.0f
+                  << " substeps=" << frame.substepCount
+                  << " peakSubsteps=" << this->peakSubstepCount
+                  << " stabilizationSubsteps="
+                  << frame.stabilizationSubstepCount
+                  << " accumulatorMs="
+                  << frame.accumulatorTime * 1000.0f
+                  << " droppedMs=" << frame.droppedTime * 1000.0f
+                  << " peakDroppedMs=" << this->peakDroppedTime * 1000.0f
+                  << " catchUpLimited="
+                  << (frame.catchUpLimited ? "true" : "false")
+                  << " bodies=" << world.bodyCount
+                  << " static=" << world.staticBodyCount
+                  << " dynamic=" << world.dynamicBodyCount
+                  << " kinematic=" << world.kinematicBodyCount
+                  << " active=" << world.activeBodyCount
+                  << " sleeping=" << world.sleepingBodyCount
+                  << " constraints=" << world.constraintCount
+                  << " manifolds=" << world.contactManifoldCount
+                  << " contacts=" << world.contactPointCount
+                  << " peakContacts=" << this->peakContactPointCount
+                  << " finite=" << (world.finite ? "true" : "false")
+                  << std::endl;
     }
 
     Scene& scene;
@@ -453,7 +558,13 @@ private:
     Input& input;
     const AnimationClip* clip = nullptr;
     float titleElapsed = 0.0f;
+    float statisticsLogElapsed = 1.0f;
+    double peakPhysicsCpuMilliseconds = 0.0;
+    float peakDroppedTime = 0.0f;
+    std::size_t peakSubstepCount = 0U;
+    std::size_t peakContactPointCount = 0U;
     bool titleDirty = true;
+    bool showPhysicsStatistics = true;
 };
 
 void ConfigureCharacterLighting(Scene& scene)

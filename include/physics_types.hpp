@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <glm/glm.hpp>
@@ -185,4 +186,32 @@ struct PhysicsStepSettings
     int maxSubSteps = 4;
     float fixedTimeStep = 1.0f / 60.0f;
     float maxDeltaTime = 0.1f;
+};
+
+struct PhysicsWorldStatistics
+{
+    std::size_t bodyCount = 0U;
+    std::size_t staticBodyCount = 0U;
+    std::size_t dynamicBodyCount = 0U;
+    std::size_t kinematicBodyCount = 0U;
+    std::size_t activeBodyCount = 0U;
+    std::size_t sleepingBodyCount = 0U;
+    std::size_t constraintCount = 0U;
+    std::size_t contactManifoldCount = 0U;
+    std::size_t contactPointCount = 0U;
+    bool finite = true;
+};
+
+struct PhysicsFrameStatistics
+{
+    float frameDeltaTime = 0.0f;
+    float simulatedDeltaTime = 0.0f;
+    float fixedTimeStep = 1.0f / 60.0f;
+    float accumulatorTime = 0.0f;
+    float droppedTime = 0.0f;
+    double physicsCpuMilliseconds = 0.0;
+    std::size_t substepCount = 0U;
+    std::size_t stabilizationSubstepCount = 0U;
+    bool catchUpLimited = false;
+    PhysicsWorldStatistics world{};
 };
