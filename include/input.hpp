@@ -17,6 +17,8 @@ enum class InputKey : std::size_t
     Escape,
     R,
     P,
+    B,
+    L,
     Space,
     Left,
     Right,

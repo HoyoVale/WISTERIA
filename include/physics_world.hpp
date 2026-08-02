@@ -68,6 +68,14 @@ public:
         PhysicsBodyHandle body,
         const glm::vec3& velocity
     );
+    void SetLinearFactor(
+        PhysicsBodyHandle body,
+        const glm::vec3& factor
+    );
+    void SetAngularFactor(
+        PhysicsBodyHandle body,
+        const glm::vec3& factor
+    );
 
     void ApplyCentralImpulse(
         PhysicsBodyHandle body,

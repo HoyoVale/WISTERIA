@@ -96,13 +96,13 @@ PBR 金属度、粗糙度。
 
 推荐接下来的顺序：
 
-1. 事件与输入系统  
+1. 事件与输入系统
    封装 GLFW 键盘、鼠标、窗口事件，先实现可操作相机。
 
-2. 法线贴图与切线  
+2. 法线贴图与切线
    扩展顶点格式，导入 `tangent/bitangent`，建立 TBN 矩阵。这也是完善材质系统的重要基础。
 
-3. PBR 材质  
+3. PBR 材质
    支持：
 
    - Base Color
@@ -114,7 +114,7 @@ PBR 金属度、粗糙度。
 
    GLB 通常会把 metallic 和 roughness 打包在同一张纹理的不同通道中。
 
-4. 骨骼蒙皮  
+4. 骨骼蒙皮
    顶点增加骨骼 ID 和权重，由顶点着色器执行：
 
    ```glsl
@@ -124,7 +124,7 @@ PBR 金属度、粗糙度。
        ...;
    ```
 
-5. 动画系统  
+5. 动画系统
    导入动画片段和关键帧，插值位置、旋转、缩放，计算：
 
    ```text
@@ -135,7 +135,7 @@ PBR 金属度、粗糙度。
        → 上传 Shader
    ```
 
-6. 异步加载  
+6. 异步加载
    最后实现，因为它涉及线程边界：
 
    - 后台线程：读取文件、Assimp 解析、图片解码。
@@ -1128,3 +1128,205 @@ MmdPhysicsInstance::FinishSimulation
 - 真实人物仍为 38 / 74 / 383 的模式分布；
 - 真实模型的 Mode 2 刚体中至少有对象产生可测平移；
 - 57 项原有渲染、动画、Morph、物理和生命周期测试继续通过。
+
+# MMD Bind Pose Alignment：先证明坐标错在哪里
+
+看到碰撞箱离开网格时，直接修改矩阵公式是危险的。PMX 允许刚体相对骨骼存在固定偏移，也允许模型作者放置不直接驱动可见顶点的辅助锤体。一个视觉上远离网格的刚体，不一定是导入错误。
+
+因此本阶段先建立可验证的四层对照：
+
+```text
+PMX source bind transform
+        ↓
+Skeleton bind × boneToBody
+        ↓
+Bullet initial body transform
+        ↓
+Bullet current runtime transform
+```
+
+## 通用调试接口仍然保持格式无关
+
+`PhysicsInstance` 增加了可选的：
+
+```cpp
+virtual void AppendDebugLines(
+    std::vector<PhysicsDebugLine>& lines
+) const;
+```
+
+Renderer 只消费通用的 `PhysicsDebugLine`，不知道提供者是 MMD、glTF、车辆还是未来的 ragdoll。PMX 的颜色语义、Bind 对照和日志全部留在 `MmdPhysicsInstance`。
+
+```text
+Renderer
+└─ PhysicsInstance::AppendDebugLines
+   ├─ MmdPhysicsInstance
+   ├─ future GltfPhysicsInstance
+   └─ future VehiclePhysicsInstance
+```
+
+## 双重 Bind Overlay
+
+`B` 在四种状态间循环：
+
+```text
+OFF
+BIND
+ANIMATED
+ALL
+```
+
+`BIND`：
+
+```text
+青色      PMX 原始 modelBindTransform
+紫红色    Bullet 创建并 Reset 后反算回模型空间的初始状态
+红色      两者中心误差超过阈值时的连接线
+```
+
+重合时后画的线会覆盖先画的线。因此只对调试 wireframe 尺寸采用 `1.03 / 0.97` 的轻微差异，变换中心和旋转不变。这个处理只影响可视化，不影响 Bullet 形状。
+
+`ANIMATED`：
+
+```text
+黄色      旧 skeleton-root-space 候选
+绿色      WISTERIA model-space 候选
+```
+
+如果 Skeleton 的 `InverseRootMatrix` 为单位矩阵，黄色与绿色应该重合。若根空间非单位，两者的差异会直接显示出来。
+
+## 正式对齐日志
+
+人物物理实例较大或检测到对齐误差时，启动阶段输出一行摘要。按 `L` 输出详细报告：
+
+```text
+[MMD ALIGN]
+[MMD ALIGN REPORT]
+[MMD ALIGN MODE]
+[MMD ALIGN BODY]
+```
+
+报告会计算：
+
+- `InverseRootMatrix` 的位置和旋转；
+- 所有骨骼的蒙皮 Bind 恒等误差；
+- PMX Bind 与骨骼重建 Bind 的位置/旋转误差；
+- PMX Bind 与 Bullet 初始刚体的误差；
+- 旧/新动画映射候选的差异；
+- 当前刚体相对动画目标的距离与角度；
+- 三种 MMD 模式各自最大的运行偏移；
+- 当前关节两端锚点的最大分离；
+- 按综合误差排序的刚体名称、骨骼、形状、尺寸和位置。
+
+`Physics` 与 `PhysicsWithBone` 相对动画目标存在一定距离可能是正常动态效果；`FollowBone` 的对应误差应接近零。日志的意义是定位异常链条，而不是把所有动态刚体强制拉回动画目标。
+
+## 非单位根空间公式
+
+PMX 刚体数据与渲染顶点位于模型空间，Assimp 的骨骼全局矩阵可能位于 Skeleton root space。通用公式应先把骨骼转换到模型空间：
+
+```text
+boneModelBind = inverseRoot × boneBindGlobal
+boneToBody    = inverse(boneModelBind) × bodyModelBind
+bodyToBone    = inverse(bodyModelBind) × boneModelBind
+```
+
+逐帧动画目标同样使用：
+
+```text
+bodyModel = inverseRoot × poseGlobal × boneToBody
+```
+
+物理结果写回 Pose 时执行逆方向转换。新增测试故意构造非单位根空间，并确认：
+
+- 蒙皮 Bind 仍为单位变换；
+- PMX 与 Bullet Bind 完全对齐；
+- 动画刚体不会多出一次根平移；
+- 青色与紫红色 Overlay 都被输出。
+
+## 对真实皮肤模型的定位结论
+
+对 732 个刚体、1029 个关节的皮肤模型进行离线诊断后得到：
+
+```text
+InverseRootMatrix        identity
+skinBindMax              约 1e-7
+PMX ↔ skeleton bind      接近 0
+PMX ↔ Bullet initial     接近 0
+初始 joint anchor        接近 0
+```
+
+因此不能把当前尾巴、飘带偏离归因于根空间公式。该公式修正只保护未来可能具有非单位根空间的模型。
+
+下一步判断应依据画面：
+
+```text
+青色和紫红色都偏离网格
+→ PMX 原始辅助体、形状方向或欧拉旋转解释
+
+青色正确，紫红色错误
+→ Bullet 创建/转换错误
+
+Bind 两套正确，当前 Bullet 红色运行体后来跑偏
+→ 约束框架、碰撞、时间步或求解稳定性
+
+黄色与绿色分开
+→ Skeleton root-space 映射问题
+```
+
+这就是“先定位，再修公式”的工程意义：每一种错误只修改拥有该语义的层，避免用全局补偿矩阵掩盖模型数据或求解器问题。
+
+
+# MMD Initialization Stability：先区分原始 Frame 差异与真实限制违规
+
+双重 Bind Overlay 解决了“数据在哪一层开始错位”的问题，但它还必须区分捕获时机。Bullet 刚体创建后如果立刻执行 `ResetToPose()`，再记录所谓 initial state，就会把 VMD 第 0 帧误标成 Bullet Bind。正确快照顺序是：
+
+```text
+PMX source bind
+→ CreateBody bind
+→ constraint-preserving reset target
+→ post-reset Bullet state
+→ pre-physics animation target
+→ current Bullet state
+```
+
+这些快照分别由 BIND、RESET、RUNTIME 三个 Overlay 显示。
+
+## 为什么原始关节锚点差不能直接作为失败阈值
+
+6DOF 关节允许两端 Frame 在其局部限制区间内存在平移和旋转。诊断需要先计算：
+
+```text
+relative = inverse(anchorA) × anchorB
+violation = distance(relative, allowed limits)
+```
+
+`maxJointPos` 只是两端 Frame 的原始距离；真正用于稳定判定的是扣除 `linearLower/Upper` 和 `angularLower/Upper` 后的 violation。模型中的宽行程、无平移弹簧辅助关节还需要单独标识，避免正常设计被误判。
+
+## 约束保持 Reset
+
+逐个把所有动态刚体传送到各自骨骼目标，会破坏按 Bind Pose 创建的长链约束。现在 MMD 层构建非宽行程关节图，并执行多源 BFS：
+
+```text
+FollowBone 刚体 = 动画锚点
+动态刚体       = 分配到最近动画锚点
+同一分支       = 应用同一 anchor animation delta
+```
+
+这不会改变 `PhysicsWorld` 的通用语义。Bullet 仍然只认识刚体和约束；“如何从 PMX 骨骼姿态得到一组约束友好的 Reset 目标”只存在于 `MmdPhysicsInstance`。
+
+## Scene 统一预热
+
+共享 `PhysicsWorld` 不能由某个模型实例私自推进。通用 `PhysicsInstance` 因此只提供可选稳定生命周期：
+
+```cpp
+StabilizationRequest()
+PrepareStabilizationStep()
+ObserveStabilizationStep()
+CompleteStabilization()
+```
+
+Scene 收集所有请求并统一执行隐藏固定步。MMD 实例在预热时只固定 FollowBone 锚点、记录第 1/10/30 步误差，并在最终不收敛时进入安全冻结。未来其他格式可以使用不同的稳定策略，也可以完全不请求预热。
+
+## 本阶段验证边界
+
+Release 下完整播放真实 VMD 约 12 秒，所有刚体状态保持有限，没有 NaN、生命周期错误或初始化误冻结；但运行末尾仍检测到部分非辅助关节违规和 Mode 2 长链漂移。这是下一阶段的运行时求解问题，不能通过继续篡改 Bind Pose 或把 Mode 2 平移重新锁死来掩盖。

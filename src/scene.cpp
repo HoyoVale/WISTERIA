@@ -1,6 +1,9 @@
 #include "pch.hpp"
 #include "scene.hpp"
+#include "physics_instance.hpp"
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 
 namespace
 {
@@ -73,6 +76,62 @@ void Scene::Update(float deltaTime)
         entity->Update(deltaTime);
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->PrePhysicsUpdate(deltaTime);
+
+    struct PendingStabilization
+    {
+        PhysicsInstance* instance = nullptr;
+        PhysicsStabilizationRequest request{};
+    };
+    std::vector<PendingStabilization> pending;
+    pending.reserve(this->entities.size());
+    std::size_t maximumSteps = 0U;
+    float stabilizationStep = 1.0f / 60.0f;
+    bool hasStabilizationStep = false;
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        PhysicsInstance* instance = entity->TryGetPhysicsInstance();
+        if (instance == nullptr)
+            continue;
+        const PhysicsStabilizationRequest request =
+            instance->StabilizationRequest();
+        if (request.steps == 0U)
+            continue;
+        if (!std::isfinite(request.fixedTimeStep) ||
+            request.fixedTimeStep <= 0.0f)
+        {
+            throw std::invalid_argument(
+                "Physics stabilization time step must be finite and positive"
+            );
+        }
+        maximumSteps = std::max(maximumSteps, request.steps);
+        stabilizationStep = hasStabilizationStep
+            ? std::min(stabilizationStep, request.fixedTimeStep)
+            : request.fixedTimeStep;
+        hasStabilizationStep = true;
+        pending.push_back(PendingStabilization{instance, request});
+    }
+
+    // Hidden fixed-step settling is scene-owned because the PhysicsWorld is
+    // shared. Model adapters keep their animation-driven bodies at a frozen
+    // target while Bullet resolves constraints; no adapter advances the world
+    // behind Scene's back.
+    for (std::size_t step = 0U; step < maximumSteps; ++step)
+    {
+        for (const PendingStabilization& item : pending)
+        {
+            if (step < item.request.steps)
+                item.instance->PrepareStabilizationStep(stabilizationStep);
+        }
+        this->physicsWorld->Step(stabilizationStep);
+        for (const PendingStabilization& item : pending)
+        {
+            if (step < item.request.steps)
+                item.instance->ObserveStabilizationStep(step + 1U);
+        }
+    }
+    for (const PendingStabilization& item : pending)
+        item.instance->CompleteStabilization();
+
     this->physicsWorld->Step(deltaTime);
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->PostPhysicsUpdate();

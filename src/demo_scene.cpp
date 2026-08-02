@@ -33,12 +33,6 @@ std::filesystem::path DemoMotionPath1()
         u8"皮卡皮卡皮卡丘+" / u8"身体动作.vmd";
 }
 
-std::filesystem::path DemoMotionPath2()
-{
-    return std::filesystem::current_path() / "assets" / "motions" /
-        u8"皮卡皮卡皮卡丘+" / u8"表情动作.vmd";
-}
-
 std::optional<BoneIndex> FindBone(
     const Skeleton& skeleton,
     std::initializer_list<std::string_view> names
@@ -399,6 +393,22 @@ public:
             );
             this->titleDirty = true;
         }
+        if (this->input.WasKeyPressed(InputKey::B) &&
+            entity.HasMmdPhysics())
+        {
+            const MmdPhysicsDebugOverlay overlay =
+                entity.GetMmdPhysics().CycleDebugOverlay();
+            std::cout << "[MMD ALIGN] debug overlay="
+                      << entity.GetMmdPhysics().DebugOverlayName()
+                      << " (" << static_cast<int>(overlay) << ")"
+                      << std::endl;
+            this->titleDirty = true;
+        }
+        if (this->input.WasKeyPressed(InputKey::L) &&
+            entity.HasMmdPhysics())
+        {
+            entity.GetMmdPhysics().LogAlignmentReport();
+        }
 
         this->titleElapsed += deltaTime;
         if (this->titleDirty || this->titleElapsed >= 0.2f)
@@ -420,8 +430,21 @@ private:
         title += std::to_string(this->clip->Duration()).substr(0U, 4U);
         if (animator.IsPaused())
             title += " [PAUSED]";
-        title += " | Space: pause | R: restart | P: physics debug ";
+        title += " | Space: pause | R: restart | P: Bullet ";
         title += this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF";
+        title += " | B: overlay ";
+        if (const Entity* entity = this->scene.EntityAt(0U);
+            entity != nullptr && entity->HasMmdPhysics())
+        {
+            title += entity->GetMmdPhysics().DebugOverlayName();
+            if (entity->GetMmdPhysics().StabilizationFailed())
+                title += " [PHYSICS SAFE FREEZE]";
+        }
+        else
+        {
+            title += "N/A";
+        }
+        title += " | L: alignment log";
         this->window.SetTitle(std::move(title));
     }
 

@@ -4375,6 +4375,240 @@ void TestMmdPhysics2BModesAndPoseSync()
     );
 }
 
+
+void TestMmdPhysicsBindAlignmentOverlay()
+{
+    const glm::mat4 skeletonRootBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(5.0f, 0.0f, 0.0f)
+    );
+    const glm::mat4 inverseRoot = glm::inverse(skeletonRootBind);
+    const glm::mat4 bodyModelBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(0.0f, 2.0f, 0.0f)
+    );
+    const glm::mat4 boneModelBind = inverseRoot * skeletonRootBind;
+
+    auto model = std::make_unique<ModelAsset>("bindAlignmentOverlay");
+    model->SetSkeleton(Skeleton(
+        {
+            Bone{
+                "root",
+                InvalidBoneIndex,
+                skeletonRootBind,
+                glm::mat4(1.0f)
+            }
+        },
+        inverseRoot
+    ));
+
+    MmdRigidBodyDefinition body;
+    body.name = "bindBody";
+    body.bone = 0U;
+    body.shape = MmdRigidBodyShape::Box;
+    body.size = glm::vec3(0.2f, 0.4f, 0.3f);
+    body.mode = MmdRigidBodyMode::FollowBone;
+    body.modelBindTransform = bodyModelBind;
+    body.boneToBody = glm::inverse(boneModelBind) * bodyModelBind;
+    body.bodyToBone = glm::inverse(bodyModelBind) * boneModelBind;
+    model->SetMmdPhysics(MmdPhysicsAsset({body}, {}));
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+    const MmdPhysicsAlignmentSummary& summary = physics.AlignmentSummary();
+    Require(summary.nonIdentityBindSpace, "Bind overlay missed non-identity root space");
+    Require(
+        summary.maximumSkinningBindError < 0.0001f &&
+        summary.maximumBindPositionError < 0.0001f &&
+        summary.maximumBindRotationErrorDegrees < 0.001f &&
+        summary.maximumBulletPositionError < 0.0001f &&
+        summary.maximumBulletRotationErrorDegrees < 0.001f,
+        "Bind overlay reported an error for an aligned non-identity root"
+    );
+
+    const PhysicsBodyState bindState = physics.BodyStateAt(0U);
+    Require(
+        NearlyEqual(bindState.position, glm::vec3(0.0f, 2.0f, 0.0f)),
+        "MMD body bind transform was not converted into model space"
+    );
+
+    const glm::mat4 animatedLocal = skeletonRootBind *
+        glm::rotate(
+            glm::mat4(1.0f),
+            glm::half_pi<float>(),
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        );
+    entity.GetPose().SetLocalMatrix(0U, animatedLocal);
+    scene.Update(0.0f);
+    const PhysicsBodyState animatedState = physics.BodyStateAt(0U);
+    Require(
+        glm::distance(animatedState.position, glm::vec3(-2.0f, 0.0f, 0.0f)) < 0.001f,
+        "MMD animated rigid-body mapping reused skeleton-root space"
+    );
+
+    std::vector<PhysicsDebugLine> lines;
+    physics.SetDebugOverlay(MmdPhysicsDebugOverlay::BindPose);
+    physics.AppendDebugLines(lines);
+    Require(!lines.empty(), "Bind-pose debug overlay produced no lines");
+    const bool hasSourceBind = std::any_of(
+        lines.begin(),
+        lines.end(),
+        [](const PhysicsDebugLine& line)
+        {
+            return NearlyEqual(line.color, glm::vec3(0.0f, 0.95f, 1.0f));
+        }
+    );
+    const bool hasBulletBind = std::any_of(
+        lines.begin(),
+        lines.end(),
+        [](const PhysicsDebugLine& line)
+        {
+            return NearlyEqual(line.color, glm::vec3(0.15f, 0.45f, 1.0f));
+        }
+    );
+    Require(
+        hasSourceBind && hasBulletBind,
+        "Bind overlay did not draw both PMX and CreateBody bind poses"
+    );
+
+    lines.clear();
+    physics.SetDebugOverlay(MmdPhysicsDebugOverlay::ResetPose);
+    physics.AppendDebugLines(lines);
+    Require(!lines.empty(), "Reset-pose debug overlay produced no lines");
+    lines.clear();
+    physics.SetDebugOverlay(MmdPhysicsDebugOverlay::Runtime);
+    physics.AppendDebugLines(lines);
+    Require(!lines.empty(), "Runtime debug overlay produced no lines");
+    physics.SetDebugOverlay(MmdPhysicsDebugOverlay::BindPose);
+    Require(
+        physics.CycleDebugOverlay() == MmdPhysicsDebugOverlay::ResetPose &&
+        physics.CycleDebugOverlay() == MmdPhysicsDebugOverlay::Runtime &&
+        physics.CycleDebugOverlay() == MmdPhysicsDebugOverlay::All &&
+        physics.CycleDebugOverlay() == MmdPhysicsDebugOverlay::Off,
+        "MMD debug overlay cycle order changed"
+    );
+}
+
+
+std::unique_ptr<ModelAsset> CreateMmdInitializationStabilizationModel(
+    bool impossibleKinematicPair
+)
+{
+    auto model = std::make_unique<ModelAsset>(
+        impossibleKinematicPair
+            ? "impossibleStabilization"
+            : "initializationStabilization"
+    );
+    const glm::mat4 secondBind = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    model->SetSkeleton(Skeleton({
+        Bone{"anchor", InvalidBoneIndex, glm::mat4(1.0f), glm::mat4(1.0f)},
+        Bone{"tip", InvalidBoneIndex, secondBind, glm::inverse(secondBind)}
+    }));
+
+    std::vector<MmdRigidBodyDefinition> bodies(2U);
+    bodies[0U].name = "anchorBody";
+    bodies[0U].bone = 0U;
+    bodies[0U].shape = MmdRigidBodyShape::Sphere;
+    bodies[0U].size = glm::vec3(0.2f, 0.0f, 0.0f);
+    bodies[0U].mode = MmdRigidBodyMode::FollowBone;
+    bodies[0U].modelBindTransform = glm::mat4(1.0f);
+    bodies[0U].boneToBody = glm::mat4(1.0f);
+    bodies[0U].bodyToBone = glm::mat4(1.0f);
+
+    bodies[1U].name = "tipBody";
+    bodies[1U].bone = 1U;
+    bodies[1U].shape = MmdRigidBodyShape::Sphere;
+    bodies[1U].size = glm::vec3(0.2f, 0.0f, 0.0f);
+    bodies[1U].mass = impossibleKinematicPair ? 0.0f : 1.0f;
+    bodies[1U].mode = impossibleKinematicPair
+        ? MmdRigidBodyMode::FollowBone
+        : MmdRigidBodyMode::PhysicsWithBone;
+    bodies[1U].modelBindTransform = secondBind;
+    bodies[1U].boneToBody = glm::mat4(1.0f);
+    bodies[1U].bodyToBone = glm::mat4(1.0f);
+
+    MmdJointDefinition joint;
+    joint.name = "lockedInitializationJoint";
+    joint.bodyA = 0U;
+    joint.bodyB = 1U;
+    joint.position = glm::vec3(0.5f, 0.0f, 0.0f);
+    joint.modelBindTransform = glm::translate(
+        glm::mat4(1.0f),
+        joint.position
+    );
+    joint.linearLower = glm::vec3(0.0f);
+    joint.linearUpper = glm::vec3(0.0f);
+    joint.angularLower = glm::vec3(0.0f);
+    joint.angularUpper = glm::vec3(0.0f);
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        {joint}
+    ));
+    return model;
+}
+
+void TestMmdPhysicsInitializationStabilization()
+{
+    {
+        std::unique_ptr<ModelAsset> model =
+            CreateMmdInitializationStabilizationModel(false);
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        entity.GetPose().SetLocalMatrix(
+            0U,
+            glm::translate(
+                glm::mat4(1.0f),
+                glm::vec3(2.0f, 0.0f, 0.0f)
+            )
+        );
+        scene.Update(0.0f);
+
+        const PhysicsBodyState anchor =
+            entity.GetMmdPhysics().BodyStateAt(0U);
+        const PhysicsBodyState tip =
+            entity.GetMmdPhysics().BodyStateAt(1U);
+        const glm::vec3 anchorJoint = anchor.position +
+            anchor.rotation * glm::vec3(0.5f, 0.0f, 0.0f);
+        const glm::vec3 tipJoint = tip.position +
+            tip.rotation * glm::vec3(-0.5f, 0.0f, 0.0f);
+        Require(
+            glm::distance(anchorJoint, tipJoint) < 0.2f,
+            "Hidden MMD warmup did not settle a reset joint chain"
+        );
+        Require(
+            entity.GetMmdPhysics().PendingStabilizationSteps() == 0U &&
+            !entity.GetMmdPhysics().StabilizationFailed(),
+            "Converged MMD initialization remained pending or failed"
+        );
+    }
+
+    {
+        std::unique_ptr<ModelAsset> model =
+            CreateMmdInitializationStabilizationModel(true);
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        entity.GetPose().SetLocalMatrix(
+            0U,
+            glm::translate(
+                glm::mat4(1.0f),
+                glm::vec3(10.0f, 0.0f, 0.0f)
+            )
+        );
+        scene.Update(0.0f);
+        Require(
+            entity.GetMmdPhysics().StabilizationFailed(),
+            "Non-convergent MMD initialization did not enter safe freeze"
+        );
+    }
+}
+
+
 void TestMmdPhysics2BSpringAndLifecycle()
 {
     std::unique_ptr<ModelAsset> model = CreatePhysics2BSpringModel();
@@ -4575,6 +4809,107 @@ void TestDemoPmxPhysics2BRuntimeWhenAvailable()
     );
 }
 
+
+
+void TestDemoPmxVmdInitializationStabilizationWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
+        u8"身体动作.vmd";
+    if (!std::filesystem::is_regular_file(motionPath))
+    {
+        motionPath = ProjectAssetDirectory / "motions" /
+            "#U76ae#U5361#U76ae#U5361#U76ae#U5361#U4e18+" /
+            "#U8eab#U4f53#U52a8#U4f5c.vmd";
+    }
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    ImportedModelData imported;
+    try
+    {
+        imported = ModelImporter().Import(modelPath);
+    }
+    catch (const std::runtime_error& error)
+    {
+        if (std::string(error.what()).find("texture was not found") !=
+            std::string::npos)
+        {
+            return;
+        }
+        throw;
+    }
+    Require(
+        imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
+        "Demo PMX/VMD stabilization source lost skeleton or physics"
+    );
+
+    ModelAsset model("demoVmdInitialization");
+    model.SetSkeleton(std::move(*imported.skeleton));
+    if (!imported.morphs.empty())
+        model.SetMorphs(std::move(imported.morphs));
+    model.SetMmdPhysics(std::move(*imported.mmdPhysics));
+    const MorphSet* morphs = model.HasMorphs() ? &model.GetMorphSet() : nullptr;
+    ImportedVmdAnimationData motion = VmdImporter().Import(
+        motionPath,
+        model.GetSkeleton(),
+        VmdImportOptions{.clipName = "initializationMotion"},
+        morphs
+    );
+    model.AddAnimationClip(std::move(motion.clip));
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    scene.Update(0.0f);
+    entity.GetMmdPhysics().LogAlignmentReport(4U);
+    Require(
+        entity.GetMmdPhysics().PendingStabilizationSteps() == 0U &&
+        !entity.GetMmdPhysics().StabilizationFailed(),
+        "Demo PMX/VMD initialization remained pending or entered safe freeze"
+    );
+
+    const int longRunFrames = std::getenv("WISTERIA_SANITIZER_SMOKE") != nullptr
+        ? 60
+        : 720;
+    for (int frame = 0; frame < longRunFrames; ++frame)
+    {
+        scene.Update(1.0f / 60.0f);
+        for (RigidBodyIndex index = 0U;
+             index < entity.GetMmdPhysics().RigidBodyCount();
+             ++index)
+        {
+            const PhysicsBodyState state =
+                entity.GetMmdPhysics().BodyStateAt(index);
+            Require(
+                std::isfinite(state.position.x) &&
+                std::isfinite(state.position.y) &&
+                std::isfinite(state.position.z) &&
+                std::isfinite(state.rotation.w) &&
+                std::isfinite(state.rotation.x) &&
+                std::isfinite(state.rotation.y) &&
+                std::isfinite(state.rotation.z),
+                "Demo PMX/VMD long-run produced non-finite Bullet state"
+            );
+        }
+        Require(
+            !entity.GetMmdPhysics().StabilizationFailed(),
+            "Demo PMX/VMD long-run entered safe freeze"
+        );
+    }
+    entity.GetMmdPhysics().LogAlignmentReport(8U);
+}
 
 
 void TestBulletAdditionalConstraintsAndDebugDraw()
@@ -4959,6 +5294,7 @@ void TestMmdPhysics2BSceneMoveAssignment()
     );
 }
 
+
 template<typename Function>
 bool RunTest(const char* name, Function&& function)
 {
@@ -5028,6 +5364,14 @@ int main()
         TestMmdPhysics2BModesAndPoseSync
     );
     failures += !RunTest(
+        "MMD bind alignment overlay",
+        TestMmdPhysicsBindAlignmentOverlay
+    );
+    failures += !RunTest(
+        "MMD initialization stabilization",
+        TestMmdPhysicsInitializationStabilization
+    );
+    failures += !RunTest(
         "MMD Physics 2B Spring and lifecycle",
         TestMmdPhysics2BSpringAndLifecycle
     );
@@ -5042,6 +5386,10 @@ int main()
     failures += !RunTest(
         "Demo PMX Physics 2B runtime",
         TestDemoPmxPhysics2BRuntimeWhenAvailable
+    );
+    failures += !RunTest(
+        "Demo PMX/VMD initialization and long-run diagnostics",
+        TestDemoPmxVmdInitializationStabilizationWhenAvailable
     );
     failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
     failures += !RunTest("Skeleton validation", TestSkeletonValidation);

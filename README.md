@@ -114,3 +114,67 @@ R      重播动作并把刚体重置到当前 Pose
 - 线框在动但网格不动：检查刚体到骨骼映射、Pose 回写和蒙皮权重；
 - Mode 2 线框受重力产生位移，而骨骼位置仍跟动画：这是正确的 Physics With Bone 行为；
 - 大量跨人物长线通常是关节和限制线，不是额外网格。
+
+## MMD Bind、Reset 与运行时诊断
+
+人物 Demo 将 Bullet 自带运行时线框和 MMD 语义 Overlay 分开：
+
+```text
+P      开关当前 Bullet 刚体、关节和限制
+B      OFF → BIND → RESET → RUNTIME → ALL → OFF
+L      在终端输出完整 MMD 对齐、初始化和运行报告
+```
+
+Overlay 含义：
+
+```text
+BIND
+青色      PMX 原始 Bind Pose
+蓝色      CreateBody 后、Reset 前的真实 Bullet Bind Pose
+
+RESET
+黄色      约束保持算法生成的 Reset 目标
+紫红色    Reset 后从 Bullet 反算的实际状态
+
+RUNTIME
+绿色      当前帧物理计算前的纯动画目标
+白色      当前 Bullet 刚体
+
+红线      同组两套中心存在可测位置差
+```
+
+为了让完全重合的线框仍能同时看见，两套 wireframe 只在调试绘制尺寸上采用 `1.03 / 0.97` 的轻微差异；中心、旋转和真实 Bullet 形状都不会被修改。
+
+初始化不再把每个动态刚体互不相关地传送到 VMD 第 0 帧。MMD 适配层会按非宽行程关节建立连接分量，以最近的 FollowBone 刚体作为动画锚点，对整条动态链应用同一个姿态差，从而尽量保持原始约束关系。
+
+若 Reset 后真实的关节限制违规超过阈值，`Scene` 会统一推进最多 30 个隐藏固定步。单个 `MmdPhysicsInstance` 只提交稳定请求和冻结动画锚点，不会私自推进共享 `PhysicsWorld`。预热第 1、10、30 步均会输出阶段日志；若仍不收敛，则进入 `PHYSICS SAFE FREEZE`，停止将异常物理结果写回网格。
+
+日志需要区分两类数值：
+
+```text
+maxJointPos / maxJointRotDeg
+关节两端局部 Frame 的原始差异；宽行程辅助关节可能很大
+
+maxLinearViolation / maxAngularViolationDeg
+扣除 PMX 允许限制范围后的真实违规
+
+stabilization*Violation
+排除明确宽行程、无弹簧辅助关节后用于稳定判定的违规
+```
+
+因此不能仅凭 `S` 类辅助关节出现十几个单位的原始差异就判定失败。当前叶瞬光模型的 Reset 结果中，虽然部分宽行程关节原始差异很大，但真实初始化违规接近浮点零，所以不会被误预热或冻结。
+
+按 `L` 后的主要字段包括：
+
+```text
+skinBindMax
+bindPosMax / bindRotMaxDeg
+createBulletPosMax / createBulletRotMaxDeg
+postResetPosMax / postResetRotMaxDeg
+currentVsPrePhysicsPos / currentVsPrePhysicsRotDeg
+maxLinearViolation / maxAngularViolationDeg
+severeJoints
+```
+
+真实 VMD 的 12 秒 Release 回归还揭示了一个独立问题：初始化保持正确，但长时间运行后部分裙摆、飘带链的约束违规会逐渐增大。该结果说明下一阶段应处理固定步调度、Kinematic 子步插值、求解器稳定性、碰撞 margin 与 CCD，而不是继续修改 Bind/Reset 坐标公式。
+

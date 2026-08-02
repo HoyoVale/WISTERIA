@@ -1766,12 +1766,17 @@ MmdPhysicsAsset BuildPmxPhysicsAsset(
                 );
             }
             body.bone = *mapped;
-            const glm::mat4& boneBind =
+            // Assimp hierarchy globals live in skeleton-root space, while
+            // PMX rigid bodies and rendered vertices live in model/mesh space.
+            // Convert the bind bone into model space before deriving the
+            // persistent MMD bone/body offsets.
+            const glm::mat4 boneModelBind =
+                skeleton->InverseRootMatrix() *
                 skeleton->BindGlobalMatrices()[body.bone];
-            body.boneToBody = glm::inverse(boneBind) *
+            body.boneToBody = glm::inverse(boneModelBind) *
                 body.modelBindTransform;
             body.bodyToBone = glm::inverse(body.modelBindTransform) *
-                boneBind;
+                boneModelBind;
         }
         rigidBodies.push_back(std::move(body));
     }

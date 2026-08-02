@@ -3,6 +3,7 @@
 #include "shader.hpp"
 #include "environment.hpp"
 #include "morph.hpp"
+#include "physics_instance.hpp"
 #include "vao.hpp"
 #include <algorithm>
 #include <cmath>
@@ -804,9 +805,22 @@ void Renderer::DrawPhysicsDebug(
     const glm::mat4& projection
 )
 {
-    const std::span<const PhysicsDebugLine> lines =
-        scene.Physics().DebugLines();
-    if (!scene.Physics().DebugDrawEnabled() || lines.empty())
+    std::vector<PhysicsDebugLine> lines;
+    if (scene.Physics().DebugDrawEnabled())
+    {
+        const std::span<const PhysicsDebugLine> worldLines =
+            scene.Physics().DebugLines();
+        lines.insert(lines.end(), worldLines.begin(), worldLines.end());
+    }
+    for (const std::unique_ptr<Entity>& entity : scene.Entities())
+    {
+        if (const PhysicsInstance* instance =
+                entity->TryGetPhysicsInstance())
+        {
+            instance->AppendDebugLines(lines);
+        }
+    }
+    if (lines.empty())
         return;
 
     this->EnsurePhysicsDebugResources();

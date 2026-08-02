@@ -1135,6 +1135,30 @@ void PhysicsWorld::SetAngularVelocity(
     slot.body->activate(true);
 }
 
+void PhysicsWorld::SetLinearFactor(
+    PhysicsBodyHandle body,
+    const glm::vec3& factor
+)
+{
+    if (!IsFinite(factor))
+        throw std::invalid_argument("Physics linear factor is non-finite");
+    Impl::BodySlot& slot = impl->Require(body);
+    slot.body->setLinearFactor(PhysicsBulletConversion::ToBullet(factor));
+    slot.body->activate(true);
+}
+
+void PhysicsWorld::SetAngularFactor(
+    PhysicsBodyHandle body,
+    const glm::vec3& factor
+)
+{
+    if (!IsFinite(factor))
+        throw std::invalid_argument("Physics angular factor is non-finite");
+    Impl::BodySlot& slot = impl->Require(body);
+    slot.body->setAngularFactor(PhysicsBulletConversion::ToBullet(factor));
+    slot.body->activate(true);
+}
+
 void PhysicsWorld::ApplyCentralImpulse(
     PhysicsBodyHandle body,
     const glm::vec3& impulse
