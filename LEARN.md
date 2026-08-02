@@ -1036,3 +1036,95 @@ SoftBodyInstance
 - 真实 605 骨骼 / 495 刚体人物连续模拟；
 - 全身骨骼动作与至少多组刚体必须同时发生位移；
 - 所有 Bullet 状态保持有限值。
+
+# MMD PhysicsWithBone 语义修正：模拟状态与骨骼写回是两件事
+
+这次问题不是 Bullet 没有重力，也不是 PMX 没有刚体，而是把 PMX Mode 2 的“骨骼位置对齐”错误地实现成了“禁止刚体平移”。真实模型有 495 个刚体，其中：
+
+```text
+Follow Bone         38
+Physics             74
+Physics With Bone  383
+```
+
+旧实现对 383 个 Mode 2 刚体设置零 `linearFactor`，并在每帧物理前把它们的位置传送回动画骨骼。结果是隐藏锤体和关节仍能带来少量旋转反馈，但重力无法完整拉动长发、衣摆与饰品链。
+
+## 正确分层
+
+通用物理层只表达可复用的物理事实：
+
+```text
+PhysicsWorld
+├─ Dynamic / Static / Kinematic
+├─ shape、mass、damping、friction
+├─ collision group / mask
+├─ constraints
+└─ force、impulse、transform、state
+```
+
+它不认识 PMX Mode 0/1/2，也不决定骨骼应该接收位置还是旋转。
+
+格式适配层负责 MMD 语义：
+
+```text
+MmdPhysicsInstance::PrepareSimulation
+└─ 只把 Follow Bone 的动画变换同步给 Kinematic 刚体
+
+PhysicsWorld::Step
+└─ Physics 与 PhysicsWithBone 都作为完整 Dynamic Body 模拟
+
+MmdPhysicsInstance::FinishSimulation
+├─ Physics：物理位置 + 物理旋转写回骨骼
+└─ PhysicsWithBone：保留动画位置 + 物理旋转写回骨骼
+```
+
+因此 Mode 2 的刚体可以在 Bullet 世界里受重力平移、碰撞和被关节牵引，但网格骨骼不会被这段物理平移拖离动画位置。不同模型格式未来可以在自己的 `PhysicsInstance` 中采用不同写回策略，而不改变 `PhysicsWorld`。
+
+## 为什么不能每帧 teleport Mode 2
+
+每帧传送一个 Dynamic Body 会同时破坏：
+
+- 重力积分；
+- 线速度连续性；
+- 关节误差的自然求解；
+- 碰撞接触缓存；
+- Bullet 的休眠判断。
+
+它看起来像在“保持骨骼位置”，实际上修改了物理对象本身。正确方法是在模拟结束后组合骨骼结果，而不是在模拟前削掉刚体自由度。
+
+## 批量 Pose 写回仍然保留
+
+本次修正没有恢复旧的逐骨骼全骨架重算。`PostPhysicsUpdate` 仍然：
+
+```text
+复制当前 local/global Pose
+→ 按 Skeleton evaluation order 线性遍历
+→ 为物理骨骼组合最终 global
+→ 计算对应 local
+→ Pose::SetLocalMatrices 一次提交
+```
+
+所以语义修正不会重新引入 Physics 2B 初版的二次复杂度卡顿。
+
+## Debug Draw 怎么读
+
+按 `P` 后，WISTERIA 收集 Bullet 的 wireframe、constraint 和 constraint limit 线段，再由 Renderer 一次上传为 GL_LINES。颜色是 Bullet 提供的调试颜色，不是 WISTERIA 自定义的 Mode 图例。
+
+实用检查顺序：
+
+1. `Space` 暂停，在固定姿态下观察刚体是否贴合头发、身体和衣物；
+2. `P` 开关线框，对比线框与实际网格；
+3. `R` 重置，观察刚体是否回到 Pose，而不是保留上一轮速度；
+4. 继续播放，观察 Dynamic/Mode 2 线框是否有惯性与重力位移；
+5. 线框动而网格不动时，继续检查骨骼映射和蒙皮，不要先怀疑 Bullet。
+
+## 自动化防回归
+
+测试现在同时证明：
+
+- 合成 Mode 2 刚体能在重力下产生线性位移；
+- Mode 2 骨骼保留动画指定的全局位置；
+- Mode 2 骨骼采用 Bullet 产生的旋转；
+- 真实人物仍为 38 / 74 / 383 的模式分布；
+- 真实模型的 Mode 2 刚体中至少有对象产生可测平移；
+- 57 项原有渲染、动画、Morph、物理和生命周期测试继续通过。

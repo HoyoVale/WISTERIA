@@ -75,3 +75,42 @@ MmdPhysicsInstance
 ```
 
 `Entity` 不再以 `MmdPhysicsInstance` 作为唯一物理所有权类型。它持有通用 `PhysicsInstance`，Scene 只调用通用生命周期；MMD 专用访问器暂时保留给刚体索引和调试工具。未来 glTF 角色、车辆或其他模型格式可以提供自己的 PhysicsInstance，而不需要修改 Scene 的模拟循环。
+
+## MMD 刚体模式与调试观察
+
+PMX 三种刚体模式的语义只存在于 `MmdPhysicsInstance` 适配层，通用 `PhysicsWorld` 仍只处理 Static、Dynamic、Kinematic 刚体：
+
+```text
+Follow Bone
+动画骨骼 → Kinematic 刚体
+
+Physics
+Dynamic 刚体的位置和旋转 → 骨骼
+
+Physics With Bone
+Dynamic 刚体完整参与重力、碰撞和关节
+但回写骨骼时保留动画平移，只采用物理旋转
+```
+
+Mode 2 不能通过关闭刚体线性自由度实现。刚体本身必须允许重力和关节推动；“位置对齐”是 MMD 适配器在模拟后写回骨骼时执行的格式语义。
+
+人物 Demo 中按 `P` 开关 Bullet 调试绘制。当前显示内容来自 Bullet：
+
+- 刚体球体、盒体和胶囊的 wireframe；
+- 刚体之间的关节连接；
+- 关节限制范围。
+
+颜色由 Bullet 调试器根据对象与约束状态提供，不代表 PMX 的三种刚体模式，不能仅凭红色或白色判断 Follow Bone / Physics / Physics With Bone。建议暂停后观察：
+
+```text
+Space  暂停动作，便于比较线框与网格
+P      开关物理线框
+R      重播动作并把刚体重置到当前 Pose
+```
+
+判断方法：
+
+- 线框和网格都不动：动作激励小、关节很紧，或该刚体本来是 Follow Bone；
+- 线框在动但网格不动：检查刚体到骨骼映射、Pose 回写和蒙皮权重；
+- Mode 2 线框受重力产生位移，而骨骼位置仍跟动画：这是正确的 Physics With Bone 行为；
+- 大量跨人物长线通常是关节和限制线，不是额外网格。

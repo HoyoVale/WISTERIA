@@ -192,8 +192,6 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             );
             description.restitution = definition.restitution;
             description.friction = definition.friction;
-            if (definition.mode == MmdRigidBodyMode::PhysicsWithBone)
-                description.linearFactor = glm::vec3(0.0f);
             description.collisionGroup = static_cast<std::uint16_t>(
                 1U << definition.collisionGroup
             );
@@ -479,7 +477,7 @@ void MmdPhysicsInstance::PrePhysicsUpdate(
     for (RuntimeBody& runtime : this->rigidBodies)
     {
         const MmdRigidBodyDefinition& definition = *runtime.definition;
-        if (definition.mode == MmdRigidBodyMode::Physics)
+        if (definition.mode != MmdRigidBodyMode::FollowBone)
             continue;
 
         const RigidTransform animated = ModelToWorld(
@@ -496,25 +494,12 @@ void MmdPhysicsInstance::PrePhysicsUpdate(
                 runtime.lastAnimatedRotation
             )) > rotationDotEpsilon;
 
-        if (definition.mode == MmdRigidBodyMode::FollowBone)
+        if (positionChanged || rotationChanged)
         {
-            if (positionChanged || rotationChanged)
-            {
-                this->world->SetTransform(
-                    runtime.handle,
-                    animated.position,
-                    animated.rotation,
-                    false
-                );
-            }
-        }
-        else if (positionChanged)
-        {
-            const PhysicsBodyState current = this->world->State(runtime.handle);
             this->world->SetTransform(
                 runtime.handle,
                 animated.position,
-                current.rotation,
+                animated.rotation,
                 false
             );
         }
@@ -568,9 +553,28 @@ void MmdPhysicsInstance::PostPhysicsUpdate(const Transform& transform)
             entity
         );
         const glm::mat4 drivenGlobal = bodyModel * definition.bodyToBone;
-        this->globalMatrixScratch[boneIndex] = drivenGlobal;
+        if (definition.mode == MmdRigidBodyMode::PhysicsWithBone)
+        {
+            // PMX mode 2 keeps the animation-authored bone translation while
+            // taking the final orientation from the freely simulated rigid
+            // body. The Bullet body itself must remain fully dynamic: locking
+            // its linear factor or teleporting it each frame prevents gravity
+            // and joint chains from reproducing MMD hair and clothing motion.
+            BoneTransform animatedBone = BoneTransform::FromMatrix(
+                currentGlobals[boneIndex]
+            );
+            const BoneTransform physicsBone = BoneTransform::FromMatrix(
+                drivenGlobal
+            );
+            animatedBone.rotation = physicsBone.rotation;
+            this->globalMatrixScratch[boneIndex] = animatedBone.Matrix();
+        }
+        else
+        {
+            this->globalMatrixScratch[boneIndex] = drivenGlobal;
+        }
         this->localMatrixScratch[boneIndex] =
-            glm::inverse(parentGlobal) * drivenGlobal;
+            glm::inverse(parentGlobal) * this->globalMatrixScratch[boneIndex];
     }
 
     this->pose->SetLocalMatrices(this->localMatrixScratch);

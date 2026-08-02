@@ -4334,6 +4334,9 @@ void TestMmdPhysics2BModesAndPoseSync()
         2U,
         glm::translate(glm::mat4(1.0f), glm::vec3(4.0f, 3.0f, 0.0f))
     );
+    const glm::vec3 hybridAnimatedPosition(4.0f, 3.0f, 0.0f);
+    const float hybridStartY =
+        entity.GetMmdPhysics().BodyStateAt(2U).position.y;
     scene.Physics().ApplyTorqueImpulse(
         entity.GetMmdPhysics().BodyHandleAt(2U),
         glm::vec3(0.0f, 0.0f, 2.0f)
@@ -4342,11 +4345,15 @@ void TestMmdPhysics2BModesAndPoseSync()
         scene.Update(1.0f / 60.0f);
     const PhysicsBodyState hybridState = entity.GetMmdPhysics().BodyStateAt(2U);
     Require(
-        std::abs(hybridState.position.x - 4.0f) < 0.05f,
-        "PhysicsWithBone did not retain the animated bone position"
+        hybridState.position.y < hybridStartY - 0.25f,
+        "PhysicsWithBone rigid body did not remain fully dynamic under gravity"
     );
     const BoneTransform hybridPose = BoneTransform::FromMatrix(
         entity.GetPose().GlobalMatrix(2U)
+    );
+    Require(
+        glm::distance(hybridPose.translation, hybridAnimatedPosition) < 0.03f,
+        "PhysicsWithBone did not retain the animation-authored bone position"
     );
     Require(
         !NearlySameRotation(hybridState.rotation, glm::quat(1.0f, 0.0f, 0.0f, 0.0f)) &&
@@ -4487,6 +4494,22 @@ void TestDemoPmxPhysics2BRuntimeWhenAvailable()
             }
         )
     );
+    std::array<std::size_t, 3U> modeCounts{};
+    std::vector<RigidBodyIndex> physicsWithBoneIndices;
+    for (RigidBodyIndex index = 0U;
+         index < imported.mmdPhysics->RigidBodyCount();
+         ++index)
+    {
+        const MmdRigidBodyMode mode =
+            imported.mmdPhysics->RigidBodyAt(index).mode;
+        ++modeCounts[static_cast<std::size_t>(mode)];
+        if (mode == MmdRigidBodyMode::PhysicsWithBone)
+            physicsWithBoneIndices.push_back(index);
+    }
+    Require(
+        modeCounts == std::array<std::size_t, 3U>{38U, 74U, 383U},
+        "Demo PMX rigid-body mode distribution changed"
+    );
     ModelAsset model("demoPhysics2B");
     model.SetSkeleton(std::move(*imported.skeleton));
     model.SetMmdPhysics(std::move(*imported.mmdPhysics));
@@ -4500,7 +4523,39 @@ void TestDemoPmxPhysics2BRuntimeWhenAvailable()
         scene.Physics().ConstraintCount() == expectedConstraints,
         "Demo PMX did not create its complete supported Bullet runtime"
     );
-    scene.Update(1.0f / 60.0f);
+    std::vector<glm::vec3> physicsWithBoneStartPositions;
+    physicsWithBoneStartPositions.reserve(physicsWithBoneIndices.size());
+    for (RigidBodyIndex index : physicsWithBoneIndices)
+    {
+        physicsWithBoneStartPositions.push_back(
+            entity.GetMmdPhysics().BodyStateAt(index).position
+        );
+    }
+
+    for (int frame = 0; frame < 60; ++frame)
+        scene.Update(1.0f / 60.0f);
+
+    std::size_t movedPhysicsWithBoneCount = 0U;
+    for (std::size_t sample = 0U;
+         sample < physicsWithBoneIndices.size();
+         ++sample)
+    {
+        const PhysicsBodyState state = entity.GetMmdPhysics().BodyStateAt(
+            physicsWithBoneIndices[sample]
+        );
+        if (glm::distance(
+                state.position,
+                physicsWithBoneStartPositions[sample]
+            ) > 0.002f)
+        {
+            ++movedPhysicsWithBoneCount;
+        }
+    }
+    Require(
+        movedPhysicsWithBoneCount > 0U,
+        "Demo PMX PhysicsWithBone bodies were prevented from translating"
+    );
+
     for (RigidBodyIndex index = 0U; index < 495U; index += 47U)
     {
         const PhysicsBodyState state = entity.GetMmdPhysics().BodyStateAt(index);
