@@ -109,6 +109,22 @@ void Window::SwapBuffers() const
     glfwSwapBuffers(this->window);
 }
 
+const std::string& Window::Title() const noexcept
+{
+    return this->title;
+}
+
+void Window::SetTitle(std::string nextTitle)
+{
+    if (nextTitle.empty())
+        throw std::invalid_argument("Window title cannot be empty");
+    if (this->window == nullptr)
+        throw std::logic_error("Cannot rename a destroyed window");
+
+    this->title = std::move(nextTitle);
+    glfwSetWindowTitle(this->window, this->title.c_str());
+}
+
 void Window::BeginInputFrame() noexcept
 {
     this->input.BeginFrame();

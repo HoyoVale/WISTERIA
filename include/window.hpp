@@ -32,6 +32,8 @@ public:
     bool ShouldClose() const noexcept;
     void MakeContextCurrent() const;
     void SwapBuffers() const;
+    const std::string& Title() const noexcept;
+    void SetTitle(std::string title);
     void BeginInputFrame() noexcept;
     void Update(float deltaTime);
     void EnableFreeCameraController(

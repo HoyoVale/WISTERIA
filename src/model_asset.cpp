@@ -74,6 +74,16 @@ void ModelAsset::SetMorphs(std::vector<MorphDefinition> definitions)
     this->morphSet.emplace(std::move(definitions));
 }
 
+std::size_t ModelAsset::MmdRigidBodyCount() const noexcept
+{
+    return this->mmdRigidBodyCount;
+}
+
+void ModelAsset::SetMmdRigidBodyCount(std::size_t count) noexcept
+{
+    this->mmdRigidBodyCount = count;
+}
+
 std::size_t ModelAsset::AnimationClipCount() const noexcept
 {
     return this->animationClips.size();

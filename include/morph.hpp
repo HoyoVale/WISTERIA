@@ -15,9 +15,12 @@
 #include <vector>
 
 using MorphIndex = std::uint32_t;
+using RigidBodyIndex = std::uint32_t;
 
 inline constexpr MorphIndex InvalidMorphIndex =
     static_cast<MorphIndex>(-1);
+inline constexpr RigidBodyIndex InvalidRigidBodyIndex =
+    static_cast<RigidBodyIndex>(-1);
 inline constexpr std::uint32_t AllMaterialMorphTargets =
     std::numeric_limits<std::uint32_t>::max();
 inline constexpr std::size_t MmdUvChannelCount = 5U;
@@ -37,7 +40,9 @@ enum class MorphKind : std::uint8_t
     Group = 1,
     Bone = 2,
     Uv = 3,
-    Material = 4
+    Material = 4,
+    Flip = 5,
+    Impulse = 6
 };
 
 enum class MaterialMorphOperation : std::uint8_t
@@ -52,11 +57,37 @@ struct GroupMorphMember
     float weight = 0.0f;
 };
 
+struct FlipMorphMember
+{
+    MorphIndex morphIndex = InvalidMorphIndex;
+    float weight = 0.0f;
+};
+
 struct BoneMorphOffset
 {
     BoneIndex boneIndex = InvalidBoneIndex;
     glm::vec3 translation{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct ImpulseMorphOffset
+{
+    RigidBodyIndex rigidBodyIndex = InvalidRigidBodyIndex;
+    bool local = false;
+    glm::vec3 velocity{0.0f};
+    glm::vec3 torque{0.0f};
+};
+
+// Aggregated per-Entity PMX 2.1 impulse request. A physics step should
+// process reset flags first, then apply global and local channels separately.
+struct MmdRigidBodyImpulse
+{
+    RigidBodyIndex rigidBodyIndex = InvalidRigidBodyIndex;
+    bool reset = false;
+    glm::vec3 globalLinearImpulse{0.0f};
+    glm::vec3 globalTorqueImpulse{0.0f};
+    glm::vec3 localLinearImpulse{0.0f};
+    glm::vec3 localTorqueImpulse{0.0f};
 };
 
 struct MaterialMorphOffset
@@ -80,8 +111,10 @@ struct MorphDefinition
     MorphCategory category = MorphCategory::Other;
     MorphKind kind = MorphKind::Vertex;
     std::vector<GroupMorphMember> groupMembers;
+    std::vector<FlipMorphMember> flipMembers;
     std::vector<BoneMorphOffset> boneOffsets;
     std::vector<MaterialMorphOffset> materialOffsets;
+    std::vector<ImpulseMorphOffset> impulseOffsets;
 };
 
 struct VertexMorphOffset
@@ -149,11 +182,15 @@ public:
         std::span<const float> weights,
         MaterialMorphValues& values
     ) const;
+    void EvaluateImpulseMorphs(
+        std::span<const float> weights,
+        std::vector<MmdRigidBodyImpulse>& output
+    ) const;
 
 private:
     std::vector<MorphDefinition> definitions;
     std::unordered_map<std::string, MorphIndex> indices;
-    std::array<bool, 5U> kinds{};
+    std::array<bool, 7U> kinds{};
 };
 
 // Per-Entity runtime weights. It references a shared MorphSet but never
@@ -173,6 +210,9 @@ public:
     void Reset() noexcept;
     std::span<const float> Weights() const noexcept;
     std::span<const float> EffectiveWeights() const;
+    void EvaluateImpulseMorphs(
+        std::vector<MmdRigidBodyImpulse>& output
+    ) const;
     std::uint64_t Revision() const noexcept;
 
 private:

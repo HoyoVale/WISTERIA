@@ -21,13 +21,19 @@ std::filesystem::path NormalizeResourcePath(
 
 Mesh& ResourceManager::CreateMesh(
     const std::string& name,
-    const DefaultModelData& data
+    const DefaultModelData& data,
+    std::size_t requiredBoneCount,
+    std::vector<MeshMorphTarget> morphTargets
 )
 {
     if (this->meshes.contains(name))
         throw std::invalid_argument("Mesh resource already exists: " + name);
 
-    auto resource = std::make_unique<Mesh>(data);
+    auto resource = std::make_unique<Mesh>(
+        data,
+        requiredBoneCount,
+        std::move(morphTargets)
+    );
     Mesh& result = *resource;
     this->meshes.emplace(name, std::move(resource));
     return result;
@@ -370,6 +376,7 @@ ModelAsset& ResourceManager::LoadModel(
     }
 
     auto model = std::make_unique<ModelAsset>(name);
+    model->SetMmdRigidBodyCount(imported.rigidBodyCount);
     if (imported.skeleton.has_value())
         model->SetSkeleton(std::move(*imported.skeleton));
     if (!imported.morphs.empty())

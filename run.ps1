@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('run', 'build', 'compile', 'test', 'clean')]
-    [string]$Action = 'run'
+    [string]$Action = 'run',
+
+    [string[]]$ApplicationArguments = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,7 +22,7 @@ function Start-Application {
     # 让程序的当前工作目录固定为项目根目录，便于使用相对资源路径。
     Push-Location $ProjectRoot
     try {
-        & $Executable
+        & $Executable @ApplicationArguments
 
         if ($LASTEXITCODE -ne 0) {
             throw "程序运行失败，退出码：$LASTEXITCODE"

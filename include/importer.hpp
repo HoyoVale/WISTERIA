@@ -72,6 +72,7 @@ struct ImportedModelData
     std::vector<ImportedMeshData> meshes;
     std::vector<ImportedPartData> parts;
     std::optional<Skeleton> skeleton;
+    std::size_t rigidBodyCount = 0U;
     std::vector<MorphDefinition> morphs;
     std::vector<AnimationClip> animations;
 };

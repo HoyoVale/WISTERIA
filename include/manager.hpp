@@ -46,7 +46,12 @@ public:
     ResourceManager(ResourceManager&&) noexcept = default;
     ResourceManager& operator=(ResourceManager&&) noexcept = default;
 
-    Mesh& CreateMesh(const std::string& name, const DefaultModelData& data);
+    Mesh& CreateMesh(
+        const std::string& name,
+        const DefaultModelData& data,
+        std::size_t requiredBoneCount = 0U,
+        std::vector<MeshMorphTarget> morphTargets = {}
+    );
     Material& CreateMaterial(
         const std::string& name,
         const MaterialData& data = {}

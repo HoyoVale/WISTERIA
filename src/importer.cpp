@@ -85,6 +85,8 @@ struct PmxMetadata
     };
 
     std::vector<BoneMetadata> bones;
+    std::vector<std::uint8_t> assimpCompatibleBytes;
+    std::size_t rigidBodyCount = 0U;
     std::vector<MorphDefinition> morphDefinitions;
     std::vector<VertexMorphMetadata> vertexMorphs;
     std::vector<UvMorphMetadata> uvMorphs;
@@ -120,6 +122,11 @@ public:
     explicit PmxReader(const std::vector<std::uint8_t>& bytes)
         : bytes(bytes)
     {
+    }
+
+    std::size_t Position() const noexcept
+    {
+        return this->offset;
     }
 
     template<typename T>
@@ -519,6 +526,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         result.bones.push_back(std::move(bone));
     }
 
+    const std::size_t morphCountOffset = reader.Position();
     const std::int32_t morphCount = reader.Read<std::int32_t>();
     if (morphCount < 0)
         throw std::runtime_error("PMX contains a negative morph count");
@@ -532,18 +540,24 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         std::vector<std::pair<std::uint32_t, glm::vec3>> vertexOffsets;
         std::vector<std::pair<std::uint32_t, glm::vec4>> uvOffsets;
         std::vector<std::pair<std::int32_t, float>> groupMembers;
+        std::vector<std::pair<std::int32_t, float>> flipMembers;
         std::vector<BoneMorphOffset> boneOffsets;
         std::vector<MaterialMorphOffset> materialOffsets;
+        std::vector<ImpulseMorphOffset> impulseOffsets;
     };
     std::vector<PendingMorph> pendingMorphs;
     pendingMorphs.reserve(static_cast<std::size_t>(morphCount));
+    std::vector<std::uint8_t> assimpMorphBytes;
+    bool requiresAssimpMorphSanitization = false;
     std::unordered_set<std::string> supportedMorphNames;
     for (std::int32_t morphIndex = 0; morphIndex < morphCount; ++morphIndex)
     {
+        const std::size_t recordStart = reader.Position();
         const std::string localName = reader.ReadText(encoding);
         const std::string englishName = reader.ReadText(encoding);
         const std::string name = !localName.empty() ? localName : englishName;
         const std::uint8_t panel = reader.Read<std::uint8_t>();
+        const std::size_t typeOffset = reader.Position();
         const std::uint8_t type = reader.Read<std::uint8_t>();
         const std::int32_t offsetCount = reader.Read<std::int32_t>();
         if (offsetCount < 0)
@@ -551,8 +565,14 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         if (panel > static_cast<std::uint8_t>(MorphCategory::Other))
             throw std::runtime_error("PMX morph category is invalid");
 
-        if (type <= 8U)
+        if (type <= 10U)
         {
+            if (type >= 9U && version < 2.1f)
+            {
+                throw std::runtime_error(
+                    "PMX 2.0 file contains a PMX 2.1 morph type"
+                );
+            }
             if (name.empty() || !supportedMorphNames.emplace(name).second)
             {
                 throw std::runtime_error(
@@ -575,8 +595,12 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                 morph.kind = MorphKind::Uv;
                 morph.uvChannel = static_cast<std::uint8_t>(type - 3U);
             }
-            else
+            else if (type == 8U)
                 morph.kind = MorphKind::Material;
+            else if (type == 9U)
+                morph.kind = MorphKind::Flip;
+            else
+                morph.kind = MorphKind::Impulse;
 
             if (type == 0U)
             {
@@ -677,7 +701,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                     );
                 }
             }
-            else
+            else if (type == 8U)
             {
                 morph.materialOffsets.reserve(
                     static_cast<std::size_t>(offsetCount)
@@ -720,29 +744,163 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
                     morph.materialOffsets.push_back(materialOffset);
                 }
             }
+            else if (type == 9U)
+            {
+                morph.flipMembers.reserve(static_cast<std::size_t>(offsetCount));
+                for (std::int32_t offset = 0; offset < offsetCount; ++offset)
+                {
+                    const int memberIndex = reader.ReadIndex(morphIndexSize);
+                    const float weight = reader.Read<float>();
+                    if (memberIndex < 0 || memberIndex >= morphCount ||
+                        !std::isfinite(weight))
+                    {
+                        throw std::runtime_error(
+                            "PMX Flip morph contains an invalid member"
+                        );
+                    }
+                    morph.flipMembers.emplace_back(memberIndex, weight);
+                }
+            }
+            else
+            {
+                morph.impulseOffsets.reserve(
+                    static_cast<std::size_t>(offsetCount)
+                );
+                for (std::int32_t offset = 0; offset < offsetCount; ++offset)
+                {
+                    const int rigidBodyIndex =
+                        reader.ReadIndex(rigidBodyIndexSize);
+                    const std::uint8_t local = reader.Read<std::uint8_t>();
+                    const glm::vec3 velocity = ReadPmxVec3(reader);
+                    const glm::vec3 torque = ReadPmxVec3(reader);
+                    const auto finite = [](const glm::vec3& value)
+                    {
+                        return std::isfinite(value.x) &&
+                            std::isfinite(value.y) &&
+                            std::isfinite(value.z);
+                    };
+                    if (rigidBodyIndex < 0 || local > 1U ||
+                        !finite(velocity) || !finite(torque))
+                    {
+                        throw std::runtime_error(
+                            "PMX Impulse morph contains an invalid offset"
+                        );
+                    }
+                    morph.impulseOffsets.push_back(ImpulseMorphOffset{
+                        static_cast<RigidBodyIndex>(rigidBodyIndex),
+                        local != 0U,
+                        glm::vec3(velocity.x, velocity.y, -velocity.z),
+                        // Angular impulse is an axial vector. Reflecting the
+                        // PMX Z axis therefore negates X/Y, like quaternion
+                        // handedness conversion, while preserving Z.
+                        glm::vec3(-torque.x, -torque.y, torque.z)
+                    });
+                }
+            }
             pendingMorphs.push_back(std::move(morph));
+
+            const std::size_t recordEnd = reader.Position();
+            if (type <= 8U)
+            {
+                assimpMorphBytes.insert(
+                    assimpMorphBytes.end(),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(recordStart),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(recordEnd)
+                );
+            }
+            else
+            {
+                requiresAssimpMorphSanitization = true;
+                // Assimp's MMD importer currently rejects PMX 2.1 Flip and
+                // Impulse records. Preserve their source indices but replace
+                // only the Assimp-facing copy with an empty Group morph.
+                assimpMorphBytes.insert(
+                    assimpMorphBytes.end(),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(recordStart),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(typeOffset)
+                );
+                assimpMorphBytes.push_back(0U);
+                assimpMorphBytes.insert(
+                    assimpMorphBytes.end(),
+                    sizeof(std::int32_t),
+                    0U
+                );
+            }
             continue;
         }
 
-        std::size_t recordSize = 0U;
-        switch (type)
+        throw std::runtime_error("PMX contains an unsupported morph type");
+    }
+
+    const std::size_t morphSectionEnd = reader.Position();
+    if (requiresAssimpMorphSanitization)
+    {
+        result.assimpCompatibleBytes.reserve(
+            bytes.size() -
+                (morphSectionEnd -
+                    (morphCountOffset + sizeof(std::int32_t))) +
+            assimpMorphBytes.size()
+        );
+        result.assimpCompatibleBytes.insert(
+            result.assimpCompatibleBytes.end(),
+            bytes.begin(),
+            bytes.begin() + static_cast<std::ptrdiff_t>(
+                morphCountOffset + sizeof(std::int32_t)
+            )
+        );
+        result.assimpCompatibleBytes.insert(
+            result.assimpCompatibleBytes.end(),
+            assimpMorphBytes.begin(),
+            assimpMorphBytes.end()
+        );
+        result.assimpCompatibleBytes.insert(
+            result.assimpCompatibleBytes.end(),
+            bytes.begin() + static_cast<std::ptrdiff_t>(morphSectionEnd),
+            bytes.end()
+        );
+    }
+
+    const std::int32_t displayFrameCount = reader.Read<std::int32_t>();
+    if (displayFrameCount < 0)
+        throw std::runtime_error("PMX contains a negative display-frame count");
+    for (std::int32_t frame = 0; frame < displayFrameCount; ++frame)
+    {
+        reader.ReadText(encoding);
+        reader.ReadText(encoding);
+        const std::uint8_t special = reader.Read<std::uint8_t>();
+        if (special > 1U)
+            throw std::runtime_error("PMX display-frame flag is invalid");
+        const std::int32_t elementCount = reader.Read<std::int32_t>();
+        if (elementCount < 0)
+            throw std::runtime_error("PMX display frame has a negative size");
+        for (std::int32_t element = 0; element < elementCount; ++element)
         {
-        case 9U: // PMX 2.1 flip morph.
-            recordSize = morphIndexSize + sizeof(float);
-            break;
-        case 10U: // PMX 2.1 impulse morph.
-            recordSize = rigidBodyIndexSize + sizeof(std::uint8_t) +
-                6U * sizeof(float);
-            break;
-        default:
-            throw std::runtime_error("PMX contains an unsupported morph type");
+            const std::uint8_t target = reader.Read<std::uint8_t>();
+            if (target == 0U)
+                reader.ReadIndex(boneIndexSize);
+            else if (target == 1U)
+                reader.ReadIndex(morphIndexSize);
+            else
+                throw std::runtime_error("PMX display-frame target is invalid");
         }
-        if (static_cast<std::size_t>(offsetCount) >
-            std::numeric_limits<std::size_t>::max() / recordSize)
+    }
+
+    const std::int32_t rigidBodyCount = reader.Read<std::int32_t>();
+    if (rigidBodyCount < 0)
+        throw std::runtime_error("PMX contains a negative rigid-body count");
+    result.rigidBodyCount = static_cast<std::size_t>(rigidBodyCount);
+    for (const PendingMorph& pending : pendingMorphs)
+    {
+        for (const ImpulseMorphOffset& offset : pending.impulseOffsets)
         {
-            throw std::length_error("PMX morph data size overflowed");
+            if (static_cast<std::size_t>(offset.rigidBodyIndex) >=
+                result.rigidBodyCount)
+            {
+                throw std::runtime_error(
+                    "PMX Impulse morph references an invalid rigid body"
+                );
+            }
         }
-        reader.Skip(static_cast<std::size_t>(offsetCount) * recordSize);
     }
 
     std::vector<MorphIndex> sourceToRuntime(
@@ -765,6 +923,7 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         definition.kind = pending.kind;
         definition.boneOffsets = std::move(pending.boneOffsets);
         definition.materialOffsets = std::move(pending.materialOffsets);
+        definition.impulseOffsets = std::move(pending.impulseOffsets);
         result.morphDefinitions.push_back(std::move(definition));
         if (pending.kind == MorphKind::Vertex)
         {
@@ -788,23 +947,45 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
     }
     for (const PendingMorph& pending : pendingMorphs)
     {
-        if (pending.kind != MorphKind::Group)
-            continue;
         const MorphIndex runtimeIndex = sourceToRuntime[
             static_cast<std::size_t>(pending.sourceIndex)
         ];
         MorphDefinition& definition = result.morphDefinitions[runtimeIndex];
-        definition.groupMembers.reserve(pending.groupMembers.size());
-        for (const auto& [sourceMemberIndex, weight] : pending.groupMembers)
+        if (pending.kind == MorphKind::Group)
         {
-            const MorphIndex memberIndex = sourceToRuntime[
-                static_cast<std::size_t>(sourceMemberIndex)
-            ];
-            // PMX 2.1 Flip/Impulse members remain inactive until their
-            // dedicated runtime systems exist.
-            if (memberIndex != InvalidMorphIndex)
+            definition.groupMembers.reserve(pending.groupMembers.size());
+            for (const auto& [sourceMemberIndex, weight] : pending.groupMembers)
             {
+                const MorphIndex memberIndex = sourceToRuntime[
+                    static_cast<std::size_t>(sourceMemberIndex)
+                ];
+                if (memberIndex == InvalidMorphIndex)
+                {
+                    throw std::runtime_error(
+                        "PMX Group morph references an unavailable morph"
+                    );
+                }
                 definition.groupMembers.push_back(GroupMorphMember{
+                    memberIndex,
+                    weight
+                });
+            }
+        }
+        else if (pending.kind == MorphKind::Flip)
+        {
+            definition.flipMembers.reserve(pending.flipMembers.size());
+            for (const auto& [sourceMemberIndex, weight] : pending.flipMembers)
+            {
+                const MorphIndex memberIndex = sourceToRuntime[
+                    static_cast<std::size_t>(sourceMemberIndex)
+                ];
+                if (memberIndex == InvalidMorphIndex)
+                {
+                    throw std::runtime_error(
+                        "PMX Flip morph references an unavailable morph"
+                    );
+                }
+                definition.flipMembers.push_back(FlipMorphMember{
                     memberIndex,
                     weight
                 });
@@ -2510,9 +2691,13 @@ ImportedModelData ModelImporter::Import(
         const unsigned int pmxImportFlags = ImportFlags &
             ~static_cast<unsigned int>(aiProcess_JoinIdenticalVertices) &
             ~static_cast<unsigned int>(aiProcess_ImproveCacheLocality);
+        const std::vector<std::uint8_t>& assimpBytes =
+            pmxMetadata->assimpCompatibleBytes.empty()
+                ? fileBytes
+                : pmxMetadata->assimpCompatibleBytes;
         scene = importer.ReadFileFromMemory(
-            fileBytes.data(),
-            fileBytes.size(),
+            assimpBytes.data(),
+            assimpBytes.size(),
             pmxImportFlags,
             extensionHint.c_str()
         );
@@ -2556,6 +2741,7 @@ ImportedModelData ModelImporter::Import(
     );
     if (pmxMetadata.has_value())
     {
+        result.rigidBodyCount = pmxMetadata->rigidBodyCount;
         result.morphs = pmxMetadata->morphDefinitions;
         const bool hasBoneMorph = std::any_of(
             result.morphs.begin(),

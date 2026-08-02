@@ -1,6 +1,7 @@
 #include "animation.hpp"
 #include "animator.hpp"
 #include "behaviour.hpp"
+#include "demo_scene.hpp"
 #include "Models/cube.hpp"
 #include "entity.hpp"
 #include "importer.hpp"
@@ -1579,6 +1580,293 @@ void TestMorphRuntime()
     Require(cycleRejected, "MorphSet accepted a cyclic Group Morph graph");
 }
 
+void TestPmx21FlipImpulseMorphRuntime()
+{
+    MorphDefinition first;
+    first.name = "first";
+    first.kind = MorphKind::Vertex;
+
+    MorphDefinition second;
+    second.name = "second";
+    second.kind = MorphKind::Material;
+
+    MorphDefinition flip;
+    flip.name = "flip";
+    flip.kind = MorphKind::Flip;
+    flip.flipMembers = {
+        FlipMorphMember{0U, 0.25f},
+        FlipMorphMember{1U, 0.75f}
+    };
+
+    MorphDefinition impulse;
+    impulse.name = "impulse";
+    impulse.kind = MorphKind::Impulse;
+    impulse.impulseOffsets = {
+        ImpulseMorphOffset{
+            2U,
+            false,
+            glm::vec3(1.0f, 2.0f, 3.0f),
+            glm::vec3(4.0f, 5.0f, 6.0f)
+        },
+        ImpulseMorphOffset{
+            2U,
+            true,
+            glm::vec3(-1.0f, 0.0f, 2.0f),
+            glm::vec3(0.5f, -0.5f, 1.0f)
+        },
+        ImpulseMorphOffset{
+            2U,
+            false,
+            glm::vec3(0.0f),
+            glm::vec3(0.0f)
+        }
+    };
+
+    MorphDefinition nested;
+    nested.name = "nested";
+    nested.kind = MorphKind::Group;
+    nested.groupMembers = {
+        GroupMorphMember{2U, 1.0f},
+        GroupMorphMember{3U, 2.0f}
+    };
+
+    MorphDefinition outer;
+    outer.name = "outer";
+    outer.kind = MorphKind::Group;
+    outer.groupMembers = {GroupMorphMember{4U, 1.0f}};
+
+    MorphSet morphSet({
+        std::move(first),
+        std::move(second),
+        std::move(flip),
+        std::move(impulse),
+        std::move(nested),
+        std::move(outer)
+    });
+    Require(
+        morphSet.HasKind(MorphKind::Flip) &&
+        morphSet.HasKind(MorphKind::Impulse),
+        "MorphSet did not retain PMX 2.1 morph kinds"
+    );
+
+    MorphState state(morphSet);
+    state.SetWeight("first", 0.9f);
+    state.SetWeight("flip", 0.2f);
+    std::span<const float> effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[0U], 0.9f) &&
+        NearlyEqual(effective[1U], 0.0f),
+        "Flip Morph selected a target inside its initial empty interval"
+    );
+
+    state.SetWeight("flip", 0.34f);
+    effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[0U], 0.25f) &&
+        NearlyEqual(effective[1U], 0.0f) &&
+        NearlyEqual(effective[2U], 0.0f),
+        "Flip Morph did not overwrite the first selected target"
+    );
+
+    state.Reset();
+    state.SetWeight("second", 0.2f);
+    state.SetWeight("flip", 0.67f);
+    effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[0U], 0.0f) &&
+        NearlyEqual(effective[1U], 0.75f),
+        "Flip Morph did not overwrite the second selected target"
+    );
+    state.SetWeight("flip", 2.0f);
+    Require(
+        NearlyEqual(state.EffectiveWeights()[1U], 0.75f),
+        "Flip Morph did not clamp an above-range control to its last target"
+    );
+
+    state.Reset();
+    state.SetWeight("outer", 0.67f);
+    effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[1U], 0.75f) &&
+        NearlyEqual(effective[3U], 1.34f) &&
+        NearlyEqual(effective[4U], 0.0f) &&
+        NearlyEqual(effective[5U], 0.0f),
+        "Nested Group Morph did not drive Flip and Impulse Morphs"
+    );
+
+    std::vector<MmdRigidBodyImpulse> impulses;
+    state.EvaluateImpulseMorphs(impulses);
+    Require(
+        impulses.size() == 1U &&
+        impulses[0U].rigidBodyIndex == 2U &&
+        impulses[0U].reset &&
+        NearlyEqual(
+            impulses[0U].globalLinearImpulse,
+            glm::vec3(1.34f, 2.68f, 4.02f)
+        ) &&
+        NearlyEqual(
+            impulses[0U].globalTorqueImpulse,
+            glm::vec3(5.36f, 6.7f, 8.04f)
+        ) &&
+        NearlyEqual(
+            impulses[0U].localLinearImpulse,
+            glm::vec3(-1.34f, 0.0f, 2.68f)
+        ) &&
+        NearlyEqual(
+            impulses[0U].localTorqueImpulse,
+            glm::vec3(0.67f, -0.67f, 1.34f)
+        ),
+        "Impulse Morph aggregation did not preserve local/global channels"
+    );
+
+    state.Reset();
+    state.SetWeight("impulse", -0.5f);
+    state.EvaluateImpulseMorphs(impulses);
+    Require(
+        impulses.size() == 1U && impulses[0U].reset &&
+        NearlyEqual(
+            impulses[0U].globalLinearImpulse,
+            glm::vec3(-0.5f, -1.0f, -1.5f)
+        ),
+        "Impulse Morph incorrectly clamped a negative effective weight"
+    );
+    state.Reset();
+    state.EvaluateImpulseMorphs(impulses);
+    Require(
+        impulses.empty(),
+        "Zero-weight Impulse Morph produced a physics request"
+    );
+
+    MorphDefinition blockedLeaf;
+    blockedLeaf.name = "blockedLeaf";
+    MorphDefinition earlyFlip;
+    earlyFlip.name = "earlyFlip";
+    earlyFlip.kind = MorphKind::Flip;
+    earlyFlip.flipMembers = {FlipMorphMember{0U, 0.4f}};
+    MorphDefinition lateController;
+    lateController.name = "lateController";
+    lateController.kind = MorphKind::Flip;
+    lateController.flipMembers = {FlipMorphMember{1U, 1.0f}};
+    MorphSet blockedOrderSet({
+        std::move(blockedLeaf),
+        std::move(earlyFlip),
+        std::move(lateController)
+    });
+    MorphState blockedOrderState(blockedOrderSet);
+    blockedOrderState.SetWeight(2U, 1.0f);
+    Require(
+        NearlyEqual(blockedOrderState.EffectiveWeights()[0U], 0.0f),
+        "A later Flip Morph incorrectly re-evaluated an earlier Flip Morph"
+    );
+
+    MorphDefinition forwardedLeaf;
+    forwardedLeaf.name = "forwardedLeaf";
+    MorphDefinition earlyController;
+    earlyController.name = "earlyController";
+    earlyController.kind = MorphKind::Flip;
+    earlyController.flipMembers = {FlipMorphMember{2U, 1.0f}};
+    MorphDefinition lateFlip;
+    lateFlip.name = "lateFlip";
+    lateFlip.kind = MorphKind::Flip;
+    lateFlip.flipMembers = {FlipMorphMember{0U, 0.4f}};
+    MorphSet forwardedOrderSet({
+        std::move(forwardedLeaf),
+        std::move(earlyController),
+        std::move(lateFlip)
+    });
+    MorphState forwardedOrderState(forwardedOrderSet);
+    forwardedOrderState.SetWeight(1U, 1.0f);
+    Require(
+        NearlyEqual(forwardedOrderState.EffectiveWeights()[0U], 0.4f),
+        "An earlier Flip Morph did not feed a later Flip Morph in index order"
+    );
+
+    MorphDefinition selfFlip;
+    selfFlip.name = "selfFlip";
+    selfFlip.kind = MorphKind::Flip;
+    selfFlip.flipMembers = {FlipMorphMember{0U, 0.5f}};
+    MorphSet selfFlipSet({std::move(selfFlip)});
+    MorphState selfFlipState(selfFlipSet);
+    selfFlipState.SetWeight(0U, 1.0f);
+    Require(
+        NearlyEqual(selfFlipState.EffectiveWeights()[0U], 0.0f),
+        "Self-referencing Flip Morph was not handled as a control-only morph"
+    );
+}
+
+void TestPmx21FlipImpulseImporter()
+{
+    const std::filesystem::path modelPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+        "pmx21_flip_impulse.pmx";
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.rigidBodyCount == 1U &&
+        imported.morphs.size() == 7U,
+        "PMX 2.1 fixture changed its rigid-body or morph count"
+    );
+
+    const MorphSet morphSet(imported.morphs);
+    const std::optional<MorphIndex> vertex = morphSet.FindMorph("vertex");
+    const std::optional<MorphIndex> material =
+        morphSet.FindMorph("materialMorph");
+    const std::optional<MorphIndex> group = morphSet.FindMorph("group");
+    const std::optional<MorphIndex> flip = morphSet.FindMorph("flip");
+    const std::optional<MorphIndex> impulse = morphSet.FindMorph("impulse");
+    Require(
+        vertex.has_value() && material.has_value() && group.has_value() &&
+        flip.has_value() && impulse.has_value(),
+        "PMX 2.1 fixture lost a named morph"
+    );
+    Require(
+        morphSet.DefinitionAt(*flip).kind == MorphKind::Flip &&
+        morphSet.DefinitionAt(*impulse).kind == MorphKind::Impulse &&
+        morphSet.DefinitionAt(*flip).flipMembers.size() == 2U &&
+        morphSet.DefinitionAt(*impulse).impulseOffsets.size() == 3U,
+        "PMX 2.1 Flip/Impulse metadata was imported incorrectly"
+    );
+
+    const ImpulseMorphOffset& global =
+        morphSet.DefinitionAt(*impulse).impulseOffsets[0U];
+    const ImpulseMorphOffset& local =
+        morphSet.DefinitionAt(*impulse).impulseOffsets[1U];
+    Require(
+        !global.local && local.local &&
+        global.rigidBodyIndex == 0U && local.rigidBodyIndex == 0U &&
+        NearlyEqual(global.velocity, glm::vec3(1.0f, 2.0f, -3.0f)) &&
+        NearlyEqual(global.torque, glm::vec3(-4.0f, -5.0f, 6.0f)) &&
+        NearlyEqual(local.velocity, glm::vec3(2.0f, 0.0f, 2.0f)) &&
+        NearlyEqual(local.torque, glm::vec3(-1.0f, 1.0f, 3.0f)),
+        "PMX Impulse Morph coordinate conversion is incorrect"
+    );
+
+    MorphState state(morphSet);
+    state.SetWeight(*group, 0.67f);
+    const std::span<const float> effective = state.EffectiveWeights();
+    Require(
+        NearlyEqual(effective[*material], 1.42f) &&
+        NearlyEqual(effective[*impulse], 0.335f) &&
+        NearlyEqual(effective[*flip], 0.0f) &&
+        NearlyEqual(effective[*group], 0.0f),
+        "Imported Group Morph did not compose PMX 2.1 controls correctly"
+    );
+
+    std::vector<MmdRigidBodyImpulse> impulses;
+    state.EvaluateImpulseMorphs(impulses);
+    Require(
+        impulses.size() == 1U && impulses[0U].reset &&
+        NearlyEqual(
+            impulses[0U].globalLinearImpulse,
+            glm::vec3(0.335f, 0.67f, -1.005f)
+        ) &&
+        NearlyEqual(
+            impulses[0U].localLinearImpulse,
+            glm::vec3(0.67f, 0.0f, 0.67f)
+        ),
+        "Imported PMX Impulse Morph did not produce runtime impulses"
+    );
+}
+
 void TestExtendedMmdMorphRuntime()
 {
     Skeleton skeleton({Bone{"root"}});
@@ -1801,6 +2089,148 @@ void TestExtendedMmdMorphRuntime()
     );
 }
 
+
+void TestMorphLabDemoAsset()
+{
+    ResourceManager resources;
+    ModelAsset& model = CreateMorphLabModel(resources);
+    Require(
+        &CreateMorphLabModel(resources) == &model,
+        "Morph Lab model creation is not idempotent"
+    );
+    Require(
+        model.PartCount() == 1U &&
+        model.HasSkeleton() &&
+        model.GetSkeleton().BoneCount() == 2U &&
+        model.HasMorphs() &&
+        model.GetMorphSet().MorphCount() == 7U &&
+        model.MmdRigidBodyCount() == 1U,
+        "Morph Lab model structure is incomplete"
+    );
+    for (MorphKind kind : {
+             MorphKind::Vertex,
+             MorphKind::Bone,
+             MorphKind::Uv,
+             MorphKind::Material,
+             MorphKind::Group,
+             MorphKind::Flip,
+             MorphKind::Impulse})
+    {
+        Require(
+            model.GetMorphSet().HasKind(kind),
+            "Morph Lab model is missing a supported Morph kind"
+        );
+    }
+
+    Scene scene;
+    Entity& reference = scene.InstantiateModel(model);
+    Entity& active = scene.InstantiateModel(model);
+    MorphState& state = active.GetMorphState();
+    const MorphSet& morphSet = model.GetMorphSet();
+
+    state.SetWeight(0U, 1.0f);
+    std::vector<MorphVertexDelta> deltas;
+    Require(
+        active.GetMesh().CalculateMorphDeltas(
+            state.EffectiveWeights(),
+            deltas
+        ) &&
+        !deltas.empty() &&
+        glm::length(deltas[7U].position) > Epsilon,
+        "Morph Lab Vertex Morph has no renderable displacement"
+    );
+
+    state.Reset();
+    state.SetWeight(2U, 1.0f);
+    Require(
+        active.GetMesh().CalculateMorphDeltas(
+            state.EffectiveWeights(),
+            deltas
+        ) &&
+        glm::length(glm::vec2(deltas[0U].uv[0U])) > Epsilon,
+        "Morph Lab UV Morph has no renderable UV displacement"
+    );
+
+    state.Reset();
+    state.SetWeight(1U, 1.0f);
+    active.Update(0.0f);
+    Require(
+        MatrixIdentityDeviation(active.GetPose().LocalMatrix(1U)) > 0.01f,
+        "Morph Lab Bone Morph did not update the skinned pose"
+    );
+
+    state.Reset();
+    state.SetWeight(3U, 1.0f);
+    MaterialMorphValues materialValues;
+    materialValues.diffuse = active.GetMaterial().BaseColorFactor();
+    materialValues.specular = active.GetMaterial().SpecularColor();
+    materialValues.shininess = active.GetMaterial().Shininess();
+    materialValues.ambient = active.GetMaterial().AmbientColor();
+    materialValues.edgeColor = active.GetMaterial().EdgeColor();
+    materialValues.edgeSize = active.GetMaterial().EdgeSize();
+    morphSet.ApplyMaterialMorphs(
+        0U,
+        state.EffectiveWeights(),
+        materialValues
+    );
+    Require(
+        !NearlyEqual(
+            materialValues.diffuse,
+            active.GetMaterial().BaseColorFactor()
+        ) && materialValues.edgeSize > active.GetMaterial().EdgeSize(),
+        "Morph Lab Material Morph has no visible material effect"
+    );
+
+    state.Reset();
+    state.SetWeight(4U, 1.0f);
+    const std::span<const float> groupWeights = state.EffectiveWeights();
+    Require(
+        groupWeights[0U] > 0.0f &&
+        groupWeights[1U] > 0.0f &&
+        groupWeights[2U] > 0.0f &&
+        groupWeights[3U] > 0.0f,
+        "Morph Lab Group Morph does not combine all visible channels"
+    );
+
+    state.Reset();
+    state.SetWeight(5U, 0.30f);
+    Require(
+        NearlyEqual(state.EffectiveWeights()[0U], 1.0f),
+        "Morph Lab Flip Morph did not select its Vertex member"
+    );
+    state.SetWeight(5U, 0.55f);
+    Require(
+        NearlyEqual(state.EffectiveWeights()[3U], 1.0f),
+        "Morph Lab Flip Morph did not select its Material member"
+    );
+    state.SetWeight(5U, 0.80f);
+    Require(
+        state.EffectiveWeights()[0U] > 0.0f &&
+        state.EffectiveWeights()[1U] > 0.0f &&
+        state.EffectiveWeights()[2U] > 0.0f &&
+        state.EffectiveWeights()[3U] > 0.0f,
+        "Morph Lab Flip Morph did not select its Group member"
+    );
+
+    state.Reset();
+    state.SetWeight(6U, 1.0f);
+    std::vector<MmdRigidBodyImpulse> impulses;
+    state.EvaluateImpulseMorphs(impulses);
+    Require(
+        impulses.size() == 1U &&
+        impulses[0U].rigidBodyIndex == 0U &&
+        NearlyEqual(
+            impulses[0U].globalLinearImpulse,
+            glm::vec3(1.5f, 2.0f, 0.0f)
+        ),
+        "Morph Lab Impulse Morph does not produce its physics request"
+    );
+    Require(
+        reference.GetMorphState().EffectiveWeights()[0U] == 0.0f,
+        "Morph Lab reference and active instances share Morph state"
+    );
+}
+
 void TestRenderPartAndModelAsset()
 {
     Mesh mesh(DefaultModelData{});
@@ -1811,9 +2241,14 @@ void TestRenderPartAndModelAsset()
     );
 
     ModelAsset model("testModel");
+    model.SetMmdRigidBodyCount(3U);
     model.AddPart(mesh, material, localTransform);
 
     Require(model.Name() == "testModel", "ModelAsset name was not preserved");
+    Require(
+        model.MmdRigidBodyCount() == 3U,
+        "ModelAsset did not preserve PMX rigid-body metadata"
+    );
     Require(model.PartCount() == 1, "ModelAsset did not store its part");
     Require(&model.Parts()[0].GetMesh() == &mesh, "ModelAsset mesh reference changed");
     Require(
@@ -1950,6 +2385,14 @@ void TestInputFrameTransitions()
     input.HandleKey(InputKey::W, false);
     Require(!input.IsKeyDown(InputKey::W), "Released key remained held");
     Require(input.WasKeyReleased(InputKey::W), "Key release transition was lost");
+
+    input.HandleKey(InputKey::Right, true);
+    input.HandleKey(InputKey::Space, true);
+    Require(
+        input.WasKeyPressed(InputKey::Right) &&
+        input.WasKeyPressed(InputKey::Space),
+        "Morph Lab navigation keys were not tracked"
+    );
 
     input.HandleCursorPosition(10.0, 20.0);
     input.HandleCursorPosition(14.0, 17.0);
@@ -2860,6 +3303,10 @@ int main()
         "Extended PMX morph importer",
         TestExtendedPmxMorphImporter
     );
+    failures += !RunTest(
+        "PMX 2.1 Flip/Impulse importer",
+        TestPmx21FlipImpulseImporter
+    );
     failures += !RunTest("VMD importer", TestVmdImporter);
     failures += !RunTest("VMD asset integration", TestVmdAssetWhenAvailable);
     failures += !RunTest("ModelAsset skeleton", TestModelAssetSkeleton);
@@ -2868,6 +3315,11 @@ int main()
         "Extended MMD morph runtime",
         TestExtendedMmdMorphRuntime
     );
+    failures += !RunTest(
+        "PMX 2.1 Flip/Impulse runtime",
+        TestPmx21FlipImpulseMorphRuntime
+    );
+    failures += !RunTest("Morph Lab demo asset", TestMorphLabDemoAsset);
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);

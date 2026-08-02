@@ -90,17 +90,29 @@ int main(int argumentCount, char* arguments[])
         Window& window1 = windowManager.CreateWindow(WindowConfig{
             .width = 600,
             .height = 600,
-            .title = "WINDOW 1"
+            .title = "FLORAL WISTERIA - CHARACTER"
         });
         Window& window2 = windowManager.CreateWindow(WindowConfig{
             .width = 600,
             .height = 600,
-            .title = "WINDOW 2"
+            .title = "FLORAL WISTERIA - MORPH LAB"
         });
         const std::shared_ptr<Scene> Scene1 = windowManager.CreateScene();
         const std::shared_ptr<Scene> Scene2 = windowManager.CreateScene();
         SetupDemoScene1(*Scene1, application.GetResources());
-        SetupDemoScene2(*Scene2, application.GetResources());
+        if (HasArgument(argumentCount, arguments, "--character-pair"))
+        {
+            window2.SetTitle("FLORAL WISTERIA - CHARACTER ALT");
+            SetupDemoScene2(*Scene2, application.GetResources());
+        }
+        else
+        {
+            SetupMorphDemoScene(
+                *Scene2,
+                application.GetResources(),
+                window2
+            );
+        }
         windowManager.BindScene(window1, Scene1);
         windowManager.EnableFreeCameraController(window1);
         windowManager.BindScene(window2, Scene2);

@@ -104,7 +104,7 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
             throw std::invalid_argument("Morph category is invalid");
         }
         if (definition.kind < MorphKind::Vertex ||
-            definition.kind > MorphKind::Material)
+            definition.kind > MorphKind::Impulse)
         {
             throw std::invalid_argument("Morph kind is invalid");
         }
@@ -115,6 +115,13 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
         {
             throw std::invalid_argument(
                 "Only Group morphs can contain group members"
+            );
+        }
+        if (definition.kind != MorphKind::Flip &&
+            !definition.flipMembers.empty())
+        {
+            throw std::invalid_argument(
+                "Only Flip morphs can contain flip members"
             );
         }
         if (definition.kind != MorphKind::Bone &&
@@ -131,6 +138,13 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
                 "Only Material morphs can contain material offsets"
             );
         }
+        if (definition.kind != MorphKind::Impulse &&
+            !definition.impulseOffsets.empty())
+        {
+            throw std::invalid_argument(
+                "Only Impulse morphs can contain impulse offsets"
+            );
+        }
 
         std::unordered_set<MorphIndex> memberIndices;
         for (const GroupMorphMember& member : definition.groupMembers)
@@ -142,6 +156,18 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
             {
                 throw std::invalid_argument(
                     "Group morph contains an invalid member"
+                );
+            }
+        }
+
+        for (const FlipMorphMember& member : definition.flipMembers)
+        {
+            if (static_cast<std::size_t>(member.morphIndex) >=
+                    this->definitions.size() ||
+                !std::isfinite(member.weight))
+            {
+                throw std::invalid_argument(
+                    "Flip morph contains an invalid member"
                 );
             }
         }
@@ -164,6 +190,17 @@ MorphSet::MorphSet(std::vector<MorphDefinition> definitions)
         }
         for (const MaterialMorphOffset& offset : definition.materialOffsets)
             ValidateMaterialOffset(offset);
+        for (const ImpulseMorphOffset& offset : definition.impulseOffsets)
+        {
+            if (offset.rigidBodyIndex == InvalidRigidBodyIndex ||
+                !IsFinite(offset.velocity) ||
+                !IsFinite(offset.torque))
+            {
+                throw std::invalid_argument(
+                    "Impulse morph contains an invalid offset"
+                );
+            }
+        }
 
         if (!this->indices.emplace(
                 definition.name,
@@ -240,6 +277,76 @@ void MorphSet::ExpandWeights(
             throw std::invalid_argument("Morph weights must be finite");
     }
 
+    // PMX 2.1 Flip morphs are controls, not deformation leaves. They first
+    // overwrite the selected target morph value in source-index order. Group
+    // entries that reference Flip morphs participate in the same first pass.
+    std::vector<float> resolved(source.begin(), source.end());
+    const auto applyFlip =
+        [&](const MorphDefinition& flip, float control)
+    {
+        if (control <= 0.0f || flip.flipMembers.empty())
+            return;
+
+        std::size_t selected = flip.flipMembers.size() - 1U;
+        if (control < 1.0f)
+        {
+            const double slot = std::floor(
+                (static_cast<double>(flip.flipMembers.size()) + 1.0) *
+                static_cast<double>(control)
+            );
+            if (slot < 1.0)
+                return;
+            selected = std::min(
+                static_cast<std::size_t>(slot - 1.0),
+                flip.flipMembers.size() - 1U
+            );
+        }
+
+        const FlipMorphMember& member = flip.flipMembers[selected];
+        resolved[member.morphIndex] = member.weight;
+    };
+
+    const std::function<void(MorphIndex, float)> applyGroupFlips =
+        [&](MorphIndex morphIndex, float weight)
+    {
+        if (weight == 0.0f)
+            return;
+        if (!std::isfinite(weight))
+            throw std::overflow_error("Expanded Flip morph weight is not finite");
+
+        const MorphDefinition& group = this->definitions[morphIndex];
+        for (const GroupMorphMember& member : group.groupMembers)
+        {
+            const float memberWeight = weight * member.weight;
+            if (!std::isfinite(memberWeight))
+            {
+                throw std::overflow_error(
+                    "Expanded Flip morph weight overflowed"
+                );
+            }
+            const MorphDefinition& target =
+                this->definitions[member.morphIndex];
+            if (target.kind == MorphKind::Flip)
+                applyFlip(target, memberWeight);
+            else if (target.kind == MorphKind::Group)
+                applyGroupFlips(member.morphIndex, memberWeight);
+        }
+    };
+
+    for (std::size_t index = 0; index < this->definitions.size(); ++index)
+    {
+        const MorphDefinition& definition = this->definitions[index];
+        if (definition.kind == MorphKind::Flip)
+            applyFlip(definition, resolved[index]);
+        else if (definition.kind == MorphKind::Group)
+        {
+            applyGroupFlips(
+                static_cast<MorphIndex>(index),
+                resolved[index]
+            );
+        }
+    }
+
     output.assign(this->definitions.size(), 0.0f);
     const std::function<void(MorphIndex, float)> accumulate =
         [&](MorphIndex morphIndex, float weight)
@@ -248,7 +355,10 @@ void MorphSet::ExpandWeights(
             return;
         if (!std::isfinite(weight))
             throw std::overflow_error("Expanded morph weight is not finite");
+
         const MorphDefinition& definition = this->definitions[morphIndex];
+        if (definition.kind == MorphKind::Flip)
+            return;
         if (definition.kind != MorphKind::Group)
         {
             const float next = output[morphIndex] + weight;
@@ -257,15 +367,20 @@ void MorphSet::ExpandWeights(
             output[morphIndex] = next;
             return;
         }
+
         for (const GroupMorphMember& member : definition.groupMembers)
+        {
+            if (this->definitions[member.morphIndex].kind == MorphKind::Flip)
+                continue;
             accumulate(member.morphIndex, weight * member.weight);
+        }
     };
 
-    for (std::size_t index = 0; index < source.size(); ++index)
+    for (std::size_t index = 0; index < resolved.size(); ++index)
     {
         accumulate(
             static_cast<MorphIndex>(index),
-            source[index]
+            resolved[index]
         );
     }
 }
@@ -395,6 +510,82 @@ void MorphSet::ApplyMaterialMorphs(
     }
 }
 
+void MorphSet::EvaluateImpulseMorphs(
+    std::span<const float> weights,
+    std::vector<MmdRigidBodyImpulse>& output
+) const
+{
+    if (weights.size() != this->definitions.size())
+        throw std::invalid_argument("Morph weight count does not match MorphSet");
+
+    output.clear();
+    std::unordered_map<RigidBodyIndex, std::size_t> outputIndices;
+    for (std::size_t index = 0; index < this->definitions.size(); ++index)
+    {
+        const MorphDefinition& definition = this->definitions[index];
+        if (definition.kind != MorphKind::Impulse)
+            continue;
+
+        const float weight = weights[index];
+        if (!std::isfinite(weight))
+            throw std::invalid_argument("Impulse morph weight must be finite");
+        if (weight == 0.0f)
+            continue;
+
+        for (const ImpulseMorphOffset& offset : definition.impulseOffsets)
+        {
+            auto [iterator, inserted] = outputIndices.emplace(
+                offset.rigidBodyIndex,
+                output.size()
+            );
+            if (inserted)
+            {
+                MmdRigidBodyImpulse next;
+                next.rigidBodyIndex = offset.rigidBodyIndex;
+                output.push_back(next);
+            }
+            MmdRigidBodyImpulse& impulse = output[iterator->second];
+
+            const bool stopControl =
+                offset.velocity == glm::vec3(0.0f) &&
+                offset.torque == glm::vec3(0.0f);
+            if (stopControl)
+            {
+                impulse.reset = true;
+                continue;
+            }
+
+            const glm::vec3 velocity = offset.velocity * weight;
+            const glm::vec3 torque = offset.torque * weight;
+            if (!IsFinite(velocity) || !IsFinite(torque))
+            {
+                throw std::overflow_error(
+                    "Impulse morph value overflowed"
+                );
+            }
+            if (offset.local)
+            {
+                impulse.localLinearImpulse += velocity;
+                impulse.localTorqueImpulse += torque;
+            }
+            else
+            {
+                impulse.globalLinearImpulse += velocity;
+                impulse.globalTorqueImpulse += torque;
+            }
+            if (!IsFinite(impulse.localLinearImpulse) ||
+                !IsFinite(impulse.localTorqueImpulse) ||
+                !IsFinite(impulse.globalLinearImpulse) ||
+                !IsFinite(impulse.globalTorqueImpulse))
+            {
+                throw std::overflow_error(
+                    "Accumulated Impulse morph value overflowed"
+                );
+            }
+        }
+    }
+}
+
 MorphState::MorphState(const MorphSet& morphSet)
     : morphSet(&morphSet),
       weights(morphSet.MorphCount(), 0.0f),
@@ -490,6 +681,16 @@ std::span<const float> MorphState::EffectiveWeights() const
         this->effectiveRevision = this->revision;
     }
     return this->effectiveWeights;
+}
+
+void MorphState::EvaluateImpulseMorphs(
+    std::vector<MmdRigidBodyImpulse>& output
+) const
+{
+    this->morphSet->EvaluateImpulseMorphs(
+        this->EffectiveWeights(),
+        output
+    );
 }
 
 std::uint64_t MorphState::Revision() const noexcept
