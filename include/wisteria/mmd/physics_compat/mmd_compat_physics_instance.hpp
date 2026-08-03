@@ -38,6 +38,7 @@ public:
     std::size_t RigidBodyCount() const noexcept;
     std::size_t JointCount() const noexcept;
     PhysicsBodyState BodyStateAt(RigidBodyIndex index) const;
+    MmdCompatJointDiagnostics JointDiagnostics() const;
     void ApplyCentralImpulse(RigidBodyIndex index, const glm::vec3& impulse);
     void ApplyTorqueImpulse(RigidBodyIndex index, const glm::vec3& impulse);
 

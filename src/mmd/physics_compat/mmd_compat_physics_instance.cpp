@@ -65,6 +65,11 @@ PhysicsBodyState MmdCompatPhysicsInstance::BodyStateAt(
     return this->runtime.BodyStateAt(index);
 }
 
+MmdCompatJointDiagnostics MmdCompatPhysicsInstance::JointDiagnostics() const
+{
+    return this->runtime.JointDiagnostics();
+}
+
 void MmdCompatPhysicsInstance::ApplyCentralImpulse(
     RigidBodyIndex index,
     const glm::vec3& impulse

@@ -739,7 +739,7 @@ private:
         }
         std::cout << " fidelityDebug=";
         if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->HasMmdPhysics())
+            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
         {
             std::cout << entity->GetMmdPhysics().FidelityDebugLayerName();
         }
@@ -1266,7 +1266,8 @@ void SetupMmdCharacterDemo(
     Scene& scene,
     ResourceManager& resources,
     Window& window,
-    bool alternateModel
+    bool alternateModel,
+    bool useCompat
 )
 {
     EnvironmentMap* existingEnvironment =
@@ -1284,6 +1285,7 @@ void SetupMmdCharacterDemo(
         DemoModelPath(alternateModel)
     );
     const AnimationClip& clip = ResolveCharacterMotion(resources, model);
+
     Entity& entity = scene.InstantiateModel(
         model,
         Transform(
@@ -1295,11 +1297,22 @@ void SetupMmdCharacterDemo(
     );
     if (model.HasMmdPhysics())
     {
-        entity.SetMmdPhysics(
-            scene.Physics(),
-            model.GetMmdPhysics(),
-            MmdCompatSettings{}
-        );
+        if (useCompat)
+        {
+            entity.SetMmdPhysics(
+                scene.Physics(),
+                model.GetMmdPhysics(),
+                MmdCompatSettings{}
+            );
+        }
+        else
+        {
+            entity.SetMmdPhysics(
+                scene.Physics(),
+                model.GetMmdPhysics(),
+                MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults()
+            );
+        }
     }
     Animator& animator = entity.GetAnimator();
     animator.SetLooping(true);
@@ -1317,11 +1330,15 @@ void SetupMmdCharacterDemo(
         .Up = {0.0f, 1.0f, 0.0f}
     });
     ConfigureCharacterLighting(scene);
-    std::cout << "[INFO] MMD full-body demo: " << clip.Name()
+    std::cout << "[INFO] MMD "
+              << (useCompat ? "COMPAT" : "LEGACY") << " demo: "
+              << clip.Name()
               << " | tracks=" << clip.TrackCount()
               << " | rigidBodies="
-              << (entity.TryGetMmdCompatPhysics() != nullptr
-                    ? entity.GetMmdCompatPhysics().RigidBodyCount()
+              << (useCompat
+                    ? (entity.TryGetMmdCompatPhysics() != nullptr
+                        ? entity.GetMmdCompatPhysics().RigidBodyCount()
+                        : 0U)
                     : (entity.TryGetMmdPhysics() != nullptr
                         ? entity.GetMmdPhysics().RigidBodyCount()
                         : 0U))

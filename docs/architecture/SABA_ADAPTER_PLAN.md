@@ -1,0 +1,163 @@
+# Saba 承接实现计划
+
+## 目标
+
+按 [SABA_ADAPTER_INTERFACE.md](./SABA_ADAPTER_INTERFACE.md) 的契约，分阶段把 MMD
+链路切换到 Saba。每一阶段都有“自动验收”（`wisteria_tests.exe`）和“手动验收”
+（demo 窗口），完成一个阶段更新一次测试与本文档。
+
+## 阶段总览
+
+| 阶段 | 内容 | 自动验收 | 手动验收 |
+|---|---|---|---|
+| 0 | 接口冻结：头文件骨架 | 编译通过 | 无 |
+| 1 | `SabaMmdImporter` | 与 Assimp importer 数据对照 | 无 |
+| 2 | Mesh 动态顶点 + Saba 蒙皮 | 顶点上传/蒙皮测试 | 裙摆/头发柔软度 |
+| 3 | CameraTrack + VMD 相机 | 相机采样测试 | demo 相机跟随 |
+| 4 | PhysicsInstance 自步进 + Saba 物理 | 自步进/长跑测试 | 物理手感对比 |
+| 5 | 整体切换 | 全量回归 | 默认 demo 流畅运行 |
+
+## 阶段 0：接口冻结
+
+任务：
+
+- 在 `include/wisteria/runtime/` 新建：
+  - `runtime_model_base.hpp`
+  - `mmd_runtime_model.hpp`
+- 在 `include/wisteria/assets/` 新建 `saba_mmd_importer.hpp`（声明）；
+- 在 `include/wisteria/rendering/mesh.hpp` 增加动态顶点上传声明；
+- 在 `include/wisteria/animation/animation.hpp` 增加 `CameraTrack` 声明；
+- 在 `include/wisteria/physics/physics_instance.hpp` 增加
+  `OwnsSimulationStep()`；
+- Scene 固定步循环对自步进实例的跳过逻辑（最小实现）。
+
+自动验收：
+
+- `wisteria_tests.exe` 全量 PASS（72+ 项）；
+- 新增 `TestInterfaceCompilation`：包含所有新头文件并调用空实现/默认实现。
+
+手动验收：无。
+
+## 阶段 1：SabaMmdImporter
+
+任务：
+
+- 实现 `SabaMmdImporter`：PMX/PMD → `ImportedModelData`；
+- 顶点、材质、骨骼（append/IK/deformAfterPhysics）、morph、刚体/关节全部转换；
+- 保留 `AssimpMmdImporter` 对照。
+
+自动验收：
+
+- 新增 `TestSabaMmdImporterWhenAvailable`：叶瞬光 PMX 用两种 importer 导入，
+  断言骨骼数、刚体数、关节数一致；打印差异矩阵（顶点数、材质数、IK 数）；
+- 对 `pmx_physics.pmx` 等测试资产做字段级断言（刚体/关节数量、弹簧值）。
+
+手动验收：无（数据层）。
+
+## 阶段 2：Mesh 动态顶点 + Saba 蒙皮
+
+任务：
+
+- `Mesh::UploadDynamicVertices` 实现（动态 VBO 更新，只更新 position/normal）；
+- `SabaMmdRuntimeModel::Initialize/Update`：用 Saba `PMXModel::Update` 做
+  BDEF/SDEF/QDEF 蒙皮，结果上传到 Mesh；
+- 先做“Saba 蒙皮 → 我们渲染”的最小 demo（替换 compat 窗口）。
+
+自动验收：
+
+- `TestMeshDynamicUpload`：上传后顶点/法线数据与输入一致；
+- `TestSabaSkinningWhenAvailable`：叶瞬光运行若干帧，顶点有限、包围盒合理、
+  与 Saba 参考输出误差 < 1e-3。
+
+手动验收：
+
+- 双窗口：Saba 蒙皮 vs compat（WISTERIA GPU 蒙皮），重点看裙摆/头发是否更柔软；
+- 记录观察结果到本文档。
+
+## 阶段 3：CameraTrack + VMD 相机
+
+任务：
+
+- `AnimationClip::CameraTrack` 实现（含贝塞尔插值）；
+- `SabaMmdImporter` 从 VMD 提取相机轨道；
+- `MmdRuntimeModel::ApplyCameraTrack` 应用到 `Camera`。
+
+自动验收：
+
+- `TestCameraTrackSampling`：关键帧线性/贝塞尔采样、越界钳制；
+- `TestVmdCameraImportWhenAvailable`：真实 VMD 相机轨道字段断言。
+
+手动验收：
+
+- demo 中相机跟随 VMD 播放（可与 Saba viewer 对照）。
+
+## 阶段 4：PhysicsInstance 自步进 + Saba 物理
+
+任务：
+
+- `PhysicsInstance::OwnsSimulationStep()` 接入 Scene 固定步循环；
+- `SabaMmdRuntimeModel` 内部使用 `saba::MMDPhysics`（独立 world、120Hz、-98）；
+- 保留 WISTERIA compat 作为对照实现。
+
+自动验收：
+
+- `TestSceneOwnsSimulationStep`：自步进实例不被共享 StepFixed 驱动；
+- `TestSabaMmdPhysicsLongRunWhenAvailable`：叶瞬光 720 帧 finite、无崩溃；
+- 全量回归。
+
+手动验收：
+
+- 双窗口：Saba 物理 vs compat 物理，对比裙摆稳定性、手感；
+- 记录观察结果到本文档。
+
+## 阶段 5：整体切换
+
+任务：
+
+- Entity/Scene 支持 `RuntimeModelBase`；
+- demo 默认使用 `SabaMmdRuntimeModel`；
+- 旧 `MmdPhysicsInstance` / adaptive 代码归档或删除（保留 git 历史即可）；
+- 更新 README 与架构文档。
+
+自动验收：
+
+- `wisteria_tests.exe` 全量 PASS；
+- `TestSabaFullChainWhenAvailable`：Saba 导入 → 运行时 → 蒙皮 → 物理，
+  叶瞬光 720 帧。
+
+手动验收：
+
+- 默认 demo（单窗口或双窗口）流畅运行、无错误日志；
+- 用户确认观感与 `simple_mmd_viewer_glfw` 一致或更好。
+
+## 验收机制
+
+### 自动验收（每次阶段完成）
+
+```powershell
+cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
+.\build\RelWithDebInfo\wisteria_tests.exe
+```
+
+要求：`PASS=全部`、`FAIL=0`、退出码 0。
+
+### 手动验收（每次阶段完成）
+
+```powershell
+.\build\RelWithDebInfo\wisteria.exe            # 双窗口/默认 demo
+.\build\RelWithDebInfo\simple_mmd_viewer_glfw.exe `
+  -model "assets\models\mmd\叶瞬光_pmx\叶瞬光.pmx" `
+  -vmd "assets\motions\皮卡皮卡皮卡丘+\身体动作.vmd"
+```
+
+用户检查清单：
+
+- 无崩溃、无 `[ERROR]` 日志；
+- 物理稳定（裙摆/头发不飞、不僵、不穿模）；
+- 观感与 Saba viewer 可对比；
+- 每个阶段的观察记录追加到本文档。
+
+## 当前状态
+
+- 接口契约：已定（v1）；
+- 实现进度：阶段 0 未开始。

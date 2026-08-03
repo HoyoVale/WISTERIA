@@ -180,9 +180,12 @@ v1 核心已落地：
 - demo（`DemoScene`）已切换到 `MmdCompatPhysicsInstance`；旧实例代码与旧测试
   暂时保留，用于 A/B 回归。
 
-叶瞬光 A/B 结果（720 帧）：
+叶瞬光 A/B 结果（720 帧，compat v1 = 纯 Saba 语义、无 adaptive）：
 
-| 实现 | bodies | joints | finite | 备注 |
-|---|---|---|---|---|
-| legacy | 495 | 568 | true | linearViol=0.916 / angularViolDeg=33.6 / severe=4 |
-| compat v1 | 495 | 565 | true | maxDisplacement=7.29（3 个无效关节跳过） |
+| 实现 | bodies | joints | finite | linearViol | angularViolDeg | severe |
+|---|---|---|---|---|---|---|
+| legacy | 495 | 568 | true | 0.916 | 33.6 | 4 |
+| compat v1 | 495 | 565 | true | 1.405 | 44.5 | 25 |
+
+compat v1 不含 adaptive 过滤，因此违规指标高于 legacy（与 P0 raw 结论一致）；
+后续通过 legacy 参数 + 1/65/120 固定步 + 重力审计继续优化。

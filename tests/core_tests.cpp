@@ -6548,6 +6548,7 @@ void TestMmdCompatRuntimeWhenAvailable()
         std::size_t bodies = 0U;
         std::size_t joints = 0U;
         float maxDisplacement = 0.0f;
+        MmdCompatJointDiagnostics diagnostics{};
     };
 
     const auto runCompat = [&]() -> CompatResult
@@ -6614,6 +6615,7 @@ void TestMmdCompatRuntimeWhenAvailable()
                 distance
             );
         }
+        result.diagnostics = physics.JointDiagnostics();
         return result;
     };
 
@@ -6653,10 +6655,17 @@ void TestMmdCompatRuntimeWhenAvailable()
               << " joints=" << compat.joints
               << " finite=" << (compat.finite ? "true" : "false")
               << " maxDisplacement=" << compat.maxDisplacement
+              << " linearViol="
+              << compat.diagnostics.maximumLinearLimitViolation
+              << " angularViolDeg="
+              << compat.diagnostics.maximumAngularLimitViolationDegrees
+              << " severe="
+              << compat.diagnostics.jointsOverFailureThreshold
               << std::endl;
 
     Require(
         compat.created && compat.finite &&
+            compat.diagnostics.finite &&
             compat.bodies == 495U && compat.joints > 0U,
         "MMD compat runtime failed to create or run the demo model"
     );

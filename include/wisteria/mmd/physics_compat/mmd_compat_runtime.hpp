@@ -12,6 +12,17 @@ class Pose;
 class Transform;
 class MmdPhysicsAsset;
 
+struct MmdCompatJointDiagnostics
+{
+    float maximumPositionSeparation = 0.0f;
+    float maximumRotationErrorDegrees = 0.0f;
+    float maximumLinearLimitViolation = 0.0f;
+    float maximumAngularLimitViolationDegrees = 0.0f;
+    std::size_t wideTravelHelperJoints = 0U;
+    std::size_t jointsOverFailureThreshold = 0U;
+    bool finite = true;
+};
+
 // Core MMD physics runtime modeled after Saba's MMDPhysics/MMDRigidBody/MMDJoint.
 // It is format-agnostic about Entity/Scene: it only talks to PhysicsWorld and
 // Pose, so it can be unit-tested without a Scene.
@@ -55,6 +66,7 @@ public:
     std::size_t RigidBodyCount() const noexcept;
     std::size_t JointCount() const noexcept;
     PhysicsBodyState BodyStateAt(RigidBodyIndex index) const;
+    MmdCompatJointDiagnostics JointDiagnostics() const;
     void ApplyCentralImpulse(RigidBodyIndex index, const glm::vec3& impulse);
     void ApplyTorqueImpulse(RigidBodyIndex index, const glm::vec3& impulse);
 

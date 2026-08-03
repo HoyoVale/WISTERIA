@@ -13,7 +13,8 @@ void SetupMmdCharacterDemo(
     Scene& scene,
     ResourceManager& resources,
     Window& window,
-    bool alternateModel = false
+    bool alternateModel = false,
+    bool useCompat = false
 );
 
 // Creates the procedural fallback used when assets/motions/demo.vmd is absent.

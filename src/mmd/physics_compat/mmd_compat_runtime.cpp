@@ -137,6 +137,157 @@ glm::mat4 AnimatedBodyModelTransform(
         pose.GlobalMatrix(definition.bone);
     return boneModel * definition.boneToBody;
 }
+
+float AxisLimitViolation(float value, float lower, float upper) noexcept
+{
+    // Bullet treats lower > upper as a free degree of freedom.
+    if (lower > upper)
+        return 0.0f;
+    if (value < lower)
+        return lower - value;
+    if (value > upper)
+        return value - upper;
+    return 0.0f;
+}
+
+bool IsWideTravelHelperJoint(const MmdJointDefinition& joint) noexcept
+{
+    if (joint.type != MmdJointType::Spring6Dof &&
+        joint.type != MmdJointType::SixDof)
+    {
+        return false;
+    }
+    const glm::vec3 span = joint.linearUpper - joint.linearLower;
+    constexpr float WideTravelSpan = 20.0f;
+    constexpr float SpringEpsilon = 0.000001f;
+    return (span.x > WideTravelSpan ||
+            span.y > WideTravelSpan ||
+            span.z > WideTravelSpan) &&
+        std::abs(joint.linearSpring.x) <= SpringEpsilon &&
+        std::abs(joint.linearSpring.y) <= SpringEpsilon &&
+        std::abs(joint.linearSpring.z) <= SpringEpsilon;
+}
+
+glm::vec3 EulerXyzFromRotation(const glm::mat4& matrix) noexcept
+{
+    // Matches btGeneric6DofSpring2Constraint::matrixToEulerXYZ.
+    const float r00 = matrix[0][0];
+    const float r01 = matrix[1][0];
+    const float r02 = matrix[2][0];
+    const float r10 = matrix[0][1];
+    const float r11 = matrix[1][1];
+    const float r12 = matrix[2][1];
+    const float r22 = matrix[2][2];
+    const float clamped = std::clamp(r02, -1.0f, 1.0f);
+    if (clamped > -1.0f && clamped < 1.0f)
+    {
+        return glm::vec3(
+            std::atan2(-r12, r22),
+            std::asin(clamped),
+            std::atan2(-r01, r00)
+        );
+    }
+    if (clamped <= -1.0f)
+    {
+        return glm::vec3(
+            -std::atan2(r10, r11),
+            -glm::half_pi<float>(),
+            0.0f
+        );
+    }
+    return glm::vec3(
+        std::atan2(r10, r11),
+        glm::half_pi<float>(),
+        0.0f
+    );
+}
+
+glm::vec3 LinearLimitViolation(
+    const MmdJointDefinition& joint,
+    const glm::vec3& relativePosition
+) noexcept
+{
+    glm::vec3 lower{0.0f};
+    glm::vec3 upper{0.0f};
+    switch (joint.type)
+    {
+    case MmdJointType::Spring6Dof:
+    case MmdJointType::SixDof:
+        lower = joint.linearLower;
+        upper = joint.linearUpper;
+        break;
+    case MmdJointType::Slider:
+        lower.x = joint.linearLower.x;
+        upper.x = joint.linearUpper.x;
+        break;
+    case MmdJointType::PointToPoint:
+    case MmdJointType::ConeTwist:
+    case MmdJointType::Hinge:
+        break;
+    }
+    return glm::vec3(
+        AxisLimitViolation(relativePosition.x, lower.x, upper.x),
+        AxisLimitViolation(relativePosition.y, lower.y, upper.y),
+        AxisLimitViolation(relativePosition.z, lower.z, upper.z)
+    );
+}
+
+glm::vec3 AngularLimitViolation(
+    const MmdJointDefinition& joint,
+    const glm::vec3& relativeEuler
+) noexcept
+{
+    glm::vec3 lower{-glm::pi<float>()};
+    glm::vec3 upper{glm::pi<float>()};
+    switch (joint.type)
+    {
+    case MmdJointType::Spring6Dof:
+    case MmdJointType::SixDof:
+        lower = joint.angularLower;
+        upper = joint.angularUpper;
+        break;
+    case MmdJointType::Slider:
+        lower.x = joint.angularLower.x;
+        upper.x = joint.angularUpper.x;
+        break;
+    case MmdJointType::Hinge:
+        lower.z = joint.angularLower.z;
+        upper.z = joint.angularUpper.z;
+        break;
+    case MmdJointType::PointToPoint:
+        return glm::vec3(0.0f);
+    case MmdJointType::ConeTwist:
+        return glm::vec3(0.0f);
+    }
+    return glm::vec3(
+        AxisLimitViolation(relativeEuler.x, lower.x, upper.x),
+        AxisLimitViolation(relativeEuler.y, lower.y, upper.y),
+        AxisLimitViolation(relativeEuler.z, lower.z, upper.z)
+    );
+}
+
+float QuaternionErrorDegrees(const glm::quat& left, const glm::quat& right)
+{
+    const float cosine = std::clamp(
+        std::abs(glm::dot(glm::normalize(left), glm::normalize(right))),
+        0.0f,
+        1.0f
+    );
+    return glm::degrees(2.0f * std::acos(cosine));
+}
+
+std::pair<float, float> TransformError(
+    const glm::mat4& left,
+    const glm::mat4& right
+)
+{
+    const RigidTransform leftRigid = ExtractRigidTransform(left);
+    const RigidTransform rightRigid = ExtractRigidTransform(right);
+    return {
+        glm::distance(leftRigid.position, rightRigid.position),
+        QuaternionErrorDegrees(leftRigid.rotation, rightRigid.rotation)
+    };
+}
 }
 
 struct MmdCompatRuntime::Impl
@@ -707,6 +858,121 @@ PhysicsBodyState MmdCompatRuntime::BodyStateAt(RigidBodyIndex index) const
     if (index >= this->impl->bodies.size())
         throw std::out_of_range("MMD compat rigid-body index is out of range");
     return this->impl->world.State(this->impl->bodies[index].handle);
+}
+
+MmdCompatJointDiagnostics MmdCompatRuntime::JointDiagnostics() const
+{
+    MmdCompatJointDiagnostics diagnostics;
+    if (!this->impl->created)
+        return diagnostics;
+
+    const EntityFrame entity = ExtractEntityFrame(this->impl->transform);
+    std::vector<glm::mat4> bodyModels;
+    bodyModels.reserve(this->impl->bodies.size());
+    for (const Impl::Body& body : this->impl->bodies)
+    {
+        const PhysicsBodyState state = this->impl->world.State(body.handle);
+        const bool finite = std::isfinite(state.position.x) &&
+            std::isfinite(state.position.y) &&
+            std::isfinite(state.position.z) &&
+            std::isfinite(state.rotation.w) &&
+            std::isfinite(state.rotation.x) &&
+            std::isfinite(state.rotation.y) &&
+            std::isfinite(state.rotation.z);
+        if (!finite)
+        {
+            diagnostics.finite = false;
+            bodyModels.push_back(glm::mat4(1.0f));
+            continue;
+        }
+        bodyModels.push_back(WorldToModel(state, entity));
+    }
+
+    const std::span<const MmdJointDefinition> joints =
+        this->impl->asset.Joints();
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        const MmdJointDefinition& joint = joints[index];
+        if (joint.bodyA == InvalidRigidBodyIndex ||
+            joint.bodyB == InvalidRigidBodyIndex ||
+            joint.bodyA == joint.bodyB ||
+            static_cast<std::size_t>(joint.bodyA) >= bodyModels.size() ||
+            static_cast<std::size_t>(joint.bodyB) >= bodyModels.size())
+        {
+            continue;
+        }
+        const glm::mat4 frameA = glm::inverse(
+            this->impl->asset.RigidBodyAt(joint.bodyA).modelBindTransform
+        ) * joint.modelBindTransform;
+        const glm::mat4 frameB = glm::inverse(
+            this->impl->asset.RigidBodyAt(joint.bodyB).modelBindTransform
+        ) * joint.modelBindTransform;
+        const glm::mat4 anchorA = bodyModels[joint.bodyA] * frameA;
+        const glm::mat4 anchorB = bodyModels[joint.bodyB] * frameB;
+        const auto [positionError, rotationError] =
+            TransformError(anchorA, anchorB);
+        const glm::mat4 relative = glm::inverse(anchorA) * anchorB;
+        const glm::vec3 relativePosition = glm::vec3(relative[3]);
+        const glm::vec3 relativeEuler = EulerXyzFromRotation(relative);
+        const glm::vec3 linearViolation = LinearLimitViolation(
+            joint,
+            relativePosition
+        );
+        const glm::vec3 angularViolation = AngularLimitViolation(
+            joint,
+            relativeEuler
+        );
+        const float maximumLinearViolation = std::max({
+            linearViolation.x,
+            linearViolation.y,
+            linearViolation.z
+        });
+        const float maximumAngularViolationDegrees = glm::degrees(
+            std::max({
+                angularViolation.x,
+                angularViolation.y,
+                angularViolation.z
+            })
+        );
+        if (!std::isfinite(positionError) ||
+            !std::isfinite(rotationError) ||
+            !std::isfinite(maximumLinearViolation) ||
+            !std::isfinite(maximumAngularViolationDegrees))
+        {
+            diagnostics.finite = false;
+            ++diagnostics.jointsOverFailureThreshold;
+            continue;
+        }
+        diagnostics.maximumPositionSeparation = std::max(
+            diagnostics.maximumPositionSeparation,
+            positionError
+        );
+        diagnostics.maximumRotationErrorDegrees = std::max(
+            diagnostics.maximumRotationErrorDegrees,
+            rotationError
+        );
+        diagnostics.maximumLinearLimitViolation = std::max(
+            diagnostics.maximumLinearLimitViolation,
+            maximumLinearViolation
+        );
+        diagnostics.maximumAngularLimitViolationDegrees = std::max(
+            diagnostics.maximumAngularLimitViolationDegrees,
+            maximumAngularViolationDegrees
+        );
+        if (IsWideTravelHelperJoint(joint))
+        {
+            ++diagnostics.wideTravelHelperJoints;
+            continue;
+        }
+        if (maximumLinearViolation >
+                this->impl->settings.failureLinearViolation ||
+            maximumAngularViolationDegrees >
+                this->impl->settings.failureAngularViolationDegrees)
+        {
+            ++diagnostics.jointsOverFailureThreshold;
+        }
+    }
+    return diagnostics;
 }
 
 void MmdCompatRuntime::ApplyCentralImpulse(

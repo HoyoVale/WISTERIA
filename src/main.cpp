@@ -103,30 +103,53 @@ int main(int argumentCount, char* arguments[])
             .height = 720,
             .title = morphLab
                 ? "FLORAL WISTERIA - MORPH LAB"
-                : "FLORAL WISTERIA - MMD FULL ACTION"
+                : "FLORAL WISTERIA - MMD LEGACY"
         });
-        const std::shared_ptr<Scene> scene = windowManager.CreateScene();
+        std::shared_ptr<Scene> legacyScene;
         if (morphLab)
         {
+            const std::shared_ptr<Scene> scene = windowManager.CreateScene();
             SetupMorphDemoScene(
                 *scene,
                 application.GetResources(),
                 primaryWindow
             );
+            windowManager.BindScene(primaryWindow, scene);
+            windowManager.EnableFreeCameraController(primaryWindow);
         }
         else
         {
+            legacyScene = windowManager.CreateScene();
             SetupMmdCharacterDemo(
-                *scene,
+                *legacyScene,
                 application.GetResources(),
                 primaryWindow,
-                alternateModel
+                alternateModel,
+                false
             );
-        }
-        windowManager.BindScene(primaryWindow, scene);
-        windowManager.EnableFreeCameraController(primaryWindow);
+            windowManager.BindScene(primaryWindow, legacyScene);
+            windowManager.EnableFreeCameraController(primaryWindow);
 
-        if (HasArgument(argumentCount, arguments, "--multi-window"))
+            Window& compatWindow = windowManager.CreateWindow(WindowConfig{
+                .width = 720,
+                .height = 720,
+                .title = "FLORAL WISTERIA - MMD COMPAT (Saba)"
+            });
+            const std::shared_ptr<Scene> compatScene =
+                windowManager.CreateScene();
+            SetupMmdCharacterDemo(
+                *compatScene,
+                application.GetResources(),
+                compatWindow,
+                alternateModel,
+                true
+            );
+            windowManager.BindScene(compatWindow, compatScene);
+            windowManager.EnableFreeCameraController(compatWindow);
+        }
+
+        if (HasArgument(argumentCount, arguments, "--multi-window") &&
+            legacyScene != nullptr)
         {
             Window& secondWindow = windowManager.CreateWindow(WindowConfig{
                 .width = 600,
@@ -139,19 +162,20 @@ int main(int argumentCount, char* arguments[])
                     .Target = {0.0f, 9.0f, 0.3f},
                     .Up = {0.0f, 1.0f, 0.0f}
                 });
-            windowManager.BindRenderView(secondWindow, scene, sideCamera);
+            windowManager.BindRenderView(secondWindow, legacyScene, sideCamera);
             windowManager.EnableFreeCameraController(secondWindow);
         }
 
-        if (HasArgument(argumentCount, arguments, "--dynamic-window"))
+        if (HasArgument(argumentCount, arguments, "--dynamic-window") &&
+            legacyScene != nullptr)
         {
-            Entity* host = scene->EntityAt(0);
+            Entity* host = legacyScene->EntityAt(0);
             if (host == nullptr)
                 throw std::runtime_error("Dynamic window demo requires an Entity");
             host->AddBehaviour<DynamicWindowDemoBehaviour>(
                 windowManager,
                 primaryWindow,
-                scene
+                legacyScene
             );
         }
 

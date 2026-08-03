@@ -23,6 +23,11 @@ struct MmdCompatSettings
     bool disableDynamicDeactivation = false;
     bool disableLinkedBodyCollisions = true;
 
+    // Joint-violation severity thresholds, matching the legacy runtime so
+    // A/B diagnostics are directly comparable.
+    float failureLinearViolation = 0.5f;
+    float failureAngularViolationDegrees = 45.0f;
+
     MmdPhysicsWithBoneSyncMode physicsWithBoneSync =
         MmdPhysicsWithBoneSyncMode::RotationOnly;
 };
