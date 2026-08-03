@@ -65,8 +65,7 @@ traces/
 test_output.txt
 
 # ---------- 本地大文件 ----------
-assets/models/
-models-copy/
+/assets/models/
 WISTERIA.zip
 
 # ------------------------------------------------------------

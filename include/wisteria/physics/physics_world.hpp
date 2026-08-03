@@ -77,6 +77,9 @@ public:
         float linearDamping,
         float angularDamping
     );
+    // Temporarily marks a body kinematic (Saba-style reset/warmup). Dynamic
+    // bodies keep their mass/inertia but stop integrating until cleared.
+    void SetKinematic(PhysicsBodyHandle body, bool kinematic);
     void SetCollisionPairIgnored(
         PhysicsBodyHandle bodyA,
         PhysicsBodyHandle bodyB,
@@ -129,6 +132,15 @@ public:
     // exact tick after applying maxDeltaTime; it does not use Bullet's internal
     // accumulator.
     void Step(float deltaTime);
+
+    // Saba-style step: forwards to Bullet's stepSimulation(timeStep,
+    // maxSubSteps, fixedTimeStep), including Bullet's internal accumulator.
+    // Returns the number of simulation substeps actually executed.
+    int StepSimulation(
+        float timeStep,
+        int maxSubSteps,
+        float fixedTimeStep
+    );
 
 private:
     class Impl;

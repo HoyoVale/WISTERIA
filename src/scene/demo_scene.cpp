@@ -3,6 +3,7 @@
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/mmd/physics/mmd_physics_instance.hpp"
+#include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
 #include "wisteria/scene/scene.hpp"
 #include "wisteria/platform/window.hpp"
 #include <algorithm>
@@ -400,62 +401,67 @@ public:
             );
             this->titleDirty = true;
         }
-        if (this->input.WasKeyPressed(InputKey::B) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::B))
         {
-            const MmdPhysicsDebugOverlay overlay =
-                entity.GetMmdPhysics().CycleDebugOverlay();
-            std::cout << "[MMD ALIGN] debug overlay="
-                      << entity.GetMmdPhysics().DebugOverlayName()
-                      << " (" << static_cast<int>(overlay) << ")"
-                      << std::endl;
-            this->titleDirty = true;
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+            {
+                const MmdPhysicsDebugOverlay overlay =
+                    physics->CycleDebugOverlay();
+                std::cout << "[MMD ALIGN] debug overlay="
+                          << physics->DebugOverlayName()
+                          << " (" << static_cast<int>(overlay) << ")"
+                          << std::endl;
+                this->titleDirty = true;
+            }
         }
-        if (this->input.WasKeyPressed(InputKey::L) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::L))
         {
-            entity.GetMmdPhysics().LogAlignmentReport();
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+                physics->LogAlignmentReport();
         }
-        if (this->input.WasKeyPressed(InputKey::V) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::V))
         {
-            MmdPhysicsInstance& physics = entity.GetMmdPhysics();
-            physics.CycleFidelityDebugLayer();
-            std::cout << "[MMD FIDELITY] debug="
-                      << physics.FidelityDebugLayerName()
-                      << std::endl;
-            this->titleDirty = true;
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+            {
+                physics->CycleFidelityDebugLayer();
+                std::cout << "[MMD FIDELITY] debug="
+                          << physics->FidelityDebugLayerName()
+                          << std::endl;
+                this->titleDirty = true;
+            }
         }
-        if (this->input.WasKeyPressed(InputKey::M) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::M))
         {
-            MmdPhysicsInstance& physics = entity.GetMmdPhysics();
-            physics.CyclePhysicsWithBoneSyncMode();
-            std::cout << "[MMD FIDELITY] mode2="
-                      << physics.PhysicsWithBoneSyncModeName()
-                      << std::endl;
-            this->titleDirty = true;
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+            {
+                physics->CyclePhysicsWithBoneSyncMode();
+                std::cout << "[MMD FIDELITY] mode2="
+                          << physics->PhysicsWithBoneSyncModeName()
+                          << std::endl;
+                this->titleDirty = true;
+            }
         }
-        if (this->input.WasKeyPressed(InputKey::C) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::C))
         {
-            entity.GetMmdPhysics().LogCollisionReport();
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+                physics->LogCollisionReport();
         }
-        if (this->input.WasKeyPressed(InputKey::G) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::G))
         {
-            MmdPhysicsInstance& physics = entity.GetMmdPhysics();
-            physics.CycleGravityMode();
-            entity.ResetPhysicsToCurrentPose();
-            std::cout << "[MMD GRAVITY] mode="
-                      << physics.GravityModeName() << std::endl;
-            physics.LogGravityReport();
-            this->titleDirty = true;
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+            {
+                physics->CycleGravityMode();
+                entity.ResetPhysicsToCurrentPose();
+                std::cout << "[MMD GRAVITY] mode="
+                          << physics->GravityModeName() << std::endl;
+                physics->LogGravityReport();
+                this->titleDirty = true;
+            }
         }
-        if (this->input.WasKeyPressed(InputKey::H) &&
-            entity.HasMmdPhysics())
+        if (this->input.WasKeyPressed(InputKey::H))
         {
-            entity.GetMmdPhysics().LogGravityReport();
+            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
+                physics->LogGravityReport();
         }
         if (this->input.WasKeyPressed(InputKey::F3))
         {
@@ -514,7 +520,7 @@ private:
               << (this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF")
               << " | B: overlay ";
         if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->HasMmdPhysics())
+            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
         {
             title << entity->GetMmdPhysics().DebugOverlayName();
             if (entity->GetMmdPhysics().StabilizationFailed())
@@ -525,7 +531,7 @@ private:
             title << "N/A";
         }
         if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->HasMmdPhysics())
+            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
         {
             const MmdPhysicsInstance& physics = entity->GetMmdPhysics();
             title << " | V: fidelity "
@@ -551,7 +557,7 @@ private:
             MmdPhysicsCollisionStatistics collision;
             MmdPhysicsGravityStatistics gravity;
             if (const Entity* entity = this->scene.EntityAt(0U);
-                entity != nullptr && entity->HasMmdPhysics())
+                entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
             {
                 recovery = entity->GetMmdPhysics().RecoveryStatistics();
                 fidelity = entity->GetMmdPhysics().FidelityStatistics();
@@ -607,7 +613,7 @@ private:
         MmdPhysicsCollisionStatistics collision;
         MmdPhysicsGravityStatistics gravity;
         if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->HasMmdPhysics())
+            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
         {
             recovery = entity->GetMmdPhysics().RecoveryStatistics();
             fidelity = entity->GetMmdPhysics().FidelityStatistics();
@@ -670,7 +676,7 @@ private:
                   << world.restitutionVelocityThreshold
                   << " gravityMode=";
         if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->HasMmdPhysics())
+            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
         {
             std::cout << entity->GetMmdPhysics().GravityModeName();
         }
@@ -723,7 +729,7 @@ private:
                   << recovery.suppressedRecoveryCount
                   << " mode2Sync=";
         if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->HasMmdPhysics())
+            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
         {
             std::cout << entity->GetMmdPhysics().PhysicsWithBoneSyncModeName();
         }
@@ -814,10 +820,21 @@ public:
         if (this->elapsed < this->nextPulse)
             return;
         this->nextPulse += 3.2f;
-        entity.GetMmdPhysics().ApplyTorqueImpulse(
-            1U,
-            glm::vec3(0.0f, 0.0f, 0.55f * this->direction)
-        );
+        if (MmdCompatPhysicsInstance* compat =
+                entity.TryGetMmdCompatPhysics())
+        {
+            compat->ApplyTorqueImpulse(
+                1U,
+                glm::vec3(0.0f, 0.0f, 0.55f * this->direction)
+            );
+        }
+        else if (MmdPhysicsInstance* legacy = entity.TryGetMmdPhysics())
+        {
+            legacy->ApplyTorqueImpulse(
+                1U,
+                glm::vec3(0.0f, 0.0f, 0.55f * this->direction)
+            );
+        }
         this->direction = -this->direction;
     }
 
@@ -1273,8 +1290,17 @@ void SetupMmdCharacterDemo(
             glm::vec3(0.0f, 0.0f, 0.1f),
             glm::vec3(0.0f),
             glm::vec3(1.0f)
-        )
+        ),
+        ModelInstantiationOptions{.enablePhysics = false}
     );
+    if (model.HasMmdPhysics())
+    {
+        entity.SetMmdPhysics(
+            scene.Physics(),
+            model.GetMmdPhysics(),
+            MmdCompatSettings{}
+        );
+    }
     Animator& animator = entity.GetAnimator();
     animator.SetLooping(true);
     animator.Play(clip, true);
@@ -1294,9 +1320,11 @@ void SetupMmdCharacterDemo(
     std::cout << "[INFO] MMD full-body demo: " << clip.Name()
               << " | tracks=" << clip.TrackCount()
               << " | rigidBodies="
-              << (entity.HasMmdPhysics()
-                    ? entity.GetMmdPhysics().RigidBodyCount()
-                    : 0U)
+              << (entity.TryGetMmdCompatPhysics() != nullptr
+                    ? entity.GetMmdCompatPhysics().RigidBodyCount()
+                    : (entity.TryGetMmdPhysics() != nullptr
+                        ? entity.GetMmdPhysics().RigidBodyCount()
+                        : 0U))
               << std::endl;
 }
 

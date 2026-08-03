@@ -19,6 +19,8 @@
 
 class MmdPhysicsAsset;
 class MmdPhysicsInstance;
+class MmdCompatPhysicsInstance;
+struct MmdCompatSettings;
 struct MmdPhysicsRuntimePolicy;
 class PhysicsInstance;
 class PhysicsWorld;
@@ -98,9 +100,18 @@ public:
     const MmdPhysicsInstance* TryGetMmdPhysics() const noexcept;
     MmdPhysicsInstance& GetMmdPhysics();
     const MmdPhysicsInstance& GetMmdPhysics() const;
+    MmdCompatPhysicsInstance* TryGetMmdCompatPhysics() noexcept;
+    const MmdCompatPhysicsInstance* TryGetMmdCompatPhysics() const noexcept;
+    MmdCompatPhysicsInstance& GetMmdCompatPhysics();
+    const MmdCompatPhysicsInstance& GetMmdCompatPhysics() const;
     void SetMmdPhysics(
         PhysicsWorld& world,
         const MmdPhysicsAsset& physics
+    );
+    void SetMmdPhysics(
+        PhysicsWorld& world,
+        const MmdPhysicsAsset& physics,
+        const MmdCompatSettings& settings
     );
     void SetMmdPhysics(
         PhysicsWorld& world,

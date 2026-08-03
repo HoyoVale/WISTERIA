@@ -1,5 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/scene/entity.hpp"
+#include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
 #include "wisteria/mmd/physics/mmd_physics_instance.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/physics/physics_world.hpp"
@@ -291,7 +292,8 @@ void Entity::SetPhysicsInstance(std::unique_ptr<PhysicsInstance> instance)
 
 bool Entity::HasMmdPhysics() const noexcept
 {
-    return this->TryGetMmdPhysics() != nullptr;
+    return this->TryGetMmdPhysics() != nullptr ||
+        this->TryGetMmdCompatPhysics() != nullptr;
 }
 
 MmdPhysicsInstance* Entity::TryGetMmdPhysics() noexcept
@@ -322,6 +324,36 @@ const MmdPhysicsInstance& Entity::GetMmdPhysics() const
     return *result;
 }
 
+MmdCompatPhysicsInstance* Entity::TryGetMmdCompatPhysics() noexcept
+{
+    return dynamic_cast<MmdCompatPhysicsInstance*>(
+        this->physicsInstance.get()
+    );
+}
+
+const MmdCompatPhysicsInstance* Entity::TryGetMmdCompatPhysics() const noexcept
+{
+    return dynamic_cast<const MmdCompatPhysicsInstance*>(
+        this->physicsInstance.get()
+    );
+}
+
+MmdCompatPhysicsInstance& Entity::GetMmdCompatPhysics()
+{
+    MmdCompatPhysicsInstance* result = this->TryGetMmdCompatPhysics();
+    if (result == nullptr)
+        throw std::logic_error("Entity has no MMD compat physics instance");
+    return *result;
+}
+
+const MmdCompatPhysicsInstance& Entity::GetMmdCompatPhysics() const
+{
+    const MmdCompatPhysicsInstance* result = this->TryGetMmdCompatPhysics();
+    if (result == nullptr)
+        throw std::logic_error("Entity has no MMD compat physics instance");
+    return *result;
+}
+
 void Entity::SetMmdPhysics(
     PhysicsWorld& world,
     const MmdPhysicsAsset& physics
@@ -332,6 +364,28 @@ void Entity::SetMmdPhysics(
         physics,
         MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults()
     );
+}
+
+void Entity::SetMmdPhysics(
+    PhysicsWorld& world,
+    const MmdPhysicsAsset& physics,
+    const MmdCompatSettings& settings
+)
+{
+    if (!this->HasPose())
+    {
+        throw std::logic_error(
+            "MMD compat physics requires an Entity skeleton pose"
+        );
+    }
+    this->SetPhysicsInstance(std::make_unique<MmdCompatPhysicsInstance>(
+        world,
+        physics,
+        *this->pose,
+        this->transform,
+        settings
+    ));
+    this->physicsResetPending = false;
 }
 
 void Entity::SetMmdPhysics(

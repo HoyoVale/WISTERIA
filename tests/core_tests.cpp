@@ -9,6 +9,7 @@
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/mmd/physics/mmd_physics_instance.hpp"
+#include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/physics/physics_world.hpp"
@@ -6478,6 +6479,193 @@ void TestP0Bullet275CompatibilityLongRunWhenAvailable()
     }
 }
 
+void TestMmdCompatRuntimeWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
+        u8"身体动作.vmd";
+    if (!std::filesystem::is_regular_file(motionPath))
+    {
+        motionPath = ProjectAssetDirectory / "motions" /
+            "#U76ae#U5361#U76ae#U5361#U76ae#U5361#U4e18+" /
+            "#U8eab#U4f53#U52a8#U4f5c.vmd";
+    }
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    ImportedModelData imported;
+    try
+    {
+        imported = ModelImporter().Import(modelPath);
+    }
+    catch (const std::runtime_error& error)
+    {
+        if (std::string(error.what()).find("texture was not found") !=
+            std::string::npos)
+        {
+            return;
+        }
+        throw;
+    }
+    Require(
+        imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
+        "MMD compat A/B source lost skeleton or physics"
+    );
+
+    ModelAsset model("mmdCompatRuntime");
+    model.SetSkeleton(std::move(*imported.skeleton));
+    if (!imported.morphs.empty())
+        model.SetMorphs(std::move(imported.morphs));
+    model.SetMmdPhysics(std::move(*imported.mmdPhysics));
+    const MorphSet* morphs = model.HasMorphs() ? &model.GetMorphSet() : nullptr;
+    ImportedVmdAnimationData motion = VmdImporter().Import(
+        motionPath,
+        model.GetSkeleton(),
+        VmdImportOptions{.clipName = "compatMotion"},
+        morphs
+    );
+    model.AddAnimationClip(std::move(motion.clip));
+
+    const int longRunFrames =
+        std::getenv("WISTERIA_SANITIZER_SMOKE") != nullptr ? 60 : 720;
+
+    struct CompatResult
+    {
+        bool created = false;
+        bool finite = true;
+        std::size_t bodies = 0U;
+        std::size_t joints = 0U;
+        float maxDisplacement = 0.0f;
+    };
+
+    const auto runCompat = [&]() -> CompatResult
+    {
+        CompatResult result;
+        Scene scene;
+        Entity& entity = scene.InstantiateModel(
+            model,
+            {},
+            ModelInstantiationOptions{.enablePhysics = false}
+        );
+        try
+        {
+            entity.SetMmdPhysics(
+                scene.Physics(),
+                model.GetMmdPhysics(),
+                MmdCompatSettings{}
+            );
+        }
+        catch (const std::exception&)
+        {
+            return result;
+        }
+        result.created = true;
+
+        const MmdCompatPhysicsInstance& physics =
+            entity.GetMmdCompatPhysics();
+        result.bodies = physics.RigidBodyCount();
+        result.joints = physics.JointCount();
+
+        std::vector<glm::vec3> startPositions;
+        startPositions.reserve(result.bodies);
+        for (RigidBodyIndex index = 0U; index < result.bodies; ++index)
+            startPositions.push_back(physics.BodyStateAt(index).position);
+
+        scene.Update(0.0f);
+        for (int frame = 0; frame < longRunFrames; ++frame)
+        {
+            scene.Update(1.0f / 60.0f);
+            for (RigidBodyIndex index = 0U; index < result.bodies; ++index)
+            {
+                const PhysicsBodyState state = physics.BodyStateAt(index);
+                if (!std::isfinite(state.position.x) ||
+                    !std::isfinite(state.position.y) ||
+                    !std::isfinite(state.position.z) ||
+                    !std::isfinite(state.rotation.w) ||
+                    !std::isfinite(state.rotation.x) ||
+                    !std::isfinite(state.rotation.y) ||
+                    !std::isfinite(state.rotation.z))
+                {
+                    result.finite = false;
+                    break;
+                }
+            }
+        }
+        for (RigidBodyIndex index = 0U; index < result.bodies; ++index)
+        {
+            const float distance = glm::distance(
+                physics.BodyStateAt(index).position,
+                startPositions[index]
+            );
+            result.maxDisplacement = std::max(
+                result.maxDisplacement,
+                distance
+            );
+        }
+        return result;
+    };
+
+    const auto runLegacy = [&]() -> MmdPhysicsInstance::MmdRuntimeJointDiagnostics
+    {
+        Scene scene;
+        Entity& entity = scene.InstantiateModel(
+            model,
+            {},
+            ModelInstantiationOptions{.enablePhysics = false}
+        );
+        entity.SetMmdPhysics(
+            scene.Physics(),
+            model.GetMmdPhysics(),
+            MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults()
+        );
+        scene.Update(0.0f);
+        const MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        for (int frame = 0; frame < longRunFrames; ++frame)
+            scene.Update(1.0f / 60.0f);
+        return physics.RuntimeJointDiagnostics();
+    };
+
+    const CompatResult compat = runCompat();
+    const MmdPhysicsInstance::MmdRuntimeJointDiagnostics legacy =
+        runLegacy();
+
+    std::cout << "[MMD COMPAT A/B] legacy linearViol="
+              << legacy.maximumLinearLimitViolation
+              << " angularViolDeg="
+              << legacy.maximumAngularLimitViolationDegrees
+              << " severe=" << legacy.jointsOverFailureThreshold
+              << std::endl;
+    std::cout << "[MMD COMPAT A/B] compat created="
+              << (compat.created ? "true" : "false")
+              << " bodies=" << compat.bodies
+              << " joints=" << compat.joints
+              << " finite=" << (compat.finite ? "true" : "false")
+              << " maxDisplacement=" << compat.maxDisplacement
+              << std::endl;
+
+    Require(
+        compat.created && compat.finite &&
+            compat.bodies == 495U && compat.joints > 0U,
+        "MMD compat runtime failed to create or run the demo model"
+    );
+    Require(
+        legacy.finite,
+        "MMD legacy runtime became non-finite during compat A/B"
+    );
+}
+
 
 void TestBulletAdditionalConstraintsAndDebugDraw()
 {
@@ -7005,6 +7193,10 @@ int main()
     failures += !RunTest(
         "P0 Bullet 2.75 compatibility A/B long-run",
         TestP0Bullet275CompatibilityLongRunWhenAvailable
+    );
+    failures += !RunTest(
+        "MMD compat runtime demo A/B",
+        TestMmdCompatRuntimeWhenAvailable
     );
     failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
     failures += !RunTest("Skeleton validation", TestSkeletonValidation);

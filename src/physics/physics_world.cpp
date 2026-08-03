@@ -1668,6 +1668,32 @@ void PhysicsWorld::SetDamping(
     slot.body->activate(true);
 }
 
+void PhysicsWorld::SetKinematic(
+    PhysicsBodyHandle body,
+    bool kinematic
+)
+{
+    Impl::BodySlot& slot = impl->Require(body);
+    if (kinematic)
+    {
+        slot.body->setCollisionFlags(
+            slot.body->getCollisionFlags() |
+            btCollisionObject::CF_KINEMATIC_OBJECT
+        );
+        slot.body->setActivationState(DISABLE_DEACTIVATION);
+    }
+    else
+    {
+        slot.body->setCollisionFlags(
+            slot.body->getCollisionFlags() &
+            ~btCollisionObject::CF_KINEMATIC_OBJECT
+        );
+        if (slot.motionType == PhysicsMotionType::Dynamic)
+            slot.body->setActivationState(ACTIVE_TAG);
+        slot.body->activate(true);
+    }
+}
+
 void PhysicsWorld::SetCollisionPairIgnored(
     PhysicsBodyHandle bodyA,
     PhysicsBodyHandle bodyB,
@@ -1856,4 +1882,44 @@ void PhysicsWorld::Step(float deltaTime)
     if (deltaTime <= 0.0f)
         return;
     this->StepFixed(std::min(deltaTime, impl->settings.maxDeltaTime));
+}
+
+int PhysicsWorld::StepSimulation(
+    float timeStep,
+    int maxSubSteps,
+    float fixedTimeStep
+)
+{
+    if (!std::isfinite(timeStep) || timeStep <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "Physics stepSimulation timeStep must be finite and positive"
+        );
+    }
+    if (maxSubSteps <= 0)
+    {
+        throw std::invalid_argument(
+            "Physics stepSimulation maxSubSteps must be positive"
+        );
+    }
+    if (!std::isfinite(fixedTimeStep) || fixedTimeStep <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "Physics stepSimulation fixedTimeStep must be finite and positive"
+        );
+    }
+
+    impl->lastFixedTimeStep = fixedTimeStep;
+    const int substeps = impl->world->stepSimulation(
+        timeStep,
+        maxSubSteps,
+        fixedTimeStep
+    );
+    impl->CaptureContactPairs();
+    if (impl->debugDrawEnabled)
+    {
+        impl->debugCollector.Clear();
+        impl->world->debugDrawWorld();
+    }
+    return substeps;
 }

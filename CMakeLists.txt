@@ -171,6 +171,8 @@ set(WISTERIA_MMD_SOURCES
     src/mmd/physics/mmd_physics_asset.cpp
     src/mmd/physics/mmd_physics_instance.cpp
     src/mmd/physics/mmd_physics_policy.cpp
+    src/mmd/physics_compat/mmd_compat_runtime.cpp
+    src/mmd/physics_compat/mmd_compat_physics_instance.cpp
 )
 
 set(WISTERIA_SCENE_SOURCES
