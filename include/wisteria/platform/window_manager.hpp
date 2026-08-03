@@ -62,6 +62,10 @@ public:
         const FreeCameraControllerSettings& settings = {}
     );
     void DisableFreeCameraController(Window& window) noexcept;
+    void SetFreeCameraControllerSettings(
+        Window& window,
+        const FreeCameraControllerSettings& settings
+    );
 
     std::size_t WindowCount() const noexcept;
 

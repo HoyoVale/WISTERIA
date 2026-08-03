@@ -3,8 +3,8 @@
 #include "wisteria/scene/demo_scene.hpp"
 #include "wisteria/platform/window.hpp"
 
-#include <iostream>
 #include <filesystem>
+#include <iostream>
 #include <optional>
 #include <string_view>
 
@@ -32,7 +32,7 @@ std::optional<std::filesystem::path> ModelPathArgument(
     for (int index = 1; index + 1 < argumentCount; ++index)
     {
         if (arguments[index] != nullptr &&
-            arguments[index] == "--model" &&
+            std::string_view(arguments[index]) == "--model" &&
             arguments[index + 1] != nullptr)
         {
             return std::filesystem::path(arguments[index + 1]);
@@ -41,63 +41,22 @@ std::optional<std::filesystem::path> ModelPathArgument(
     return std::nullopt;
 }
 
-class DynamicWindowDemoBehaviour final : public Behaviour
+std::optional<std::filesystem::path> ScenePathArgument(
+    int argumentCount,
+    char* arguments[]
+)
 {
-public:
-    DynamicWindowDemoBehaviour(
-        WindowManager& windowManager,
-        Window& primaryWindow,
-        std::shared_ptr<Scene> scene
-    )
-        : windowManager(windowManager),
-          primaryWindow(primaryWindow),
-          scene(std::move(scene))
+    for (int index = 1; index + 1 < argumentCount; ++index)
     {
-    }
-
-    void Update(Entity&, float deltaTime) override
-    {
-        this->elapsed += deltaTime;
-        if (!this->createdSecondary && this->elapsed >= 1.0f)
+        if (arguments[index] != nullptr &&
+            std::string_view(arguments[index]) == "--scene" &&
+            arguments[index + 1] != nullptr)
         {
-            Window& window = this->windowManager.CreateWindow(WindowConfig{
-                .width = 480,
-                .height = 480,
-                .title = "FLORAL WISTERIA - DYNAMIC VIEW"
-            });
-            const std::shared_ptr<Camera> camera =
-                this->windowManager.CreateCamera(CameraParam{
-                    .Position = {18.0f, 9.0f, 8.0f},
-                    .Target = {0.0f, 9.0f, 0.3f},
-                    .Up = {0.0f, 1.0f, 0.0f}
-                });
-            this->windowManager.BindRenderView(window, this->scene, camera);
-            this->secondaryWindow = &window;
-            this->createdSecondary = true;
-        }
-
-        if (this->secondaryWindow != nullptr && this->elapsed >= 3.0f)
-        {
-            this->windowManager.DestroyWindow(*this->secondaryWindow);
-            this->secondaryWindow = nullptr;
-        }
-
-        if (!this->requestedPrimaryClose && this->elapsed >= 5.0f)
-        {
-            this->windowManager.DestroyWindow(this->primaryWindow);
-            this->requestedPrimaryClose = true;
+            return std::filesystem::path(arguments[index + 1]);
         }
     }
-
-private:
-    WindowManager& windowManager;
-    Window& primaryWindow;
-    std::shared_ptr<Scene> scene;
-    Window* secondaryWindow = nullptr;
-    float elapsed = 0.0f;
-    bool createdSecondary = false;
-    bool requestedPrimaryClose = false;
-};
+    return std::nullopt;
+}
 }
 
 int main(int argumentCount, char* arguments[])
@@ -106,82 +65,47 @@ int main(int argumentCount, char* arguments[])
     {
         Application application;
         WindowManager& windowManager = application.GetWindowManager();
-        const bool morphLab = HasArgument(
-            argumentCount,
-            arguments,
-            "--morph-lab"
-        );
         const bool alternateModel = HasArgument(
             argumentCount,
             arguments,
             "--alternate-model"
-        ) || HasArgument(argumentCount, arguments, "--character-pair");
+        );
+        const bool sceneMode = HasArgument(
+            argumentCount,
+            arguments,
+            "--scene"
+        );
         const std::optional<std::filesystem::path> modelPath =
             ModelPathArgument(argumentCount, arguments);
+        const std::optional<std::filesystem::path> scenePath =
+            ScenePathArgument(argumentCount, arguments);
 
         Window& primaryWindow = windowManager.CreateWindow(WindowConfig{
-            .width = 720,
+            .width = 960,
             .height = 720,
-            .title = morphLab
-                ? "FLORAL WISTERIA - MORPH LAB"
-                : "FLORAL WISTERIA - MMD SABA"
+            .title = sceneMode
+                ? "FLORAL WISTERIA - MMD SCENE"
+                : "FLORAL WISTERIA - MMD DREAM WINGS"
         });
-        std::shared_ptr<Scene> demoScene;
-        if (morphLab)
-        {
-            const std::shared_ptr<Scene> scene = windowManager.CreateScene();
-            SetupMorphDemoScene(
-                *scene,
-                application.GetResources(),
-                primaryWindow
-            );
-            windowManager.BindScene(primaryWindow, scene);
-            windowManager.EnableFreeCameraController(primaryWindow);
-        }
-        else
-        {
-            demoScene = windowManager.CreateScene();
-            SetupSabaMmdDemoScene(
-                *demoScene,
-                application.GetResources(),
-                primaryWindow,
-                alternateModel,
-                modelPath.value_or(std::filesystem::path{})
-            );
-            windowManager.BindScene(primaryWindow, demoScene);
-            windowManager.EnableFreeCameraController(primaryWindow);
-        }
-
-        if (HasArgument(argumentCount, arguments, "--multi-window") &&
-            demoScene != nullptr)
-        {
-            Window& secondWindow = windowManager.CreateWindow(WindowConfig{
-                .width = 600,
-                .height = 600,
-                .title = "FLORAL WISTERIA - SECOND VIEW"
-            });
-            const std::shared_ptr<Camera> sideCamera =
-                windowManager.CreateCamera(CameraParam{
-                    .Position = {18.0f, 9.0f, 8.0f},
-                    .Target = {0.0f, 9.0f, 0.3f},
-                    .Up = {0.0f, 1.0f, 0.0f}
-                });
-            windowManager.BindRenderView(secondWindow, demoScene, sideCamera);
-            windowManager.EnableFreeCameraController(secondWindow);
-        }
-
-        if (HasArgument(argumentCount, arguments, "--dynamic-window") &&
-            demoScene != nullptr)
-        {
-            Entity* host = demoScene->EntityAt(0);
-            if (host == nullptr)
-                throw std::runtime_error("Dynamic window demo requires an Entity");
-            host->AddBehaviour<DynamicWindowDemoBehaviour>(
-                windowManager,
-                primaryWindow,
-                demoScene
-            );
-        }
+        const std::shared_ptr<Scene> scene = windowManager.CreateScene();
+        SetupSabaMmdDemoScene(
+            *scene,
+            application.GetResources(),
+            primaryWindow,
+            alternateModel,
+            modelPath.value_or(std::filesystem::path{}),
+            scenePath.value_or(std::filesystem::path{}),
+            sceneMode
+        );
+        windowManager.BindScene(primaryWindow, scene);
+        FreeCameraControllerSettings cameraSettings;
+        // Scene PMX can span hundreds of units; give scene mode a faster
+        // default so the user can cross the whole set without holding Shift.
+        cameraSettings.moveSpeed = sceneMode ? 12.0f : 2.5f;
+        windowManager.EnableFreeCameraController(
+            primaryWindow,
+            cameraSettings
+        );
 
         const int result = application.Run();
         std::cout << "[INFO] Application was closed" << std::endl;

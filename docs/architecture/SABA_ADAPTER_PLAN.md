@@ -144,10 +144,10 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
 ### 手动验收（每次阶段完成）
 
 ```powershell
-.\build\RelWithDebInfo\wisteria.exe            # 双窗口/默认 demo
+.\build\RelWithDebInfo\wisteria.exe            # 默认 demo（梦的翅膀）
 .\build\RelWithDebInfo\simple_mmd_viewer_glfw.exe `
   -model "assets\models\mmd\叶瞬光_pmx\叶瞬光.pmx" `
-  -vmd "assets\motions\皮卡皮卡皮卡丘+\身体动作.vmd"
+  -vmd "assets\motions\梦的翅膀\梦的翅膀motion.vmd"
 ```
 
 用户检查清单：
@@ -224,7 +224,7 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
       物理手感可接受；已做成可设置接口，不再写死。
   - **阶段 5：整体切换完成（2026-08-04）**
     - demo 改为单窗口默认 `SabaMmdRuntimeModel`（`--alternate-model` 切换
-      皮肤，`--morph-lab` 保留 Morph 诊断场景）；
+      皮肤，`--model` 指定任意模型）；
     - 删除旧 MMD 物理运行层：
       `mmd/physics/{mmd_physics_instance,mmd_physics_policy,mmd_physics_modes,
       mmd_physics_diagnostics}` 与 `mmd/physics_compat/*`；
@@ -247,3 +247,21 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
       `LoadLightMotion/ApplyLightMotion` 承接 `VMDFile::m_lights`；
     - 自动验收：**59/59 PASS，FAIL=0**；
     - 手动验收：接口层已由测试覆盖，demo 暂未接入相机/灯光（后续可选）。
+  - **demo 最终形态（2026-08-04）**
+    - demo 改为“梦的翅膀”动作 + 镜头动画循环：
+      `梦的翅膀motion.vmd`（动作）+ `梦的翅膀camera.vmd`（镜头），
+      每帧 `ApplyCameraMotion(MotionFrame(), camera)`；
+    - 删除自定义动作代码（`BuildFullBodyAction`/`CreateMmdFullBodyDemoAnimation`
+      及配套测试）、MorphLab 全部代码（demo + 测试 + `--morph-lab`）、
+      main 多窗口实验（`--multi-window`/`--dynamic-window`）；
+    - main 只保留单窗口入口 + `--alternate-model`/`--model`；
+    - 自动验收：**57/57 PASS，FAIL=0**（删除 2 个 demo 资产测试）。
+  - **场景 PMX + 相机速度（2026-08-04）**
+    - 新增 `--scene` 模式：不加载 VMD 动作/镜头，按模型网格包围盒自动取景，
+      默认自由相机速度 12（场景通常数百单位）；
+    - 相机速度接口：`Window::SetFreeCameraControllerSettings` /
+      `WindowManager::SetFreeCameraControllerSettings`；demo 用 `←`/`→`
+      以 0.5×/2× 调节并在标题显示当前速度（`Shift` 仍是 3× 冲刺）；
+    - 场景实测：星穹列车-观景车厢（36 网格，范围约 220×145×660）、
+      随便观（63 网格，范围约 445×250×475）均正常加载，无 `[ERROR]`；
+    - 自动验收：**57/57 PASS，FAIL=0**（跨模型测试自动覆盖新场景）。

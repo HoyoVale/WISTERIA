@@ -1,0 +1,56 @@
+[INFO] MMD SCENE demo: meshes=36 model=assets\models\mmd\星穹列车-观景车厢\Stage0514.pmx motion=none camera=missing physicsFps=120 maxSubSteps=10
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1 updateAvgMs=2.5613 uploadAvgMs=0
+[SKINNING] dynamic=1 skinned=1 bones=1
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=61 updateAvgMs=1.67094 uploadAvgMs=0.150005
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=121 updateAvgMs=1.60999 uploadAvgMs=0.153196
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=181 updateAvgMs=1.5941 uploadAvgMs=0.146787
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=241 updateAvgMs=1.59609 uploadAvgMs=0.139714
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=301 updateAvgMs=1.57901 uploadAvgMs=0.13822
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=361 updateAvgMs=1.55644 uploadAvgMs=0.139186
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=421 updateAvgMs=1.55396 uploadAvgMs=0.138669
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=481 updateAvgMs=1.55136 uploadAvgMs=0.137842
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=541 updateAvgMs=1.55458 uploadAvgMs=0.135211
+[SKINNING] dynamic=1 skinned=1 bones=1
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=601 updateAvgMs=1.55795 uploadAvgMs=0.134703
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=661 updateAvgMs=1.55725 uploadAvgMs=0.134196
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=721 updateAvgMs=1.55878 uploadAvgMs=0.133325
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=781 updateAvgMs=1.56432 uploadAvgMs=0.133265
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=841 updateAvgMs=1.55889 uploadAvgMs=0.13172
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=901 updateAvgMs=1.55483 uploadAvgMs=0.130727
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=961 updateAvgMs=1.55106 uploadAvgMs=0.12991
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1021 updateAvgMs=1.5507 uploadAvgMs=0.129622
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1081 updateAvgMs=1.55307 uploadAvgMs=0.129206
+[SKINNING] dynamic=1 skinned=1 bones=1
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1141 updateAvgMs=1.55174 uploadAvgMs=0.129013
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1201 updateAvgMs=1.55093 uploadAvgMs=0.128058
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1261 updateAvgMs=1.55279 uploadAvgMs=0.127828
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1321 updateAvgMs=1.54967 uploadAvgMs=0.127138
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1381 updateAvgMs=1.54839 uploadAvgMs=0.126565
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1441 updateAvgMs=1.55092 uploadAvgMs=0.126644
+[SABA SKIN] finite=true min=(-109.118, -1.42789, -329.827) max=(109.118, 144.181, 329.827) maxBindDisplacement=0
+[SABA PROFILE] frames=1501 updateAvgMs=1.54641 uploadAvgMs=0.126878

@@ -40,6 +40,11 @@ public:
         const FreeCameraControllerSettings& settings = {}
     );
     void DisableFreeCameraController() noexcept;
+    const FreeCameraControllerSettings& GetFreeCameraControllerSettings()
+        const noexcept;
+    void SetFreeCameraControllerSettings(
+        const FreeCameraControllerSettings& settings
+    );
     Scene& GetScene() noexcept { return *this->scene; };
     const Scene& GetScene() const noexcept { return *this->scene; };
     Camera& GetCamera() noexcept { return *this->camera; };

@@ -153,6 +153,23 @@ void Window::DisableFreeCameraController() noexcept
     this->cameraController.reset();
 }
 
+const FreeCameraControllerSettings&
+Window::GetFreeCameraControllerSettings() const noexcept
+{
+    static const FreeCameraControllerSettings fallback;
+    return this->cameraController != nullptr
+        ? this->cameraController->Settings()
+        : fallback;
+}
+
+void Window::SetFreeCameraControllerSettings(
+    const FreeCameraControllerSettings& settings
+)
+{
+    if (this->cameraController != nullptr)
+        this->cameraController->SetSettings(settings);
+}
+
 void Window::BindScene(SceneHandle nextScene)
 {
     if (nextScene == nullptr)

@@ -1,11 +1,13 @@
 [CmdletBinding()]
 param(
+    [Parameter(Position = 0)]
     [ValidateSet('run', 'build', 'compile', 'test', 'clean')]
     [string]$Action = 'run',
 
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
     [string]$Configuration = 'RelWithDebInfo',
 
+    [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]]$ApplicationArguments = @()
 )
 

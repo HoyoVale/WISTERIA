@@ -194,6 +194,16 @@ void WindowManager::DisableFreeCameraController(Window& window) noexcept
     }
 }
 
+void WindowManager::SetFreeCameraControllerSettings(
+    Window& window,
+    const FreeCameraControllerSettings& settings
+)
+{
+    this->RequireOwnerThread();
+    this->Find(window);
+    window.SetFreeCameraControllerSettings(settings);
+}
+
 std::size_t WindowManager::WindowCount() const noexcept
 {
     return this->windows.size() + this->pendingWindows.size();
