@@ -17,11 +17,6 @@ Windows PowerShell：
 Space  暂停 / 继续
 R      从头播放并重置物理
 P      开关 Bullet 调试线框
-B      切换 MMD Bind / Reset / Runtime Overlay
-V      切换 Bone / Vertex 物理忠实度调试层
-M      切换 Mode 2 骨骼回写策略
-L      输出 MMD 对齐与物理诊断
-F3     开关物理性能与忠实度统计
 ```
 
 可选 Demo：
@@ -94,10 +89,10 @@ Dynamic 刚体的位置和旋转 → 骨骼
 
 Physics With Bone
 Dynamic 刚体完整参与重力、碰撞和关节
-骨骼回写可在 RotationOnly、FullBody、TranslationDelta 间切换
+但回写骨骼时保留动画平移，只采用物理旋转
 ```
 
-Mode 2 不能通过关闭刚体线性自由度实现。刚体本身必须允许重力和关节推动；“位置对齐”是 MMD 适配器在模拟后写回骨骼时执行的格式语义。默认仍为兼容旧行为的 `RotationOnly`，人物 Demo 中按 `M` 可实时切换三种策略。
+Mode 2 不能通过关闭刚体线性自由度实现。刚体本身必须允许重力和关节推动；“位置对齐”是 MMD 适配器在模拟后写回骨骼时执行的格式语义。
 
 人物 Demo 中按 `P` 开关 Bullet 调试绘制。当前显示内容来自 Bullet：
 
@@ -190,16 +185,16 @@ P1 的自动恢复已改为只在真实 Bullet 固定步后检测，所有持续
 
 完整设计、日志字段和验收方式见 `P1_1_RECOVERY_STABILITY.md`。
 
-## Runtime Physics P1.2 A/B：Physics-to-Skinning Fidelity
+## P1.2 Collision Topology & Response
 
-新增两条运行时对照能力：
+`TRANSLATION_DELTA` 暴露出的网格挤压主要来自密集刚体碰撞产生的过度位移。本阶段增加接触对/穿透/冲量诊断，过滤同链关节近邻的无意义内部碰撞，将 CCD 改为按真实单步位移动态启停，并降低密集 Dynamic Box 的局部 margin 与 restitution。接触修正参数也显式限制，避免深穿透后把刚体猛烈推开。
+
+人物演示新增：
 
 ```text
-V  OFF → BONE → VERTEX → ALL → OFF
-M  ROTATION_ONLY → FULL_BODY → TRANSLATION_DELTA → ROTATION_ONLY
+C      输出碰撞汇总、链间碰撞矩阵和高冲量刚体对
+B      RUNTIME / ALL 时显示接触点和法线
+F3     显示 active/candidate CCD、接触对、跨链对和最大穿透
 ```
 
-`B=RUNTIME` 与 `V=ALL` 组合可同时显示绿色动画目标刚体、白色 Bullet 刚体、橙色最终骨骼和紫色蒙皮顶点样本，从而直接判断误差发生在 Bullet→Bone 还是 Bone→Vertex。`TranslationDelta` 会保留动画骨骼基础位置，同时加入 Bullet 相对本帧动画目标的平移，适合对照 Mode 2 占比较高的裙摆、长发和飘带。
-
-完整颜色、统计字段、策略公式与验收方法见 `P1_2_PHYSICS_TO_SKINNING_AB.md`。
-
+完整策略、阈值和 Windows 验收步骤见 `P1_2_COLLISION_TOPOLOGY_RESPONSE.md`。

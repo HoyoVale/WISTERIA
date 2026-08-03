@@ -198,6 +198,20 @@ struct PhysicsBodyRuntimeSettings
     bool ccdEnabled = false;
     float ccdMotionThreshold = 0.0f;
     float ccdSweptSphereRadius = 0.0f;
+    std::uint16_t collisionGroup = 0x0001U;
+    std::uint16_t collisionMask = 0xFFFFU;
+};
+
+struct PhysicsContactPair
+{
+    PhysicsBodyHandle bodyA{};
+    PhysicsBodyHandle bodyB{};
+    std::size_t contactPointCount = 0U;
+    float maximumPenetrationDepth = 0.0f;
+    float totalAppliedImpulse = 0.0f;
+    float maximumAppliedImpulse = 0.0f;
+    glm::vec3 deepestPointOnB{0.0f};
+    glm::vec3 deepestNormalOnB{0.0f, 1.0f, 0.0f};
 };
 
 struct PhysicsStepSettings
@@ -213,7 +227,11 @@ struct PhysicsStepSettings
     float splitImpulsePenetrationThreshold = -0.02f;
     float splitImpulseTurnErp = 0.1f;
     float solverErp = 0.2f;
-    float solverErp2 = 0.2f;
+    float solverErp2 = 0.1f;
+    // Caps penetration correction velocity so dense MMD collision proxies do
+    // not explosively push one another apart after a deep contact.
+    float maximumErrorReduction = 4.0f;
+    float restitutionVelocityThreshold = 0.5f;
 };
 
 struct PhysicsWorldStatistics
@@ -227,12 +245,15 @@ struct PhysicsWorldStatistics
     std::size_t constraintCount = 0U;
     std::size_t contactManifoldCount = 0U;
     std::size_t contactPointCount = 0U;
+    std::size_t contactPairCount = 0U;
     std::size_t ccdBodyCount = 0U;
     float minimumBoxCollisionMargin = 0.0f;
     float maximumBoxCollisionMargin = 0.0f;
     int solverIterations = 0;
     bool splitImpulse = false;
     float splitImpulsePenetrationThreshold = 0.0f;
+    float maximumErrorReduction = 0.0f;
+    float restitutionVelocityThreshold = 0.0f;
     bool finite = true;
 };
 

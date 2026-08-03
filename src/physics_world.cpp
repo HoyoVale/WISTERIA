@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -61,7 +62,9 @@ void ValidateStepSettings(const PhysicsStepSettings& settings)
         settings.splitImpulsePenetrationThreshold,
         settings.splitImpulseTurnErp,
         settings.solverErp,
-        settings.solverErp2
+        settings.solverErp2,
+        settings.maximumErrorReduction,
+        settings.restitutionVelocityThreshold
     };
     for (const float value : solverValues)
     {
@@ -71,10 +74,12 @@ void ValidateStepSettings(const PhysicsStepSettings& settings)
     if (settings.splitImpulseTurnErp < 0.0f ||
         settings.splitImpulseTurnErp > 1.0f ||
         settings.solverErp < 0.0f || settings.solverErp > 1.0f ||
-        settings.solverErp2 < 0.0f || settings.solverErp2 > 1.0f)
+        settings.solverErp2 < 0.0f || settings.solverErp2 > 1.0f ||
+        settings.maximumErrorReduction <= 0.0f ||
+        settings.restitutionVelocityThreshold < 0.0f)
     {
         throw std::invalid_argument(
-            "Physics solver ERP values must be normalized"
+            "Physics solver ERP values must be normalized and response limits positive"
         );
     }
 }
@@ -407,6 +412,9 @@ void ApplySolverSettings(
     solverInfo.m_splitImpulseTurnErp = settings.splitImpulseTurnErp;
     solverInfo.m_erp = settings.solverErp;
     solverInfo.m_erp2 = settings.solverErp2;
+    solverInfo.m_maxErrorReduction = settings.maximumErrorReduction;
+    solverInfo.m_restitutionVelocityThreshold =
+        settings.restitutionVelocityThreshold;
 }
 }
 
@@ -731,6 +739,107 @@ public:
             freeSlots.push_back(index);
         }
         bodyCount = 0;
+        contactPairs.clear();
+    }
+
+
+    void CaptureContactPairs()
+    {
+        contactPairs.clear();
+        std::unordered_map<std::uint64_t, std::size_t> pairIndex;
+        const int manifoldCount = dispatcher->getNumManifolds();
+        for (int manifoldIndex = 0; manifoldIndex < manifoldCount; ++manifoldIndex)
+        {
+            const btPersistentManifold* manifold =
+                dispatcher->getManifoldByIndexInternal(manifoldIndex);
+            if (manifold == nullptr || manifold->getNumContacts() <= 0)
+                continue;
+
+            const auto* objectA = static_cast<const btCollisionObject*>(
+                manifold->getBody0()
+            );
+            const auto* objectB = static_cast<const btCollisionObject*>(
+                manifold->getBody1()
+            );
+            if (objectA == nullptr || objectB == nullptr)
+                continue;
+            const int rawA = objectA->getUserIndex();
+            const int rawB = objectB->getUserIndex();
+            if (rawA < 0 || rawB < 0)
+                continue;
+            const std::uint32_t indexA = static_cast<std::uint32_t>(rawA);
+            const std::uint32_t indexB = static_cast<std::uint32_t>(rawB);
+            if (indexA >= bodies.size() || indexB >= bodies.size() ||
+                !bodies[indexA].body || !bodies[indexB].body)
+            {
+                continue;
+            }
+
+            const std::uint32_t lower = std::min(indexA, indexB);
+            const std::uint32_t upper = std::max(indexA, indexB);
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(lower) << 32U) |
+                static_cast<std::uint64_t>(upper);
+            auto [iterator, inserted] = pairIndex.emplace(
+                key,
+                contactPairs.size()
+            );
+            if (inserted)
+            {
+                const BodySlot& lowerSlot = bodies[lower];
+                const BodySlot& upperSlot = bodies[upper];
+                contactPairs.push_back(PhysicsContactPair{
+                    PhysicsBodyHandle{lower, lowerSlot.generation},
+                    PhysicsBodyHandle{upper, upperSlot.generation}
+                });
+            }
+            PhysicsContactPair& pair = contactPairs[iterator->second];
+            for (int pointIndex = 0;
+                 pointIndex < manifold->getNumContacts();
+                 ++pointIndex)
+            {
+                const btManifoldPoint& point =
+                    manifold->getContactPoint(pointIndex);
+                ++pair.contactPointCount;
+                const float penetration = std::max(
+                    0.0f,
+                    -static_cast<float>(point.getDistance())
+                );
+                const float impulse = std::max(
+                    0.0f,
+                    static_cast<float>(point.getAppliedImpulse())
+                );
+                pair.totalAppliedImpulse += impulse;
+                pair.maximumAppliedImpulse = std::max(
+                    pair.maximumAppliedImpulse,
+                    impulse
+                );
+                if (penetration >= pair.maximumPenetrationDepth)
+                {
+                    pair.maximumPenetrationDepth = penetration;
+                    pair.deepestPointOnB = PhysicsBulletConversion::FromBullet(
+                        point.getPositionWorldOnB()
+                    );
+                    pair.deepestNormalOnB = PhysicsBulletConversion::FromBullet(
+                        point.m_normalWorldOnB
+                    );
+                }
+            }
+        }
+        std::sort(
+            contactPairs.begin(),
+            contactPairs.end(),
+            [](const PhysicsContactPair& left, const PhysicsContactPair& right)
+            {
+                if (left.totalAppliedImpulse != right.totalAppliedImpulse)
+                {
+                    return left.totalAppliedImpulse >
+                        right.totalAppliedImpulse;
+                }
+                return left.maximumPenetrationDepth >
+                    right.maximumPenetrationDepth;
+            }
+        );
     }
 
     std::unique_ptr<btDefaultCollisionConfiguration> collisionConfiguration;
@@ -747,6 +856,7 @@ public:
     std::vector<std::uint32_t> freeConstraintSlots;
     std::size_t constraintCount = 0;
     bool debugDrawEnabled = false;
+    std::vector<PhysicsContactPair> contactPairs;
 };
 
 PhysicsWorld::PhysicsWorld(const PhysicsStepSettings& settings)
@@ -872,12 +982,15 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(
     slot.shape = std::move(shape);
     slot.motionState = std::move(motionState);
     slot.body = std::move(rigidBody);
+    slot.body->setUserIndex(static_cast<int>(index));
     slot.motionType = description.motionType;
     slot.runtimeSettings = PhysicsBodyRuntimeSettings{
         resolvedCollisionMargin,
         description.enableCcd,
         description.enableCcd ? description.ccdMotionThreshold : 0.0f,
-        description.enableCcd ? description.ccdSweptSphereRadius : 0.0f
+        description.enableCcd ? description.ccdSweptSphereRadius : 0.0f,
+        description.collisionGroup,
+        description.collisionMask
     };
 
     impl->world->addRigidBody(
@@ -894,6 +1007,10 @@ bool PhysicsWorld::DestroyBody(PhysicsBodyHandle body) noexcept
     if (!impl->Find(body))
         return false;
     impl->Release(body.index);
+    // Contact handles are snapshots from the previous fixed tick. Once a
+    // body is destroyed, discard the snapshot instead of exposing a stale
+    // generation until the next simulation step.
+    impl->contactPairs.clear();
     return true;
 }
 
@@ -1194,6 +1311,11 @@ PhysicsWorldStatistics PhysicsWorld::Statistics() const noexcept
     statistics.splitImpulse = impl->settings.splitImpulse;
     statistics.splitImpulsePenetrationThreshold =
         impl->settings.splitImpulsePenetrationThreshold;
+    statistics.maximumErrorReduction =
+        impl->settings.maximumErrorReduction;
+    statistics.restitutionVelocityThreshold =
+        impl->settings.restitutionVelocityThreshold;
+    statistics.contactPairCount = impl->contactPairs.size();
     bool hasBoxMargin = false;
 
     for (const Impl::BodySlot& slot : impl->bodies)
@@ -1303,6 +1425,62 @@ PhysicsBodyRuntimeSettings PhysicsWorld::RuntimeSettings(
 ) const
 {
     return impl->Require(body).runtimeSettings;
+}
+
+void PhysicsWorld::ConfigureCcd(
+    PhysicsBodyHandle body,
+    bool enabled,
+    float motionThreshold,
+    float sweptSphereRadius
+)
+{
+    if (!std::isfinite(motionThreshold) ||
+        !std::isfinite(sweptSphereRadius) ||
+        motionThreshold < 0.0f || sweptSphereRadius < 0.0f)
+    {
+        throw std::invalid_argument("Physics CCD configuration is invalid");
+    }
+    Impl::BodySlot& slot = impl->Require(body);
+    if (enabled && slot.motionType != PhysicsMotionType::Dynamic)
+    {
+        throw std::invalid_argument(
+            "CCD can only be enabled for dynamic rigid bodies"
+        );
+    }
+    if (enabled && (motionThreshold <= 0.0f || sweptSphereRadius <= 0.0f))
+    {
+        throw std::invalid_argument(
+            "Enabled CCD requires positive threshold and swept radius"
+        );
+    }
+    slot.body->setCcdMotionThreshold(enabled ? motionThreshold : 0.0f);
+    slot.body->setCcdSweptSphereRadius(
+        enabled ? sweptSphereRadius : 0.0f
+    );
+    slot.runtimeSettings.ccdEnabled = enabled;
+    slot.runtimeSettings.ccdMotionThreshold =
+        enabled ? motionThreshold : 0.0f;
+    slot.runtimeSettings.ccdSweptSphereRadius =
+        enabled ? sweptSphereRadius : 0.0f;
+}
+
+void PhysicsWorld::SetCollisionPairIgnored(
+    PhysicsBodyHandle bodyA,
+    PhysicsBodyHandle bodyB,
+    bool ignored
+)
+{
+    if (bodyA == bodyB)
+        return;
+    Impl::BodySlot& first = impl->Require(bodyA);
+    Impl::BodySlot& second = impl->Require(bodyB);
+    first.body->setIgnoreCollisionCheck(second.body.get(), ignored);
+    second.body->setIgnoreCollisionCheck(first.body.get(), ignored);
+}
+
+std::span<const PhysicsContactPair> PhysicsWorld::ContactPairs() const noexcept
+{
+    return impl->contactPairs;
 }
 
 void PhysicsWorld::SetTransform(
@@ -1458,6 +1636,7 @@ void PhysicsWorld::StepFixed(float fixedTimeStep)
     // owns the accumulator so model adapters can update kinematic targets
     // before every individual solver tick.
     impl->world->stepSimulation(fixedTimeStep, 0, fixedTimeStep);
+    impl->CaptureContactPairs();
     if (impl->debugDrawEnabled)
     {
         impl->debugCollector.Clear();

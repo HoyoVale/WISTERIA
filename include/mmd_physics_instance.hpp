@@ -50,6 +50,39 @@ struct MmdPhysicsFidelityStatistics
     float averageMode2TranslationDelta = 0.0f;
 };
 
+
+struct MmdPhysicsContactDiagnostic
+{
+    std::size_t bodyAIndex = std::numeric_limits<std::size_t>::max();
+    std::size_t bodyBIndex = std::numeric_limits<std::size_t>::max();
+    std::size_t chainAIndex = std::numeric_limits<std::size_t>::max();
+    std::size_t chainBIndex = std::numeric_limits<std::size_t>::max();
+    std::size_t contactPointCount = 0U;
+    float maximumPenetrationDepth = 0.0f;
+    float totalAppliedImpulse = 0.0f;
+    float maximumAppliedImpulse = 0.0f;
+    glm::vec3 deepestPointOnB{0.0f};
+    glm::vec3 deepestNormalOnB{0.0f, 1.0f, 0.0f};
+};
+
+struct MmdPhysicsCollisionStatistics
+{
+    std::size_t linkedJointPairCount = 0U;
+    std::size_t ignoredNearNeighborPairCount = 0U;
+    std::size_t denseMarginBodyCount = 0U;
+    std::size_t ccdCandidateCount = 0U;
+    std::size_t activeCcdBodyCount = 0U;
+    std::size_t ccdActivationCount = 0U;
+    std::size_t ccdDeactivationCount = 0U;
+    std::size_t contactPairCount = 0U;
+    std::size_t sameChainContactPairCount = 0U;
+    std::size_t crossChainContactPairCount = 0U;
+    std::size_t contactPointCount = 0U;
+    float maximumPenetrationDepth = 0.0f;
+    float totalAppliedImpulse = 0.0f;
+    float maximumPairImpulse = 0.0f;
+};
+
 struct MmdPhysicsAlignmentSummary
 {
     std::size_t bodyCount = 0U;
@@ -168,6 +201,9 @@ public:
     MmdPhysicsWithBoneSyncMode CyclePhysicsWithBoneSyncMode() noexcept;
     const char* PhysicsWithBoneSyncModeName() const noexcept;
     const MmdPhysicsFidelityStatistics& FidelityStatistics() const noexcept;
+    const MmdPhysicsCollisionStatistics& CollisionStatistics() const noexcept;
+    std::span<const MmdPhysicsContactDiagnostic> ContactDiagnostics() const noexcept;
+    void LogCollisionReport(std::size_t maximumEntries = 20U) const;
     std::span<const std::uint8_t> DrivenBoneModes() const noexcept;
     void SetSampledVertexCount(std::size_t count) noexcept;
     bool StabilizationFailed() const noexcept;
@@ -232,6 +268,14 @@ private:
         glm::mat4 resetTargetModelTransform{1.0f};
         glm::mat4 postResetBulletModelTransform{1.0f};
         glm::mat4 prePhysicsAnimatedModelTransform{1.0f};
+        bool ccdCandidate = false;
+        bool ccdActive = false;
+        bool denseMarginAdjusted = false;
+        float ccdFeatureSize = 0.0f;
+        float ccdMaximumExtent = 0.0f;
+        float ccdMotionThreshold = 0.0f;
+        float ccdSweptSphereRadius = 0.0f;
+        float ccdIdleSeconds = 0.0f;
     };
 
     struct RecoveryEdge
@@ -277,6 +321,9 @@ private:
     void CaptureConstraintPreservingResetTargets();
     void ApplyResetTargets(const Transform& transform);
     void BuildRecoveryChains();
+    void ConfigureCollisionTopology();
+    void UpdateAdaptiveCcd(float fixedTimeStep);
+    void UpdateCollisionDiagnostics();
     void RecoverAbnormalChains(float fixedTimeStep);
     std::vector<std::size_t> CollectRecoveryRegion(
         std::size_t chainIndex,
@@ -304,6 +351,7 @@ private:
     Transform* transform = nullptr;
     const MorphState* morphState = nullptr;
     std::vector<RuntimeBody> rigidBodies;
+    std::vector<std::size_t> runtimeBodyByWorldHandle;
     std::vector<PhysicsConstraintHandle> constraints;
     std::vector<std::size_t> drivenRuntimeBodyByBone;
     // 0 = not driven by physics, otherwise MmdRigidBodyMode + 1.
@@ -321,6 +369,8 @@ private:
     MmdPhysicsAlignmentSummary alignmentSummary;
     MmdPhysicsRecoveryStatistics recoveryStatistics;
     MmdPhysicsFidelityStatistics fidelityStatistics;
+    MmdPhysicsCollisionStatistics collisionStatistics;
+    std::vector<MmdPhysicsContactDiagnostic> contactDiagnostics;
     MmdPhysicsDebugOverlay debugOverlay = MmdPhysicsDebugOverlay::Off;
     MmdPhysicsFidelityDebugLayer fidelityDebugLayer =
         MmdPhysicsFidelityDebugLayer::Off;

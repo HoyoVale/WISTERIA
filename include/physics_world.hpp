@@ -58,6 +58,18 @@ public:
     PhysicsBodyRuntimeSettings RuntimeSettings(
         PhysicsBodyHandle body
     ) const;
+    void ConfigureCcd(
+        PhysicsBodyHandle body,
+        bool enabled,
+        float motionThreshold,
+        float sweptSphereRadius
+    );
+    void SetCollisionPairIgnored(
+        PhysicsBodyHandle bodyA,
+        PhysicsBodyHandle bodyB,
+        bool ignored = true
+    );
+    std::span<const PhysicsContactPair> ContactPairs() const noexcept;
     void SetTransform(
         PhysicsBodyHandle body,
         const glm::vec3& position,

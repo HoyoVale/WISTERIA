@@ -15,6 +15,7 @@
 #include <queue>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
 
 namespace
 {
@@ -46,6 +47,11 @@ constexpr float RecoveryHardAngularViolationDegrees = 175.0f;
 constexpr float RecoveryRunawayDistance = 5.0f;
 constexpr float RecoveryHardRunawayDistance = 10.0f;
 constexpr float RecoverySeverityGrowthTolerance = 0.03f;
+constexpr float CollisionNearNeighborProximityFactor = 0.85f;
+constexpr float AdaptiveCcdEnableTravelFactor = 0.35f;
+constexpr float AdaptiveCcdDisableTravelFactor = 0.15f;
+constexpr float AdaptiveCcdDisableDelaySeconds = 0.25f;
+constexpr std::size_t MaximumContactDiagnostics = 64U;
 
 struct RigidTransform
 {
@@ -229,34 +235,71 @@ float MaximumShapeExtent(const PhysicsShapeDesc& shape) noexcept
     return 0.0f;
 }
 
-void ConfigureSelectiveCcd(
-    PhysicsBodyDesc& description,
+struct AdaptiveCcdCandidate
+{
+    bool candidate = false;
+    float featureSize = 0.0f;
+    float maximumExtent = 0.0f;
+    float motionThreshold = 0.0f;
+    float sweptSphereRadius = 0.0f;
+};
+
+AdaptiveCcdCandidate MakeAdaptiveCcdCandidate(
+    const PhysicsBodyDesc& description,
     float entityScale
 ) noexcept
 {
+    AdaptiveCcdCandidate result;
     if (description.motionType != PhysicsMotionType::Dynamic)
-        return;
+        return result;
 
-    const float minimumFeature = MinimumShapeFeature(description.shape);
-    const float maximumExtent = MaximumShapeExtent(description.shape);
-    if (minimumFeature <= 0.0f || maximumExtent <= 0.0f)
-        return;
+    result.featureSize = MinimumShapeFeature(description.shape);
+    result.maximumExtent = MaximumShapeExtent(description.shape);
+    if (result.featureSize <= 0.0f || result.maximumExtent <= 0.0f)
+        return result;
 
-    const float aspectRatio = maximumExtent / minimumFeature;
-    const bool smallBody = minimumFeature <= 0.35f * entityScale;
+    const float aspectRatio = result.maximumExtent / result.featureSize;
+    const bool smallBody = result.featureSize <= 0.35f * entityScale;
     const bool slenderBody = aspectRatio >= 2.5f;
-    if (!smallBody && !slenderBody)
-        return;
+    result.candidate = smallBody || slenderBody;
+    if (!result.candidate)
+        return result;
 
-    description.enableCcd = true;
-    description.ccdMotionThreshold = std::max(
+    result.motionThreshold = std::max(
         0.001f * entityScale,
-        minimumFeature * 0.5f
+        result.featureSize * 0.35f
     );
-    description.ccdSweptSphereRadius = std::max(
+    result.sweptSphereRadius = std::max(
         0.0005f * entityScale,
-        minimumFeature * 0.8f
+        result.featureSize * 0.75f
     );
+    return result;
+}
+
+float AutomaticBoxMargin(const PhysicsShapeDesc& shape) noexcept
+{
+    const float minimumHalfExtent = MinimumShapeFeature(shape);
+    const float maximumSafeMargin = minimumHalfExtent * 0.2f;
+    return std::min(
+        maximumSafeMargin,
+        std::min(0.04f, std::max(0.0001f, minimumHalfExtent * 0.08f))
+    );
+}
+
+float ShapeBoundingRadiusModel(
+    const MmdRigidBodyDefinition& definition
+) noexcept
+{
+    switch (definition.shape)
+    {
+    case MmdRigidBodyShape::Sphere:
+        return definition.size.x;
+    case MmdRigidBodyShape::Box:
+        return glm::length(definition.size);
+    case MmdRigidBodyShape::Capsule:
+        return definition.size.x + definition.size.y * 0.5f;
+    }
+    return 0.0f;
 }
 
 glm::mat4 AnimatedBodyModelTransform(
@@ -759,10 +802,26 @@ MmdPhysicsInstance::MmdPhysicsInstance(
     this->localMatrixScratch.resize(boneCount);
     this->globalMatrixScratch.resize(boneCount);
 
+    std::vector<std::size_t> jointDegree(asset.RigidBodyCount(), 0U);
+    for (const MmdJointDefinition& joint : asset.Joints())
+    {
+        if (joint.bodyA != InvalidRigidBodyIndex &&
+            static_cast<std::size_t>(joint.bodyA) < jointDegree.size())
+        {
+            ++jointDegree[joint.bodyA];
+        }
+        if (joint.bodyB != InvalidRigidBodyIndex &&
+            static_cast<std::size_t>(joint.bodyB) < jointDegree.size())
+        {
+            ++jointDegree[joint.bodyB];
+        }
+    }
+
     try
     {
         for (const MmdRigidBodyDefinition& definition : asset.RigidBodies())
         {
+            const std::size_t sourceBodyIndex = this->rigidBodies.size();
             if (definition.mode != MmdRigidBodyMode::FollowBone &&
                 definition.mass <= 0.0f)
             {
@@ -792,7 +851,17 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 0.0f,
                 1.0f
             );
-            description.restitution = definition.restitution;
+            const bool denseDynamicBox =
+                description.motionType == PhysicsMotionType::Dynamic &&
+                description.shape.kind == PhysicsShapeKind::Box &&
+                sourceBodyIndex < jointDegree.size() &&
+                jointDegree[sourceBodyIndex] >= 2U &&
+                MinimumShapeFeature(description.shape) <= 0.75f * entity.scale;
+            description.restitution = std::clamp(
+                definition.restitution,
+                0.0f,
+                denseDynamicBox ? 0.05f : 0.2f
+            );
             description.friction = definition.friction;
             description.collisionGroup = static_cast<std::uint16_t>(
                 1U << definition.collisionGroup
@@ -800,11 +869,34 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             description.collisionMask = static_cast<std::uint16_t>(
                 ~definition.nonCollisionMask
             );
-            ConfigureSelectiveCcd(description, entity.scale);
+            if (denseDynamicBox)
+            {
+                const float feature = MinimumShapeFeature(description.shape);
+                description.collisionMargin = std::min(
+                    AutomaticBoxMargin(description.shape),
+                    std::max(0.0001f, feature * 0.035f)
+                );
+            }
+            const AdaptiveCcdCandidate ccd = MakeAdaptiveCcdCandidate(
+                description,
+                entity.scale
+            );
+            // MMD CCD is activated dynamically from actual per-tick travel;
+            // candidates start in discrete mode instead of enabling CCD on
+            // most small decorative bodies for their entire lifetime.
+            description.enableCcd = false;
             const std::size_t runtimeIndex = this->rigidBodies.size();
             RuntimeBody runtime;
             runtime.definition = &definition;
             runtime.handle = world.CreateBody(description);
+            if (this->runtimeBodyByWorldHandle.size() <= runtime.handle.index)
+            {
+                this->runtimeBodyByWorldHandle.resize(
+                    static_cast<std::size_t>(runtime.handle.index) + 1U,
+                    std::numeric_limits<std::size_t>::max()
+                );
+            }
+            this->runtimeBodyByWorldHandle[runtime.handle.index] = runtimeIndex;
             runtime.lastAnimatedPosition = initial.position;
             runtime.lastAnimatedRotation = initial.rotation;
             runtime.hasAnimatedTransform = true;
@@ -818,6 +910,16 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 runtime.createdBulletBindModelTransform;
             runtime.prePhysicsAnimatedModelTransform =
                 definition.modelBindTransform;
+            runtime.ccdCandidate = ccd.candidate;
+            runtime.ccdFeatureSize = ccd.featureSize;
+            runtime.ccdMaximumExtent = ccd.maximumExtent;
+            runtime.ccdMotionThreshold = ccd.motionThreshold;
+            runtime.ccdSweptSphereRadius = ccd.sweptSphereRadius;
+            runtime.denseMarginAdjusted = denseDynamicBox;
+            if (runtime.ccdCandidate)
+                ++this->collisionStatistics.ccdCandidateCount;
+            if (runtime.denseMarginAdjusted)
+                ++this->collisionStatistics.denseMarginBodyCount;
             this->rigidBodies.push_back(std::move(runtime));
             if (definition.mode != MmdRigidBodyMode::FollowBone &&
                 definition.bone != InvalidBoneIndex)
@@ -972,6 +1074,7 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             this->constraints.push_back(handle);
         }
         this->BuildRecoveryChains();
+        this->ConfigureCollisionTopology();
         this->createdJointSnapshot = this->CaptureJointSnapshot("created");
         this->ResetToPose(transform);
         this->BuildAlignmentDiagnostics();
@@ -1084,6 +1187,7 @@ void MmdPhysicsInstance::PrepareSimulationSubstep(
         runtime.lastAnimatedPosition = position;
         runtime.lastAnimatedRotation = rotation;
     }
+    this->UpdateAdaptiveCcd(fixedTimeStep);
 }
 
 void MmdPhysicsInstance::ObserveSimulationSubstep(float fixedTimeStep)
@@ -1094,6 +1198,7 @@ void MmdPhysicsInstance::ObserveSimulationSubstep(float fixedTimeStep)
             "MMD recovery time step must be finite and positive"
         );
     }
+    this->UpdateCollisionDiagnostics();
     if (!this->stabilizationFailed)
         this->RecoverAbnormalChains(fixedTimeStep);
 }
@@ -1343,6 +1448,49 @@ void MmdPhysicsInstance::AppendDebugLines(
         }
     }
 
+    if (showRuntime)
+    {
+        constexpr std::size_t MaximumDebugContacts = 32U;
+        const std::size_t count = std::min(
+            MaximumDebugContacts,
+            this->contactDiagnostics.size()
+        );
+        for (std::size_t index = 0U; index < count; ++index)
+        {
+            const MmdPhysicsContactDiagnostic& contact =
+                this->contactDiagnostics[index];
+            const bool penetrating = contact.maximumPenetrationDepth >
+                0.0025f * entity.scale;
+            const glm::vec3 color = penetrating
+                ? glm::vec3(1.0f, 0.05f, 0.05f)
+                : glm::vec3(0.0f, 0.9f, 1.0f);
+            const float markerSize = std::max(
+                0.01f * entity.scale,
+                contact.maximumPenetrationDepth
+            );
+            const glm::vec3 point = contact.deepestPointOnB;
+            AppendLine(
+                lines,
+                point - glm::vec3(markerSize, 0.0f, 0.0f),
+                point + glm::vec3(markerSize, 0.0f, 0.0f),
+                color
+            );
+            AppendLine(
+                lines,
+                point - glm::vec3(0.0f, markerSize, 0.0f),
+                point + glm::vec3(0.0f, markerSize, 0.0f),
+                color
+            );
+            AppendLine(
+                lines,
+                point,
+                point + contact.deepestNormalOnB *
+                    std::max(markerSize * 2.0f, 0.03f * entity.scale),
+                color
+            );
+        }
+    }
+
     if (showFidelityBones)
     {
         const Skeleton& skeleton = this->pose->GetSkeleton();
@@ -1559,6 +1707,152 @@ const MmdPhysicsFidelityStatistics&
 MmdPhysicsInstance::FidelityStatistics() const noexcept
 {
     return this->fidelityStatistics;
+}
+
+const MmdPhysicsCollisionStatistics&
+MmdPhysicsInstance::CollisionStatistics() const noexcept
+{
+    return this->collisionStatistics;
+}
+
+std::span<const MmdPhysicsContactDiagnostic>
+MmdPhysicsInstance::ContactDiagnostics() const noexcept
+{
+    return this->contactDiagnostics;
+}
+
+void MmdPhysicsInstance::LogCollisionReport(
+    std::size_t maximumEntries
+) const
+{
+    std::cout << "[MMD COLLISION SUMMARY] linkedPairs="
+              << this->collisionStatistics.linkedJointPairCount
+              << " ignoredNearPairs="
+              << this->collisionStatistics.ignoredNearNeighborPairCount
+              << " denseMarginBodies="
+              << this->collisionStatistics.denseMarginBodyCount
+              << " ccdCandidates="
+              << this->collisionStatistics.ccdCandidateCount
+              << " ccdActive="
+              << this->collisionStatistics.activeCcdBodyCount
+              << " pairs=" << this->collisionStatistics.contactPairCount
+              << " sameChainPairs="
+              << this->collisionStatistics.sameChainContactPairCount
+              << " crossChainPairs="
+              << this->collisionStatistics.crossChainContactPairCount
+              << " points=" << this->collisionStatistics.contactPointCount
+              << " maxPenetration="
+              << this->collisionStatistics.maximumPenetrationDepth
+              << " totalImpulse="
+              << this->collisionStatistics.totalAppliedImpulse
+              << " maxPairImpulse="
+              << this->collisionStatistics.maximumPairImpulse
+              << std::endl;
+
+    struct ChainPairSummary
+    {
+        std::size_t chainA = std::numeric_limits<std::size_t>::max();
+        std::size_t chainB = std::numeric_limits<std::size_t>::max();
+        std::size_t pairCount = 0U;
+        std::size_t pointCount = 0U;
+        float impulse = 0.0f;
+        float penetration = 0.0f;
+    };
+    std::vector<ChainPairSummary> matrix;
+    for (const MmdPhysicsContactDiagnostic& contact : this->contactDiagnostics)
+    {
+        const std::size_t lower = std::min(
+            contact.chainAIndex,
+            contact.chainBIndex
+        );
+        const std::size_t upper = std::max(
+            contact.chainAIndex,
+            contact.chainBIndex
+        );
+        auto iterator = std::find_if(
+            matrix.begin(),
+            matrix.end(),
+            [lower, upper](const ChainPairSummary& entry)
+            {
+                return entry.chainA == lower && entry.chainB == upper;
+            }
+        );
+        if (iterator == matrix.end())
+        {
+            matrix.push_back(ChainPairSummary{lower, upper});
+            iterator = std::prev(matrix.end());
+        }
+        ++iterator->pairCount;
+        iterator->pointCount += contact.contactPointCount;
+        iterator->impulse += contact.totalAppliedImpulse;
+        iterator->penetration = std::max(
+            iterator->penetration,
+            contact.maximumPenetrationDepth
+        );
+    }
+    std::sort(
+        matrix.begin(),
+        matrix.end(),
+        [](const ChainPairSummary& left, const ChainPairSummary& right)
+        {
+            return left.impulse > right.impulse;
+        }
+    );
+    for (const ChainPairSummary& entry : matrix)
+    {
+        std::cout << "[MMD COLLISION MATRIX] chainA=" << entry.chainA
+                  << " chainB=" << entry.chainB
+                  << " pairs=" << entry.pairCount
+                  << " points=" << entry.pointCount
+                  << " impulse=" << entry.impulse
+                  << " maxPenetration=" << entry.penetration
+                  << std::endl;
+    }
+
+    const std::size_t count = std::min(
+        maximumEntries,
+        this->contactDiagnostics.size()
+    );
+    for (std::size_t rank = 0U; rank < count; ++rank)
+    {
+        const MmdPhysicsContactDiagnostic& contact =
+            this->contactDiagnostics[rank];
+        const MmdRigidBodyDefinition& bodyA =
+            this->asset->RigidBodyAt(contact.bodyAIndex);
+        const MmdRigidBodyDefinition& bodyB =
+            this->asset->RigidBodyAt(contact.bodyBIndex);
+        const PhysicsBodyRuntimeSettings settingsA = this->world->RuntimeSettings(
+            this->rigidBodies[contact.bodyAIndex].handle
+        );
+        const PhysicsBodyRuntimeSettings settingsB = this->world->RuntimeSettings(
+            this->rigidBodies[contact.bodyBIndex].handle
+        );
+        const bool linked = std::any_of(
+            this->recoveryAdjacency[contact.bodyAIndex].begin(),
+            this->recoveryAdjacency[contact.bodyAIndex].end(),
+            [&contact](const RecoveryEdge& edge)
+            {
+                return edge.bodyIndex == contact.bodyBIndex;
+            }
+        );
+        std::cout << "[MMD CONTACT] rank=" << rank
+                  << " bodyA=" << contact.bodyAIndex << ":\""
+                  << bodyA.name << "\""
+                  << " bodyB=" << contact.bodyBIndex << ":\""
+                  << bodyB.name << "\""
+                  << " chainA=" << contact.chainAIndex
+                  << " chainB=" << contact.chainBIndex
+                  << " linked=" << (linked ? "true" : "false")
+                  << " groupA=0x" << std::hex << settingsA.collisionGroup
+                  << " maskA=0x" << settingsA.collisionMask
+                  << " groupB=0x" << settingsB.collisionGroup
+                  << " maskB=0x" << settingsB.collisionMask << std::dec
+                  << " points=" << contact.contactPointCount
+                  << " penetration=" << contact.maximumPenetrationDepth
+                  << " totalImpulse=" << contact.totalAppliedImpulse
+                  << " maxImpulse=" << contact.maximumAppliedImpulse
+                  << std::endl;
+    }
 }
 
 std::span<const std::uint8_t>
@@ -2419,6 +2713,17 @@ void MmdPhysicsInstance::ResetToPose(const Transform& transform)
     }
     this->CaptureConstraintPreservingResetTargets();
     this->ApplyResetTargets(transform);
+    for (RuntimeBody& runtime : this->rigidBodies)
+    {
+        if (runtime.ccdActive)
+        {
+            this->world->ConfigureCcd(runtime.handle, false, 0.0f, 0.0f);
+            runtime.ccdActive = false;
+        }
+        runtime.ccdIdleSeconds = 0.0f;
+    }
+    this->collisionStatistics.activeCcdBodyCount = 0U;
+    this->contactDiagnostics.clear();
 
     const JointSnapshot afterReset = this->CaptureJointSnapshot(
         "after-reset"
@@ -2631,6 +2936,240 @@ void MmdPhysicsInstance::BuildRecoveryChains()
     this->recoveryJointSeverityHistory.assign(joints.size(), 0.0f);
     this->recoveryStatistics = {};
     this->recoveryStatistics.chainCount = this->recoveryChains.size();
+}
+
+void MmdPhysicsInstance::ConfigureCollisionTopology()
+{
+    const std::size_t bodyCount = this->rigidBodies.size();
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    const auto pairKey = [](std::size_t left, std::size_t right)
+    {
+        const std::uint32_t lower = static_cast<std::uint32_t>(
+            std::min(left, right)
+        );
+        const std::uint32_t upper = static_cast<std::uint32_t>(
+            std::max(left, right)
+        );
+        return (static_cast<std::uint64_t>(lower) << 32U) |
+            static_cast<std::uint64_t>(upper);
+    };
+
+    std::unordered_set<std::uint64_t> linkedPairs;
+    for (const MmdJointDefinition& joint : this->asset->Joints())
+    {
+        if (joint.bodyA == InvalidRigidBodyIndex ||
+            joint.bodyB == InvalidRigidBodyIndex ||
+            joint.bodyA == joint.bodyB ||
+            static_cast<std::size_t>(joint.bodyA) >= bodyCount ||
+            static_cast<std::size_t>(joint.bodyB) >= bodyCount)
+        {
+            continue;
+        }
+        linkedPairs.insert(pairKey(joint.bodyA, joint.bodyB));
+    }
+    this->collisionStatistics.linkedJointPairCount = linkedPairs.size();
+
+    std::unordered_set<std::uint64_t> ignoredPairs;
+    for (std::size_t bodyAIndex = 0U;
+         bodyAIndex < bodyCount;
+         ++bodyAIndex)
+    {
+        if (this->rigidBodies[bodyAIndex].definition->mode ==
+            MmdRigidBodyMode::FollowBone)
+        {
+            continue;
+        }
+        const std::size_t chainA = this->recoveryChainByBody[bodyAIndex];
+        if (chainA == invalidIndex)
+            continue;
+
+        for (const RecoveryEdge& firstEdge :
+             this->recoveryAdjacency[bodyAIndex])
+        {
+            if (firstEdge.bodyIndex >= bodyCount)
+                continue;
+            for (const RecoveryEdge& secondEdge :
+                 this->recoveryAdjacency[firstEdge.bodyIndex])
+            {
+                const std::size_t bodyBIndex = secondEdge.bodyIndex;
+                if (bodyBIndex <= bodyAIndex || bodyBIndex >= bodyCount ||
+                    bodyBIndex == bodyAIndex ||
+                    this->rigidBodies[bodyBIndex].definition->mode ==
+                        MmdRigidBodyMode::FollowBone ||
+                    this->recoveryChainByBody[bodyBIndex] != chainA)
+                {
+                    continue;
+                }
+                const std::uint64_t key = pairKey(bodyAIndex, bodyBIndex);
+                if (linkedPairs.contains(key) || ignoredPairs.contains(key))
+                    continue;
+
+                const MmdRigidBodyDefinition& bodyA =
+                    *this->rigidBodies[bodyAIndex].definition;
+                const MmdRigidBodyDefinition& bodyB =
+                    *this->rigidBodies[bodyBIndex].definition;
+                const glm::vec3 positionA = glm::vec3(
+                    bodyA.modelBindTransform[3]
+                );
+                const glm::vec3 positionB = glm::vec3(
+                    bodyB.modelBindTransform[3]
+                );
+                const float proximityLimit =
+                    (ShapeBoundingRadiusModel(bodyA) +
+                     ShapeBoundingRadiusModel(bodyB)) *
+                    CollisionNearNeighborProximityFactor;
+                if (proximityLimit <= 0.0f ||
+                    glm::distance(positionA, positionB) > proximityLimit)
+                {
+                    continue;
+                }
+
+                this->world->SetCollisionPairIgnored(
+                    this->rigidBodies[bodyAIndex].handle,
+                    this->rigidBodies[bodyBIndex].handle,
+                    true
+                );
+                ignoredPairs.insert(key);
+            }
+        }
+    }
+    this->collisionStatistics.ignoredNearNeighborPairCount =
+        ignoredPairs.size();
+}
+
+void MmdPhysicsInstance::UpdateAdaptiveCcd(float fixedTimeStep)
+{
+    this->collisionStatistics.activeCcdBodyCount = 0U;
+    for (RuntimeBody& runtime : this->rigidBodies)
+    {
+        if (!runtime.ccdCandidate)
+            continue;
+
+        const PhysicsBodyState state = this->world->State(runtime.handle);
+        const float linearTravel = glm::length(state.linearVelocity) *
+            fixedTimeStep;
+        const float angularTravel = glm::length(state.angularVelocity) *
+            runtime.ccdMaximumExtent * fixedTimeStep;
+        const float predictedTravel = linearTravel + angularTravel;
+        const float enableTravel = std::max(
+            runtime.ccdMotionThreshold,
+            runtime.ccdFeatureSize * AdaptiveCcdEnableTravelFactor
+        );
+        const float disableTravel = runtime.ccdFeatureSize *
+            AdaptiveCcdDisableTravelFactor;
+
+        if (!runtime.ccdActive && predictedTravel >= enableTravel)
+        {
+            this->world->ConfigureCcd(
+                runtime.handle,
+                true,
+                runtime.ccdMotionThreshold,
+                runtime.ccdSweptSphereRadius
+            );
+            runtime.ccdActive = true;
+            runtime.ccdIdleSeconds = 0.0f;
+            ++this->collisionStatistics.ccdActivationCount;
+        }
+        else if (runtime.ccdActive)
+        {
+            if (predictedTravel <= disableTravel)
+                runtime.ccdIdleSeconds += fixedTimeStep;
+            else
+                runtime.ccdIdleSeconds = 0.0f;
+
+            if (runtime.ccdIdleSeconds >= AdaptiveCcdDisableDelaySeconds)
+            {
+                this->world->ConfigureCcd(
+                    runtime.handle,
+                    false,
+                    0.0f,
+                    0.0f
+                );
+                runtime.ccdActive = false;
+                runtime.ccdIdleSeconds = 0.0f;
+                ++this->collisionStatistics.ccdDeactivationCount;
+            }
+        }
+
+        if (runtime.ccdActive)
+            ++this->collisionStatistics.activeCcdBodyCount;
+    }
+}
+
+void MmdPhysicsInstance::UpdateCollisionDiagnostics()
+{
+    this->contactDiagnostics.clear();
+    this->collisionStatistics.contactPairCount = 0U;
+    this->collisionStatistics.sameChainContactPairCount = 0U;
+    this->collisionStatistics.crossChainContactPairCount = 0U;
+    this->collisionStatistics.contactPointCount = 0U;
+    this->collisionStatistics.maximumPenetrationDepth = 0.0f;
+    this->collisionStatistics.totalAppliedImpulse = 0.0f;
+    this->collisionStatistics.maximumPairImpulse = 0.0f;
+
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    const auto resolveRuntimeIndex = [this, invalidIndex](
+        PhysicsBodyHandle handle
+    )
+    {
+        if (handle.index >= this->runtimeBodyByWorldHandle.size())
+            return invalidIndex;
+        const std::size_t runtimeIndex =
+            this->runtimeBodyByWorldHandle[handle.index];
+        if (runtimeIndex >= this->rigidBodies.size() ||
+            this->rigidBodies[runtimeIndex].handle != handle)
+        {
+            return invalidIndex;
+        }
+        return runtimeIndex;
+    };
+
+    for (const PhysicsContactPair& pair : this->world->ContactPairs())
+    {
+        const std::size_t bodyAIndex = resolveRuntimeIndex(pair.bodyA);
+        const std::size_t bodyBIndex = resolveRuntimeIndex(pair.bodyB);
+        if (bodyAIndex == invalidIndex || bodyBIndex == invalidIndex)
+            continue;
+
+        MmdPhysicsContactDiagnostic diagnostic;
+        diagnostic.bodyAIndex = bodyAIndex;
+        diagnostic.bodyBIndex = bodyBIndex;
+        diagnostic.chainAIndex = bodyAIndex < this->recoveryChainByBody.size()
+            ? this->recoveryChainByBody[bodyAIndex]
+            : invalidIndex;
+        diagnostic.chainBIndex = bodyBIndex < this->recoveryChainByBody.size()
+            ? this->recoveryChainByBody[bodyBIndex]
+            : invalidIndex;
+        diagnostic.contactPointCount = pair.contactPointCount;
+        diagnostic.maximumPenetrationDepth = pair.maximumPenetrationDepth;
+        diagnostic.totalAppliedImpulse = pair.totalAppliedImpulse;
+        diagnostic.maximumAppliedImpulse = pair.maximumAppliedImpulse;
+        diagnostic.deepestPointOnB = pair.deepestPointOnB;
+        diagnostic.deepestNormalOnB = pair.deepestNormalOnB;
+
+        ++this->collisionStatistics.contactPairCount;
+        this->collisionStatistics.contactPointCount +=
+            diagnostic.contactPointCount;
+        const bool sameChain = diagnostic.chainAIndex != invalidIndex &&
+            diagnostic.chainAIndex == diagnostic.chainBIndex;
+        if (sameChain)
+            ++this->collisionStatistics.sameChainContactPairCount;
+        else
+            ++this->collisionStatistics.crossChainContactPairCount;
+        this->collisionStatistics.maximumPenetrationDepth = std::max(
+            this->collisionStatistics.maximumPenetrationDepth,
+            diagnostic.maximumPenetrationDepth
+        );
+        this->collisionStatistics.totalAppliedImpulse +=
+            diagnostic.totalAppliedImpulse;
+        this->collisionStatistics.maximumPairImpulse = std::max(
+            this->collisionStatistics.maximumPairImpulse,
+            diagnostic.totalAppliedImpulse
+        );
+
+        if (this->contactDiagnostics.size() < MaximumContactDiagnostics)
+            this->contactDiagnostics.push_back(diagnostic);
+    }
 }
 
 void MmdPhysicsInstance::RecoverAbnormalChains(float fixedTimeStep)
@@ -3437,4 +3976,6 @@ void MmdPhysicsInstance::DestroyRuntime() noexcept
         this->world->DestroyBody(iterator->handle);
     }
     this->rigidBodies.clear();
+    this->runtimeBodyByWorldHandle.clear();
+    this->contactDiagnostics.clear();
 }

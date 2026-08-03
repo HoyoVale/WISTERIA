@@ -436,6 +436,11 @@ public:
                       << std::endl;
             this->titleDirty = true;
         }
+        if (this->input.WasKeyPressed(InputKey::C) &&
+            entity.HasMmdPhysics())
+        {
+            entity.GetMmdPhysics().LogCollisionReport();
+        }
         if (this->input.WasKeyPressed(InputKey::F3))
         {
             this->showPhysicsStatistics = !this->showPhysicsStatistics;
@@ -510,7 +515,8 @@ private:
             title << " | V: fidelity "
                   << physics.FidelityDebugLayerName()
                   << " | M: mode2 "
-                  << physics.PhysicsWithBoneSyncModeName();
+                  << physics.PhysicsWithBoneSyncModeName()
+                  << " | C: collision log";
         }
         title << " | L: alignment log | F3: stats "
               << (this->showPhysicsStatistics ? "ON" : "OFF");
@@ -525,11 +531,13 @@ private:
                 : 0.0f;
             MmdPhysicsRecoveryStatistics recovery;
             MmdPhysicsFidelityStatistics fidelity;
+            MmdPhysicsCollisionStatistics collision;
             if (const Entity* entity = this->scene.EntityAt(0U);
                 entity != nullptr && entity->HasMmdPhysics())
             {
                 recovery = entity->GetMmdPhysics().RecoveryStatistics();
                 fidelity = entity->GetMmdPhysics().FidelityStatistics();
+                collision = entity->GetMmdPhysics().CollisionStatistics();
             }
             title << " | [" << WISTERIA_BUILD_CONFIGURATION << "] "
                   << std::setprecision(1) << fps << " FPS"
@@ -543,7 +551,12 @@ private:
                   << " | bodies " << world.bodyCount
                   << " (D" << world.dynamicBodyCount
                   << "/K" << world.kinematicBodyCount << ')'
-                  << " | CCD " << world.ccdBodyCount
+                  << " | CCD " << world.ccdBodyCount << '/'
+                  << collision.ccdCandidateCount
+                  << " | pairs " << collision.contactPairCount
+                  << " (X" << collision.crossChainContactPairCount << ')'
+                  << " | pen " << std::setprecision(3)
+                  << collision.maximumPenetrationDepth
                   << " | solver " << world.solverIterations
                   << (world.splitImpulse ? "+SI" : "-SI")
                   << " | recover " << recovery.totalRecoveries
@@ -569,11 +582,13 @@ private:
             : 0.0f;
         MmdPhysicsRecoveryStatistics recovery;
         MmdPhysicsFidelityStatistics fidelity;
+        MmdPhysicsCollisionStatistics collision;
         if (const Entity* entity = this->scene.EntityAt(0U);
             entity != nullptr && entity->HasMmdPhysics())
         {
             recovery = entity->GetMmdPhysics().RecoveryStatistics();
             fidelity = entity->GetMmdPhysics().FidelityStatistics();
+            collision = entity->GetMmdPhysics().CollisionStatistics();
         }
         std::cout << "[PHYSICS STATS] build="
                   << WISTERIA_BUILD_CONFIGURATION
@@ -598,6 +613,24 @@ private:
                   << " dynamic=" << world.dynamicBodyCount
                   << " kinematic=" << world.kinematicBodyCount
                   << " ccdBodies=" << world.ccdBodyCount
+                  << " ccdCandidates=" << collision.ccdCandidateCount
+                  << " ccdActivations=" << collision.ccdActivationCount
+                  << " ccdDeactivations=" << collision.ccdDeactivationCount
+                  << " ignoredNearPairs="
+                  << collision.ignoredNearNeighborPairCount
+                  << " denseMarginBodies="
+                  << collision.denseMarginBodyCount
+                  << " contactPairs=" << collision.contactPairCount
+                  << " sameChainPairs="
+                  << collision.sameChainContactPairCount
+                  << " crossChainPairs="
+                  << collision.crossChainContactPairCount
+                  << " maxPenetration="
+                  << collision.maximumPenetrationDepth
+                  << " contactImpulse="
+                  << collision.totalAppliedImpulse
+                  << " maxPairImpulse="
+                  << collision.maximumPairImpulse
                   << " boxMarginMin="
                   << world.minimumBoxCollisionMargin
                   << " boxMarginMax="
@@ -607,6 +640,10 @@ private:
                   << (world.splitImpulse ? "true" : "false")
                   << " splitImpulseThreshold="
                   << world.splitImpulsePenetrationThreshold
+                  << " maxErrorReduction="
+                  << world.maximumErrorReduction
+                  << " restitutionVelocityThreshold="
+                  << world.restitutionVelocityThreshold
                   << " recoveryChains=" << recovery.chainCount
                   << " recoveryPhysicsTicks="
                   << recovery.physicsTickCount

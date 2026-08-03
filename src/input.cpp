@@ -29,6 +29,7 @@ std::optional<InputKey> ToInputKey(int key) noexcept
     case GLFW_KEY_L: return InputKey::L;
     case GLFW_KEY_V: return InputKey::V;
     case GLFW_KEY_M: return InputKey::M;
+    case GLFW_KEY_C: return InputKey::C;
     case GLFW_KEY_F3: return InputKey::F3;
     case GLFW_KEY_SPACE: return InputKey::Space;
     case GLFW_KEY_LEFT: return InputKey::Left;

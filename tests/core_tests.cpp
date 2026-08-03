@@ -3906,6 +3906,8 @@ void TestBulletP1CcdMarginsAndSolver()
     settings.splitImpulsePenetrationThreshold = -0.015f;
     settings.solverErp = 0.18f;
     settings.solverErp2 = 0.16f;
+    settings.maximumErrorReduction = 3.5f;
+    settings.restitutionVelocityThreshold = 0.75f;
     PhysicsWorld world(settings);
     world.SetGravity(glm::vec3(0.0f));
 
@@ -3940,7 +3942,9 @@ void TestBulletP1CcdMarginsAndSolver()
         NearlyEqual(
             statistics.splitImpulsePenetrationThreshold,
             -0.015f
-        ),
+        ) &&
+        NearlyEqual(statistics.maximumErrorReduction, 3.5f) &&
+        NearlyEqual(statistics.restitutionVelocityThreshold, 0.75f),
         "P1 solver/CCD statistics do not match the active Bullet policy"
     );
 
@@ -3954,6 +3958,62 @@ void TestBulletP1CcdMarginsAndSolver()
     Require(
         world.State(thinHandle).position.x < 0.5f,
         "Selective CCD allowed a fast thin body to tunnel through a wall"
+    );
+}
+
+void TestBulletContactDiagnosticsAndPairIgnore()
+{
+    PhysicsWorld world;
+    world.SetGravity(glm::vec3(0.0f));
+    const PhysicsBodyHandle bodyA = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(-0.2f, 0.0f, 0.0f)
+    ));
+    const PhysicsBodyHandle bodyB = world.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(0.2f, 0.0f, 0.0f)
+    ));
+    world.StepFixed(1.0f / 60.0f);
+    Require(
+        !world.ContactPairs().empty() &&
+        world.ContactPairs().front().contactPointCount > 0U &&
+        world.ContactPairs().front().maximumPenetrationDepth > 0.0f &&
+        world.Statistics().contactPairCount > 0U,
+        "Bullet contact-pair diagnostics did not capture overlap data"
+    );
+
+    PhysicsWorld ignoredWorld;
+    ignoredWorld.SetGravity(glm::vec3(0.0f));
+    const PhysicsBodyHandle ignoredA = ignoredWorld.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(-0.2f, 0.0f, 0.0f)
+    ));
+    const PhysicsBodyHandle ignoredB = ignoredWorld.CreateBody(DynamicBodyDesc(
+        PhysicsShapeDesc::Sphere(0.5f),
+        glm::vec3(0.2f, 0.0f, 0.0f)
+    ));
+    ignoredWorld.SetCollisionPairIgnored(ignoredA, ignoredB, true);
+    ignoredWorld.StepFixed(1.0f / 60.0f);
+    Require(
+        ignoredWorld.ContactPairs().empty(),
+        "Explicit Bullet collision-pair ignore did not suppress contacts"
+    );
+
+    ignoredWorld.ConfigureCcd(ignoredA, true, 0.05f, 0.1f);
+    Require(
+        ignoredWorld.RuntimeSettings(ignoredA).ccdEnabled,
+        "Runtime CCD activation was not applied"
+    );
+    ignoredWorld.ConfigureCcd(ignoredA, false, 0.0f, 0.0f);
+    Require(
+        !ignoredWorld.RuntimeSettings(ignoredA).ccdEnabled,
+        "Runtime CCD deactivation was not applied"
+    );
+    ignoredWorld.Clear();
+    Require(
+        ignoredWorld.ContactPairs().empty() &&
+        ignoredWorld.Statistics().contactPairCount == 0U,
+        "Clearing the Bullet world retained stale contact-pair diagnostics"
     );
 }
 
@@ -5064,6 +5124,162 @@ std::unique_ptr<ModelAsset> CreateMmdLocalRecoveryModel()
     return model;
 }
 
+std::unique_ptr<ModelAsset> CreateMmdCollisionTopologyModel()
+{
+    auto model = std::make_unique<ModelAsset>("collisionTopology");
+    std::vector<Bone> bones;
+    std::vector<MmdRigidBodyDefinition> bodies(3U);
+    for (std::size_t index = 0U; index < bodies.size(); ++index)
+    {
+        const glm::mat4 bind = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(static_cast<float>(index) * 0.15f, 0.0f, 0.0f)
+        );
+        bones.push_back(Bone{
+            "collisionBone" + std::to_string(index),
+            InvalidBoneIndex,
+            bind,
+            glm::inverse(bind)
+        });
+        bodies[index].name = "collisionBody" + std::to_string(index);
+        bodies[index].bone = static_cast<BoneIndex>(index);
+        bodies[index].shape = MmdRigidBodyShape::Box;
+        bodies[index].size = glm::vec3(0.2f);
+        bodies[index].mode = MmdRigidBodyMode::PhysicsWithBone;
+        bodies[index].mass = 1.0f;
+        bodies[index].modelBindTransform = bind;
+        bodies[index].boneToBody = glm::mat4(1.0f);
+        bodies[index].bodyToBone = glm::mat4(1.0f);
+    }
+    model->SetSkeleton(Skeleton(std::move(bones)));
+
+    std::vector<MmdJointDefinition> joints(2U);
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        joints[index].name = "collisionJoint" + std::to_string(index);
+        joints[index].bodyA = static_cast<RigidBodyIndex>(index);
+        joints[index].bodyB = static_cast<RigidBodyIndex>(index + 1U);
+        joints[index].position = glm::vec3(
+            static_cast<float>(index) * 0.15f + 0.075f,
+            0.0f,
+            0.0f
+        );
+        joints[index].modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joints[index].position
+        );
+        joints[index].linearLower = glm::vec3(0.0f);
+        joints[index].linearUpper = glm::vec3(0.0f);
+        joints[index].angularLower = glm::vec3(0.0f);
+        joints[index].angularUpper = glm::vec3(0.0f);
+    }
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
+std::unique_ptr<ModelAsset> CreateMmdCrossChainContactModel()
+{
+    auto model = std::make_unique<ModelAsset>("crossChainContact");
+    std::vector<Bone> bones;
+    std::vector<MmdRigidBodyDefinition> bodies(2U);
+    const glm::vec3 positions[] = {
+        glm::vec3(-0.1f, 0.0f, 0.0f),
+        glm::vec3(0.1f, 0.0f, 0.0f)
+    };
+    for (std::size_t index = 0U; index < bodies.size(); ++index)
+    {
+        const glm::mat4 bind = glm::translate(
+            glm::mat4(1.0f),
+            positions[index]
+        );
+        bones.push_back(Bone{
+            "crossBone" + std::to_string(index),
+            InvalidBoneIndex,
+            bind,
+            glm::inverse(bind)
+        });
+        bodies[index].name = "crossBody" + std::to_string(index);
+        bodies[index].bone = static_cast<BoneIndex>(index);
+        bodies[index].shape = MmdRigidBodyShape::Sphere;
+        bodies[index].size = glm::vec3(0.5f, 0.0f, 0.0f);
+        bodies[index].mode = MmdRigidBodyMode::PhysicsWithBone;
+        bodies[index].mass = 1.0f;
+        bodies[index].modelBindTransform = bind;
+        bodies[index].boneToBody = glm::mat4(1.0f);
+        bodies[index].bodyToBone = glm::mat4(1.0f);
+    }
+    model->SetSkeleton(Skeleton(std::move(bones)));
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::vector<MmdJointDefinition>{}
+    ));
+    return model;
+}
+
+void TestMmdCollisionTopologyAndAdaptiveCcd()
+{
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdCollisionTopologyModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        const MmdPhysicsCollisionStatistics initial =
+            physics.CollisionStatistics();
+        Require(
+            initial.linkedJointPairCount == 2U &&
+            initial.ignoredNearNeighborPairCount == 1U &&
+            initial.denseMarginBodyCount == 1U &&
+            initial.ccdCandidateCount == 3U,
+            "MMD collision topology policy did not classify the dense chain"
+        );
+        Require(
+            scene.Physics().RuntimeSettings(physics.BodyHandleAt(1U)).collisionMargin <
+                scene.Physics().RuntimeSettings(physics.BodyHandleAt(0U)).collisionMargin,
+            "Dense MMD chain body did not receive its reduced box margin"
+        );
+
+        // Consume the first-frame constraint-preserving reset before injecting
+        // the speed used to exercise adaptive CCD.
+        scene.Update(0.0f);
+        scene.Physics().SetLinearVelocity(
+            physics.BodyHandleAt(2U),
+            glm::vec3(20.0f, 0.0f, 0.0f)
+        );
+        scene.Update(1.0f / 60.0f);
+        Require(
+            scene.Physics().RuntimeSettings(physics.BodyHandleAt(2U)).ccdEnabled &&
+            physics.CollisionStatistics().activeCcdBodyCount >= 1U &&
+            physics.CollisionStatistics().ccdActivationCount >= 1U,
+            "MMD adaptive CCD did not activate for actual high per-tick travel"
+        );
+        Require(
+            physics.CollisionStatistics().contactPairCount == 0U,
+            "MMD near-neighbor filtering left an internal A-C contact active"
+        );
+    }
+
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdCrossChainContactModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        scene.Update(1.0f / 60.0f);
+        const MmdPhysicsCollisionStatistics& collision =
+            entity.GetMmdPhysics().CollisionStatistics();
+        Require(
+            collision.contactPairCount >= 1U &&
+            collision.crossChainContactPairCount >= 1U &&
+            collision.maximumPenetrationDepth > 0.0f &&
+            !entity.GetMmdPhysics().ContactDiagnostics().empty(),
+            "MMD cross-chain contact matrix did not capture an allowed contact"
+        );
+    }
+}
+
 void TestMmdPhysicsP1LocalRecovery()
 {
     std::unique_ptr<ModelAsset> model = CreateMmdLocalRecoveryModel();
@@ -5078,10 +5294,11 @@ void TestMmdPhysicsP1LocalRecovery()
         "MMD local recovery did not separate independent physics chains"
     );
     Require(
-        scene.Physics().Statistics().ccdBodyCount == 2U &&
-        scene.Physics().RuntimeSettings(physics.BodyHandleAt(1U)).ccdEnabled &&
-        scene.Physics().RuntimeSettings(physics.BodyHandleAt(3U)).ccdEnabled,
-        "MMD selective CCD was not limited to the two small dynamic bodies"
+        scene.Physics().Statistics().ccdBodyCount == 0U &&
+        physics.CollisionStatistics().ccdCandidateCount == 2U &&
+        !scene.Physics().RuntimeSettings(physics.BodyHandleAt(1U)).ccdEnabled &&
+        !scene.Physics().RuntimeSettings(physics.BodyHandleAt(3U)).ccdEnabled,
+        "MMD adaptive CCD candidates were not kept inactive at rest"
     );
 
     const PhysicsBodyState unaffectedBefore = physics.BodyStateAt(3U);
@@ -6081,6 +6298,10 @@ int main()
         TestBulletP1CcdMarginsAndSolver
     );
     failures += !RunTest(
+        "Bullet contact diagnostics and pair ignore",
+        TestBulletContactDiagnosticsAndPairIgnore
+    );
+    failures += !RunTest(
         "Bullet rigid bodies",
         TestBulletFoundationRigidBodies
     );
@@ -6143,6 +6364,10 @@ int main()
     failures += !RunTest(
         "MMD initialization stabilization",
         TestMmdPhysicsInitializationStabilization
+    );
+    failures += !RunTest(
+        "MMD collision topology and adaptive CCD",
+        TestMmdCollisionTopologyAndAdaptiveCcd
     );
     failures += !RunTest(
         "MMD P1 local chain recovery",
