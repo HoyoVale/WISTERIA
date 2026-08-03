@@ -1,7 +1,5 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/scene/entity.hpp"
-#include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
-#include "wisteria/mmd/physics/mmd_physics_instance.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/physics/physics_world.hpp"
 #include <algorithm>
@@ -290,127 +288,6 @@ void Entity::SetPhysicsInstance(std::unique_ptr<PhysicsInstance> instance)
     this->physicsInstance = std::move(instance);
 }
 
-bool Entity::HasMmdPhysics() const noexcept
-{
-    return this->TryGetMmdPhysics() != nullptr ||
-        this->TryGetMmdCompatPhysics() != nullptr;
-}
-
-MmdPhysicsInstance* Entity::TryGetMmdPhysics() noexcept
-{
-    return dynamic_cast<MmdPhysicsInstance*>(this->physicsInstance.get());
-}
-
-const MmdPhysicsInstance* Entity::TryGetMmdPhysics() const noexcept
-{
-    return dynamic_cast<const MmdPhysicsInstance*>(
-        this->physicsInstance.get()
-    );
-}
-
-MmdPhysicsInstance& Entity::GetMmdPhysics()
-{
-    MmdPhysicsInstance* result = this->TryGetMmdPhysics();
-    if (result == nullptr)
-        throw std::logic_error("Entity has no MMD physics instance");
-    return *result;
-}
-
-const MmdPhysicsInstance& Entity::GetMmdPhysics() const
-{
-    const MmdPhysicsInstance* result = this->TryGetMmdPhysics();
-    if (result == nullptr)
-        throw std::logic_error("Entity has no MMD physics instance");
-    return *result;
-}
-
-MmdCompatPhysicsInstance* Entity::TryGetMmdCompatPhysics() noexcept
-{
-    return dynamic_cast<MmdCompatPhysicsInstance*>(
-        this->physicsInstance.get()
-    );
-}
-
-const MmdCompatPhysicsInstance* Entity::TryGetMmdCompatPhysics() const noexcept
-{
-    return dynamic_cast<const MmdCompatPhysicsInstance*>(
-        this->physicsInstance.get()
-    );
-}
-
-MmdCompatPhysicsInstance& Entity::GetMmdCompatPhysics()
-{
-    MmdCompatPhysicsInstance* result = this->TryGetMmdCompatPhysics();
-    if (result == nullptr)
-        throw std::logic_error("Entity has no MMD compat physics instance");
-    return *result;
-}
-
-const MmdCompatPhysicsInstance& Entity::GetMmdCompatPhysics() const
-{
-    const MmdCompatPhysicsInstance* result = this->TryGetMmdCompatPhysics();
-    if (result == nullptr)
-        throw std::logic_error("Entity has no MMD compat physics instance");
-    return *result;
-}
-
-void Entity::SetMmdPhysics(
-    PhysicsWorld& world,
-    const MmdPhysicsAsset& physics
-)
-{
-    this->SetMmdPhysics(
-        world,
-        physics,
-        MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults()
-    );
-}
-
-void Entity::SetMmdPhysics(
-    PhysicsWorld& world,
-    const MmdPhysicsAsset& physics,
-    const MmdCompatSettings& settings
-)
-{
-    if (!this->HasPose())
-    {
-        throw std::logic_error(
-            "MMD compat physics requires an Entity skeleton pose"
-        );
-    }
-    this->SetPhysicsInstance(std::make_unique<MmdCompatPhysicsInstance>(
-        world,
-        physics,
-        *this->pose,
-        this->transform,
-        settings
-    ));
-    this->physicsResetPending = false;
-}
-
-void Entity::SetMmdPhysics(
-    PhysicsWorld& world,
-    const MmdPhysicsAsset& physics,
-    const MmdPhysicsRuntimePolicy& policy
-)
-{
-    if (!this->HasPose())
-    {
-        throw std::logic_error(
-            "MMD physics requires an Entity skeleton pose"
-        );
-    }
-    this->SetPhysicsInstance(std::make_unique<MmdPhysicsInstance>(
-        world,
-        physics,
-        *this->pose,
-        this->transform,
-        this->morphState.get(),
-        policy
-    ));
-    this->physicsResetPending = false;
-}
-
 void Entity::PrePhysicsUpdate(float deltaTime)
 {
     if (this->physicsInstance == nullptr)
@@ -470,37 +347,6 @@ void Entity::AppendPhysicsDebugLines(
 {
     if (this->physicsInstance != nullptr)
         this->physicsInstance->AppendDebugLines(lines);
-
-    MmdPhysicsInstance* mmd = this->TryGetMmdPhysics();
-    if (mmd == nullptr || this->pose == nullptr)
-        return;
-    const MmdPhysicsFidelityDebugLayer layer = mmd->FidelityDebugLayer();
-    const bool showVertices =
-        layer == MmdPhysicsFidelityDebugLayer::Vertex ||
-        layer == MmdPhysicsFidelityDebugLayer::All;
-    if (!showVertices)
-    {
-        mmd->SetSampledVertexCount(0U);
-        return;
-    }
-
-    constexpr std::size_t MaximumEntitySamples = 128U;
-    std::size_t sampled = 0U;
-    const glm::mat4 entityMatrix = this->transform.Matrix();
-    for (const RenderPart& part : this->renderParts)
-    {
-        if (sampled >= MaximumEntitySamples)
-            break;
-        sampled += part.GetMesh().AppendSkinningDebugLines(
-            lines,
-            *this->pose,
-            mmd->DrivenBoneModes(),
-            entityMatrix * part.LocalTransform(),
-            this->morphState.get(),
-            MaximumEntitySamples - sampled
-        );
-    }
-    mmd->SetSampledVertexCount(sampled);
 }
 
 bool Entity::RemoveBehaviour(Behaviour& behaviour)

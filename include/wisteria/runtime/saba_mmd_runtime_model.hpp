@@ -6,20 +6,33 @@
 #include <memory>
 #include <span>
 
+struct SabaPhysicsSettings
+{
+    float fixedTimeStep = 1.0f / 120.0f;
+    int maxSubSteps = 10;
+    glm::vec3 gravity{0.0f, -98.0f, 0.0f};
+};
+
 // Saba-backed MMD runtime: uses saba::PMXModel for animation, IK, morph and
 // CPU skinning (BDEF/SDEF/QDEF), then uploads skinned vertices into our Mesh.
-// Saba physics integration arrives in phase 4 (OwnsSimulationStep).
+// Saba owns its per-model Bullet world (OwnsSimulationStep); the Scene skips
+// the shared fixed-step lifecycle for this runtime.
 class SabaMmdRuntimeModel final : public MmdRuntimeModel
 {
 public:
     SabaMmdRuntimeModel(
         std::filesystem::path modelPath,
-        std::filesystem::path vmdPath = {}
+        std::filesystem::path vmdPath = {},
+        SabaPhysicsSettings physicsSettings = {}
     );
     ~SabaMmdRuntimeModel() override;
 
     SabaMmdRuntimeModel(const SabaMmdRuntimeModel&) = delete;
     SabaMmdRuntimeModel& operator=(const SabaMmdRuntimeModel&) = delete;
+
+    // Overrides physics settings. Calling before Initialize() applies them at
+    // startup; calling after Initialize() reapplies them to the live world.
+    void SetPhysicsSettings(const SabaPhysicsSettings& settings);
 
     bool Initialize() override;
     void Update(float deltaTime) override;

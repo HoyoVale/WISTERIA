@@ -6,23 +6,14 @@ class ResourceManager;
 class Scene;
 class Window;
 
-// The default demo is one complete MMD character pipeline: model import,
-// full-body animation or assets/motions/demo.vmd, Morph, IK, Bullet physics,
-// after-physics pose solving and rendering.
-void SetupMmdCharacterDemo(
+// Default demo: Saba drives the whole MMD chain (VMD animation, IK, morph,
+// physics and CPU skinning), then uploads skinned vertices into WISTERIA's
+// Mesh every frame.
+void SetupSabaMmdDemoScene(
     Scene& scene,
     ResourceManager& resources,
     Window& window,
-    bool alternateModel = false,
-    bool useCompat = false
-);
-
-// Saba-backed demo window: saba::PMXModel drives animation/IK/morph and CPU
-// skinning, then uploads skinned vertices into WISTERIA's Mesh every frame.
-void SetupSabaMeshDemoScene(
-    Scene& scene,
-    ResourceManager& resources,
-    Window& window
+    bool alternateModel = false
 );
 
 // Creates the procedural fallback used when assets/motions/demo.vmd is absent.

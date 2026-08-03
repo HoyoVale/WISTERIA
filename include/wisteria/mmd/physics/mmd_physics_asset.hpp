@@ -75,8 +75,8 @@ struct MmdJointDefinition
     glm::mat4 modelBindTransform{1.0f};
 };
 
-// Immutable model-level PMX physics metadata. Runtime Bullet objects and
-// mutable velocities belong to each Entity's MmdPhysicsInstance.
+// Immutable model-level PMX physics metadata. Runtime Bullet objects are
+// owned by the Saba physics world inside SabaMmdRuntimeModel.
 class MmdPhysicsAsset
 {
 public:

@@ -323,8 +323,7 @@ Entity& Scene::CreateEntity(
 
 Entity& Scene::InstantiateModel(
     const ModelAsset& model,
-    const Transform& transform,
-    const ModelInstantiationOptions& options
+    const Transform& transform
 )
 {
     Entity& entity = this->CreateEntity(transform);
@@ -336,8 +335,6 @@ Entity& Scene::InstantiateModel(
         if (model.AnimationClipCount() > 0)
             entity.GetAnimator().Play(model.AnimationClipAt(0));
     }
-    if (options.enablePhysics && model.HasMmdPhysics())
-        entity.SetMmdPhysics(*this->physicsWorld, model.GetMmdPhysics());
     for (const RenderPart& part : model.Parts())
     {
         entity.AddRenderPart(

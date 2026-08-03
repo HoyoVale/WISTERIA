@@ -17,11 +17,6 @@
 #include <utility>
 #include <vector>
 
-class MmdPhysicsAsset;
-class MmdPhysicsInstance;
-class MmdCompatPhysicsInstance;
-struct MmdCompatSettings;
-struct MmdPhysicsRuntimePolicy;
 class PhysicsInstance;
 class PhysicsWorld;
 
@@ -93,31 +88,6 @@ public:
     const PhysicsInstance& GetPhysicsInstance() const;
     void SetPhysicsInstance(std::unique_ptr<PhysicsInstance> instance);
 
-    // Transitional typed access for MMD-only features such as Impulse Morph.
-    // Entity lifecycle itself uses PhysicsInstance and is format-agnostic.
-    bool HasMmdPhysics() const noexcept;
-    MmdPhysicsInstance* TryGetMmdPhysics() noexcept;
-    const MmdPhysicsInstance* TryGetMmdPhysics() const noexcept;
-    MmdPhysicsInstance& GetMmdPhysics();
-    const MmdPhysicsInstance& GetMmdPhysics() const;
-    MmdCompatPhysicsInstance* TryGetMmdCompatPhysics() noexcept;
-    const MmdCompatPhysicsInstance* TryGetMmdCompatPhysics() const noexcept;
-    MmdCompatPhysicsInstance& GetMmdCompatPhysics();
-    const MmdCompatPhysicsInstance& GetMmdCompatPhysics() const;
-    void SetMmdPhysics(
-        PhysicsWorld& world,
-        const MmdPhysicsAsset& physics
-    );
-    void SetMmdPhysics(
-        PhysicsWorld& world,
-        const MmdPhysicsAsset& physics,
-        const MmdCompatSettings& settings
-    );
-    void SetMmdPhysics(
-        PhysicsWorld& world,
-        const MmdPhysicsAsset& physics,
-        const MmdPhysicsRuntimePolicy& policy
-    );
     void PrePhysicsUpdate(float deltaTime);
     void PreparePhysicsSubstep(float alpha, float fixedTimeStep);
     void ObservePhysicsSubstep(float fixedTimeStep);

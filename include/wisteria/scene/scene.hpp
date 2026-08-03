@@ -11,11 +11,6 @@
 
 class EnvironmentMap;
 
-struct ModelInstantiationOptions
-{
-    bool enablePhysics = true;
-};
-
 // Scene owns scene objects. Mesh and Material stay externally owned resources.
 class Scene
 {
@@ -45,8 +40,7 @@ public:
     );
     Entity& InstantiateModel(
         const ModelAsset& model,
-        const Transform& transform = {},
-        const ModelInstantiationOptions& options = {}
+        const Transform& transform = {}
     );
     bool RemoveEntity(const Entity& entity);
     void ClearEntities() noexcept;

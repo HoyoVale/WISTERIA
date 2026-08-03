@@ -1,8 +1,11 @@
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 
 #include "wisteria/animation/pose.hpp"
+#include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/rendering/mesh.hpp"
 
+#include <btBulletDynamicsCommon.h>
+#include <Saba/Model/MMD/MMDPhysics.h>
 #include <Saba/Model/MMD/PMXModel.h>
 #include <Saba/Model/MMD/VMDAnimation.h>
 #include <Saba/Model/MMD/VMDFile.h>
@@ -13,6 +16,32 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace
+{
+// Marker instance so Scene knows Saba drives its own per-model Bullet world
+// and must skip the shared StepFixed lifecycle.
+class SabaOwnedPhysicsInstance final : public PhysicsInstance
+{
+public:
+    bool OwnsSimulationStep() const noexcept override
+    {
+        return true;
+    }
+
+    void PrepareSimulation(float) override
+    {
+    }
+
+    void FinishSimulation() override
+    {
+    }
+
+    void ResetSimulation() override
+    {
+    }
+};
+}
 
 namespace
 {
@@ -30,6 +59,7 @@ struct SabaMmdRuntimeModel::Impl
 {
     std::filesystem::path modelPath;
     std::filesystem::path vmdPath;
+    SabaPhysicsSettings physicsSettings;
     std::shared_ptr<saba::PMXModel> model;
     std::unique_ptr<saba::VMDAnimation> vmdAnimation;
     saba::VMDFile vmdFile;
@@ -38,6 +68,7 @@ struct SabaMmdRuntimeModel::Impl
     double updateMilliseconds = 0.0;
     double uploadMilliseconds = 0.0;
     std::size_t profileFrameCount = 0U;
+    std::unique_ptr<SabaOwnedPhysicsInstance> ownedPhysics;
 
     std::vector<Bone> bones;
     Skeleton skeleton;
@@ -45,10 +76,12 @@ struct SabaMmdRuntimeModel::Impl
 
     Impl(
         std::filesystem::path modelPath_,
-        std::filesystem::path vmdPath_
+        std::filesystem::path vmdPath_,
+        SabaPhysicsSettings physicsSettings_
     )
         : modelPath(std::move(modelPath_)),
           vmdPath(std::move(vmdPath_)),
+          physicsSettings(physicsSettings_),
           skeleton(BuildSingleBoneSkeleton()),
           pose(skeleton)
     {
@@ -65,16 +98,39 @@ struct SabaMmdRuntimeModel::Impl
 
 SabaMmdRuntimeModel::SabaMmdRuntimeModel(
     std::filesystem::path modelPath,
-    std::filesystem::path vmdPath
+    std::filesystem::path vmdPath,
+    SabaPhysicsSettings physicsSettings
 )
     : impl(std::make_unique<Impl>(
           std::move(modelPath),
-          std::move(vmdPath)
+          std::move(vmdPath),
+          physicsSettings
       ))
 {
 }
 
 SabaMmdRuntimeModel::~SabaMmdRuntimeModel() = default;
+
+void SabaMmdRuntimeModel::SetPhysicsSettings(
+    const SabaPhysicsSettings& settings
+)
+{
+    this->impl->physicsSettings = settings;
+    if (this->impl->model != nullptr)
+    {
+        if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
+        {
+            physics->SetFPS(1.0f / settings.fixedTimeStep);
+            physics->SetMaxSubStepCount(settings.maxSubSteps);
+            const glm::vec3& gravity = settings.gravity;
+            physics->GetDynamicsWorld()->setGravity(btVector3(
+                gravity.x,
+                gravity.y,
+                gravity.z
+            ));
+        }
+    }
+}
 
 bool SabaMmdRuntimeModel::Initialize()
 {
@@ -95,6 +151,20 @@ bool SabaMmdRuntimeModel::Initialize()
     // it resets node animation state and rebuilds the physics reset pose.
     // Skipping it leaves physics and VMD evaluation on inconsistent baselines.
     this->impl->model->InitializeAnimation();
+    if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
+    {
+        const float fps = 1.0f / this->impl->physicsSettings.fixedTimeStep;
+        physics->SetFPS(fps);
+        physics->SetMaxSubStepCount(this->impl->physicsSettings.maxSubSteps);
+        const glm::vec3& gravity = this->impl->physicsSettings.gravity;
+        physics->GetDynamicsWorld()->setGravity(btVector3(
+            gravity.x,
+            gravity.y,
+            gravity.z
+        ));
+    }
+    this->impl->ownedPhysics =
+        std::make_unique<SabaOwnedPhysicsInstance>();
 
     if (!this->impl->vmdPath.empty())
     {
@@ -208,7 +278,7 @@ SabaMmdRuntimeModel::ProfileSnapshot SabaMmdRuntimeModel::Profile() const
 
 PhysicsInstance* SabaMmdRuntimeModel::TryGetPhysicsInstance() noexcept
 {
-    return nullptr;
+    return this->impl->ownedPhysics.get();
 }
 
 void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex, bool)
@@ -234,7 +304,7 @@ MmdSkinningKind SabaMmdRuntimeModel::SkinningKind() const noexcept
 
 PhysicsInstance* SabaMmdRuntimeModel::GetMmdPhysics() noexcept
 {
-    return nullptr;
+    return this->impl->ownedPhysics.get();
 }
 
 SabaMmdRuntimeModel::VertexDiagnostics

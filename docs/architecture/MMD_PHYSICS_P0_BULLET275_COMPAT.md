@@ -1,5 +1,9 @@
 # P0 实验：Bullet 2.75 约束兼容层（MMD_COMPAT 首个里程碑）
 
+> 状态：已归档（2026-08-04）。该实验对应的 `mmd/physics_compat/*` 与旧
+> `MmdPhysicsInstance` 已在整体切换到 Saba 后删除；本文保留实验结论，
+> 供将来评估 Bullet 版本补偿时参考。
+
 ## 背景与证据
 
 WISTERIA 的“长时运行后裙摆/飘带约束违规逐渐增大”问题，与 Bullet 版本行为差异高度相关。

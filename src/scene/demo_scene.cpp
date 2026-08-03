@@ -2,8 +2,6 @@
 #include "wisteria/scene/demo_scene.hpp"
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/assets/manager.hpp"
-#include "wisteria/mmd/physics/mmd_physics_instance.hpp"
-#include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
 #include "wisteria/assets/saba_mmd_importer.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #include "wisteria/scene/scene.hpp"
@@ -28,7 +26,6 @@ namespace
 {
 constexpr float FullBodyActionDuration = 8.0f;
 constexpr std::string_view FullBodyActionName = "demoFullBodyAction";
-constexpr std::string_view ExternalMotionName = "demoExternalVmd";
 
 std::filesystem::path DemoModelPath(bool alternate)
 {
@@ -325,470 +322,6 @@ AnimationClip BuildFullBodyAction(ModelAsset& model)
     );
 }
 
-const AnimationClip& ResolveCharacterMotion(
-    ResourceManager& resources,
-    ModelAsset& model
-)
-{
-    if (const AnimationClip* existing = model.FindAnimationClip(
-            std::string(ExternalMotionName)
-        ))
-    {
-        return *existing;
-    }
-    const std::filesystem::path motionPath1 = DemoMotionPath1();
-    if (std::filesystem::is_regular_file(motionPath1))
-    {
-        try
-        {
-            const AnimationClip& clip = resources.LoadVmdAnimation(
-                model,
-                motionPath1,
-                VmdImportOptions{.clipName = std::string(ExternalMotionName)}
-            );
-            std::cout << "[INFO] Full-body demo loaded VMD: "
-                      << motionPath1.string() << std::endl;
-            return clip;
-        }
-        catch (const std::exception& error)
-        {
-            std::cerr << "[WARN] Cannot use assets/motions/demo.vmd: "
-                      << error.what() << "\n"
-                      << "[WARN] Falling back to the built-in full-body action"
-                      << std::endl;
-        }
-    }
-    if (const AnimationClip* existing = model.FindAnimationClip(
-            std::string(FullBodyActionName)
-        ))
-    {
-        return *existing;
-    }
-    return model.AddAnimationClip(BuildFullBodyAction(model));
-}
-
-class CharacterDemoBehaviour final : public Behaviour
-{
-public:
-    CharacterDemoBehaviour(
-        Scene& scene,
-        Window& window,
-        Input& input,
-        const AnimationClip& clip
-    )
-        : scene(scene), window(window), input(input), clip(&clip)
-    {
-    }
-
-    void Update(Entity& entity, float deltaTime) override
-    {
-        Animator& animator = entity.GetAnimator();
-        if (this->input.WasKeyPressed(InputKey::Space))
-        {
-            if (animator.IsPaused())
-                animator.Resume();
-            else
-                animator.Pause();
-            this->titleDirty = true;
-        }
-        if (this->input.WasKeyPressed(InputKey::R))
-        {
-            animator.Play(*this->clip, true);
-            entity.ResetPhysicsToCurrentPose();
-            this->titleDirty = true;
-        }
-        if (this->input.WasKeyPressed(InputKey::P))
-        {
-            this->scene.Physics().SetDebugDrawEnabled(
-                !this->scene.Physics().DebugDrawEnabled()
-            );
-            this->titleDirty = true;
-        }
-        if (this->input.WasKeyPressed(InputKey::B))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-            {
-                const MmdPhysicsDebugOverlay overlay =
-                    physics->CycleDebugOverlay();
-                std::cout << "[MMD ALIGN] debug overlay="
-                          << physics->DebugOverlayName()
-                          << " (" << static_cast<int>(overlay) << ")"
-                          << std::endl;
-                this->titleDirty = true;
-            }
-        }
-        if (this->input.WasKeyPressed(InputKey::L))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-                physics->LogAlignmentReport();
-        }
-        if (this->input.WasKeyPressed(InputKey::V))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-            {
-                physics->CycleFidelityDebugLayer();
-                std::cout << "[MMD FIDELITY] debug="
-                          << physics->FidelityDebugLayerName()
-                          << std::endl;
-                this->titleDirty = true;
-            }
-        }
-        if (this->input.WasKeyPressed(InputKey::M))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-            {
-                physics->CyclePhysicsWithBoneSyncMode();
-                std::cout << "[MMD FIDELITY] mode2="
-                          << physics->PhysicsWithBoneSyncModeName()
-                          << std::endl;
-                this->titleDirty = true;
-            }
-        }
-        if (this->input.WasKeyPressed(InputKey::C))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-                physics->LogCollisionReport();
-        }
-        if (this->input.WasKeyPressed(InputKey::G))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-            {
-                physics->CycleGravityMode();
-                entity.ResetPhysicsToCurrentPose();
-                std::cout << "[MMD GRAVITY] mode="
-                          << physics->GravityModeName() << std::endl;
-                physics->LogGravityReport();
-                this->titleDirty = true;
-            }
-        }
-        if (this->input.WasKeyPressed(InputKey::H))
-        {
-            if (MmdPhysicsInstance* physics = entity.TryGetMmdPhysics())
-                physics->LogGravityReport();
-        }
-        if (this->input.WasKeyPressed(InputKey::F3))
-        {
-            this->showPhysicsStatistics = !this->showPhysicsStatistics;
-            this->statisticsLogElapsed = 1.0f;
-            this->titleDirty = true;
-        }
-
-        const PhysicsFrameStatistics& previousFrame =
-            this->scene.LastPhysicsFrameStatistics();
-        this->peakPhysicsCpuMilliseconds = std::max(
-            this->peakPhysicsCpuMilliseconds,
-            previousFrame.physicsCpuMilliseconds
-        );
-        this->peakSubstepCount = std::max(
-            this->peakSubstepCount,
-            previousFrame.substepCount
-        );
-        this->peakDroppedTime = std::max(
-            this->peakDroppedTime,
-            previousFrame.droppedTime
-        );
-        this->peakContactPointCount = std::max(
-            this->peakContactPointCount,
-            previousFrame.world.contactPointCount
-        );
-
-        this->statisticsLogElapsed += deltaTime;
-        if (this->showPhysicsStatistics &&
-            this->statisticsLogElapsed >= 1.0f)
-        {
-            this->statisticsLogElapsed = 0.0f;
-            this->LogPhysicsStatistics();
-        }
-
-        this->titleElapsed += deltaTime;
-        if (this->titleDirty || this->titleElapsed >= 0.2f)
-        {
-            this->titleElapsed = 0.0f;
-            this->UpdateTitle(animator);
-            this->titleDirty = false;
-        }
-    }
-
-private:
-    void UpdateTitle(const Animator& animator)
-    {
-        std::ostringstream title;
-        title << "FLORAL WISTERIA - MMD FULL ACTION - "
-              << this->clip->Name() << " | "
-              << std::fixed << std::setprecision(2)
-              << animator.Time() << " / " << this->clip->Duration();
-        if (animator.IsPaused())
-            title << " [PAUSED]";
-        title << " | Space: pause | R: restart | P: Bullet "
-              << (this->scene.Physics().DebugDrawEnabled() ? "ON" : "OFF")
-              << " | B: overlay ";
-        if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-        {
-            title << entity->GetMmdPhysics().DebugOverlayName();
-            if (entity->GetMmdPhysics().StabilizationFailed())
-                title << " [PHYSICS SAFE FREEZE]";
-        }
-        else
-        {
-            title << "N/A";
-        }
-        if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-        {
-            const MmdPhysicsInstance& physics = entity->GetMmdPhysics();
-            title << " | V: fidelity "
-                  << physics.FidelityDebugLayerName()
-                  << " | M: mode2 "
-                  << physics.PhysicsWithBoneSyncModeName()
-                  << " | G: gravity " << physics.GravityModeName()
-                  << " | H: gravity log | C: collision log";
-        }
-        title << " | L: alignment log | F3: stats "
-              << (this->showPhysicsStatistics ? "ON" : "OFF");
-
-        if (this->showPhysicsStatistics)
-        {
-            const PhysicsFrameStatistics& frame =
-                this->scene.LastPhysicsFrameStatistics();
-            const PhysicsWorldStatistics& world = frame.world;
-            const float fps = frame.frameDeltaTime > 0.000001f
-                ? 1.0f / frame.frameDeltaTime
-                : 0.0f;
-            MmdPhysicsRecoveryStatistics recovery;
-            MmdPhysicsFidelityStatistics fidelity;
-            MmdPhysicsCollisionStatistics collision;
-            MmdPhysicsGravityStatistics gravity;
-            if (const Entity* entity = this->scene.EntityAt(0U);
-                entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-            {
-                recovery = entity->GetMmdPhysics().RecoveryStatistics();
-                fidelity = entity->GetMmdPhysics().FidelityStatistics();
-                collision = entity->GetMmdPhysics().CollisionStatistics();
-                gravity = entity->GetMmdPhysics().GravityStatistics();
-            }
-            title << " | [" << WISTERIA_BUILD_CONFIGURATION << "] "
-                  << std::setprecision(1) << fps << " FPS"
-                  << " | phys " << std::setprecision(2)
-                  << frame.physicsCpuMilliseconds << " ms"
-                  << " (peak " << this->peakPhysicsCpuMilliseconds << ')'
-                  << " | steps " << frame.substepCount << '/'
-                  << this->scene.Physics().StepSettings().maxSubSteps
-                  << " | acc " << frame.accumulatorTime * 1000.0f << " ms"
-                  << " | drop " << frame.droppedTime * 1000.0f << " ms"
-                  << " | bodies " << world.bodyCount
-                  << " (D" << world.dynamicBodyCount
-                  << "/K" << world.kinematicBodyCount << ')'
-                  << " | CCD " << world.ccdBodyCount << '/'
-                  << collision.ccdCandidateCount
-                  << " | pairs " << collision.contactPairCount
-                  << " (X" << collision.crossChainContactPairCount << ')'
-                  << " | pen " << std::setprecision(3)
-                  << collision.maximumPenetrationDepth
-                  << " | g " << std::setprecision(2)
-                  << gravity.averageEffectiveGravityScale
-                  << " down " << gravity.maximumDownwardDisplacement
-                  << " | solver " << world.solverIterations
-                  << (world.splitImpulse ? "+SI" : "-SI")
-                  << " | recover " << recovery.totalRecoveries
-                  << " (local<=" << recovery.largestRecoveryRegion
-                  << "/fused" << recovery.fusedChainCount << ')'
-                  << " | B2Bone " << std::setprecision(3)
-                  << fidelity.maximumBulletToBonePositionError
-                  << " | Vtx " << fidelity.sampledVertexCount
-                  << " | active " << world.activeBodyCount
-                  << " | contacts " << world.contactPointCount
-                  << " | finite " << (world.finite ? "OK" : "FAIL");
-        }
-        this->window.SetTitle(title.str());
-    }
-
-    void LogPhysicsStatistics() const
-    {
-        const PhysicsFrameStatistics& frame =
-            this->scene.LastPhysicsFrameStatistics();
-        const PhysicsWorldStatistics& world = frame.world;
-        const float fps = frame.frameDeltaTime > 0.000001f
-            ? 1.0f / frame.frameDeltaTime
-            : 0.0f;
-        MmdPhysicsRecoveryStatistics recovery;
-        MmdPhysicsFidelityStatistics fidelity;
-        MmdPhysicsCollisionStatistics collision;
-        MmdPhysicsGravityStatistics gravity;
-        if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-        {
-            recovery = entity->GetMmdPhysics().RecoveryStatistics();
-            fidelity = entity->GetMmdPhysics().FidelityStatistics();
-            collision = entity->GetMmdPhysics().CollisionStatistics();
-            gravity = entity->GetMmdPhysics().GravityStatistics();
-        }
-        std::cout << "[PHYSICS STATS] build="
-                  << WISTERIA_BUILD_CONFIGURATION
-                  << " fps=" << fps
-                  << " frameMs=" << frame.frameDeltaTime * 1000.0f
-                  << " physicsMs=" << frame.physicsCpuMilliseconds
-                  << " peakPhysicsMs="
-                  << this->peakPhysicsCpuMilliseconds
-                  << " fixedMs=" << frame.fixedTimeStep * 1000.0f
-                  << " substeps=" << frame.substepCount
-                  << " peakSubsteps=" << this->peakSubstepCount
-                  << " stabilizationSubsteps="
-                  << frame.stabilizationSubstepCount
-                  << " accumulatorMs="
-                  << frame.accumulatorTime * 1000.0f
-                  << " droppedMs=" << frame.droppedTime * 1000.0f
-                  << " peakDroppedMs=" << this->peakDroppedTime * 1000.0f
-                  << " catchUpLimited="
-                  << (frame.catchUpLimited ? "true" : "false")
-                  << " bodies=" << world.bodyCount
-                  << " static=" << world.staticBodyCount
-                  << " dynamic=" << world.dynamicBodyCount
-                  << " kinematic=" << world.kinematicBodyCount
-                  << " ccdBodies=" << world.ccdBodyCount
-                  << " ccdCandidates=" << collision.ccdCandidateCount
-                  << " ccdActivations=" << collision.ccdActivationCount
-                  << " ccdDeactivations=" << collision.ccdDeactivationCount
-                  << " ignoredNearPairs="
-                  << collision.ignoredNearNeighborPairCount
-                  << " denseMarginBodies="
-                  << collision.denseMarginBodyCount
-                  << " contactPairs=" << collision.contactPairCount
-                  << " sameChainPairs="
-                  << collision.sameChainContactPairCount
-                  << " crossChainPairs="
-                  << collision.crossChainContactPairCount
-                  << " maxPenetration="
-                  << collision.maximumPenetrationDepth
-                  << " contactImpulse="
-                  << collision.totalAppliedImpulse
-                  << " maxPairImpulse="
-                  << collision.maximumPairImpulse
-                  << " boxMarginMin="
-                  << world.minimumBoxCollisionMargin
-                  << " boxMarginMax="
-                  << world.maximumBoxCollisionMargin
-                  << " solverIterations=" << world.solverIterations
-                  << " splitImpulse="
-                  << (world.splitImpulse ? "true" : "false")
-                  << " splitImpulseThreshold="
-                  << world.splitImpulsePenetrationThreshold
-                  << " maxErrorReduction="
-                  << world.maximumErrorReduction
-                  << " restitutionVelocityThreshold="
-                  << world.restitutionVelocityThreshold
-                  << " gravityMode=";
-        if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-        {
-            std::cout << entity->GetMmdPhysics().GravityModeName();
-        }
-        else
-        {
-            std::cout << "N/A";
-        }
-        std::cout << " gravityScaleMin="
-                  << gravity.minimumEffectiveGravityScale
-                  << " gravityScaleAvg="
-                  << gravity.averageEffectiveGravityScale
-                  << " gravityScaleMax="
-                  << gravity.maximumEffectiveGravityScale
-                  << " gravityDownAvg="
-                  << gravity.averageDownwardDisplacement
-                  << " gravityDownMax="
-                  << gravity.maximumDownwardDisplacement
-                  << " gravitySpeedAvg=" << gravity.averageSpeed
-                  << " gravitySpeedMax=" << gravity.maximumSpeed
-                  << " gravityMode2DeltaMax="
-                  << gravity.maximumMode2TranslationDelta
-                  << " gravityConstraintImpulse="
-                  << gravity.totalConstraintImpulse
-                  << " gravityConstraintImpulseMax="
-                  << gravity.maximumConstraintImpulse
-                  << " gravityExtensionMax="
-                  << gravity.maximumNormalizedExtension
-                  << " gravityAnchorSpeedMax="
-                  << gravity.maximumAnchorLinearSpeed
-                  << " skirtLayerIgnoredPairs="
-                  << gravity.skirtLayerIgnoredPairCount
-                  << " skirtSemanticIgnoredPairs="
-                  << gravity.skirtSemanticIgnoredPairCount
-                  << " recoveryChains=" << recovery.chainCount
-                  << " recoveryPhysicsTicks="
-                  << recovery.physicsTickCount
-                  << " recoveries=" << recovery.totalRecoveries
-                  << " recoveredBodies=" << recovery.recoveredBodyCount
-                  << " largestRecoveryRegion="
-                  << recovery.largestRecoveryRegion
-                  << " pendingRecoveryChains="
-                  << recovery.pendingAbnormalChainCount
-                  << " recoveryCooldownChains="
-                  << recovery.cooldownChainCount
-                  << " recoveryFusedChains="
-                  << recovery.fusedChainCount
-                  << " recoveryFuseTrips="
-                  << recovery.totalFuseTrips
-                  << " suppressedRecoveries="
-                  << recovery.suppressedRecoveryCount
-                  << " mode2Sync=";
-        if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-        {
-            std::cout << entity->GetMmdPhysics().PhysicsWithBoneSyncModeName();
-        }
-        else
-        {
-            std::cout << "N/A";
-        }
-        std::cout << " fidelityDebug=";
-        if (const Entity* entity = this->scene.EntityAt(0U);
-            entity != nullptr && entity->TryGetMmdPhysics() != nullptr)
-        {
-            std::cout << entity->GetMmdPhysics().FidelityDebugLayerName();
-        }
-        else
-        {
-            std::cout << "N/A";
-        }
-        std::cout << " drivenBones=" << fidelity.drivenBoneCount
-                  << " mode2Bodies=" << fidelity.physicsWithBoneCount
-                  << " sampledVertices=" << fidelity.sampledVertexCount
-                  << " bulletBonePosMax="
-                  << fidelity.maximumBulletToBonePositionError
-                  << " bulletBonePosAvg="
-                  << fidelity.averageBulletToBonePositionError
-                  << " bulletBoneRotMaxDeg="
-                  << fidelity.maximumBulletToBoneRotationErrorDegrees
-                  << " bulletBoneRotAvgDeg="
-                  << fidelity.averageBulletToBoneRotationErrorDegrees
-                  << " mode2DeltaMax="
-                  << fidelity.maximumMode2TranslationDelta
-                  << " mode2DeltaAvg="
-                  << fidelity.averageMode2TranslationDelta
-                  << " active=" << world.activeBodyCount
-                  << " sleeping=" << world.sleepingBodyCount
-                  << " constraints=" << world.constraintCount
-                  << " manifolds=" << world.contactManifoldCount
-                  << " contacts=" << world.contactPointCount
-                  << " peakContacts=" << this->peakContactPointCount
-                  << " finite=" << (world.finite ? "true" : "false")
-                  << std::endl;
-    }
-
-    Scene& scene;
-    Window& window;
-    Input& input;
-    const AnimationClip* clip = nullptr;
-    float titleElapsed = 0.0f;
-    float statisticsLogElapsed = 1.0f;
-    double peakPhysicsCpuMilliseconds = 0.0;
-    float peakDroppedTime = 0.0f;
-    std::size_t peakSubstepCount = 0U;
-    std::size_t peakContactPointCount = 0U;
-    bool titleDirty = true;
-    bool showPhysicsStatistics = true;
-};
-
 void ConfigureCharacterLighting(Scene& scene)
 {
     scene.CreateDirectionalLight(DirectionalLightData{
@@ -813,39 +346,6 @@ void ConfigureCharacterLighting(Scene& scene)
         .Quadratic = 0.008f
     });
 }
-
-class MorphLabPhysicsBehaviour final : public Behaviour
-{
-public:
-    void Update(Entity& entity, float deltaTime) override
-    {
-        this->elapsed += deltaTime;
-        if (this->elapsed < this->nextPulse)
-            return;
-        this->nextPulse += 3.2f;
-        if (MmdCompatPhysicsInstance* compat =
-                entity.TryGetMmdCompatPhysics())
-        {
-            compat->ApplyTorqueImpulse(
-                1U,
-                glm::vec3(0.0f, 0.0f, 0.55f * this->direction)
-            );
-        }
-        else if (MmdPhysicsInstance* legacy = entity.TryGetMmdPhysics())
-        {
-            legacy->ApplyTorqueImpulse(
-                1U,
-                glm::vec3(0.0f, 0.0f, 0.55f * this->direction)
-            );
-        }
-        this->direction = -this->direction;
-    }
-
-private:
-    float elapsed = 0.0f;
-    float nextPulse = 0.35f;
-    float direction = 1.0f;
-};
 
 enum class MorphLabStage : std::size_t
 {
@@ -1323,12 +823,11 @@ const AnimationClip& CreateMmdFullBodyDemoAnimation(ModelAsset& model)
     return model.AddAnimationClip(BuildFullBodyAction(model));
 }
 
-void SetupMmdCharacterDemo(
+void SetupSabaMmdDemoScene(
     Scene& scene,
     ResourceManager& resources,
     Window& window,
-    bool alternateModel,
-    bool useCompat
+    bool alternateModel
 )
 {
     EnvironmentMap* existingEnvironment =
@@ -1341,91 +840,10 @@ void SetupMmdCharacterDemo(
         );
     scene.SetEnvironment(&environment);
 
-    ModelAsset& model = resources.LoadModel(
-        alternateModel ? "mmdCharacterAlt" : "mmdCharacter",
-        DemoModelPath(alternateModel)
-    );
-    const AnimationClip& clip = ResolveCharacterMotion(resources, model);
-
-    Entity& entity = scene.InstantiateModel(
-        model,
-        Transform(
-            glm::vec3(0.0f, 0.0f, 0.1f),
-            glm::vec3(0.0f),
-            glm::vec3(1.0f)
-        ),
-        ModelInstantiationOptions{.enablePhysics = false}
-    );
-    if (model.HasMmdPhysics())
-    {
-        if (useCompat)
-        {
-            entity.SetMmdPhysics(
-                scene.Physics(),
-                model.GetMmdPhysics(),
-                MmdCompatSettings{}
-            );
-        }
-        else
-        {
-            entity.SetMmdPhysics(
-                scene.Physics(),
-                model.GetMmdPhysics(),
-                MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults()
-            );
-        }
-    }
-    Animator& animator = entity.GetAnimator();
-    animator.SetLooping(true);
-    animator.Play(clip, true);
-    entity.AddBehaviour<CharacterDemoBehaviour>(
-        scene,
-        window,
-        window.GetInput(),
-        clip
-    );
-
-    scene.ActiveCamera().SetParam(CameraParam{
-        .Position = {0.0f, 9.0f, 27.0f},
-        .Target = {0.0f, 9.0f, 0.3f},
-        .Up = {0.0f, 1.0f, 0.0f}
-    });
-    ConfigureCharacterLighting(scene);
-    std::cout << "[INFO] MMD "
-              << (useCompat ? "COMPAT" : "LEGACY") << " demo: "
-              << clip.Name()
-              << " | tracks=" << clip.TrackCount()
-              << " | rigidBodies="
-              << (useCompat
-                    ? (entity.TryGetMmdCompatPhysics() != nullptr
-                        ? entity.GetMmdCompatPhysics().RigidBodyCount()
-                        : 0U)
-                    : (entity.TryGetMmdPhysics() != nullptr
-                        ? entity.GetMmdPhysics().RigidBodyCount()
-                        : 0U))
-              << std::endl;
-}
-
-void SetupSabaMeshDemoScene(
-    Scene& scene,
-    ResourceManager& resources,
-    Window& window
-)
-{
-    EnvironmentMap* existingEnvironment =
-        resources.FindEnvironment("defaultSky");
-    EnvironmentMap& environment = existingEnvironment != nullptr
-        ? *existingEnvironment
-        : resources.CreateEnvironment(
-            "defaultSky",
-            EnvironmentMapData::ProceduralSky()
-        );
-    scene.SetEnvironment(&environment);
-
-    const std::filesystem::path modelPath = DemoModelPath(false);
+    const std::filesystem::path modelPath = DemoModelPath(alternateModel);
     ModelAsset& model = CreateSabaMeshModel(
         resources,
-        "sabaMeshModel",
+        alternateModel ? "sabaMeshModelAlt" : "sabaMeshModel",
         modelPath
     );
     Entity& entity = scene.InstantiateModel(
@@ -1434,8 +852,7 @@ void SetupSabaMeshDemoScene(
             glm::vec3(0.0f, 0.0f, 0.1f),
             glm::vec3(0.0f),
             glm::vec3(1.0f)
-        ),
-        ModelInstantiationOptions{.enablePhysics = false}
+        )
     );
 
     const std::filesystem::path motionPath = DemoMotionPath1();
@@ -1443,9 +860,25 @@ void SetupSabaMeshDemoScene(
         std::filesystem::is_regular_file(motionPath)
         ? motionPath
         : std::filesystem::path{};
+    SabaPhysicsSettings physicsSettings;
+    if (const char* fpsValue =
+            std::getenv("WISTERIA_SABA_PHYSICS_FPS"))
+    {
+        const float fps = static_cast<float>(std::atof(fpsValue));
+        if (fps > 0.0f)
+            physicsSettings.fixedTimeStep = 1.0f / fps;
+    }
+    if (const char* stepsValue =
+            std::getenv("WISTERIA_SABA_PHYSICS_MAXSTEPS"))
+    {
+        const int steps = std::atoi(stepsValue);
+        if (steps > 0)
+            physicsSettings.maxSubSteps = steps;
+    }
     auto runtime = std::make_shared<SabaMmdRuntimeModel>(
         modelPath,
-        vmdPath
+        vmdPath,
+        physicsSettings
     );
     if (!runtime->Initialize())
     {
@@ -1481,7 +914,11 @@ void SetupSabaMeshDemoScene(
     });
     ConfigureCharacterLighting(scene);
     std::cout << "[INFO] MMD SABA MESH demo: meshes="
-              << model.Parts().size() << std::endl;
+              << model.Parts().size()
+              << " physicsFps="
+              << (1.0f / physicsSettings.fixedTimeStep)
+              << " maxSubSteps=" << physicsSettings.maxSubSteps
+              << std::endl;
 }
 
 
@@ -1599,8 +1036,7 @@ void SetupMorphDemoScene(
             glm::vec3(-1.25f, 0.0f, 0.0f),
             glm::vec3(0.0f),
             glm::vec3(0.92f)
-        ),
-        ModelInstantiationOptions{.enablePhysics = false}
+        )
     );
     Entity& active = scene.InstantiateModel(
         model,
@@ -1615,7 +1051,6 @@ void SetupMorphDemoScene(
         window,
         window.GetInput()
     );
-    active.AddBehaviour<MorphLabPhysicsBehaviour>();
 
     scene.ActiveCamera().SetParam(CameraParam{
         .Position = {0.0f, 0.0f, 6.2f},

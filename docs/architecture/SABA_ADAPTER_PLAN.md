@@ -97,7 +97,7 @@
 
 - `PhysicsInstance::OwnsSimulationStep()` 接入 Scene 固定步循环；
 - `SabaMmdRuntimeModel` 内部使用 `saba::MMDPhysics`（独立 world、120Hz、-98）；
-- 保留 WISTERIA compat 作为对照实现。
+- 阶段内保留 WISTERIA compat 作为对照实现（阶段 5 删除）。
 
 自动验收：
 
@@ -208,3 +208,31 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
     - 鲁棒性清单文档：
       `docs/architecture/MMD_PHYSICS_ROBUSTNESS.md`；
     - 自动验收：**78/78 PASS，FAIL=0**。
+  - **性能优化（2026-08-04）**
+    - 顶点子集化：上传量降 ~30 倍，帧率 49 → 65fps；
+    - 性能路线图：`docs/architecture/MMD_PERFORMANCE_ROADMAP.md`。
+  - **阶段 4：已完成（2026-08-04）**
+    - `SabaPhysicsSettings`：fixedTimeStep/maxSubSteps/gravity 可配置并应用到
+      `saba::MMDPhysics`；
+    - 自步进契约：`SabaOwnedPhysicsInstance`（`OwnsSimulationStep=true`），
+      Scene 跳过其共享 StepFixed 生命周期；
+    - demo 对照开关：`WISTERIA_SABA_PHYSICS_FPS`、`WISTERIA_SABA_PHYSICS_MAXSTEPS`；
+    - 新增 `TestSceneOwnsSimulationStep`、`TestSabaMmdPhysicsLongRunWhenAvailable`；
+    - `SetPhysicsSettings` 可配置接口（构造参数或 `Initialize()` 前调用）；
+    - 自动验收：**80/80 PASS，FAIL=0**；
+    - 手动验收：120Hz vs 60Hz 对照。结论：两者都流畅，60Hz 帧率更高，
+      物理手感可接受；已做成可设置接口，不再写死。
+  - **阶段 5：整体切换完成（2026-08-04）**
+    - demo 改为单窗口默认 `SabaMmdRuntimeModel`（`--alternate-model` 切换
+      皮肤，`--morph-lab` 保留 Morph 诊断场景）；
+    - 删除旧 MMD 物理运行层：
+      `mmd/physics/{mmd_physics_instance,mmd_physics_policy,mmd_physics_modes,
+      mmd_physics_diagnostics}` 与 `mmd/physics_compat/*`；
+    - Entity/Scene 移除 `SetMmdPhysics`/`TryGetMmdPhysics` 等旧类型化接口，
+      `ModelInstantiationOptions` 删除（旧“enablePhysics”语义随旧实现消失）；
+    - 保留资源层：`MmdPhysicsAsset` / `MmdPhysicsTypes`（Saba importer 与
+      ModelAsset 仍使用）；
+    - 保留 Bullet 基础封装测试（PhysicsWorld/约束/调试绘制）与 Saba 链路测试；
+    - 自动验收：**57/57 PASS，FAIL=0**（删除 23 个旧物理运行层测试）；
+    - 手动验收：单窗口 Saba demo 流畅运行、无 `[ERROR]`；
+      用户确认旧实现不再保留。
