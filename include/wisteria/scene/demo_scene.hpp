@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+
 class AnimationClip;
 class ModelAsset;
 class ResourceManager;
@@ -13,7 +15,8 @@ void SetupSabaMmdDemoScene(
     Scene& scene,
     ResourceManager& resources,
     Window& window,
-    bool alternateModel = false
+    bool alternateModel = false,
+    std::filesystem::path modelPath = {}
 );
 
 // Creates the procedural fallback used when assets/motions/demo.vmd is absent.

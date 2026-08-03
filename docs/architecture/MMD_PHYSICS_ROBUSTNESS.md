@@ -17,6 +17,17 @@
 | 6 | 脸部被拉到地上（仅动态上传后出现） | VBO 是交错布局，却把 position/normal 当连续块写入，覆盖整个 buffer | `Mesh::RebuildInterleavedVertices` 纯函数重建交错数组 + 单测 |
 | 7 | 物理/动画基准不一致导致疯狂运动 | 漏调 `InitializeAnimation()`（Saba viewer 加载后必调） | runtime Initialize 顺序：Load → InitializeAnimation → VMD |
 | 8 | `dynamic=0`（CPU 蒙皮未生效） | provider 调用条件依赖“已上传”标记，形成死锁 | 只要设置 provider 就每帧上传，不再依赖标记 |
+| 9 | 蕾米埃尔等模型直接崩溃退出（`MMD append transform references an invalid source bone`） | PMX 的 append/IK 索引越界，`Skeleton` 严格校验抛异常 | importer 构造 Skeleton 前清洗：父级越界/自引用/成环降为 root；非法 append/IK 跳过，输出 `[WARN][SABA IMPORT]` |
+| 10 | Saba 自身 warning（Invalid morph index / parent index big / Illegal Joint） | PMX 引用无效 morph 成员、非法父级或关节端点，Saba 解析器宽容跳过 | 我们的转换层同样宽容：group/flip 非法成员跳过；刚体/关节非法端点跳过并按剩余刚体重映射索引 |
+| 11 | 空名称 / 重名导致 Skeleton/MorphSet 校验抛错 | PMX 作者命名不规范 | importer 自动命名；重复名追加 ` #N`，首个保留原名 |
+| 12 | 数值非法（NaN、负质量、碰撞组 ≥16、无效旋转） | 损坏或非常规 PMX | 转换层钳制/跳过并警告，不再直接抛异常 |
+
+## 自动防线（2026-08-04 追加）
+
+`TestSabaImporterAcrossModelsWhenAvailable` 现在扫描 `assets/models/mmd` 下
+**全部 `.pmx`**（不再只测固定 5 个），任何一个模型 Saba 导入失败都直接判
+FAIL。当前 15 个模型全部通过；蕾米埃尔系列会打印两条预期警告（非法
+append/IK 被跳过），其余照常加载。
 
 ## 自动防线（测试）
 

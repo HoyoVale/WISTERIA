@@ -31,14 +31,14 @@ std::filesystem::path DemoModelPath(bool alternate)
 {
     return std::filesystem::current_path() / "assets" / "models" /
         "mmd" /
-        (alternate ? u8"叶瞬光皮肤_pmx" : u8"叶瞬光_pmx") /
-        u8"叶瞬光.pmx";
+        (alternate ? u8"叶瞬光皮肤_pmx" : u8"仪玄_pmx") /
+        u8"仪玄.pmx";
 }
 
 std::filesystem::path DemoMotionPath1()
 {
     return std::filesystem::current_path() / "assets" / "motions" /
-        u8"皮卡皮卡皮卡丘+" / u8"身体动作.vmd";
+        u8"梦的翅膀" / u8"梦的翅膀无旋转动作vmd.vmd";
 }
 
 std::optional<BoneIndex> FindBone(
@@ -827,7 +827,8 @@ void SetupSabaMmdDemoScene(
     Scene& scene,
     ResourceManager& resources,
     Window& window,
-    bool alternateModel
+    bool alternateModel,
+    std::filesystem::path modelPath
 )
 {
     EnvironmentMap* existingEnvironment =
@@ -840,10 +841,16 @@ void SetupSabaMmdDemoScene(
         );
     scene.SetEnvironment(&environment);
 
-    const std::filesystem::path modelPath = DemoModelPath(alternateModel);
+    if (modelPath.empty())
+        modelPath = DemoModelPath(alternateModel);
+    const std::u8string modelFileName = modelPath.filename().u8string();
+    const std::string modelResourceName(
+        reinterpret_cast<const char*>(modelFileName.data()),
+        modelFileName.size()
+    );
     ModelAsset& model = CreateSabaMeshModel(
         resources,
-        alternateModel ? "sabaMeshModelAlt" : "sabaMeshModel",
+        "saba::" + modelResourceName,
         modelPath
     );
     Entity& entity = scene.InstantiateModel(
@@ -913,8 +920,14 @@ void SetupSabaMmdDemoScene(
         .Up = {0.0f, 1.0f, 0.0f}
     });
     ConfigureCharacterLighting(scene);
+    const std::u8string modelPathU8 = modelPath.u8string();
+    const std::string modelPathNarrow(
+        reinterpret_cast<const char*>(modelPathU8.data()),
+        modelPathU8.size()
+    );
     std::cout << "[INFO] MMD SABA MESH demo: meshes="
               << model.Parts().size()
+              << " model=" << modelPathNarrow
               << " physicsFps="
               << (1.0f / physicsSettings.fixedTimeStep)
               << " maxSubSteps=" << physicsSettings.maxSubSteps

@@ -4,6 +4,8 @@
 #include "wisteria/platform/window.hpp"
 
 #include <iostream>
+#include <filesystem>
+#include <optional>
 #include <string_view>
 
 namespace
@@ -20,6 +22,23 @@ bool HasArgument(
             return true;
     }
     return false;
+}
+
+std::optional<std::filesystem::path> ModelPathArgument(
+    int argumentCount,
+    char* arguments[]
+)
+{
+    for (int index = 1; index + 1 < argumentCount; ++index)
+    {
+        if (arguments[index] != nullptr &&
+            arguments[index] == "--model" &&
+            arguments[index + 1] != nullptr)
+        {
+            return std::filesystem::path(arguments[index + 1]);
+        }
+    }
+    return std::nullopt;
 }
 
 class DynamicWindowDemoBehaviour final : public Behaviour
@@ -97,6 +116,8 @@ int main(int argumentCount, char* arguments[])
             arguments,
             "--alternate-model"
         ) || HasArgument(argumentCount, arguments, "--character-pair");
+        const std::optional<std::filesystem::path> modelPath =
+            ModelPathArgument(argumentCount, arguments);
 
         Window& primaryWindow = windowManager.CreateWindow(WindowConfig{
             .width = 720,
@@ -124,7 +145,8 @@ int main(int argumentCount, char* arguments[])
                 *demoScene,
                 application.GetResources(),
                 primaryWindow,
-                alternateModel
+                alternateModel,
+                modelPath.value_or(std::filesystem::path{})
             );
             windowManager.BindScene(primaryWindow, demoScene);
             windowManager.EnableFreeCameraController(primaryWindow);

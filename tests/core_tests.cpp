@@ -3009,25 +3009,26 @@ void TestSabaSkinningWhenAvailable()
 
 void TestSabaImporterAcrossModelsWhenAvailable()
 {
-    const std::vector<std::filesystem::path> candidates = {
-        ProjectAssetDirectory / "models" / "mmd" /
-            u8"叶瞬光_pmx" / u8"叶瞬光.pmx",
-        ProjectAssetDirectory / "models" / "mmd" /
-            u8"今汐_pmx" / u8"今汐.pmx",
-        ProjectAssetDirectory / "models" / "mmd" /
-            u8"凑企鹅" / u8"凑企鹅.pmx",
-        ProjectAssetDirectory / "models" / "mmd" /
-            u8"爱弥斯_pmx" / u8"爱弥斯.pmx",
-        ProjectAssetDirectory / "models" / "mmd" /
-            u8"今汐皮肤_pmx" / u8"今汐_桃夭灼灼.pmx"
-    };
+    const std::filesystem::path mmdDirectory =
+        ProjectAssetDirectory / "models" / "mmd";
+    if (!std::filesystem::is_directory(mmdDirectory))
+        return;
+
+    std::vector<std::filesystem::path> candidates;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::recursive_directory_iterator(mmdDirectory))
+    {
+        if (entry.is_regular_file() &&
+            entry.path().extension() == ".pmx")
+        {
+            candidates.push_back(entry.path());
+        }
+    }
+    std::sort(candidates.begin(), candidates.end());
 
     std::size_t testedModels = 0U;
     for (const std::filesystem::path& modelPath : candidates)
     {
-        if (!std::filesystem::is_regular_file(modelPath))
-            continue;
-
         const std::u8string u8Name = modelPath.filename().u8string();
         const std::string modelName(
             reinterpret_cast<const char*>(u8Name.data()),
@@ -3044,12 +3045,13 @@ void TestSabaImporterAcrossModelsWhenAvailable()
         {
             std::cout << "[SABA MODEL] saba-import-fail: "
                       << modelName << ": " << error.what() << std::endl;
-            continue;
+            Require(
+                false,
+                "Saba importer rejected a model: " + modelName
+            );
         }
         Require(
-            saba.skeleton.has_value() &&
-                saba.mmdPhysics.has_value() &&
-                !saba.meshes.empty(),
+            saba.skeleton.has_value() && !saba.meshes.empty(),
             "Saba cross-model import is incomplete: " + modelName
         );
 
@@ -3069,8 +3071,14 @@ void TestSabaImporterAcrossModelsWhenAvailable()
         const std::size_t sabaBones = saba.skeleton->BoneCount();
         std::cout << "[SABA MODEL] " << modelName
                   << " bones=" << sabaBones
-                  << " bodies=" << saba.mmdPhysics->RigidBodyCount()
-                  << " joints=" << saba.mmdPhysics->JointCount()
+                  << " bodies="
+                  << (saba.mmdPhysics.has_value()
+                        ? saba.mmdPhysics->RigidBodyCount()
+                        : 0U)
+                  << " joints="
+                  << (saba.mmdPhysics.has_value()
+                        ? saba.mmdPhysics->JointCount()
+                        : 0U)
                   << " materials=" << saba.materials.size()
                   << " morphs=" << saba.morphs.size()
                   << " assimp=" << (assimpAvailable ? "ok" : "skip")
@@ -3079,8 +3087,7 @@ void TestSabaImporterAcrossModelsWhenAvailable()
         if (assimpAvailable)
         {
             Require(
-                assimp.skeleton.has_value() &&
-                    assimp.mmdPhysics.has_value(),
+                assimp.skeleton.has_value(),
                 "Assimp cross-model comparison lost skeleton or physics"
             );
             const std::size_t assimpBones = assimp.skeleton->BoneCount();
@@ -3088,14 +3095,22 @@ void TestSabaImporterAcrossModelsWhenAvailable()
                 (sabaBones + 1U == assimpBones ||
                     sabaBones == assimpBones ||
                     sabaBones == assimpBones + 1U) &&
-                    saba.mmdPhysics->RigidBodyCount() ==
-                        assimp.mmdPhysics->RigidBodyCount() &&
-                    saba.mmdPhysics->JointCount() ==
-                        assimp.mmdPhysics->JointCount() &&
                     saba.materials.size() == assimp.materials.size() &&
                     saba.morphs.size() == assimp.morphs.size(),
                 "Saba/Assimp metadata mismatch on model: " + modelName
             );
+            if (saba.mmdPhysics.has_value() &&
+                assimp.mmdPhysics.has_value())
+            {
+                Require(
+                    saba.mmdPhysics->RigidBodyCount() ==
+                        assimp.mmdPhysics->RigidBodyCount() &&
+                        saba.mmdPhysics->JointCount() ==
+                            assimp.mmdPhysics->JointCount(),
+                    "Saba/Assimp physics metadata mismatch on model: " +
+                        modelName
+                );
+            }
         }
         ++testedModels;
     }

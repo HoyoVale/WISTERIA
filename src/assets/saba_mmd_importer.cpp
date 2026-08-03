@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -24,6 +25,23 @@ bool IsFinitePmx(const glm::vec3& value) noexcept
 {
     return std::isfinite(value.x) && std::isfinite(value.y) &&
         std::isfinite(value.z);
+}
+
+bool IsFinitePmx(const glm::quat& value) noexcept
+{
+    return std::isfinite(value.w) && std::isfinite(value.x) &&
+        std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool IsFinitePmx(const glm::vec4& value) noexcept
+{
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+        std::isfinite(value.z) && std::isfinite(value.w);
+}
+
+void WarnImport(const std::string& message)
+{
+    std::cerr << "[WARN][SABA IMPORT] " << message << std::endl;
 }
 
 glm::vec3 ConvertPosition(const glm::vec3& value)
@@ -173,25 +191,108 @@ std::optional<Skeleton> BuildSkeleton(const saba::PMXFile& pmx)
     if (pmx.m_bones.empty())
         return std::nullopt;
 
+    const std::size_t boneCount = pmx.m_bones.size();
+
+    // PMX parents normally form a forest, but community models sometimes
+    // contain out-of-range or cyclic parents. Resolve a safe parent for every
+    // bone before building the Skeleton, otherwise its validation throws and
+    // the whole import fails.
+    std::vector<int> finalParents(boneCount, -1);
+    for (std::size_t index = 0U; index < boneCount; ++index)
+    {
+        const int rawParent = pmx.m_bones[index].m_parentBoneIndex;
+        bool valid = rawParent >= 0 &&
+            static_cast<std::size_t>(rawParent) < boneCount &&
+            static_cast<std::size_t>(rawParent) != index;
+        if (valid)
+        {
+            std::vector<std::uint8_t> visited(boneCount, 0U);
+            std::size_t cursor = static_cast<std::size_t>(rawParent);
+            bool cycle = false;
+            while (cursor != index)
+            {
+                if (visited[cursor] != 0U)
+                {
+                    cycle = true;
+                    break;
+                }
+                visited[cursor] = 1U;
+                const int next = pmx.m_bones[cursor].m_parentBoneIndex;
+                if (next < 0 || static_cast<std::size_t>(next) >= boneCount)
+                    break;
+                cursor = static_cast<std::size_t>(next);
+            }
+            if (cycle || cursor == index)
+                valid = false;
+        }
+        if (!valid)
+        {
+            if (rawParent >= 0)
+            {
+                WarnImport(
+                    "Bone " + std::to_string(index) + " (\"" +
+                    pmx.m_bones[index].m_name +
+                    "\") has an invalid or cyclic parent; treating as root"
+                );
+            }
+            finalParents[index] = -1;
+        }
+        else
+        {
+            finalParents[index] = rawParent;
+        }
+    }
+
+    // Skeleton requires unique, non-empty names. Keep the first occurrence as
+    // authored and disambiguate the rest with a numeric suffix.
+    std::vector<std::string> names(boneCount);
+    std::unordered_map<std::string, std::size_t> nameCounts;
+    for (std::size_t index = 0U; index < boneCount; ++index)
+    {
+        std::string base = pmx.m_bones[index].m_name;
+        if (base.empty())
+        {
+            base = "Bone" + std::to_string(index);
+            WarnImport(
+                "Bone " + std::to_string(index) +
+                " has an empty name; using \"" + base + "\""
+            );
+        }
+        const auto found = nameCounts.find(base);
+        if (found == nameCounts.end())
+        {
+            nameCounts.emplace(base, 1U);
+            names[index] = std::move(base);
+        }
+        else
+        {
+            ++found->second;
+            names[index] = base + " #" + std::to_string(found->second);
+            WarnImport(
+                "Duplicate bone name \"" + base + "\"; renamed to \"" +
+                names[index] + "\""
+            );
+        }
+    }
+
     std::vector<Bone> bones;
-    bones.reserve(pmx.m_bones.size());
-    for (std::size_t index = 0U; index < pmx.m_bones.size(); ++index)
+    bones.reserve(boneCount);
+    for (std::size_t index = 0U; index < boneCount; ++index)
     {
         const saba::PMXBone& source = pmx.m_bones[index];
         Bone bone;
-        bone.name = source.m_name;
-        bone.parentIndex = source.m_parentBoneIndex >= 0
-            ? static_cast<BoneIndex>(source.m_parentBoneIndex)
+        bone.name = names[index];
+        bone.parentIndex = finalParents[index] >= 0
+            ? static_cast<BoneIndex>(finalParents[index])
             : InvalidBoneIndex;
 
         // Saba computes the local translation relative to the parent bone
         // and mirrors Z for its coordinate space.
         glm::vec3 localPosition = source.m_position;
-        if (bone.parentIndex != InvalidBoneIndex &&
-            static_cast<std::size_t>(bone.parentIndex) < pmx.m_bones.size())
+        if (bone.parentIndex != InvalidBoneIndex)
         {
             localPosition -=
-                pmx.m_bones[bone.parentIndex].m_position;
+                pmx.m_bones[finalParents[index]].m_position;
         }
         localPosition.z *= -1.0f;
         bone.bindLocalMatrix = glm::translate(glm::mat4(1.0f), localPosition);
@@ -209,55 +310,164 @@ std::optional<Skeleton> BuildSkeleton(const saba::PMXFile& pmx)
         );
         bone.deformAfterPhysics = (flags & 0x1000U) != 0U;
 
-        if ((flags & (0x0100U | 0x0200U)) != 0U &&
-            source.m_appendBoneIndex >= 0)
+        const bool appendRotation = (flags & 0x0100U) != 0U;
+        const bool appendTranslation = (flags & 0x0200U) != 0U;
+        if (appendRotation || appendTranslation)
         {
-            bone.appendTransform = MmdAppendTransform{
-                static_cast<BoneIndex>(source.m_appendBoneIndex),
-                source.m_appendWeight,
-                (flags & 0x0100U) != 0U,
-                (flags & 0x0200U) != 0U
-            };
-        }
-        if ((flags & 0x0020U) != 0U &&
-            source.m_ikTargetBoneIndex >= 0)
-        {
-            MmdIkConstraint ik;
-            ik.targetBone = static_cast<BoneIndex>(
-                source.m_ikTargetBoneIndex
-            );
-            ik.iterations = static_cast<std::uint32_t>(
-                source.m_ikIterationCount
-            );
-            ik.angleLimit = source.m_ikLimit;
-            ik.links.reserve(source.m_ikLinks.size());
-            for (const saba::PMXIKLink& sourceLink : source.m_ikLinks)
+            const bool validAppend =
+                source.m_appendBoneIndex >= 0 &&
+                static_cast<std::size_t>(source.m_appendBoneIndex) < boneCount &&
+                static_cast<std::size_t>(source.m_appendBoneIndex) != index &&
+                std::isfinite(source.m_appendWeight);
+            if (validAppend)
             {
-                MmdIkLink link;
-                link.bone = static_cast<BoneIndex>(
-                    sourceLink.m_ikBoneIndex
+                bone.appendTransform = MmdAppendTransform{
+                    static_cast<BoneIndex>(source.m_appendBoneIndex),
+                    source.m_appendWeight,
+                    appendRotation,
+                    appendTranslation
+                };
+            }
+            else
+            {
+                WarnImport(
+                    "Bone \"" + bone.name +
+                    "\" has an invalid append source; skipping append"
                 );
-                link.hasLimits = sourceLink.m_enableLimit != 0U;
-                if (link.hasLimits)
+            }
+        }
+        if ((flags & 0x0020U) != 0U)
+        {
+            const bool validTarget =
+                source.m_ikTargetBoneIndex >= 0 &&
+                static_cast<std::size_t>(source.m_ikTargetBoneIndex) < boneCount &&
+                static_cast<std::size_t>(source.m_ikTargetBoneIndex) != index;
+            const bool validParams =
+                source.m_ikIterationCount > 0 &&
+                std::isfinite(source.m_ikLimit) &&
+                source.m_ikLimit > 0.0f &&
+                !source.m_ikLinks.empty();
+            if (validTarget && validParams)
+            {
+                MmdIkConstraint ik;
+                ik.targetBone = static_cast<BoneIndex>(
+                    source.m_ikTargetBoneIndex
+                );
+                ik.iterations = static_cast<std::uint32_t>(
+                    source.m_ikIterationCount
+                );
+                ik.angleLimit = source.m_ikLimit;
+                std::unordered_set<BoneIndex> linkBones;
+                bool linksValid = true;
+                ik.links.reserve(source.m_ikLinks.size());
+                for (const saba::PMXIKLink& sourceLink : source.m_ikLinks)
                 {
-                    link.minimumAngle = glm::vec3(
-                        -sourceLink.m_limitMax.x,
-                        -sourceLink.m_limitMax.y,
-                        sourceLink.m_limitMin.z
+                    MmdIkLink link;
+                    link.bone = static_cast<BoneIndex>(
+                        sourceLink.m_ikBoneIndex
                     );
-                    link.maximumAngle = glm::vec3(
-                        -sourceLink.m_limitMin.x,
-                        -sourceLink.m_limitMin.y,
-                        sourceLink.m_limitMax.z
+                    if (sourceLink.m_ikBoneIndex < 0 ||
+                        static_cast<std::size_t>(sourceLink.m_ikBoneIndex) >=
+                            boneCount ||
+                        !linkBones.emplace(link.bone).second)
+                    {
+                        linksValid = false;
+                        break;
+                    }
+                    link.hasLimits = sourceLink.m_enableLimit != 0U;
+                    if (link.hasLimits)
+                    {
+                        const bool finiteLimits =
+                            IsFinitePmx(sourceLink.m_limitMin) &&
+                            IsFinitePmx(sourceLink.m_limitMax);
+                        if (!finiteLimits)
+                        {
+                            link.hasLimits = false;
+                            WarnImport(
+                                "Bone \"" + bone.name +
+                                "\" IK link has non-finite limits; limits dropped"
+                            );
+                        }
+                        else
+                        {
+                            link.minimumAngle = glm::vec3(
+                                -sourceLink.m_limitMax.x,
+                                -sourceLink.m_limitMax.y,
+                                sourceLink.m_limitMin.z
+                            );
+                            link.maximumAngle = glm::vec3(
+                                -sourceLink.m_limitMin.x,
+                                -sourceLink.m_limitMin.y,
+                                sourceLink.m_limitMax.z
+                            );
+                            if (link.minimumAngle.x > link.maximumAngle.x ||
+                                link.minimumAngle.y > link.maximumAngle.y ||
+                                link.minimumAngle.z > link.maximumAngle.z)
+                            {
+                                link.hasLimits = false;
+                                WarnImport(
+                                    "Bone \"" + bone.name +
+                                    "\" IK link limits are inverted; limits dropped"
+                                );
+                            }
+                        }
+                    }
+                    ik.links.push_back(std::move(link));
+                }
+                if (linksValid)
+                {
+                    bone.ikConstraint = std::move(ik);
+                }
+                else
+                {
+                    WarnImport(
+                        "Bone \"" + bone.name +
+                        "\" has invalid IK links; skipping IK"
                     );
                 }
-                ik.links.push_back(std::move(link));
             }
-            bone.ikConstraint = std::move(ik);
+            else
+            {
+                WarnImport(
+                    "Bone \"" + bone.name +
+                    "\" has invalid IK parameters; skipping IK"
+                );
+            }
         }
         bones.push_back(std::move(bone));
     }
-    return Skeleton(std::move(bones));
+    try
+    {
+        return Skeleton(std::move(bones));
+    }
+    catch (const std::exception& error)
+    {
+        WarnImport(
+            std::string("Skeleton validation rejected the PMX bones: ") +
+            error.what() + "; falling back to a root-only skeleton"
+        );
+        std::vector<Bone> fallback;
+        fallback.reserve(boneCount);
+        for (std::size_t index = 0U; index < boneCount; ++index)
+        {
+            Bone bone;
+            bone.name = names[index];
+            bone.parentIndex = InvalidBoneIndex;
+            const glm::vec3 globalPosition =
+                pmx.m_bones[index].m_position * glm::vec3(1.0f, 1.0f, -1.0f);
+            bone.bindLocalMatrix = glm::translate(
+                glm::mat4(1.0f),
+                globalPosition
+            );
+            bone.inverseBindMatrix = glm::inverse(
+                glm::translate(glm::mat4(1.0f), globalPosition)
+            );
+            bone.deformLayer = pmx.m_bones[index].m_deformDepth;
+            bone.sourceOrder = static_cast<std::uint32_t>(index);
+            fallback.push_back(std::move(bone));
+        }
+        return Skeleton(std::move(fallback));
+    }
 }
 
 MmdPhysicsAsset BuildPhysics(
@@ -265,24 +475,56 @@ MmdPhysicsAsset BuildPhysics(
     const std::optional<Skeleton>& skeleton
 )
 {
+    const std::size_t bodyCount = pmx.m_rigidbodies.size();
+    std::vector<RigidBodyIndex> bodyRemap(bodyCount, InvalidRigidBodyIndex);
     std::vector<MmdRigidBodyDefinition> rigidBodies;
-    rigidBodies.reserve(pmx.m_rigidbodies.size());
-    for (const saba::PMXRigidbody& source : pmx.m_rigidbodies)
+    rigidBodies.reserve(bodyCount);
+    for (std::size_t bodyIndex = 0U; bodyIndex < bodyCount; ++bodyIndex)
     {
+        const saba::PMXRigidbody& source = pmx.m_rigidbodies[bodyIndex];
         MmdRigidBodyDefinition body;
         body.name = source.m_name;
-        body.collisionGroup = source.m_group;
+        if (body.name.empty())
+        {
+            body.name = "RigidBody" + std::to_string(bodyIndex);
+            WarnImport(
+                "Rigid body " + std::to_string(bodyIndex) +
+                " has an empty name; using \"" + body.name + "\""
+            );
+        }
+        if (source.m_group >= 16)
+        {
+            WarnImport(
+                "Rigid body \"" + body.name + "\" has collision group " +
+                std::to_string(source.m_group) + "; clamped to 15"
+            );
+            body.collisionGroup = 15U;
+        }
+        else
+        {
+            body.collisionGroup = static_cast<std::uint8_t>(source.m_group);
+        }
         body.nonCollisionMask = source.m_collisionGroup;
-        body.shape = ShapeFromSaba(source.m_shape);
-        body.size = source.m_shapeSize;
-        body.position = ConvertPosition(source.m_translate);
-        body.rotation = ConvertEulerRotation(source.m_rotate);
-        body.mass = source.m_mass;
-        body.linearDamping = source.m_translateDimmer;
-        body.angularDamping = source.m_rotateDimmer;
-        body.restitution = source.m_repulsion;
-        body.friction = source.m_friction;
-        body.mode = ModeFromSaba(source.m_op);
+        try
+        {
+            body.shape = ShapeFromSaba(source.m_shape);
+            body.mode = ModeFromSaba(source.m_op);
+            body.size = glm::max(source.m_shapeSize, glm::vec3(0.0f));
+            body.position = ConvertPosition(source.m_translate);
+            body.rotation = ConvertEulerRotation(source.m_rotate);
+            body.mass = std::max(0.0f, source.m_mass);
+            body.linearDamping = std::max(0.0f, source.m_translateDimmer);
+            body.angularDamping = std::max(0.0f, source.m_rotateDimmer);
+            body.restitution = std::max(0.0f, source.m_repulsion);
+            body.friction = std::max(0.0f, source.m_friction);
+        }
+        catch (const std::exception& error)
+        {
+            WarnImport(
+                "Skipping rigid body \"" + body.name + "\": " + error.what()
+            );
+            continue;
+        }
         body.modelBindTransform = MakeModelTransform(
             body.position,
             body.rotation
@@ -290,70 +532,118 @@ MmdPhysicsAsset BuildPhysics(
 
         if (source.m_boneIndex >= 0)
         {
-            if (!skeleton.has_value() ||
-                static_cast<std::size_t>(source.m_boneIndex) >=
+            if (skeleton.has_value() &&
+                static_cast<std::size_t>(source.m_boneIndex) <
                     pmx.m_bones.size())
             {
-                throw std::runtime_error(
-                    "PMX rigid body requires an imported Skeleton"
-                );
+                const std::string boneName =
+                    pmx.m_bones[source.m_boneIndex].m_name;
+                const std::optional<BoneIndex> mapped =
+                    skeleton->FindBone(boneName);
+                if (mapped.has_value())
+                {
+                    body.bone = *mapped;
+                    const glm::mat4 boneModelBind =
+                        skeleton->InverseRootMatrix() *
+                        skeleton->BindGlobalMatrices()[body.bone];
+                    body.boneToBody = glm::inverse(boneModelBind) *
+                        body.modelBindTransform;
+                    body.bodyToBone = glm::inverse(body.modelBindTransform) *
+                        boneModelBind;
+                }
+                else
+                {
+                    WarnImport(
+                        "Rigid body \"" + body.name +
+                        "\" references bone \"" + boneName +
+                        "\" that was not imported; keeping it bone-less"
+                    );
+                }
             }
-            const std::string boneName =
-                pmx.m_bones[source.m_boneIndex].m_name;
-            const std::optional<BoneIndex> mapped =
-                skeleton->FindBone(boneName);
-            if (!mapped.has_value())
+            else
             {
-                throw std::runtime_error(
-                    "PMX rigid body has no matching Skeleton bone: " +
-                    boneName
+                WarnImport(
+                    "Rigid body \"" + body.name +
+                    "\" references an out-of-range bone; keeping it bone-less"
                 );
             }
-            body.bone = *mapped;
-            const glm::mat4 boneModelBind =
-                skeleton->InverseRootMatrix() *
-                skeleton->BindGlobalMatrices()[body.bone];
-            body.boneToBody = glm::inverse(boneModelBind) *
-                body.modelBindTransform;
-            body.bodyToBone = glm::inverse(body.modelBindTransform) *
-                boneModelBind;
         }
         rigidBodies.push_back(std::move(body));
+        bodyRemap[bodyIndex] = static_cast<RigidBodyIndex>(
+            rigidBodies.size() - 1U
+        );
     }
 
     std::vector<MmdJointDefinition> joints;
     joints.reserve(pmx.m_joints.size());
-    for (const saba::PMXJoint& source : pmx.m_joints)
+    for (std::size_t jointIndex = 0U;
+         jointIndex < pmx.m_joints.size();
+         ++jointIndex)
     {
+        const saba::PMXJoint& source = pmx.m_joints[jointIndex];
         MmdJointDefinition joint;
         joint.name = source.m_name;
-        joint.type = JointTypeFromSaba(source.m_type);
-        joint.bodyA = source.m_rigidbodyAIndex < 0
-            ? InvalidRigidBodyIndex
-            : static_cast<RigidBodyIndex>(source.m_rigidbodyAIndex);
-        joint.bodyB = source.m_rigidbodyBIndex < 0
-            ? InvalidRigidBodyIndex
-            : static_cast<RigidBodyIndex>(source.m_rigidbodyBIndex);
-        joint.position = ConvertPosition(source.m_translate);
-        joint.rotation = ConvertEulerRotation(source.m_rotate);
-        const auto [linearLower, linearUpper] = ConvertLinearLimits(
-            source.m_translateLowerLimit,
-            source.m_translateUpperLimit
-        );
-        joint.linearLower = linearLower;
-        joint.linearUpper = linearUpper;
-        const auto [angularLower, angularUpper] = ConvertAngularLimits(
-            source.m_rotateLowerLimit,
-            source.m_rotateUpperLimit
-        );
-        joint.angularLower = angularLower;
-        joint.angularUpper = angularUpper;
-        joint.linearSpring = source.m_springTranslateFactor;
-        joint.angularSpring = source.m_springRotateFactor;
+        if (joint.name.empty())
+        {
+            joint.name = "Joint" + std::to_string(jointIndex);
+            WarnImport(
+                "Joint " + std::to_string(jointIndex) +
+                " has an empty name; using \"" + joint.name + "\""
+            );
+        }
+        try
+        {
+            joint.type = JointTypeFromSaba(source.m_type);
+            joint.position = ConvertPosition(source.m_translate);
+            joint.rotation = ConvertEulerRotation(source.m_rotate);
+            const auto [linearLower, linearUpper] = ConvertLinearLimits(
+                source.m_translateLowerLimit,
+                source.m_translateUpperLimit
+            );
+            joint.linearLower = linearLower;
+            joint.linearUpper = linearUpper;
+            const auto [angularLower, angularUpper] = ConvertAngularLimits(
+                source.m_rotateLowerLimit,
+                source.m_rotateUpperLimit
+            );
+            joint.angularLower = angularLower;
+            joint.angularUpper = angularUpper;
+            joint.linearSpring = source.m_springTranslateFactor;
+            joint.angularSpring = source.m_springRotateFactor;
+        }
+        catch (const std::exception& error)
+        {
+            WarnImport(
+                "Skipping joint \"" + joint.name + "\": " + error.what()
+            );
+            continue;
+        }
         joint.modelBindTransform = MakeModelTransform(
             joint.position,
             joint.rotation
         );
+
+        const auto mapBody = [&bodyRemap](std::int32_t sourceIndex)
+            -> RigidBodyIndex
+        {
+            if (sourceIndex < 0 ||
+                static_cast<std::size_t>(sourceIndex) >= bodyRemap.size())
+            {
+                return InvalidRigidBodyIndex;
+            }
+            return bodyRemap[static_cast<std::size_t>(sourceIndex)];
+        };
+        joint.bodyA = mapBody(source.m_rigidbodyAIndex);
+        joint.bodyB = mapBody(source.m_rigidbodyBIndex);
+        if (joint.bodyA == InvalidRigidBodyIndex &&
+            joint.bodyB == InvalidRigidBodyIndex)
+        {
+            WarnImport(
+                "Skipping joint \"" + joint.name +
+                "\": both endpoints are unavailable"
+            );
+            continue;
+        }
         joints.push_back(std::move(joint));
     }
 
@@ -370,14 +660,42 @@ struct PendingMorph
 
 std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
 {
+    const std::size_t morphCount = pmx.m_morphs.size();
+    const std::size_t boneCount = pmx.m_bones.size();
+    const std::size_t rigidBodyCount = pmx.m_rigidbodies.size();
+
     std::vector<PendingMorph> pending;
-    pending.reserve(pmx.m_morphs.size());
-    for (std::size_t index = 0U; index < pmx.m_morphs.size(); ++index)
+    pending.reserve(morphCount);
+    std::unordered_map<std::string, std::size_t> morphNameCounts;
+    for (std::size_t index = 0U; index < morphCount; ++index)
     {
         const saba::PMXMorph& source = pmx.m_morphs[index];
         PendingMorph morph;
         morph.sourceIndex = index;
-        morph.definition.name = source.m_name;
+        std::string name = source.m_name;
+        if (name.empty())
+        {
+            name = "Morph" + std::to_string(index);
+            WarnImport(
+                "Morph " + std::to_string(index) +
+                " has an empty name; using \"" + name + "\""
+            );
+        }
+        const auto nameFound = morphNameCounts.find(name);
+        if (nameFound == morphNameCounts.end())
+        {
+            morphNameCounts.emplace(name, 1U);
+        }
+        else
+        {
+            ++nameFound->second;
+            name += " #" + std::to_string(nameFound->second);
+            WarnImport(
+                "Duplicate morph name \"" + source.m_name +
+                "\"; renamed to \"" + name + "\""
+            );
+        }
+        morph.definition.name = std::move(name);
         morph.definition.category = CategoryFromControl(source.m_controlPanel);
 
         switch (source.m_morphType)
@@ -387,6 +705,18 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
             for (const saba::PMXMorph::GroupMorph& member :
                  source.m_groupMorph)
             {
+                if (member.m_morphIndex < 0 ||
+                    static_cast<std::size_t>(member.m_morphIndex) >=
+                        morphCount ||
+                    static_cast<std::size_t>(member.m_morphIndex) == index ||
+                    !std::isfinite(member.m_weight))
+                {
+                    WarnImport(
+                        "Group morph \"" + morph.definition.name +
+                        "\" references an invalid member; member skipped"
+                    );
+                    continue;
+                }
                 morph.groupMembers.emplace_back(
                     member.m_morphIndex,
                     member.m_weight
@@ -398,18 +728,38 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
             break;
         case saba::PMXMorphType::Bone:
             morph.definition.kind = MorphKind::Bone;
-            for (const saba::PMXMorph::BoneMorph& offset :
-                 source.m_boneMorph)
             {
-                if (offset.m_boneIndex < 0)
-                    continue;
-                BoneMorphOffset converted;
-                converted.boneIndex = static_cast<BoneIndex>(
-                    offset.m_boneIndex
-                );
-                converted.translation = ConvertPosition(offset.m_position);
-                converted.rotation = offset.m_quaternion;
-                morph.definition.boneOffsets.push_back(converted);
+                std::unordered_set<BoneIndex> boneIndices;
+                for (const saba::PMXMorph::BoneMorph& offset :
+                     source.m_boneMorph)
+                {
+                    const bool validBone =
+                        offset.m_boneIndex >= 0 &&
+                        static_cast<std::size_t>(offset.m_boneIndex) <
+                            boneCount &&
+                        boneIndices.emplace(static_cast<BoneIndex>(
+                            offset.m_boneIndex
+                        )).second;
+                    if (!validBone ||
+                        !IsFinitePmx(offset.m_position) ||
+                        !IsFinitePmx(offset.m_quaternion) ||
+                        glm::dot(offset.m_quaternion, offset.m_quaternion) <=
+                            0.000001f)
+                    {
+                        WarnImport(
+                            "Bone morph \"" + morph.definition.name +
+                            "\" contains an invalid bone offset; offset skipped"
+                        );
+                        continue;
+                    }
+                    BoneMorphOffset converted;
+                    converted.boneIndex = static_cast<BoneIndex>(
+                        offset.m_boneIndex
+                    );
+                    converted.translation = ConvertPosition(offset.m_position);
+                    converted.rotation = glm::normalize(offset.m_quaternion);
+                    morph.definition.boneOffsets.push_back(converted);
+                }
             }
             break;
         case saba::PMXMorphType::UV:
@@ -443,6 +793,24 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
                 converted.sphereTextureFactor =
                     offset.m_sphereTextureFactor;
                 converted.toonTextureFactor = offset.m_toonTextureFactor;
+                const bool finiteOffset =
+                    IsFinitePmx(converted.diffuse) &&
+                    IsFinitePmx(converted.specular) &&
+                    std::isfinite(converted.shininess) &&
+                    IsFinitePmx(converted.ambient) &&
+                    IsFinitePmx(converted.edgeColor) &&
+                    std::isfinite(converted.edgeSize) &&
+                    IsFinitePmx(converted.textureFactor) &&
+                    IsFinitePmx(converted.sphereTextureFactor) &&
+                    IsFinitePmx(converted.toonTextureFactor);
+                if (!finiteOffset)
+                {
+                    WarnImport(
+                        "Material morph \"" + morph.definition.name +
+                        "\" contains a non-finite offset; offset skipped"
+                    );
+                    continue;
+                }
                 morph.definition.materialOffsets.push_back(converted);
             }
             break;
@@ -451,6 +819,18 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
             for (const saba::PMXMorph::FlipMorph& member :
                  source.m_flipMorph)
             {
+                if (member.m_morphIndex < 0 ||
+                    static_cast<std::size_t>(member.m_morphIndex) >=
+                        morphCount ||
+                    static_cast<std::size_t>(member.m_morphIndex) == index ||
+                    !std::isfinite(member.m_weight))
+                {
+                    WarnImport(
+                        "Flip morph \"" + morph.definition.name +
+                        "\" references an invalid member; member skipped"
+                    );
+                    continue;
+                }
                 morph.flipMembers.emplace_back(
                     member.m_morphIndex,
                     member.m_weight
@@ -462,6 +842,18 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
             for (const saba::PMXMorph::ImpulseMorph& offset :
                  source.m_impulseMorph)
             {
+                if (offset.m_rigidbodyIndex < 0 ||
+                    static_cast<std::size_t>(offset.m_rigidbodyIndex) >=
+                        rigidBodyCount ||
+                    !IsFinitePmx(offset.m_translateVelocity) ||
+                    !IsFinitePmx(offset.m_rotateTorque))
+                {
+                    WarnImport(
+                        "Impulse morph \"" + morph.definition.name +
+                        "\" contains an invalid impulse offset; offset skipped"
+                    );
+                    continue;
+                }
                 ImpulseMorphOffset converted;
                 converted.rigidBodyIndex = offset.m_rigidbodyIndex < 0
                     ? InvalidRigidBodyIndex
@@ -483,7 +875,7 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
     }
 
     std::vector<MorphIndex> sourceToRuntime(
-        pmx.m_morphs.size(),
+        morphCount,
         InvalidMorphIndex
     );
     for (std::size_t index = 0U; index < pending.size(); ++index)
@@ -494,18 +886,21 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
     {
         if (morph.definition.kind == MorphKind::Group)
         {
+            std::unordered_set<MorphIndex> seen;
             for (const auto& [member, weight] : morph.groupMembers)
             {
-                if (member < 0 ||
-                    static_cast<std::size_t>(member) >=
-                        sourceToRuntime.size())
+                const MorphIndex runtimeIndex =
+                    sourceToRuntime[static_cast<std::size_t>(member)];
+                if (!seen.emplace(runtimeIndex).second)
                 {
-                    throw std::runtime_error(
-                        "PMX Group morph references an unavailable morph"
+                    WarnImport(
+                        "Group morph \"" + morph.definition.name +
+                        "\" contains duplicate members; duplicate skipped"
                     );
+                    continue;
                 }
                 morph.definition.groupMembers.push_back(GroupMorphMember{
-                    sourceToRuntime[static_cast<std::size_t>(member)],
+                    runtimeIndex,
                     weight
                 });
             }
@@ -514,14 +909,6 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
         {
             for (const auto& [member, weight] : morph.flipMembers)
             {
-                if (member < 0 ||
-                    static_cast<std::size_t>(member) >=
-                        sourceToRuntime.size())
-                {
-                    throw std::runtime_error(
-                        "PMX Flip morph references an unavailable morph"
-                    );
-                }
                 morph.definition.flipMembers.push_back(FlipMorphMember{
                     sourceToRuntime[static_cast<std::size_t>(member)],
                     weight
@@ -535,10 +922,93 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
     for (PendingMorph& morph : pending)
         definitions.push_back(std::move(morph.definition));
 
+    // Break group graphs that reference themselves (directly or indirectly).
+    // MorphSet would reject them, and community models sometimes contain such
+    // cycles after unrelated morphs were removed by their authors.
+    const auto groupReaches = [&definitions](
+        MorphIndex start,
+        MorphIndex target
+    )
+    {
+        std::vector<std::uint8_t> visited(definitions.size(), 0U);
+        std::vector<MorphIndex> stack{start};
+        visited[start] = 1U;
+        while (!stack.empty())
+        {
+            const MorphIndex current = stack.back();
+            stack.pop_back();
+            if (current == target)
+                return true;
+            const MorphDefinition& definition = definitions[current];
+            if (definition.kind != MorphKind::Group)
+                continue;
+            for (const GroupMorphMember& member : definition.groupMembers)
+            {
+                if (visited[member.morphIndex] == 0U)
+                {
+                    visited[member.morphIndex] = 1U;
+                    stack.push_back(member.morphIndex);
+                }
+            }
+        }
+        return false;
+    };
+    bool changed = true;
+    while (changed)
+    {
+        changed = false;
+        for (std::size_t index = 0U; index < definitions.size(); ++index)
+        {
+            MorphDefinition& definition = definitions[index];
+            if (definition.kind != MorphKind::Group)
+                continue;
+            std::vector<GroupMorphMember> kept;
+            kept.reserve(definition.groupMembers.size());
+            for (const GroupMorphMember& member : definition.groupMembers)
+            {
+                if (groupReaches(
+                        member.morphIndex,
+                        static_cast<MorphIndex>(index)
+                    ))
+                {
+                    WarnImport(
+                        "Group morph \"" + definition.name +
+                        "\" contains a cycle through member \"" +
+                        definitions[member.morphIndex].name +
+                        "\"; member skipped"
+                    );
+                    changed = true;
+                }
+                else
+                {
+                    kept.push_back(member);
+                }
+            }
+            definition.groupMembers = std::move(kept);
+        }
+    }
+
     if (!definitions.empty())
     {
-        const MorphSet validation(definitions);
-        (void)validation;
+        try
+        {
+            const MorphSet validation(definitions);
+            (void)validation;
+        }
+        catch (const std::exception& error)
+        {
+            WarnImport(
+                std::string("MorphSet rejected the imported morphs: ") +
+                error.what() + "; group/flip references were dropped"
+            );
+            for (MorphDefinition& definition : definitions)
+            {
+                definition.groupMembers.clear();
+                definition.flipMembers.clear();
+            }
+            const MorphSet validation(definitions);
+            (void)validation;
+        }
     }
     return definitions;
 }
