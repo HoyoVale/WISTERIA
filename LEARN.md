@@ -1359,3 +1359,15 @@ CCD 也不能再由尺寸一次性决定。尺寸只选候选，真正启用取�
 ```
 
 不能用更多 solver iteration 替代错误的碰撞关系。
+# P1.2 Gravity & Constraint Balance：重力是持续输入，碰撞冲量是放大器
+
+碰撞矩阵显示，大多数高冲量接触来自同一裙摆分组内部，而非跨链碰撞。只削弱蒙皮平移会再次隐藏问题，因此应先控制 Bullet 的持续下坠输入。WISTERIA 现在为 MMD Dynamic 刚体使用可选的每体重力覆盖，并将大型恢复连通分量拆成更细的 `SKIRT / HAIR / TAIL / ACCESSORY / GENERAL` 重力分组。
+
+平衡模式采用：
+
+```text
+world gravity × global A/B scale × chain scale
+```
+
+同时只提高到分组最低阻尼，不覆盖更高的 PMX 原值。`G` 用于 1g、0.75g、0.5g、0.25g、0g 对照；`H` 输出每个分组的向下位移、速度、接触冲量和 Mode 2 位移。若 0g 下仍有巨大冲量，问题就不再是重力，而是初始重叠、动画锚点推入或碰撞/约束拓扑。裙摆的三至四跳 Box 近邻会在 Bind Pose 仍重叠时被过滤，避免关节拉近与碰撞推开形成永久反馈。
+

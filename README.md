@@ -198,3 +198,18 @@ F3     显示 active/candidate CCD、接触对、跨链对和最大穿透
 ```
 
 完整策略、阈值和 Windows 验收步骤见 `P1_2_COLLISION_TOPOLOGY_RESPONSE.md`。
+
+## P1.2 Gravity & Constraint Balance
+
+人物演示可用 `G` 在 Original、Balanced 1.00/0.75/0.50/0.25G 与 Zero G 间切换，并用 `H` 输出逐链重力、下坠、速度、碰撞冲量和 Mode 2 位移。装饰链支持独立重力和最低阻尼，裙摆内部近邻碰撞可按最多四层关节图过滤。完整说明见 `P1_2_GRAVITY_CONSTRAINT_BALANCE.md`。
+
+## P1.3 Chain Semantics & Anchor Recovery
+
+P1.3 不再把 Zero G 下仍存在的异常归因于重力参数，而是修正物理语义：
+
+- 识别 `Skirt_*_*B` 主/辅助层和同环近邻，过滤超过四跳但 Bind 空间重叠的裙摆内部冲突；
+- 将未命名、低分支、单锚点的大型装饰组件归入 `DECORATIVE_FALLBACK`，避免 `GENERAL + 0/0 damping`；
+- 通过 Bullet `btJointFeedback` 分离统计碰撞冲量与约束冲量；
+- 用 FollowBone 锚点距离、Bind 链长和归一化伸长率判断 runaway，不再仅凭离纯动画目标过远恢复。
+
+`H` 报告新增 `constraintImpulse`、`anchorSpeed`、`anchorDistance`、`extensionMax`；F3/`[PHYSICS STATS]` 新增聚合约束冲量、最大伸长率和语义过滤数量。完整设计与验收步骤见 `P1_3_CHAIN_SEMANTICS_ANCHOR_RECOVERY.md`。

@@ -497,6 +497,7 @@ public:
     struct ConstraintSlot
     {
         std::unique_ptr<btTypedConstraint> constraint;
+        std::unique_ptr<btJointFeedback> feedback;
         PhysicsBodyHandle bodyA{};
         PhysicsBodyHandle bodyB{};
         std::uint32_t generation = 1;
@@ -642,6 +643,9 @@ public:
         }
         ConstraintSlot& slot = constraints[index];
         slot.constraint = std::move(next);
+        slot.feedback = std::make_unique<btJointFeedback>();
+        slot.constraint->enableFeedback(true);
+        slot.constraint->setJointFeedback(slot.feedback.get());
         slot.bodyA = bodyA;
         slot.bodyB = bodyB;
         world->addConstraint(slot.constraint.get(), disableCollisions);
@@ -656,6 +660,7 @@ public:
             return;
         world->removeConstraint(slot.constraint.get());
         slot.constraint.reset();
+        slot.feedback.reset();
         slot.bodyA = {};
         slot.bodyB = {};
         ++slot.generation;
@@ -855,6 +860,7 @@ public:
     std::vector<ConstraintSlot> constraints;
     std::vector<std::uint32_t> freeConstraintSlots;
     std::size_t constraintCount = 0;
+    float lastFixedTimeStep = 0.0f;
     bool debugDrawEnabled = false;
     std::vector<PhysicsContactPair> contactPairs;
 };
@@ -873,6 +879,12 @@ void PhysicsWorld::SetGravity(const glm::vec3& gravity)
     if (!IsFinite(gravity))
         throw std::invalid_argument("Physics gravity is non-finite");
     impl->world->setGravity(PhysicsBulletConversion::ToBullet(gravity));
+    for (Impl::BodySlot& slot : impl->bodies)
+    {
+        if (!slot.body || slot.runtimeSettings.gravityOverride)
+            continue;
+        slot.runtimeSettings.gravity = gravity;
+    }
 }
 
 glm::vec3 PhysicsWorld::Gravity() const noexcept
@@ -990,7 +1002,11 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(
         description.enableCcd ? description.ccdMotionThreshold : 0.0f,
         description.enableCcd ? description.ccdSweptSphereRadius : 0.0f,
         description.collisionGroup,
-        description.collisionMask
+        description.collisionMask,
+        false,
+        PhysicsBulletConversion::FromBullet(impl->world->getGravity()),
+        description.linearDamping,
+        description.angularDamping
     };
 
     impl->world->addRigidBody(
@@ -1287,6 +1303,34 @@ bool PhysicsWorld::Contains(PhysicsConstraintHandle constraint) const noexcept
     return impl->Find(constraint) != nullptr;
 }
 
+PhysicsConstraintRuntimeState PhysicsWorld::ConstraintState(
+    PhysicsConstraintHandle constraint
+) const
+{
+    const Impl::ConstraintSlot* slot = impl->Find(constraint);
+    if (slot == nullptr)
+    {
+        throw std::out_of_range(
+            "Physics constraint handle is stale or invalid"
+        );
+    }
+    const btJointFeedback* feedback = slot->feedback.get();
+    if (feedback == nullptr || impl->lastFixedTimeStep <= 0.0f)
+        return {};
+    const float linearForce = static_cast<float>(std::max(
+        feedback->m_appliedForceBodyA.length(),
+        feedback->m_appliedForceBodyB.length()
+    ));
+    const float angularForce = static_cast<float>(std::max(
+        feedback->m_appliedTorqueBodyA.length(),
+        feedback->m_appliedTorqueBodyB.length()
+    ));
+    return PhysicsConstraintRuntimeState{
+        linearForce * impl->lastFixedTimeStep,
+        angularForce * impl->lastFixedTimeStep
+    };
+}
+
 std::size_t PhysicsWorld::ConstraintCount() const noexcept
 {
     return impl->constraintCount;
@@ -1464,6 +1508,61 @@ void PhysicsWorld::ConfigureCcd(
         enabled ? sweptSphereRadius : 0.0f;
 }
 
+void PhysicsWorld::ConfigureGravity(
+    PhysicsBodyHandle body,
+    bool overrideWorldGravity,
+    const glm::vec3& gravity
+)
+{
+    if (!IsFinite(gravity))
+        throw std::invalid_argument("Physics body gravity is non-finite");
+    Impl::BodySlot& slot = impl->Require(body);
+    if (slot.motionType != PhysicsMotionType::Dynamic)
+    {
+        if (overrideWorldGravity)
+        {
+            throw std::invalid_argument(
+                "Gravity override can only be enabled for dynamic bodies"
+            );
+        }
+        return;
+    }
+
+    int flags = slot.body->getFlags();
+    if (overrideWorldGravity)
+        flags |= BT_DISABLE_WORLD_GRAVITY;
+    else
+        flags &= ~BT_DISABLE_WORLD_GRAVITY;
+    slot.body->setFlags(flags);
+    const glm::vec3 appliedGravity = overrideWorldGravity
+        ? gravity
+        : PhysicsBulletConversion::FromBullet(impl->world->getGravity());
+    slot.body->setGravity(PhysicsBulletConversion::ToBullet(appliedGravity));
+    slot.runtimeSettings.gravityOverride = overrideWorldGravity;
+    slot.runtimeSettings.gravity = appliedGravity;
+    slot.body->activate(true);
+}
+
+void PhysicsWorld::SetDamping(
+    PhysicsBodyHandle body,
+    float linearDamping,
+    float angularDamping
+)
+{
+    if (!std::isfinite(linearDamping) ||
+        !std::isfinite(angularDamping) ||
+        linearDamping < 0.0f || linearDamping > 1.0f ||
+        angularDamping < 0.0f || angularDamping > 1.0f)
+    {
+        throw std::invalid_argument("Physics damping is outside [0, 1]");
+    }
+    Impl::BodySlot& slot = impl->Require(body);
+    slot.body->setDamping(linearDamping, angularDamping);
+    slot.runtimeSettings.linearDamping = linearDamping;
+    slot.runtimeSettings.angularDamping = angularDamping;
+    slot.body->activate(true);
+}
+
 void PhysicsWorld::SetCollisionPairIgnored(
     PhysicsBodyHandle bodyA,
     PhysicsBodyHandle bodyB,
@@ -1635,6 +1734,7 @@ void PhysicsWorld::StepFixed(float fixedTimeStep)
     // maxSubSteps=0 disables Bullet's internal accumulator. WISTERIA's Scene
     // owns the accumulator so model adapters can update kinematic targets
     // before every individual solver tick.
+    impl->lastFixedTimeStep = fixedTimeStep;
     impl->world->stepSimulation(fixedTimeStep, 0, fixedTimeStep);
     impl->CaptureContactPairs();
     if (impl->debugDrawEnabled)

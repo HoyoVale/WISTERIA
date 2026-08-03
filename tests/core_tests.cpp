@@ -5180,6 +5180,66 @@ std::unique_ptr<ModelAsset> CreateMmdCollisionTopologyModel()
     return model;
 }
 
+std::unique_ptr<ModelAsset> CreateMmdGravityBalanceModel()
+{
+    auto model = std::make_unique<ModelAsset>("gravityBalance");
+    constexpr std::size_t BodyCount = 5U;
+    std::vector<Bone> bones;
+    std::vector<MmdRigidBodyDefinition> bodies(BodyCount);
+    for (std::size_t index = 0U; index < BodyCount; ++index)
+    {
+        const glm::mat4 bind = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(static_cast<float>(index) * 0.12f, 2.0f, 0.0f)
+        );
+        bones.push_back(Bone{
+            "SkirtBone_" + std::to_string(index),
+            InvalidBoneIndex,
+            bind,
+            glm::inverse(bind)
+        });
+        bodies[index].name = "Skirt_" + std::to_string(index);
+        bodies[index].bone = static_cast<BoneIndex>(index);
+        bodies[index].collisionGroup = 8U;
+        bodies[index].shape = MmdRigidBodyShape::Box;
+        bodies[index].size = glm::vec3(0.2f);
+        bodies[index].mode = MmdRigidBodyMode::PhysicsWithBone;
+        bodies[index].mass = 1.0f;
+        bodies[index].linearDamping = 0.01f;
+        bodies[index].angularDamping = 0.02f;
+        bodies[index].modelBindTransform = bind;
+        bodies[index].boneToBody = glm::mat4(1.0f);
+        bodies[index].bodyToBone = glm::mat4(1.0f);
+    }
+    model->SetSkeleton(Skeleton(std::move(bones)));
+
+    std::vector<MmdJointDefinition> joints(BodyCount - 1U);
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        joints[index].name = "SkirtJoint_" + std::to_string(index);
+        joints[index].bodyA = static_cast<RigidBodyIndex>(index);
+        joints[index].bodyB = static_cast<RigidBodyIndex>(index + 1U);
+        joints[index].position = glm::vec3(
+            static_cast<float>(index) * 0.12f + 0.06f,
+            2.0f,
+            0.0f
+        );
+        joints[index].modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joints[index].position
+        );
+        joints[index].linearLower = glm::vec3(0.0f);
+        joints[index].linearUpper = glm::vec3(0.0f);
+        joints[index].angularLower = glm::vec3(-0.2f);
+        joints[index].angularUpper = glm::vec3(0.2f);
+    }
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
 std::unique_ptr<ModelAsset> CreateMmdCrossChainContactModel()
 {
     auto model = std::make_unique<ModelAsset>("crossChainContact");
@@ -5217,6 +5277,311 @@ std::unique_ptr<ModelAsset> CreateMmdCrossChainContactModel()
         std::vector<MmdJointDefinition>{}
     ));
     return model;
+}
+
+
+std::unique_ptr<ModelAsset> CreateMmdP13SemanticModel()
+{
+    constexpr std::size_t BodyCount = 13U;
+    auto model = std::make_unique<ModelAsset>("p13Semantic");
+    std::vector<Bone> bones;
+    std::vector<MmdRigidBodyDefinition> bodies(BodyCount);
+    for (std::size_t index = 0U; index < BodyCount; ++index)
+    {
+        const glm::mat4 bind = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(static_cast<float>(index) * 0.25f, 1.0f, 0.0f)
+        );
+        bones.push_back(Bone{
+            "mysteryBone" + std::to_string(index),
+            InvalidBoneIndex,
+            bind,
+            glm::inverse(bind)
+        });
+        MmdRigidBodyDefinition& body = bodies[index];
+        body.name = "mysteryBody" + std::to_string(index);
+        body.bone = static_cast<BoneIndex>(index);
+        body.shape = MmdRigidBodyShape::Box;
+        body.size = glm::vec3(0.12f);
+        body.mode = index == 0U
+            ? MmdRigidBodyMode::FollowBone
+            : MmdRigidBodyMode::PhysicsWithBone;
+        body.mass = index == 0U ? 0.0f : 1.0f;
+        body.modelBindTransform = bind;
+        body.boneToBody = glm::mat4(1.0f);
+        body.bodyToBone = glm::mat4(1.0f);
+    }
+    model->SetSkeleton(Skeleton(std::move(bones)));
+
+    std::vector<MmdJointDefinition> joints(BodyCount - 1U);
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        MmdJointDefinition& joint = joints[index];
+        joint.name = "mysteryJoint" + std::to_string(index);
+        joint.bodyA = static_cast<RigidBodyIndex>(index);
+        joint.bodyB = static_cast<RigidBodyIndex>(index + 1U);
+        joint.position = glm::vec3(
+            static_cast<float>(index) * 0.25f + 0.125f,
+            1.0f,
+            0.0f
+        );
+        joint.modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joint.position
+        );
+        joint.linearLower = glm::vec3(0.0f);
+        joint.linearUpper = glm::vec3(0.0f);
+        joint.angularLower = glm::vec3(-0.4f);
+        joint.angularUpper = glm::vec3(0.4f);
+    }
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
+std::unique_ptr<ModelAsset> CreateMmdP13SkirtSemanticModel()
+{
+    constexpr std::size_t BodyCount = 6U;
+    auto model = std::make_unique<ModelAsset>("p13SkirtSemantic");
+    std::vector<Bone> bones;
+    std::vector<MmdRigidBodyDefinition> bodies(BodyCount);
+    const char* names[] = {
+        "Skirt_0_1", "Skirt_10_2", "Skirt_11_2",
+        "Skirt_12_2", "Skirt_13_2", "Skirt_2_1B"
+    };
+    for (std::size_t index = 0U; index < BodyCount; ++index)
+    {
+        const glm::mat4 bind = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(static_cast<float>(index) * 0.05f, 2.0f, 0.0f)
+        );
+        bones.push_back(Bone{
+            "semanticSkirtBone" + std::to_string(index),
+            InvalidBoneIndex,
+            bind,
+            glm::inverse(bind)
+        });
+        MmdRigidBodyDefinition& body = bodies[index];
+        body.name = names[index];
+        body.bone = static_cast<BoneIndex>(index);
+        body.collisionGroup = 8U;
+        body.shape = MmdRigidBodyShape::Box;
+        body.size = glm::vec3(0.10f);
+        body.mode = MmdRigidBodyMode::PhysicsWithBone;
+        body.mass = 1.0f;
+        body.modelBindTransform = bind;
+        body.boneToBody = glm::mat4(1.0f);
+        body.bodyToBone = glm::mat4(1.0f);
+    }
+    model->SetSkeleton(Skeleton(std::move(bones)));
+
+    std::vector<MmdJointDefinition> joints(BodyCount - 1U);
+    for (std::size_t index = 0U; index < joints.size(); ++index)
+    {
+        MmdJointDefinition& joint = joints[index];
+        joint.name = "semanticSkirtJoint" + std::to_string(index);
+        joint.bodyA = static_cast<RigidBodyIndex>(index);
+        joint.bodyB = static_cast<RigidBodyIndex>(index + 1U);
+        joint.position = glm::vec3(
+            static_cast<float>(index) * 0.05f + 0.025f,
+            2.0f,
+            0.0f
+        );
+        joint.modelBindTransform = glm::translate(
+            glm::mat4(1.0f),
+            joint.position
+        );
+        joint.linearLower = glm::vec3(0.0f);
+        joint.linearUpper = glm::vec3(0.0f);
+        joint.angularLower = glm::vec3(-0.2f);
+        joint.angularUpper = glm::vec3(0.2f);
+    }
+    model->SetMmdPhysics(MmdPhysicsAsset(
+        std::move(bodies),
+        std::move(joints)
+    ));
+    return model;
+}
+
+void TestMmdP13ChainSemanticsAndAnchorDiagnostics()
+{
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdP13SkirtSemanticModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        Require(
+            physics.GravityStatistics().skirtSemanticIgnoredPairCount >= 1U,
+            "P1.3 did not identify a skirt main/auxiliary semantic conflict"
+        );
+        scene.Update(1.0f / 60.0f);
+        bool forbiddenPairVisible = false;
+        for (const MmdPhysicsContactDiagnostic& contact :
+             physics.ContactDiagnostics())
+        {
+            const bool pair05 =
+                (contact.bodyAIndex == 0U && contact.bodyBIndex == 5U) ||
+                (contact.bodyAIndex == 5U && contact.bodyBIndex == 0U);
+            forbiddenPairVisible = forbiddenPairVisible || pair05;
+        }
+        Require(
+            !forbiddenPairVisible,
+            "P1.3 skirt semantic conflict still reached Bullet contacts"
+        );
+    }
+
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdP13SemanticModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        const auto initialChains = physics.ChainBalanceStatistics();
+        Require(
+            initialChains.size() == 1U &&
+            initialChains.front().kind ==
+                MmdPhysicsChainKind::DecorativeFallback,
+            "P1.3 did not classify an unnamed anchored long chain safely"
+        );
+        const PhysicsBodyRuntimeSettings settings =
+            scene.Physics().RuntimeSettings(physics.BodyHandleAt(6U));
+        Require(
+            settings.linearDamping >= 0.18f &&
+            settings.angularDamping >= 0.28f,
+            "P1.3 decorative fallback did not receive minimum damping"
+        );
+
+        scene.Update(0.0f);
+        scene.Physics().ApplyCentralImpulse(
+            physics.BodyHandleAt(12U),
+            glm::vec3(12.0f, 0.0f, 0.0f)
+        );
+        scene.Update(1.0f / 60.0f);
+        const auto chains = physics.ChainBalanceStatistics();
+        Require(
+            chains.front().anchorBodyIndex == 0U &&
+            chains.front().maximumAnchorDistance > 0.0f &&
+            chains.front().maximumNormalizedExtension > 1.0f &&
+            chains.front().totalConstraintImpulse > 0.0f &&
+            chains.front().maximumConstraintImpulse > 0.0f,
+            "P1.3 anchor distance or constraint impulse diagnostics were empty"
+        );
+    }
+
+    {
+        std::unique_ptr<ModelAsset> model = CreateMmdP13SemanticModel();
+        Scene scene;
+        scene.Physics().SetGravity(glm::vec3(0.0f));
+        Entity& entity = scene.InstantiateModel(*model);
+        scene.Update(0.0f);
+        MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        const glm::quat quarterTurn = glm::angleAxis(
+            glm::half_pi<float>(),
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        );
+        for (std::size_t index = 0U; index < 13U; ++index)
+        {
+            scene.Physics().SetTransform(
+                physics.BodyHandleAt(static_cast<RigidBodyIndex>(index)),
+                quarterTurn * glm::vec3(
+                    static_cast<float>(index) * 0.25f,
+                    1.0f,
+                    0.0f
+                ),
+                quarterTurn,
+                true
+            );
+        }
+        const std::size_t recoveriesBefore =
+            physics.RecoveryStatistics().totalRecoveries;
+        for (int tick = 0; tick < 40; ++tick)
+            physics.ObserveSimulationSubstep(1.0f / 60.0f);
+        Require(
+            physics.RecoveryStatistics().totalRecoveries == recoveriesBefore,
+            "P1.3 treated a rigidly rotated, length-preserving chain as runaway"
+        );
+    }
+}
+
+void TestMmdGravityConstraintBalance()
+{
+    std::unique_ptr<ModelAsset> model = CreateMmdGravityBalanceModel();
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(*model);
+    MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+
+    Require(
+        physics.GravityMode() == MmdPhysicsGravityMode::Balanced100 &&
+        std::string(physics.GravityModeName()) == "BALANCED_1.00G",
+        "MMD gravity balance did not default to the balanced 1g profile"
+    );
+    const PhysicsBodyRuntimeSettings balanced = scene.Physics().RuntimeSettings(
+        physics.BodyHandleAt(2U)
+    );
+    Require(
+        balanced.gravityOverride &&
+        glm::distance(balanced.gravity, glm::vec3(0.0f, -5.39f, 0.0f)) < 0.01f &&
+        balanced.linearDamping >= 0.25f &&
+        balanced.angularDamping >= 0.35f,
+        "Skirt gravity and damping profile was not applied"
+    );
+    Require(
+        physics.GravityStatistics().skirtLayerIgnoredPairCount >= 1U &&
+        physics.CollisionStatistics().ignoredNearNeighborPairCount >= 3U,
+        "Layered skirt self-collision filtering was not configured"
+    );
+    const auto chains = physics.ChainBalanceStatistics();
+    Require(
+        chains.size() == 1U &&
+        chains.front().kind == MmdPhysicsChainKind::Skirt &&
+        chains.front().dynamicBodyCount == 5U,
+        "MMD skirt bodies were not grouped into a gravity balance chain"
+    );
+
+    physics.SetGravityMode(MmdPhysicsGravityMode::Balanced050);
+    const PhysicsBodyRuntimeSettings halfGravity = scene.Physics().RuntimeSettings(
+        physics.BodyHandleAt(2U)
+    );
+    Require(
+        halfGravity.gravityOverride &&
+        glm::distance(halfGravity.gravity, glm::vec3(0.0f, -2.695f, 0.0f)) < 0.01f,
+        "Global gravity A/B scale did not combine with the skirt profile"
+    );
+
+    physics.SetGravityMode(MmdPhysicsGravityMode::Zero);
+    Require(
+        NearlyEqual(
+            scene.Physics().RuntimeSettings(physics.BodyHandleAt(2U)).gravity,
+            glm::vec3(0.0f)
+        ),
+        "Zero-gravity A/B mode did not remove decorative body gravity"
+    );
+
+    physics.SetGravityMode(MmdPhysicsGravityMode::Original);
+    const PhysicsBodyRuntimeSettings original = scene.Physics().RuntimeSettings(
+        physics.BodyHandleAt(2U)
+    );
+    Require(
+        !original.gravityOverride &&
+        NearlyEqual(original.gravity, glm::vec3(0.0f, -9.8f, 0.0f)) &&
+        NearlyEqual(original.linearDamping, 0.01f) &&
+        NearlyEqual(original.angularDamping, 0.02f),
+        "Original mode did not restore PMX gravity and damping"
+    );
+
+    physics.SetGravityMode(MmdPhysicsGravityMode::Balanced075);
+    scene.Update(1.0f / 60.0f);
+    Require(
+        physics.GravityStatistics().dynamicBodyCount == 5U &&
+        physics.GravityStatistics().averageEffectiveGravityScale > 0.40f &&
+        physics.GravityStatistics().averageEffectiveGravityScale < 0.42f &&
+        physics.GravityStatistics().maximumSpeed >= 0.0f,
+        "Gravity, displacement and speed statistics were not updated"
+    );
+    physics.LogGravityReport();
 }
 
 void TestMmdCollisionTopologyAndAdaptiveCcd()
@@ -6364,6 +6729,14 @@ int main()
     failures += !RunTest(
         "MMD initialization stabilization",
         TestMmdPhysicsInitializationStabilization
+    );
+    failures += !RunTest(
+        "MMD gravity and constraint balance",
+        TestMmdGravityConstraintBalance
+    );
+    failures += !RunTest(
+        "MMD P1.3 chain semantics and anchor diagnostics",
+        TestMmdP13ChainSemanticsAndAnchorDiagnostics
     );
     failures += !RunTest(
         "MMD collision topology and adaptive CCD",

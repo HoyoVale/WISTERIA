@@ -441,6 +441,22 @@ public:
         {
             entity.GetMmdPhysics().LogCollisionReport();
         }
+        if (this->input.WasKeyPressed(InputKey::G) &&
+            entity.HasMmdPhysics())
+        {
+            MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+            physics.CycleGravityMode();
+            entity.ResetPhysicsToCurrentPose();
+            std::cout << "[MMD GRAVITY] mode="
+                      << physics.GravityModeName() << std::endl;
+            physics.LogGravityReport();
+            this->titleDirty = true;
+        }
+        if (this->input.WasKeyPressed(InputKey::H) &&
+            entity.HasMmdPhysics())
+        {
+            entity.GetMmdPhysics().LogGravityReport();
+        }
         if (this->input.WasKeyPressed(InputKey::F3))
         {
             this->showPhysicsStatistics = !this->showPhysicsStatistics;
@@ -516,7 +532,8 @@ private:
                   << physics.FidelityDebugLayerName()
                   << " | M: mode2 "
                   << physics.PhysicsWithBoneSyncModeName()
-                  << " | C: collision log";
+                  << " | G: gravity " << physics.GravityModeName()
+                  << " | H: gravity log | C: collision log";
         }
         title << " | L: alignment log | F3: stats "
               << (this->showPhysicsStatistics ? "ON" : "OFF");
@@ -532,12 +549,14 @@ private:
             MmdPhysicsRecoveryStatistics recovery;
             MmdPhysicsFidelityStatistics fidelity;
             MmdPhysicsCollisionStatistics collision;
+            MmdPhysicsGravityStatistics gravity;
             if (const Entity* entity = this->scene.EntityAt(0U);
                 entity != nullptr && entity->HasMmdPhysics())
             {
                 recovery = entity->GetMmdPhysics().RecoveryStatistics();
                 fidelity = entity->GetMmdPhysics().FidelityStatistics();
                 collision = entity->GetMmdPhysics().CollisionStatistics();
+                gravity = entity->GetMmdPhysics().GravityStatistics();
             }
             title << " | [" << WISTERIA_BUILD_CONFIGURATION << "] "
                   << std::setprecision(1) << fps << " FPS"
@@ -557,6 +576,9 @@ private:
                   << " (X" << collision.crossChainContactPairCount << ')'
                   << " | pen " << std::setprecision(3)
                   << collision.maximumPenetrationDepth
+                  << " | g " << std::setprecision(2)
+                  << gravity.averageEffectiveGravityScale
+                  << " down " << gravity.maximumDownwardDisplacement
                   << " | solver " << world.solverIterations
                   << (world.splitImpulse ? "+SI" : "-SI")
                   << " | recover " << recovery.totalRecoveries
@@ -583,12 +605,14 @@ private:
         MmdPhysicsRecoveryStatistics recovery;
         MmdPhysicsFidelityStatistics fidelity;
         MmdPhysicsCollisionStatistics collision;
+        MmdPhysicsGravityStatistics gravity;
         if (const Entity* entity = this->scene.EntityAt(0U);
             entity != nullptr && entity->HasMmdPhysics())
         {
             recovery = entity->GetMmdPhysics().RecoveryStatistics();
             fidelity = entity->GetMmdPhysics().FidelityStatistics();
             collision = entity->GetMmdPhysics().CollisionStatistics();
+            gravity = entity->GetMmdPhysics().GravityStatistics();
         }
         std::cout << "[PHYSICS STATS] build="
                   << WISTERIA_BUILD_CONFIGURATION
@@ -644,6 +668,42 @@ private:
                   << world.maximumErrorReduction
                   << " restitutionVelocityThreshold="
                   << world.restitutionVelocityThreshold
+                  << " gravityMode=";
+        if (const Entity* entity = this->scene.EntityAt(0U);
+            entity != nullptr && entity->HasMmdPhysics())
+        {
+            std::cout << entity->GetMmdPhysics().GravityModeName();
+        }
+        else
+        {
+            std::cout << "N/A";
+        }
+        std::cout << " gravityScaleMin="
+                  << gravity.minimumEffectiveGravityScale
+                  << " gravityScaleAvg="
+                  << gravity.averageEffectiveGravityScale
+                  << " gravityScaleMax="
+                  << gravity.maximumEffectiveGravityScale
+                  << " gravityDownAvg="
+                  << gravity.averageDownwardDisplacement
+                  << " gravityDownMax="
+                  << gravity.maximumDownwardDisplacement
+                  << " gravitySpeedAvg=" << gravity.averageSpeed
+                  << " gravitySpeedMax=" << gravity.maximumSpeed
+                  << " gravityMode2DeltaMax="
+                  << gravity.maximumMode2TranslationDelta
+                  << " gravityConstraintImpulse="
+                  << gravity.totalConstraintImpulse
+                  << " gravityConstraintImpulseMax="
+                  << gravity.maximumConstraintImpulse
+                  << " gravityExtensionMax="
+                  << gravity.maximumNormalizedExtension
+                  << " gravityAnchorSpeedMax="
+                  << gravity.maximumAnchorLinearSpeed
+                  << " skirtLayerIgnoredPairs="
+                  << gravity.skirtLayerIgnoredPairCount
+                  << " skirtSemanticIgnoredPairs="
+                  << gravity.skirtSemanticIgnoredPairCount
                   << " recoveryChains=" << recovery.chainCount
                   << " recoveryPhysicsTicks="
                   << recovery.physicsTickCount

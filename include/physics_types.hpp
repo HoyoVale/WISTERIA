@@ -69,6 +69,12 @@ struct PhysicsConstraintFrame
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
+struct PhysicsConstraintRuntimeState
+{
+    float appliedImpulse = 0.0f;
+    float appliedAngularImpulse = 0.0f;
+};
+
 struct PhysicsSpring6DofDesc
 {
     PhysicsBodyHandle bodyA{};
@@ -200,6 +206,10 @@ struct PhysicsBodyRuntimeSettings
     float ccdSweptSphereRadius = 0.0f;
     std::uint16_t collisionGroup = 0x0001U;
     std::uint16_t collisionMask = 0xFFFFU;
+    bool gravityOverride = false;
+    glm::vec3 gravity{0.0f, -9.8f, 0.0f};
+    float linearDamping = 0.0f;
+    float angularDamping = 0.0f;
 };
 
 struct PhysicsContactPair

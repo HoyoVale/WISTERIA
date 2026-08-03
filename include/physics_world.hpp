@@ -48,6 +48,9 @@ public:
     );
     bool DestroyConstraint(PhysicsConstraintHandle constraint) noexcept;
     bool Contains(PhysicsConstraintHandle constraint) const noexcept;
+    PhysicsConstraintRuntimeState ConstraintState(
+        PhysicsConstraintHandle constraint
+    ) const;
     std::size_t ConstraintCount() const noexcept;
 
     bool Contains(PhysicsBodyHandle body) const noexcept;
@@ -63,6 +66,16 @@ public:
         bool enabled,
         float motionThreshold,
         float sweptSphereRadius
+    );
+    void ConfigureGravity(
+        PhysicsBodyHandle body,
+        bool overrideWorldGravity,
+        const glm::vec3& gravity
+    );
+    void SetDamping(
+        PhysicsBodyHandle body,
+        float linearDamping,
+        float angularDamping
     );
     void SetCollisionPairIgnored(
         PhysicsBodyHandle bodyA,

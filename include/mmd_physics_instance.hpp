@@ -37,6 +37,79 @@ enum class MmdPhysicsWithBoneSyncMode : std::uint8_t
     TranslationDelta
 };
 
+enum class MmdPhysicsGravityMode : std::uint8_t
+{
+    Original,
+    Balanced100,
+    Balanced075,
+    Balanced050,
+    Balanced025,
+    Zero
+};
+
+enum class MmdPhysicsChainKind : std::uint8_t
+{
+    General,
+    Skirt,
+    Hair,
+    Tail,
+    Accessory,
+    DecorativeFallback
+};
+
+struct MmdPhysicsChainBalanceStatistics
+{
+    std::size_t chainIndex = std::numeric_limits<std::size_t>::max();
+    MmdPhysicsChainKind kind = MmdPhysicsChainKind::General;
+    std::size_t bodyCount = 0U;
+    std::size_t dynamicBodyCount = 0U;
+    float totalMass = 0.0f;
+    float gravityScale = 1.0f;
+    float effectiveGravityScale = 1.0f;
+    float minimumLinearDamping = 0.0f;
+    float minimumAngularDamping = 0.0f;
+    float averageDownwardDisplacement = 0.0f;
+    float maximumDownwardDisplacement = 0.0f;
+    float averageSpeed = 0.0f;
+    float maximumSpeed = 0.0f;
+    std::size_t contactPairCount = 0U;
+    float contactImpulse = 0.0f;
+    float maximumMode2TranslationDelta = 0.0f;
+    std::size_t anchorBodyIndex = std::numeric_limits<std::size_t>::max();
+    float anchorLinearSpeed = 0.0f;
+    float anchorAngularSpeed = 0.0f;
+    float averageAnchorDistance = 0.0f;
+    float maximumAnchorDistance = 0.0f;
+    float averageNormalizedExtension = 0.0f;
+    float maximumNormalizedExtension = 0.0f;
+    float totalConstraintImpulse = 0.0f;
+    float maximumConstraintImpulse = 0.0f;
+};
+
+struct MmdPhysicsGravityStatistics
+{
+    MmdPhysicsGravityMode mode = MmdPhysicsGravityMode::Balanced100;
+    float globalGravityScale = 1.0f;
+    bool chainProfilesEnabled = true;
+    std::size_t chainCount = 0U;
+    std::size_t dynamicBodyCount = 0U;
+    std::size_t skirtLayerIgnoredPairCount = 0U;
+    std::size_t skirtSemanticIgnoredPairCount = 0U;
+    float minimumEffectiveGravityScale = 1.0f;
+    float maximumEffectiveGravityScale = 1.0f;
+    float averageEffectiveGravityScale = 1.0f;
+    float averageDownwardDisplacement = 0.0f;
+    float maximumDownwardDisplacement = 0.0f;
+    float averageSpeed = 0.0f;
+    float maximumSpeed = 0.0f;
+    float totalContactImpulse = 0.0f;
+    float totalConstraintImpulse = 0.0f;
+    float maximumConstraintImpulse = 0.0f;
+    float maximumNormalizedExtension = 0.0f;
+    float maximumAnchorLinearSpeed = 0.0f;
+    float maximumMode2TranslationDelta = 0.0f;
+};
+
 struct MmdPhysicsFidelityStatistics
 {
     std::size_t drivenBoneCount = 0U;
@@ -134,6 +207,9 @@ struct MmdPhysicsRecoveryStatistics
     float lastAngularViolationDegrees = 0.0f;
     float lastLinearSpeed = 0.0f;
     float lastAngularSpeed = 0.0f;
+    float lastAnchorDistance = 0.0f;
+    float lastBindChainLength = 0.0f;
+    float lastNormalizedExtension = 0.0f;
 };
 
 // Per-Entity runtime bridge between immutable PMX physics metadata and the
@@ -204,6 +280,15 @@ public:
     const MmdPhysicsCollisionStatistics& CollisionStatistics() const noexcept;
     std::span<const MmdPhysicsContactDiagnostic> ContactDiagnostics() const noexcept;
     void LogCollisionReport(std::size_t maximumEntries = 20U) const;
+
+    void SetGravityMode(MmdPhysicsGravityMode mode);
+    MmdPhysicsGravityMode GravityMode() const noexcept;
+    MmdPhysicsGravityMode CycleGravityMode();
+    const char* GravityModeName() const noexcept;
+    const MmdPhysicsGravityStatistics& GravityStatistics() const noexcept;
+    std::span<const MmdPhysicsChainBalanceStatistics>
+        ChainBalanceStatistics() const noexcept;
+    void LogGravityReport() const;
     std::span<const std::uint8_t> DrivenBoneModes() const noexcept;
     void SetSampledVertexCount(std::size_t count) noexcept;
     bool StabilizationFailed() const noexcept;
@@ -276,6 +361,11 @@ private:
         float ccdMotionThreshold = 0.0f;
         float ccdSweptSphereRadius = 0.0f;
         float ccdIdleSeconds = 0.0f;
+        float baseLinearDamping = 0.0f;
+        float baseAngularDamping = 0.0f;
+        float appliedGravityScale = 1.0f;
+        float appliedLinearDamping = 0.0f;
+        float appliedAngularDamping = 0.0f;
     };
 
     struct RecoveryEdge
@@ -298,6 +388,9 @@ private:
         float angularViolationDegrees = 0.0f;
         float linearSpeed = 0.0f;
         float angularSpeed = 0.0f;
+        float anchorDistance = 0.0f;
+        float bindChainLength = 0.0f;
+        float normalizedExtension = 0.0f;
     };
 
     struct RecoveryChain
@@ -315,12 +408,26 @@ private:
         RecoveryTrigger pendingTrigger{};
     };
 
+    struct GravityChain
+    {
+        std::vector<std::size_t> bodyIndices;
+        MmdPhysicsChainKind kind = MmdPhysicsChainKind::General;
+        float gravityScale = 1.0f;
+        float minimumLinearDamping = 0.0f;
+        float minimumAngularDamping = 0.0f;
+        std::size_t anchorBodyIndex =
+            std::numeric_limits<std::size_t>::max();
+    };
+
     void PrePhysicsUpdate(const Transform& transform, float deltaTime);
     void PostPhysicsUpdate(const Transform& transform);
     void ResetToPose(const Transform& transform);
     void CaptureConstraintPreservingResetTargets();
     void ApplyResetTargets(const Transform& transform);
     void BuildRecoveryChains();
+    void ConfigureGravityBalanceProfiles();
+    void ApplyGravityBalanceSettings(bool force = false);
+    void UpdateGravityBalanceStatistics();
     void ConfigureCollisionTopology();
     void UpdateAdaptiveCcd(float fixedTimeStep);
     void UpdateCollisionDiagnostics();
@@ -362,7 +469,11 @@ private:
     std::vector<RecoveryChain> recoveryChains;
     std::vector<std::size_t> recoveryChainByBody;
     std::vector<std::vector<RecoveryEdge>> recoveryAdjacency;
+    std::vector<GravityChain> gravityChains;
+    std::vector<std::size_t> gravityChainByBody;
     std::vector<float> recoveryJointSeverityHistory;
+    std::vector<float> recoveryBindPathLengthByBody;
+    std::vector<float> recoveryPreviousNormalizedExtension;
     std::vector<AlignmentRecord> alignmentRecords;
     std::vector<JointSnapshot> jointSnapshots;
     JointSnapshot createdJointSnapshot{};
@@ -371,6 +482,10 @@ private:
     MmdPhysicsFidelityStatistics fidelityStatistics;
     MmdPhysicsCollisionStatistics collisionStatistics;
     std::vector<MmdPhysicsContactDiagnostic> contactDiagnostics;
+    MmdPhysicsGravityStatistics gravityStatistics;
+    std::vector<MmdPhysicsChainBalanceStatistics> chainBalanceStatistics;
+    MmdPhysicsGravityMode gravityMode = MmdPhysicsGravityMode::Balanced100;
+    glm::vec3 lastAppliedWorldGravity{std::numeric_limits<float>::quiet_NaN()};
     MmdPhysicsDebugOverlay debugOverlay = MmdPhysicsDebugOverlay::Off;
     MmdPhysicsFidelityDebugLayer fidelityDebugLayer =
         MmdPhysicsFidelityDebugLayer::Off;

@@ -14,6 +14,7 @@
 #include <optional>
 #include <queue>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <unordered_set>
 
@@ -45,13 +46,197 @@ constexpr float RecoveryHardLinearViolation = 3.0f;
 constexpr float RecoveryAngularViolationDegrees = 115.0f;
 constexpr float RecoveryHardAngularViolationDegrees = 175.0f;
 constexpr float RecoveryRunawayDistance = 5.0f;
-constexpr float RecoveryHardRunawayDistance = 10.0f;
+constexpr float RecoveryNormalizedExtension = 1.35f;
+constexpr float RecoveryHardNormalizedExtension = 3.0f;
+constexpr float RecoveryExtensionGrowthTolerance = 0.025f;
+constexpr float RecoveryRunawaySupportSpeed = 8.0f;
 constexpr float RecoverySeverityGrowthTolerance = 0.03f;
 constexpr float CollisionNearNeighborProximityFactor = 0.85f;
 constexpr float AdaptiveCcdEnableTravelFactor = 0.35f;
 constexpr float AdaptiveCcdDisableTravelFactor = 0.15f;
 constexpr float AdaptiveCcdDisableDelaySeconds = 0.25f;
 constexpr std::size_t MaximumContactDiagnostics = 64U;
+constexpr std::size_t SkirtSelfCollisionGraphDistance = 4U;
+constexpr float SkirtSelfCollisionProximityFactor = 1.15f;
+
+struct ChainBalanceProfile
+{
+    float gravityScale = 1.0f;
+    float minimumLinearDamping = 0.0f;
+    float minimumAngularDamping = 0.0f;
+};
+
+float GravityModeScale(MmdPhysicsGravityMode mode) noexcept
+{
+    switch (mode)
+    {
+    case MmdPhysicsGravityMode::Original:
+    case MmdPhysicsGravityMode::Balanced100:
+        return 1.0f;
+    case MmdPhysicsGravityMode::Balanced075:
+        return 0.75f;
+    case MmdPhysicsGravityMode::Balanced050:
+        return 0.50f;
+    case MmdPhysicsGravityMode::Balanced025:
+        return 0.25f;
+    case MmdPhysicsGravityMode::Zero:
+        return 0.0f;
+    }
+    return 1.0f;
+}
+
+bool GravityModeUsesChainProfiles(MmdPhysicsGravityMode mode) noexcept
+{
+    return mode != MmdPhysicsGravityMode::Original;
+}
+
+const char* ChainKindName(MmdPhysicsChainKind kind) noexcept
+{
+    switch (kind)
+    {
+    case MmdPhysicsChainKind::General: return "GENERAL";
+    case MmdPhysicsChainKind::Skirt: return "SKIRT";
+    case MmdPhysicsChainKind::Hair: return "HAIR";
+    case MmdPhysicsChainKind::Tail: return "TAIL";
+    case MmdPhysicsChainKind::Accessory: return "ACCESSORY";
+    case MmdPhysicsChainKind::DecorativeFallback:
+        return "DECORATIVE_FALLBACK";
+    }
+    return "UNKNOWN";
+}
+
+ChainBalanceProfile ProfileForChainKind(MmdPhysicsChainKind kind) noexcept
+{
+    switch (kind)
+    {
+    case MmdPhysicsChainKind::Skirt:
+        return {0.55f, 0.25f, 0.35f};
+    case MmdPhysicsChainKind::Hair:
+        return {0.65f, 0.18f, 0.28f};
+    case MmdPhysicsChainKind::Tail:
+        return {0.70f, 0.15f, 0.25f};
+    case MmdPhysicsChainKind::Accessory:
+        return {0.50f, 0.22f, 0.32f};
+    case MmdPhysicsChainKind::DecorativeFallback:
+        return {0.65f, 0.18f, 0.28f};
+    case MmdPhysicsChainKind::General:
+        return {1.0f, 0.0f, 0.0f};
+    }
+    return {};
+}
+
+std::string AsciiLower(std::string_view value)
+{
+    std::string result(value);
+    std::transform(
+        result.begin(),
+        result.end(),
+        result.begin(),
+        [](unsigned char character)
+        {
+            if (character >= 'A' && character <= 'Z')
+                return static_cast<char>(character - 'A' + 'a');
+            return static_cast<char>(character);
+        }
+    );
+    return result;
+}
+
+bool ContainsAnyNameToken(
+    std::string_view name,
+    std::initializer_list<std::string_view> tokens
+)
+{
+    const std::string lowered = AsciiLower(name);
+    for (std::string_view token : tokens)
+    {
+        const std::string loweredToken = AsciiLower(token);
+        if (lowered.find(loweredToken) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
+struct SkirtSemantic
+{
+    bool valid = false;
+    int section = -1;
+    int level = -1;
+    bool auxiliary = false;
+};
+
+SkirtSemantic ParseSkirtSemantic(std::string_view name)
+{
+    const std::string lowered = AsciiLower(name);
+    const std::size_t skirt = lowered.find("skirt_");
+    if (skirt == std::string::npos)
+        return {};
+
+    std::size_t cursor = skirt + 6U;
+    const auto parseInteger = [&lowered, &cursor]() -> int
+    {
+        if (cursor >= lowered.size() ||
+            lowered[cursor] < '0' || lowered[cursor] > '9')
+        {
+            return -1;
+        }
+        int value = 0;
+        while (cursor < lowered.size() &&
+            lowered[cursor] >= '0' && lowered[cursor] <= '9')
+        {
+            value = value * 10 + static_cast<int>(lowered[cursor] - '0');
+            ++cursor;
+        }
+        return value;
+    };
+
+    const int section = parseInteger();
+    if (section < 0 || cursor >= lowered.size() || lowered[cursor] != '_')
+        return {};
+    ++cursor;
+    const int level = parseInteger();
+    if (level < 0)
+        return {};
+
+    bool auxiliary = false;
+    while (cursor < lowered.size())
+    {
+        if (lowered[cursor] == 'b')
+            auxiliary = true;
+        ++cursor;
+    }
+    return SkirtSemantic{true, section, level, auxiliary};
+}
+
+MmdPhysicsChainKind ClassifyBodyName(std::string_view name)
+{
+    if (ContainsAnyNameToken(
+            name,
+            {"skirt", "dress", "スカート", "裙", "衣摆", "衣襬"}))
+    {
+        return MmdPhysicsChainKind::Skirt;
+    }
+    if (ContainsAnyNameToken(
+            name,
+            {"hair", "髪", "头发", "頭髮", "发束", "髮束"}))
+    {
+        return MmdPhysicsChainKind::Hair;
+    }
+    if (ContainsAnyNameToken(
+            name,
+            {"tail", "尻尾", "しっぽ", "尾巴", "尾"}))
+    {
+        return MmdPhysicsChainKind::Tail;
+    }
+    if (ContainsAnyNameToken(
+            name,
+            {"ribbon", "accessory", "ornament", "cape", "cloth", "belt",
+             "リボン", "アクセ", "装飾", "飾", "饰", "袖", "披风", "披風"}))
+    {
+        return MmdPhysicsChainKind::Accessory;
+    }
+    return MmdPhysicsChainKind::General;
+}
 
 struct RigidTransform
 {
@@ -916,6 +1101,10 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             runtime.ccdMotionThreshold = ccd.motionThreshold;
             runtime.ccdSweptSphereRadius = ccd.sweptSphereRadius;
             runtime.denseMarginAdjusted = denseDynamicBox;
+            runtime.baseLinearDamping = description.linearDamping;
+            runtime.baseAngularDamping = description.angularDamping;
+            runtime.appliedLinearDamping = description.linearDamping;
+            runtime.appliedAngularDamping = description.angularDamping;
             if (runtime.ccdCandidate)
                 ++this->collisionStatistics.ccdCandidateCount;
             if (runtime.denseMarginAdjusted)
@@ -1074,6 +1263,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             this->constraints.push_back(handle);
         }
         this->BuildRecoveryChains();
+        this->ConfigureGravityBalanceProfiles();
+        this->ApplyGravityBalanceSettings(true);
         this->ConfigureCollisionTopology();
         this->createdJointSnapshot = this->CaptureJointSnapshot("created");
         this->ResetToPose(transform);
@@ -1104,6 +1295,7 @@ MmdPhysicsInstance::~MmdPhysicsInstance()
 
 void MmdPhysicsInstance::PrepareSimulation(float deltaTime)
 {
+    this->ApplyGravityBalanceSettings();
     this->PrePhysicsUpdate(*this->transform, deltaTime);
     if (!this->suppressImpulseMorphOnce &&
         this->morphState != nullptr &&
@@ -1199,6 +1391,7 @@ void MmdPhysicsInstance::ObserveSimulationSubstep(float fixedTimeStep)
         );
     }
     this->UpdateCollisionDiagnostics();
+    this->UpdateGravityBalanceStatistics();
     if (!this->stabilizationFailed)
         this->RecoverAbnormalChains(fixedTimeStep);
 }
@@ -1719,6 +1912,174 @@ std::span<const MmdPhysicsContactDiagnostic>
 MmdPhysicsInstance::ContactDiagnostics() const noexcept
 {
     return this->contactDiagnostics;
+}
+
+void MmdPhysicsInstance::SetGravityMode(MmdPhysicsGravityMode mode)
+{
+    switch (mode)
+    {
+    case MmdPhysicsGravityMode::Original:
+    case MmdPhysicsGravityMode::Balanced100:
+    case MmdPhysicsGravityMode::Balanced075:
+    case MmdPhysicsGravityMode::Balanced050:
+    case MmdPhysicsGravityMode::Balanced025:
+    case MmdPhysicsGravityMode::Zero:
+        break;
+    default:
+        throw std::invalid_argument("Unknown MMD gravity mode");
+    }
+    this->gravityMode = mode;
+    this->ApplyGravityBalanceSettings(true);
+}
+
+MmdPhysicsGravityMode MmdPhysicsInstance::GravityMode() const noexcept
+{
+    return this->gravityMode;
+}
+
+MmdPhysicsGravityMode MmdPhysicsInstance::CycleGravityMode()
+{
+    switch (this->gravityMode)
+    {
+    case MmdPhysicsGravityMode::Original:
+        this->SetGravityMode(MmdPhysicsGravityMode::Balanced100);
+        break;
+    case MmdPhysicsGravityMode::Balanced100:
+        this->SetGravityMode(MmdPhysicsGravityMode::Balanced075);
+        break;
+    case MmdPhysicsGravityMode::Balanced075:
+        this->SetGravityMode(MmdPhysicsGravityMode::Balanced050);
+        break;
+    case MmdPhysicsGravityMode::Balanced050:
+        this->SetGravityMode(MmdPhysicsGravityMode::Balanced025);
+        break;
+    case MmdPhysicsGravityMode::Balanced025:
+        this->SetGravityMode(MmdPhysicsGravityMode::Zero);
+        break;
+    case MmdPhysicsGravityMode::Zero:
+        this->SetGravityMode(MmdPhysicsGravityMode::Original);
+        break;
+    }
+    return this->gravityMode;
+}
+
+const char* MmdPhysicsInstance::GravityModeName() const noexcept
+{
+    switch (this->gravityMode)
+    {
+    case MmdPhysicsGravityMode::Original: return "ORIGINAL_1.00G";
+    case MmdPhysicsGravityMode::Balanced100: return "BALANCED_1.00G";
+    case MmdPhysicsGravityMode::Balanced075: return "BALANCED_0.75G";
+    case MmdPhysicsGravityMode::Balanced050: return "BALANCED_0.50G";
+    case MmdPhysicsGravityMode::Balanced025: return "BALANCED_0.25G";
+    case MmdPhysicsGravityMode::Zero: return "ZERO_G";
+    }
+    return "UNKNOWN";
+}
+
+const MmdPhysicsGravityStatistics&
+MmdPhysicsInstance::GravityStatistics() const noexcept
+{
+    return this->gravityStatistics;
+}
+
+std::span<const MmdPhysicsChainBalanceStatistics>
+MmdPhysicsInstance::ChainBalanceStatistics() const noexcept
+{
+    return this->chainBalanceStatistics;
+}
+
+void MmdPhysicsInstance::LogGravityReport() const
+{
+    const MmdPhysicsGravityStatistics& summary = this->gravityStatistics;
+    std::cout << "[MMD GRAVITY SUMMARY] mode=" << this->GravityModeName()
+              << " globalScale=" << summary.globalGravityScale
+              << " profiles="
+              << (summary.chainProfilesEnabled ? "true" : "false")
+              << " chains=" << summary.chainCount
+              << " dynamicBodies=" << summary.dynamicBodyCount
+              << " effectiveScaleMin=" << summary.minimumEffectiveGravityScale
+              << " effectiveScaleAvg=" << summary.averageEffectiveGravityScale
+              << " effectiveScaleMax=" << summary.maximumEffectiveGravityScale
+              << " downAvg=" << summary.averageDownwardDisplacement
+              << " downMax=" << summary.maximumDownwardDisplacement
+              << " speedAvg=" << summary.averageSpeed
+              << " speedMax=" << summary.maximumSpeed
+              << " contactImpulse=" << summary.totalContactImpulse
+              << " constraintImpulse=" << summary.totalConstraintImpulse
+              << " constraintImpulseMax="
+              << summary.maximumConstraintImpulse
+              << " extensionMax=" << summary.maximumNormalizedExtension
+              << " anchorSpeedMax=" << summary.maximumAnchorLinearSpeed
+              << " mode2DeltaMax=" << summary.maximumMode2TranslationDelta
+              << " skirtLayerIgnoredPairs="
+              << summary.skirtLayerIgnoredPairCount
+              << " skirtSemanticIgnoredPairs="
+              << summary.skirtSemanticIgnoredPairCount
+              << std::endl;
+
+    std::vector<MmdPhysicsChainBalanceStatistics> ordered(
+        this->chainBalanceStatistics.begin(),
+        this->chainBalanceStatistics.end()
+    );
+    std::stable_sort(
+        ordered.begin(),
+        ordered.end(),
+        [](const MmdPhysicsChainBalanceStatistics& left,
+           const MmdPhysicsChainBalanceStatistics& right)
+        {
+            const float leftActivity = std::max(
+                left.contactImpulse,
+                left.totalConstraintImpulse
+            );
+            const float rightActivity = std::max(
+                right.contactImpulse,
+                right.totalConstraintImpulse
+            );
+            if (leftActivity != rightActivity)
+                return leftActivity > rightActivity;
+            if (left.maximumNormalizedExtension !=
+                right.maximumNormalizedExtension)
+            {
+                return left.maximumNormalizedExtension >
+                    right.maximumNormalizedExtension;
+            }
+            return left.maximumDownwardDisplacement >
+                right.maximumDownwardDisplacement;
+        }
+    );
+    for (const MmdPhysicsChainBalanceStatistics& chain : ordered)
+    {
+        std::cout << "[MMD GRAVITY CHAIN] chain=" << chain.chainIndex
+                  << " kind=" << ChainKindName(chain.kind)
+                  << " bodies=" << chain.bodyCount
+                  << " dynamic=" << chain.dynamicBodyCount
+                  << " mass=" << chain.totalMass
+                  << " gravityScale=" << chain.gravityScale
+                  << " effectiveScale=" << chain.effectiveGravityScale
+                  << " damping=" << chain.minimumLinearDamping << '/'
+                  << chain.minimumAngularDamping
+                  << " downAvg=" << chain.averageDownwardDisplacement
+                  << " downMax=" << chain.maximumDownwardDisplacement
+                  << " speedAvg=" << chain.averageSpeed
+                  << " speedMax=" << chain.maximumSpeed
+                  << " pairs=" << chain.contactPairCount
+                  << " impulse=" << chain.contactImpulse
+                  << " constraintImpulse="
+                  << chain.totalConstraintImpulse
+                  << " constraintImpulseMax="
+                  << chain.maximumConstraintImpulse
+                  << " anchorBody=" << chain.anchorBodyIndex
+                  << " anchorSpeed=" << chain.anchorLinearSpeed
+                  << " anchorAngularSpeed=" << chain.anchorAngularSpeed
+                  << " anchorDistanceAvg=" << chain.averageAnchorDistance
+                  << " anchorDistanceMax=" << chain.maximumAnchorDistance
+                  << " extensionAvg=" << chain.averageNormalizedExtension
+                  << " extensionMax=" << chain.maximumNormalizedExtension
+                  << " mode2DeltaMax="
+                  << chain.maximumMode2TranslationDelta
+                  << std::endl;
+    }
 }
 
 void MmdPhysicsInstance::LogCollisionReport(
@@ -2747,6 +3108,11 @@ void MmdPhysicsInstance::ResetToPose(const Transform& transform)
         this->recoveryJointSeverityHistory.end(),
         0.0f
     );
+    std::fill(
+        this->recoveryPreviousNormalizedExtension.begin(),
+        this->recoveryPreviousNormalizedExtension.end(),
+        1.0f
+    );
     this->UpdateRecoveryStatistics();
     this->BuildAlignmentDiagnostics();
 
@@ -2933,9 +3299,554 @@ void MmdPhysicsInstance::BuildRecoveryChains()
         appendJoint(chainB);
     }
 
+    this->recoveryBindPathLengthByBody.assign(
+        bodyCount,
+        std::numeric_limits<float>::infinity()
+    );
+    this->recoveryPreviousNormalizedExtension.assign(bodyCount, 1.0f);
+    for (std::size_t chainIndex = 0U;
+         chainIndex < this->recoveryChains.size();
+         ++chainIndex)
+    {
+        const RecoveryChain& chain = this->recoveryChains[chainIndex];
+        if (chain.anchorBodyIndex >= bodyCount)
+            continue;
+        using DistanceNode = std::pair<float, std::size_t>;
+        std::priority_queue<
+            DistanceNode,
+            std::vector<DistanceNode>,
+            std::greater<DistanceNode>
+        > pending;
+        this->recoveryBindPathLengthByBody[chain.anchorBodyIndex] = 0.0f;
+        pending.emplace(0.0f, chain.anchorBodyIndex);
+        while (!pending.empty())
+        {
+            const auto [distance, bodyIndex] = pending.top();
+            pending.pop();
+            if (distance > this->recoveryBindPathLengthByBody[bodyIndex] +
+                0.000001f)
+            {
+                continue;
+            }
+            const glm::vec3 position = glm::vec3(
+                this->rigidBodies[bodyIndex].definition->modelBindTransform[3]
+            );
+            for (const RecoveryEdge& edge :
+                 this->recoveryAdjacency[bodyIndex])
+            {
+                if (edge.bodyIndex >= bodyCount ||
+                    this->recoveryChainByBody[edge.bodyIndex] != chainIndex)
+                {
+                    continue;
+                }
+                const glm::vec3 neighborPosition = glm::vec3(
+                    this->rigidBodies[edge.bodyIndex]
+                        .definition->modelBindTransform[3]
+                );
+                const float edgeLength = std::max(
+                    glm::distance(position, neighborPosition),
+                    0.001f
+                );
+                const float candidate = distance + edgeLength;
+                if (candidate + 0.000001f <
+                    this->recoveryBindPathLengthByBody[edge.bodyIndex])
+                {
+                    this->recoveryBindPathLengthByBody[edge.bodyIndex] =
+                        candidate;
+                    pending.emplace(candidate, edge.bodyIndex);
+                }
+            }
+        }
+    }
+
     this->recoveryJointSeverityHistory.assign(joints.size(), 0.0f);
     this->recoveryStatistics = {};
     this->recoveryStatistics.chainCount = this->recoveryChains.size();
+}
+
+void MmdPhysicsInstance::ConfigureGravityBalanceProfiles()
+{
+    const std::size_t bodyCount = this->rigidBodies.size();
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    this->gravityChains.clear();
+    this->gravityChainByBody.assign(bodyCount, invalidIndex);
+
+    std::vector<MmdPhysicsChainKind> bodyKinds(
+        bodyCount,
+        MmdPhysicsChainKind::General
+    );
+    for (std::size_t bodyIndex = 0U; bodyIndex < bodyCount; ++bodyIndex)
+    {
+        bodyKinds[bodyIndex] = ClassifyBodyName(
+            this->rigidBodies[bodyIndex].definition->name
+        );
+    }
+
+    // PMX models frequently name only the first body of a decorative branch.
+    // Propagate a unique neighboring category through unnamed continuation
+    // bodies without merging two different categories at a junction.
+    for (std::size_t pass = 0U; pass < 4U; ++pass)
+    {
+        bool changed = false;
+        std::vector<MmdPhysicsChainKind> nextKinds = bodyKinds;
+        for (std::size_t bodyIndex = 0U; bodyIndex < bodyCount; ++bodyIndex)
+        {
+            if (bodyKinds[bodyIndex] != MmdPhysicsChainKind::General)
+                continue;
+            MmdPhysicsChainKind candidate = MmdPhysicsChainKind::General;
+            bool conflict = false;
+            for (const RecoveryEdge& edge : this->recoveryAdjacency[bodyIndex])
+            {
+                if (edge.bodyIndex >= bodyCount)
+                    continue;
+                const MmdPhysicsChainKind neighborKind = bodyKinds[edge.bodyIndex];
+                if (neighborKind == MmdPhysicsChainKind::General)
+                    continue;
+                if (candidate == MmdPhysicsChainKind::General)
+                    candidate = neighborKind;
+                else if (candidate != neighborKind)
+                    conflict = true;
+            }
+            if (!conflict && candidate != MmdPhysicsChainKind::General)
+            {
+                nextKinds[bodyIndex] = candidate;
+                changed = true;
+            }
+        }
+        bodyKinds.swap(nextKinds);
+        if (!changed)
+            break;
+    }
+
+    std::vector<bool> visited(bodyCount, false);
+    for (std::size_t start = 0U; start < bodyCount; ++start)
+    {
+        if (visited[start])
+            continue;
+        const MmdPhysicsChainKind kind = bodyKinds[start];
+        std::queue<std::size_t> pending;
+        std::vector<std::size_t> component;
+        pending.push(start);
+        visited[start] = true;
+        while (!pending.empty())
+        {
+            const std::size_t bodyIndex = pending.front();
+            pending.pop();
+            component.push_back(bodyIndex);
+            for (const RecoveryEdge& edge : this->recoveryAdjacency[bodyIndex])
+            {
+                if (edge.bodyIndex >= bodyCount || visited[edge.bodyIndex] ||
+                    bodyKinds[edge.bodyIndex] != kind)
+                {
+                    continue;
+                }
+                visited[edge.bodyIndex] = true;
+                pending.push(edge.bodyIndex);
+            }
+        }
+
+        std::size_t dynamicCount = 0U;
+        std::size_t boxCount = 0U;
+        std::size_t anchorCount = 0U;
+        std::size_t maximumDegree = 0U;
+        std::size_t anchorBodyIndex = invalidIndex;
+        for (const std::size_t bodyIndex : component)
+        {
+            const MmdRigidBodyDefinition& definition =
+                *this->rigidBodies[bodyIndex].definition;
+            maximumDegree = std::max(
+                maximumDegree,
+                this->recoveryAdjacency[bodyIndex].size()
+            );
+            if (definition.mode == MmdRigidBodyMode::FollowBone)
+            {
+                ++anchorCount;
+                if (anchorBodyIndex == invalidIndex)
+                    anchorBodyIndex = bodyIndex;
+            }
+            else
+            {
+                ++dynamicCount;
+                if (definition.shape == MmdRigidBodyShape::Box)
+                    ++boxCount;
+            }
+        }
+        if (dynamicCount == 0U)
+            continue;
+
+        MmdPhysicsChainKind resolvedKind = kind;
+        if (resolvedKind == MmdPhysicsChainKind::General &&
+            dynamicCount >= 32U && boxCount * 5U >= dynamicCount * 3U)
+        {
+            resolvedKind = MmdPhysicsChainKind::Skirt;
+        }
+        else if (resolvedKind == MmdPhysicsChainKind::General &&
+            dynamicCount >= 12U && anchorCount >= 1U &&
+            anchorCount <= 2U && maximumDegree <= 3U)
+        {
+            // Names from non-UTF8 PMX files can be unavailable after import.
+            // A long, low-branching component with one animated anchor is a
+            // decorative chain rather than a torso island. Give it a safe
+            // profile instead of GENERAL + zero damping.
+            resolvedKind = MmdPhysicsChainKind::DecorativeFallback;
+        }
+        const ChainBalanceProfile profile = ProfileForChainKind(resolvedKind);
+        GravityChain chain;
+        chain.bodyIndices = std::move(component);
+        chain.kind = resolvedKind;
+        chain.gravityScale = profile.gravityScale;
+        chain.minimumLinearDamping = profile.minimumLinearDamping;
+        chain.minimumAngularDamping = profile.minimumAngularDamping;
+        chain.anchorBodyIndex = anchorBodyIndex;
+        const std::size_t chainIndex = this->gravityChains.size();
+        for (const std::size_t bodyIndex : chain.bodyIndices)
+            this->gravityChainByBody[bodyIndex] = chainIndex;
+        this->gravityChains.push_back(std::move(chain));
+    }
+
+    this->chainBalanceStatistics.resize(this->gravityChains.size());
+    const std::size_t skirtLayerIgnoredPairCount =
+        this->gravityStatistics.skirtLayerIgnoredPairCount;
+    const std::size_t skirtSemanticIgnoredPairCount =
+        this->gravityStatistics.skirtSemanticIgnoredPairCount;
+    this->gravityStatistics = {};
+    this->gravityStatistics.skirtLayerIgnoredPairCount =
+        skirtLayerIgnoredPairCount;
+    this->gravityStatistics.skirtSemanticIgnoredPairCount =
+        skirtSemanticIgnoredPairCount;
+    this->gravityStatistics.mode = this->gravityMode;
+    this->gravityStatistics.chainCount = this->gravityChains.size();
+}
+
+void MmdPhysicsInstance::ApplyGravityBalanceSettings(bool force)
+{
+    const glm::vec3 worldGravity = this->world->Gravity();
+    const bool gravityChanged = !std::isfinite(this->lastAppliedWorldGravity.x) ||
+        glm::distance(worldGravity, this->lastAppliedWorldGravity) > 0.000001f;
+    if (!force && !gravityChanged)
+        return;
+
+    const bool profilesEnabled = GravityModeUsesChainProfiles(this->gravityMode);
+    const float globalScale = GravityModeScale(this->gravityMode);
+    const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
+    for (std::size_t bodyIndex = 0U;
+         bodyIndex < this->rigidBodies.size();
+         ++bodyIndex)
+    {
+        RuntimeBody& runtime = this->rigidBodies[bodyIndex];
+        if (runtime.definition->mode == MmdRigidBodyMode::FollowBone)
+            continue;
+
+        float chainScale = 1.0f;
+        float minimumLinearDamping = 0.0f;
+        float minimumAngularDamping = 0.0f;
+        const std::size_t chainIndex = bodyIndex < this->gravityChainByBody.size()
+            ? this->gravityChainByBody[bodyIndex]
+            : invalidIndex;
+        if (profilesEnabled && chainIndex < this->gravityChains.size())
+        {
+            const GravityChain& chain = this->gravityChains[chainIndex];
+            chainScale = chain.gravityScale;
+            minimumLinearDamping = chain.minimumLinearDamping;
+            minimumAngularDamping = chain.minimumAngularDamping;
+        }
+
+        const float effectiveScale = globalScale * chainScale;
+        const float linearDamping = std::clamp(
+            std::max(runtime.baseLinearDamping, minimumLinearDamping),
+            0.0f,
+            0.95f
+        );
+        const float angularDamping = std::clamp(
+            std::max(runtime.baseAngularDamping, minimumAngularDamping),
+            0.0f,
+            0.95f
+        );
+        this->world->ConfigureGravity(
+            runtime.handle,
+            profilesEnabled,
+            worldGravity * effectiveScale
+        );
+        this->world->SetDamping(
+            runtime.handle,
+            profilesEnabled ? linearDamping : runtime.baseLinearDamping,
+            profilesEnabled ? angularDamping : runtime.baseAngularDamping
+        );
+        runtime.appliedGravityScale = profilesEnabled ? effectiveScale : 1.0f;
+        runtime.appliedLinearDamping = profilesEnabled
+            ? linearDamping
+            : runtime.baseLinearDamping;
+        runtime.appliedAngularDamping = profilesEnabled
+            ? angularDamping
+            : runtime.baseAngularDamping;
+    }
+    this->lastAppliedWorldGravity = worldGravity;
+    this->UpdateGravityBalanceStatistics();
+}
+
+void MmdPhysicsInstance::UpdateGravityBalanceStatistics()
+{
+    const std::size_t skirtLayerIgnoredPairCount =
+        this->gravityStatistics.skirtLayerIgnoredPairCount;
+    const std::size_t skirtSemanticIgnoredPairCount =
+        this->gravityStatistics.skirtSemanticIgnoredPairCount;
+    this->gravityStatistics = {};
+    this->gravityStatistics.skirtLayerIgnoredPairCount =
+        skirtLayerIgnoredPairCount;
+    this->gravityStatistics.skirtSemanticIgnoredPairCount =
+        skirtSemanticIgnoredPairCount;
+    this->gravityStatistics.mode = this->gravityMode;
+    this->gravityStatistics.globalGravityScale = GravityModeScale(this->gravityMode);
+    this->gravityStatistics.chainProfilesEnabled =
+        GravityModeUsesChainProfiles(this->gravityMode);
+    this->gravityStatistics.chainCount = this->gravityChains.size();
+    this->chainBalanceStatistics.assign(
+        this->gravityChains.size(),
+        MmdPhysicsChainBalanceStatistics{}
+    );
+
+    const glm::vec3 gravity = this->world->Gravity();
+    const glm::vec3 downDirection = glm::length(gravity) > 0.000001f
+        ? glm::normalize(gravity)
+        : glm::vec3(0.0f, -1.0f, 0.0f);
+    const EntityFrame entity = ExtractEntityFrame(*this->transform);
+    float totalGravityScale = 0.0f;
+    float totalDownwardDisplacement = 0.0f;
+    float totalSpeed = 0.0f;
+    std::size_t totalDynamicCount = 0U;
+    float minimumScale = std::numeric_limits<float>::max();
+    float maximumScale = 0.0f;
+
+    for (std::size_t chainIndex = 0U;
+         chainIndex < this->gravityChains.size();
+         ++chainIndex)
+    {
+        const GravityChain& chain = this->gravityChains[chainIndex];
+        MmdPhysicsChainBalanceStatistics& statistics =
+            this->chainBalanceStatistics[chainIndex];
+        statistics.chainIndex = chainIndex;
+        statistics.kind = chain.kind;
+        statistics.bodyCount = chain.bodyIndices.size();
+        statistics.gravityScale = chain.gravityScale;
+        statistics.effectiveGravityScale = 0.0f;
+        statistics.minimumLinearDamping = chain.minimumLinearDamping;
+        statistics.minimumAngularDamping = chain.minimumAngularDamping;
+        statistics.anchorBodyIndex = chain.anchorBodyIndex;
+        float chainDownward = 0.0f;
+        float chainSpeed = 0.0f;
+        float chainAnchorDistance = 0.0f;
+        float chainNormalizedExtension = 0.0f;
+        std::size_t extensionCount = 0U;
+        std::optional<PhysicsBodyState> anchorState;
+        if (chain.anchorBodyIndex < this->rigidBodies.size())
+        {
+            anchorState = this->world->State(
+                this->rigidBodies[chain.anchorBodyIndex].handle
+            );
+            statistics.anchorLinearSpeed = glm::length(
+                anchorState->linearVelocity
+            );
+            statistics.anchorAngularSpeed = glm::length(
+                anchorState->angularVelocity
+            );
+        }
+
+        for (const std::size_t bodyIndex : chain.bodyIndices)
+        {
+            if (bodyIndex >= this->rigidBodies.size())
+                continue;
+            const RuntimeBody& runtime = this->rigidBodies[bodyIndex];
+            const MmdRigidBodyDefinition& definition = *runtime.definition;
+            if (definition.mode == MmdRigidBodyMode::FollowBone)
+                continue;
+            const PhysicsBodyState state = this->world->State(runtime.handle);
+            const RigidTransform target = ModelToWorld(
+                runtime.prePhysicsAnimatedModelTransform,
+                entity
+            );
+            const float downward = std::max(
+                0.0f,
+                glm::dot(state.position - target.position, downDirection)
+            );
+            const float speed = glm::length(state.linearVelocity);
+            ++statistics.dynamicBodyCount;
+            statistics.totalMass += definition.mass;
+            statistics.effectiveGravityScale += runtime.appliedGravityScale;
+            chainDownward += downward;
+            chainSpeed += speed;
+            statistics.maximumDownwardDisplacement = std::max(
+                statistics.maximumDownwardDisplacement,
+                downward
+            );
+            statistics.maximumSpeed = std::max(statistics.maximumSpeed, speed);
+            if (definition.mode == MmdRigidBodyMode::PhysicsWithBone)
+            {
+                statistics.maximumMode2TranslationDelta = std::max(
+                    statistics.maximumMode2TranslationDelta,
+                    glm::distance(state.position, target.position)
+                );
+            }
+            if (anchorState.has_value() &&
+                bodyIndex != chain.anchorBodyIndex &&
+                bodyIndex < this->recoveryBindPathLengthByBody.size())
+            {
+                const float bindLength =
+                    this->recoveryBindPathLengthByBody[bodyIndex] * entity.scale;
+                if (std::isfinite(bindLength) && bindLength > 0.0001f)
+                {
+                    const float anchorDistance = glm::distance(
+                        state.position,
+                        anchorState->position
+                    );
+                    const float normalizedExtension =
+                        anchorDistance / bindLength;
+                    chainAnchorDistance += anchorDistance;
+                    chainNormalizedExtension += normalizedExtension;
+                    ++extensionCount;
+                    statistics.maximumAnchorDistance = std::max(
+                        statistics.maximumAnchorDistance,
+                        anchorDistance
+                    );
+                    statistics.maximumNormalizedExtension = std::max(
+                        statistics.maximumNormalizedExtension,
+                        normalizedExtension
+                    );
+                }
+            }
+            totalGravityScale += runtime.appliedGravityScale;
+            totalDownwardDisplacement += downward;
+            totalSpeed += speed;
+            ++totalDynamicCount;
+            minimumScale = std::min(minimumScale, runtime.appliedGravityScale);
+            maximumScale = std::max(maximumScale, runtime.appliedGravityScale);
+        }
+        if (statistics.dynamicBodyCount > 0U)
+        {
+            const float inverseCount = 1.0f /
+                static_cast<float>(statistics.dynamicBodyCount);
+            statistics.effectiveGravityScale *= inverseCount;
+            statistics.averageDownwardDisplacement = chainDownward * inverseCount;
+            statistics.averageSpeed = chainSpeed * inverseCount;
+        }
+        if (extensionCount > 0U)
+        {
+            const float inverseExtensionCount = 1.0f /
+                static_cast<float>(extensionCount);
+            statistics.averageAnchorDistance =
+                chainAnchorDistance * inverseExtensionCount;
+            statistics.averageNormalizedExtension =
+                chainNormalizedExtension * inverseExtensionCount;
+        }
+    }
+
+    for (const MmdPhysicsContactDiagnostic& contact : this->contactDiagnostics)
+    {
+        const auto accumulateContact = [this, &contact](std::size_t chainIndex)
+        {
+            if (chainIndex >= this->chainBalanceStatistics.size())
+                return;
+            MmdPhysicsChainBalanceStatistics& statistics =
+                this->chainBalanceStatistics[chainIndex];
+            ++statistics.contactPairCount;
+            statistics.contactImpulse += contact.totalAppliedImpulse;
+        };
+        accumulateContact(contact.chainAIndex);
+        if (contact.chainBIndex != contact.chainAIndex)
+            accumulateContact(contact.chainBIndex);
+    }
+
+    const std::span<const MmdJointDefinition> joints = this->asset->Joints();
+    const std::size_t constraintCount = std::min(
+        joints.size(),
+        this->constraints.size()
+    );
+    for (std::size_t jointIndex = 0U; jointIndex < constraintCount; ++jointIndex)
+    {
+        const MmdJointDefinition& joint = joints[jointIndex];
+        if (joint.bodyA == InvalidRigidBodyIndex ||
+            joint.bodyB == InvalidRigidBodyIndex ||
+            static_cast<std::size_t>(joint.bodyA) >=
+                this->gravityChainByBody.size() ||
+            static_cast<std::size_t>(joint.bodyB) >=
+                this->gravityChainByBody.size())
+        {
+            continue;
+        }
+        const float impulse = std::abs(
+            this->world->ConstraintState(this->constraints[jointIndex])
+                .appliedImpulse
+        );
+        const std::size_t chainA = this->gravityChainByBody[joint.bodyA];
+        const std::size_t chainB = this->gravityChainByBody[joint.bodyB];
+        const auto accumulateConstraint = [this, impulse](
+            std::size_t chainIndex
+        )
+        {
+            if (chainIndex >= this->chainBalanceStatistics.size())
+                return;
+            MmdPhysicsChainBalanceStatistics& statistics =
+                this->chainBalanceStatistics[chainIndex];
+            statistics.totalConstraintImpulse += impulse;
+            statistics.maximumConstraintImpulse = std::max(
+                statistics.maximumConstraintImpulse,
+                impulse
+            );
+        };
+        accumulateConstraint(chainA);
+        if (chainB != chainA)
+            accumulateConstraint(chainB);
+    }
+
+    this->gravityStatistics.dynamicBodyCount = totalDynamicCount;
+    this->gravityStatistics.totalContactImpulse =
+        this->collisionStatistics.totalAppliedImpulse;
+    if (totalDynamicCount > 0U)
+    {
+        const float inverseCount = 1.0f / static_cast<float>(totalDynamicCount);
+        this->gravityStatistics.minimumEffectiveGravityScale = minimumScale;
+        this->gravityStatistics.maximumEffectiveGravityScale = maximumScale;
+        this->gravityStatistics.averageEffectiveGravityScale =
+            totalGravityScale * inverseCount;
+        this->gravityStatistics.averageDownwardDisplacement =
+            totalDownwardDisplacement * inverseCount;
+        this->gravityStatistics.averageSpeed = totalSpeed * inverseCount;
+    }
+    else
+    {
+        this->gravityStatistics.minimumEffectiveGravityScale = 0.0f;
+        this->gravityStatistics.maximumEffectiveGravityScale = 0.0f;
+        this->gravityStatistics.averageEffectiveGravityScale = 0.0f;
+    }
+    for (const MmdPhysicsChainBalanceStatistics& statistics :
+         this->chainBalanceStatistics)
+    {
+        this->gravityStatistics.maximumDownwardDisplacement = std::max(
+            this->gravityStatistics.maximumDownwardDisplacement,
+            statistics.maximumDownwardDisplacement
+        );
+        this->gravityStatistics.maximumSpeed = std::max(
+            this->gravityStatistics.maximumSpeed,
+            statistics.maximumSpeed
+        );
+        this->gravityStatistics.totalConstraintImpulse +=
+            statistics.totalConstraintImpulse;
+        this->gravityStatistics.maximumConstraintImpulse = std::max(
+            this->gravityStatistics.maximumConstraintImpulse,
+            statistics.maximumConstraintImpulse
+        );
+        this->gravityStatistics.maximumNormalizedExtension = std::max(
+            this->gravityStatistics.maximumNormalizedExtension,
+            statistics.maximumNormalizedExtension
+        );
+        this->gravityStatistics.maximumAnchorLinearSpeed = std::max(
+            this->gravityStatistics.maximumAnchorLinearSpeed,
+            statistics.anchorLinearSpeed
+        );
+        this->gravityStatistics.maximumMode2TranslationDelta = std::max(
+            this->gravityStatistics.maximumMode2TranslationDelta,
+            statistics.maximumMode2TranslationDelta
+        );
+    }
 }
 
 void MmdPhysicsInstance::ConfigureCollisionTopology()
@@ -2970,6 +3881,8 @@ void MmdPhysicsInstance::ConfigureCollisionTopology()
     this->collisionStatistics.linkedJointPairCount = linkedPairs.size();
 
     std::unordered_set<std::uint64_t> ignoredPairs;
+    std::size_t skirtLayerIgnoredPairs = 0U;
+    std::size_t skirtSemanticIgnoredPairs = 0U;
     for (std::size_t bodyAIndex = 0U;
          bodyAIndex < bodyCount;
          ++bodyAIndex)
@@ -2979,62 +3892,141 @@ void MmdPhysicsInstance::ConfigureCollisionTopology()
         {
             continue;
         }
-        const std::size_t chainA = this->recoveryChainByBody[bodyAIndex];
-        if (chainA == invalidIndex)
-            continue;
-
-        for (const RecoveryEdge& firstEdge :
-             this->recoveryAdjacency[bodyAIndex])
+        const std::size_t gravityChain =
+            bodyAIndex < this->gravityChainByBody.size()
+                ? this->gravityChainByBody[bodyAIndex]
+                : invalidIndex;
+        if (gravityChain == invalidIndex ||
+            gravityChain >= this->gravityChains.size())
         {
-            if (firstEdge.bodyIndex >= bodyCount)
+            continue;
+        }
+        const bool skirtChain = this->gravityChains[gravityChain].kind ==
+            MmdPhysicsChainKind::Skirt;
+        const std::size_t maximumDepth = skirtChain
+            ? SkirtSelfCollisionGraphDistance
+            : 2U;
+
+        std::queue<std::pair<std::size_t, std::size_t>> pending;
+        std::vector<std::size_t> bestDepth(bodyCount, invalidIndex);
+        pending.emplace(bodyAIndex, 0U);
+        bestDepth[bodyAIndex] = 0U;
+        while (!pending.empty())
+        {
+            const auto [current, depth] = pending.front();
+            pending.pop();
+            if (depth >= maximumDepth)
                 continue;
-            for (const RecoveryEdge& secondEdge :
-                 this->recoveryAdjacency[firstEdge.bodyIndex])
+            for (const RecoveryEdge& edge : this->recoveryAdjacency[current])
             {
-                const std::size_t bodyBIndex = secondEdge.bodyIndex;
-                if (bodyBIndex <= bodyAIndex || bodyBIndex >= bodyCount ||
-                    bodyBIndex == bodyAIndex ||
-                    this->rigidBodies[bodyBIndex].definition->mode ==
-                        MmdRigidBodyMode::FollowBone ||
-                    this->recoveryChainByBody[bodyBIndex] != chainA)
+                const std::size_t neighbor = edge.bodyIndex;
+                const std::size_t nextDepth = depth + 1U;
+                if (neighbor >= bodyCount ||
+                    nextDepth >= bestDepth[neighbor])
                 {
                     continue;
                 }
-                const std::uint64_t key = pairKey(bodyAIndex, bodyBIndex);
-                if (linkedPairs.contains(key) || ignoredPairs.contains(key))
-                    continue;
-
-                const MmdRigidBodyDefinition& bodyA =
-                    *this->rigidBodies[bodyAIndex].definition;
-                const MmdRigidBodyDefinition& bodyB =
-                    *this->rigidBodies[bodyBIndex].definition;
-                const glm::vec3 positionA = glm::vec3(
-                    bodyA.modelBindTransform[3]
-                );
-                const glm::vec3 positionB = glm::vec3(
-                    bodyB.modelBindTransform[3]
-                );
-                const float proximityLimit =
-                    (ShapeBoundingRadiusModel(bodyA) +
-                     ShapeBoundingRadiusModel(bodyB)) *
-                    CollisionNearNeighborProximityFactor;
-                if (proximityLimit <= 0.0f ||
-                    glm::distance(positionA, positionB) > proximityLimit)
-                {
-                    continue;
-                }
-
-                this->world->SetCollisionPairIgnored(
-                    this->rigidBodies[bodyAIndex].handle,
-                    this->rigidBodies[bodyBIndex].handle,
-                    true
-                );
-                ignoredPairs.insert(key);
+                bestDepth[neighbor] = nextDepth;
+                pending.emplace(neighbor, nextDepth);
             }
+        }
+
+        for (std::size_t bodyBIndex = bodyAIndex + 1U;
+             bodyBIndex < bodyCount;
+             ++bodyBIndex)
+        {
+            if (this->rigidBodies[bodyBIndex].definition->mode ==
+                    MmdRigidBodyMode::FollowBone ||
+                bodyBIndex >= this->gravityChainByBody.size() ||
+                this->gravityChainByBody[bodyBIndex] != gravityChain)
+            {
+                continue;
+            }
+            const std::uint64_t key = pairKey(bodyAIndex, bodyBIndex);
+            if (linkedPairs.contains(key) || ignoredPairs.contains(key))
+                continue;
+
+            const MmdRigidBodyDefinition& bodyA =
+                *this->rigidBodies[bodyAIndex].definition;
+            const MmdRigidBodyDefinition& bodyB =
+                *this->rigidBodies[bodyBIndex].definition;
+            const glm::vec3 positionA = glm::vec3(bodyA.modelBindTransform[3]);
+            const glm::vec3 positionB = glm::vec3(bodyB.modelBindTransform[3]);
+            const float boundingSum = ShapeBoundingRadiusModel(bodyA) +
+                ShapeBoundingRadiusModel(bodyB);
+            if (boundingSum <= 0.0f)
+                continue;
+
+            const std::size_t graphDistance = bestDepth[bodyBIndex];
+            const bool graphCandidate = graphDistance >= 2U &&
+                graphDistance <= maximumDepth;
+            bool semanticConflict = false;
+            if (skirtChain &&
+                bodyA.shape == MmdRigidBodyShape::Box &&
+                bodyB.shape == MmdRigidBodyShape::Box &&
+                bodyA.collisionGroup == bodyB.collisionGroup)
+            {
+                const SkirtSemantic semanticA = ParseSkirtSemantic(bodyA.name);
+                const SkirtSemantic semanticB = ParseSkirtSemantic(bodyB.name);
+                if (semanticA.valid && semanticB.valid &&
+                    semanticA.level == semanticB.level)
+                {
+                    const int sectionDistance = std::abs(
+                        semanticA.section - semanticB.section
+                    );
+                    const bool mainAuxiliaryConflict =
+                        semanticA.auxiliary != semanticB.auxiliary &&
+                        sectionDistance <= 4;
+                    const bool sameRingNearNeighbor =
+                        !semanticA.auxiliary && !semanticB.auxiliary &&
+                        sectionDistance > 0 && sectionDistance <= 3;
+                    semanticConflict =
+                        (mainAuxiliaryConflict || sameRingNearNeighbor) &&
+                        glm::distance(positionA, positionB) <=
+                            boundingSum * 1.35f;
+                }
+            }
+            if (!graphCandidate && !semanticConflict)
+                continue;
+
+            if (graphCandidate && skirtChain && graphDistance > 2U)
+            {
+                const bool skirtProxyPair =
+                    bodyA.shape == MmdRigidBodyShape::Box &&
+                    bodyB.shape == MmdRigidBodyShape::Box &&
+                    bodyA.collisionGroup == bodyB.collisionGroup;
+                if (!skirtProxyPair && !semanticConflict)
+                    continue;
+            }
+
+            const float proximityFactor = skirtChain
+                ? SkirtSelfCollisionProximityFactor
+                : CollisionNearNeighborProximityFactor;
+            if (!semanticConflict &&
+                glm::distance(positionA, positionB) >
+                    boundingSum * proximityFactor)
+            {
+                continue;
+            }
+
+            this->world->SetCollisionPairIgnored(
+                this->rigidBodies[bodyAIndex].handle,
+                this->rigidBodies[bodyBIndex].handle,
+                true
+            );
+            ignoredPairs.insert(key);
+            if (semanticConflict)
+                ++skirtSemanticIgnoredPairs;
+            else if (skirtChain && graphDistance > 2U)
+                ++skirtLayerIgnoredPairs;
         }
     }
     this->collisionStatistics.ignoredNearNeighborPairCount =
         ignoredPairs.size();
+    this->gravityStatistics.skirtLayerIgnoredPairCount =
+        skirtLayerIgnoredPairs;
+    this->gravityStatistics.skirtSemanticIgnoredPairCount =
+        skirtSemanticIgnoredPairs;
 }
 
 void MmdPhysicsInstance::UpdateAdaptiveCcd(float fixedTimeStep)
@@ -3134,11 +4126,11 @@ void MmdPhysicsInstance::UpdateCollisionDiagnostics()
         MmdPhysicsContactDiagnostic diagnostic;
         diagnostic.bodyAIndex = bodyAIndex;
         diagnostic.bodyBIndex = bodyBIndex;
-        diagnostic.chainAIndex = bodyAIndex < this->recoveryChainByBody.size()
-            ? this->recoveryChainByBody[bodyAIndex]
+        diagnostic.chainAIndex = bodyAIndex < this->gravityChainByBody.size()
+            ? this->gravityChainByBody[bodyAIndex]
             : invalidIndex;
-        diagnostic.chainBIndex = bodyBIndex < this->recoveryChainByBody.size()
-            ? this->recoveryChainByBody[bodyBIndex]
+        diagnostic.chainBIndex = bodyBIndex < this->gravityChainByBody.size()
+            ? this->gravityChainByBody[bodyBIndex]
             : invalidIndex;
         diagnostic.contactPointCount = pair.contactPointCount;
         diagnostic.maximumPenetrationDepth = pair.maximumPenetrationDepth;
@@ -3318,23 +4310,76 @@ void MmdPhysicsInstance::RecoverAbnormalChains(float fixedTimeStep)
             RecoveryRunawayDistance * scale,
             bodySize * 12.0f
         );
-        const float hardRunawayDistance = std::max(
-            RecoveryHardRunawayDistance * scale,
-            bodySize * 24.0f
-        );
         const float distanceFromAnimation = glm::distance(
             state.position,
             animated.position
         );
-        if (distanceFromAnimation > runawayDistance)
+
+        float normalizedExtension = 1.0f;
+        float anchorDistance = 0.0f;
+        float bindChainLength = 0.0f;
+        bool anchorMetricValid = false;
+        if (chainIndex < this->recoveryChains.size() &&
+            index < this->recoveryBindPathLengthByBody.size())
+        {
+            const RecoveryChain& chain = this->recoveryChains[chainIndex];
+            bindChainLength = this->recoveryBindPathLengthByBody[index] * scale;
+            if (chain.anchorBodyIndex < this->rigidBodies.size() &&
+                chain.anchorBodyIndex != index &&
+                std::isfinite(bindChainLength) &&
+                bindChainLength > std::max(bodySize * 0.25f, 0.0001f))
+            {
+                const PhysicsBodyState anchorState = this->world->State(
+                    this->rigidBodies[chain.anchorBodyIndex].handle
+                );
+                anchorDistance = glm::distance(
+                    state.position,
+                    anchorState.position
+                );
+                normalizedExtension = anchorDistance / bindChainLength;
+                anchorMetricValid = std::isfinite(normalizedExtension);
+            }
+        }
+
+        const float previousExtension =
+            index < this->recoveryPreviousNormalizedExtension.size()
+                ? this->recoveryPreviousNormalizedExtension[index]
+                : 1.0f;
+        if (index < this->recoveryPreviousNormalizedExtension.size() &&
+            anchorMetricValid)
+        {
+            this->recoveryPreviousNormalizedExtension[index] =
+                normalizedExtension;
+        }
+        const bool extensionGrowing = anchorMetricValid &&
+            normalizedExtension >
+                previousExtension + RecoveryExtensionGrowthTolerance;
+        const bool supportedByMotion =
+            linearSpeed > RecoveryRunawaySupportSpeed * scale;
+        const bool hardExtension = anchorMetricValid &&
+            normalizedExtension > RecoveryHardNormalizedExtension;
+        const bool sustainedExtension = anchorMetricValid &&
+            normalizedExtension > RecoveryNormalizedExtension &&
+            distanceFromAnimation > runawayDistance &&
+            (extensionGrowing || supportedByMotion);
+        if (hardExtension || sustainedExtension)
         {
             RecoveryTrigger trigger;
             trigger.reason = MmdPhysicsRecoveryReason::Runaway;
             trigger.seedBodyIndex = index;
-            trigger.immediate = distanceFromAnimation > hardRunawayDistance;
+            // Only physically impossible chain stretch is immediate. A body
+            // that is merely far from the pure-animation target must show
+            // growth or motion over real physics time.
+            trigger.immediate = normalizedExtension >
+                RecoveryHardNormalizedExtension * 2.0f;
             trigger.positionError = distanceFromAnimation;
+            trigger.linearSpeed = linearSpeed;
+            trigger.angularSpeed = angularSpeed;
+            trigger.anchorDistance = anchorDistance;
+            trigger.bindChainLength = bindChainLength;
+            trigger.normalizedExtension = normalizedExtension;
             trigger.score = (trigger.immediate ? 800.0f : 400.0f) +
-                distanceFromAnimation / runawayDistance;
+                normalizedExtension;
             mark(chainIndex, trigger);
         }
     }
@@ -3676,6 +4721,10 @@ void MmdPhysicsInstance::RecoverChain(
         trigger.angularViolationDegrees;
     this->recoveryStatistics.lastLinearSpeed = trigger.linearSpeed;
     this->recoveryStatistics.lastAngularSpeed = trigger.angularSpeed;
+    this->recoveryStatistics.lastAnchorDistance = trigger.anchorDistance;
+    this->recoveryStatistics.lastBindChainLength = trigger.bindChainLength;
+    this->recoveryStatistics.lastNormalizedExtension =
+        trigger.normalizedExtension;
 
     const std::size_t invalidIndex = std::numeric_limits<std::size_t>::max();
     std::cout << "[MMD RECOVERY] chain=" << chainIndex
@@ -3708,6 +4757,9 @@ void MmdPhysicsInstance::RecoverChain(
               << trigger.angularViolationDegrees
               << " linearSpeed=" << trigger.linearSpeed
               << " angularSpeed=" << trigger.angularSpeed
+              << " anchorDistance=" << trigger.anchorDistance
+              << " bindChainLength=" << trigger.bindChainLength
+              << " normalizedExtension=" << trigger.normalizedExtension
               << " total=" << this->recoveryStatistics.totalRecoveries
               << std::endl;
 }
