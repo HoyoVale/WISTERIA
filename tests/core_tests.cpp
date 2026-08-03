@@ -10,6 +10,9 @@
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/mmd/physics/mmd_physics_instance.hpp"
 #include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
+#include "wisteria/runtime/runtime_model_base.hpp"
+#include "wisteria/runtime/mmd_runtime_model.hpp"
+#include "wisteria/assets/saba_mmd_importer.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/physics/physics_world.hpp"
@@ -27,6 +30,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -2349,6 +2353,276 @@ public:
 private:
     PhysicsLifecycleCounters* counters = nullptr;
 };
+
+class InterfaceCompilationRuntime final : public MmdRuntimeModel
+{
+public:
+    explicit InterfaceCompilationRuntime(Pose& poseReference)
+        : pose(poseReference)
+    {
+    }
+
+    bool Initialize() override
+    {
+        return true;
+    }
+
+    void Update(float) override
+    {
+    }
+
+    void Reset() override
+    {
+    }
+
+    Pose& GetPose() override
+    {
+        return this->pose;
+    }
+
+    bool NeedsDynamicVertexUpload() const noexcept override
+    {
+        return false;
+    }
+
+    void UploadDynamicVertices(Mesh&) override
+    {
+    }
+
+    PhysicsInstance* TryGetPhysicsInstance() noexcept override
+    {
+        return nullptr;
+    }
+
+    void SetMmdIkEnabled(BoneIndex, bool) override
+    {
+    }
+
+    void ApplyCameraTrack(const CameraTrack&, float, Camera&) override
+    {
+    }
+
+    MmdSkinningKind SkinningKind() const noexcept override
+    {
+        return MmdSkinningKind::LinearBlend;
+    }
+
+    PhysicsInstance* GetMmdPhysics() noexcept override
+    {
+        return nullptr;
+    }
+
+private:
+    Pose& pose;
+};
+
+class InterfaceSelfSteppingInstance final : public PhysicsInstance
+{
+public:
+    bool OwnsSimulationStep() const noexcept override
+    {
+        return true;
+    }
+
+    void PrepareSimulation(float) override
+    {
+    }
+
+    void FinishSimulation() override
+    {
+    }
+
+    void ResetSimulation() override
+    {
+    }
+};
+
+void TestInterfaceCompilation()
+{
+    // Importer interface is extensible and the Saba stub is instantiable.
+    SabaMmdImporter sabaImporter;
+    ModelImporter baseImporter;
+    Require(
+        sizeof(sabaImporter) > 0U,
+        "SabaMmdImporter must be instantiable"
+    );
+    (void)baseImporter;
+
+    // RuntimeModelBase / MmdRuntimeModel can be implemented by a stub.
+    std::vector<Bone> bones;
+    Bone root;
+    root.name = "root";
+    bones.push_back(root);
+    Skeleton skeleton(std::move(bones));
+    Pose pose(skeleton);
+    InterfaceCompilationRuntime runtime(pose);
+    Require(runtime.Initialize(), "Runtime stub Initialize failed");
+    Require(
+        !runtime.NeedsDynamicVertexUpload(),
+        "Runtime stub must not request dynamic uploads"
+    );
+    Require(
+        runtime.SkinningKind() == MmdSkinningKind::LinearBlend,
+        "Runtime stub skinning kind mismatch"
+    );
+    Require(
+        runtime.TryGetPhysicsInstance() == nullptr,
+        "Runtime stub must not expose a physics instance"
+    );
+    runtime.Update(0.0f);
+    runtime.Reset();
+    Require(
+        &runtime.GetPose() == &pose,
+        "Runtime stub pose identity mismatch"
+    );
+
+    // Mesh dynamic vertex bridge exists (implementation lands in phase 2).
+    Mesh mesh(DefaultModelData{});
+    Require(
+        !mesh.HasDynamicVertexSource(),
+        "Mesh must start without a dynamic vertex source"
+    );
+    mesh.UploadDynamicVertices({}, {});
+
+    // CameraTrack interface exists (sampling lands in phase 3).
+    CameraTrack track({});
+    CameraKeyframe cameraSample;
+    Require(
+        !track.Sample(0.0f, cameraSample),
+        "CameraTrack sampling is not implemented in phase 0"
+    );
+    Require(
+        track.EndTime() == 0.0f,
+        "Empty CameraTrack end time must be zero"
+    );
+
+    // PhysicsInstance self-stepping hook defaults to false and can be
+    // overridden by Saba's per-model world.
+    InterfaceSelfSteppingInstance selfStepping;
+    Require(
+        selfStepping.OwnsSimulationStep(),
+        "Self-stepping override must return true"
+    );
+}
+
+void TestSabaMmdImporterWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    SabaMmdImporter sabaImporter;
+    ImportedModelData saba;
+    try
+    {
+        saba = sabaImporter.Import(modelPath);
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << "[SABA IMPORT FAIL] " << error.what() << std::endl;
+        throw;
+    }
+    Require(
+        saba.skeleton.has_value() &&
+            saba.mmdPhysics.has_value() &&
+            !saba.morphs.empty() &&
+            !saba.meshes.empty() &&
+            !saba.materials.empty(),
+        "Saba importer produced an incomplete PMX model"
+    );
+
+    ImportedModelData assimp;
+    try
+    {
+        assimp = ModelImporter().Import(modelPath);
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << "[ASSIMP IMPORT FAIL] " << error.what() << std::endl;
+        throw;
+    }
+    Require(
+        assimp.skeleton.has_value() &&
+            assimp.mmdPhysics.has_value() &&
+            !assimp.morphs.empty() &&
+            !assimp.meshes.empty() &&
+            !assimp.materials.empty(),
+        "Assimp importer produced an incomplete PMX model"
+    );
+
+    const std::size_t sabaBones = saba.skeleton->BoneCount();
+    const std::size_t assimpBones = assimp.skeleton->BoneCount();
+    const std::size_t sabaBodies = saba.mmdPhysics->RigidBodyCount();
+    const std::size_t assimpBodies = assimp.mmdPhysics->RigidBodyCount();
+    const std::size_t sabaJoints = saba.mmdPhysics->JointCount();
+    const std::size_t assimpJoints = assimp.mmdPhysics->JointCount();
+
+    std::unordered_set<std::string> sabaBoneNames;
+    std::unordered_set<std::string> assimpBoneNames;
+    for (BoneIndex index = 0U; index < sabaBones; ++index)
+        sabaBoneNames.insert(saba.skeleton->BoneAt(index).name);
+    for (BoneIndex index = 0U; index < assimpBones; ++index)
+        assimpBoneNames.insert(assimp.skeleton->BoneAt(index).name);
+    for (const std::string& name : assimpBoneNames)
+    {
+        if (sabaBoneNames.find(name) == sabaBoneNames.end())
+            std::cout << "[SABA IMPORTER] only-assimp-bone: " << name
+                      << std::endl;
+    }
+    for (const std::string& name : sabaBoneNames)
+    {
+        if (assimpBoneNames.find(name) == assimpBoneNames.end())
+            std::cout << "[SABA IMPORTER] only-saba-bone: " << name
+                      << std::endl;
+    }
+
+    std::cout << "[SABA IMPORTER] saba bones=" << sabaBones
+              << " rigidBodies=" << sabaBodies
+              << " joints=" << sabaJoints
+              << " materials=" << saba.materials.size()
+              << " morphs=" << saba.morphs.size()
+              << " meshes=" << saba.meshes.size()
+              << " | assimp bones=" << assimpBones
+              << " rigidBodies=" << assimpBodies
+              << " joints=" << assimpJoints
+              << " materials=" << assimp.materials.size()
+              << " morphs=" << assimp.morphs.size()
+              << " meshes=" << assimp.meshes.size()
+              << std::endl;
+
+    Require(
+        (sabaBones + 1U == assimpBones ||
+            sabaBones == assimpBones ||
+            sabaBones == assimpBones + 1U) &&
+            sabaBodies == assimpBodies &&
+            sabaJoints == assimpJoints &&
+            saba.materials.size() == assimp.materials.size() &&
+            saba.morphs.size() == assimp.morphs.size(),
+        "Saba and Assimp PMX import disagree beyond one extra skeleton bone"
+    );
+
+    const std::filesystem::path smallPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+        "pmx_physics.pmx";
+    if (std::filesystem::is_regular_file(smallPath))
+    {
+        ImportedModelData small = sabaImporter.Import(smallPath);
+        Require(
+            small.mmdPhysics.has_value() &&
+                small.mmdPhysics->RigidBodyCount() == 3U &&
+                small.mmdPhysics->JointCount() == 6U,
+            "Saba importer mismatched the PMX Physics 1 fixture"
+        );
+    }
+}
 
 void TestGenericPhysicsInstanceLifecycle()
 {
@@ -7248,6 +7522,14 @@ int main()
     failures += !RunTest(
         "Generic PhysicsInstance lifecycle",
         TestGenericPhysicsInstanceLifecycle
+    );
+    failures += !RunTest(
+        "Saba adapter interface compilation",
+        TestInterfaceCompilation
+    );
+    failures += !RunTest(
+        "Saba importer PMX data comparison",
+        TestSabaMmdImporterWhenAvailable
     );
     failures += !RunTest(
         "MMD full-body demo animation",

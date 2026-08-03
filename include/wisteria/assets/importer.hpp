@@ -83,5 +83,9 @@ struct ImportedModelData
 class ModelImporter
 {
 public:
-    ImportedModelData Import(const std::filesystem::path& filePath) const;
+    virtual ~ModelImporter() = default;
+
+    virtual ImportedModelData Import(
+        const std::filesystem::path& filePath
+    ) const;
 };

@@ -331,6 +331,22 @@ std::size_t Mesh::VertexCount() const noexcept
     return this->vertexCount;
 }
 
+void Mesh::UploadDynamicVertices(
+    std::span<const glm::vec3> positions,
+    std::span<const glm::vec3> normals
+)
+{
+    // TODO(phase 2): update position/normal ranges in this->vbo without
+    // rebuilding the vertex array. Validate sizes against vertexCount.
+    (void)positions;
+    (void)normals;
+}
+
+bool Mesh::HasDynamicVertexSource() const noexcept
+{
+    return false;
+}
+
 bool Mesh::HasMorphTargets() const noexcept
 {
     return !this->morphTargets.empty();

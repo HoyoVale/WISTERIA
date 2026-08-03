@@ -60,6 +60,14 @@ public:
         return {};
     }
 
+    // True when this instance owns its own simulation stepping (e.g. Saba's
+    // per-model Bullet world). Scene skips Prepare/Substep/StepFixed/Finish
+    // for such instances and lets the runtime drive itself.
+    virtual bool OwnsSimulationStep() const noexcept
+    {
+        return false;
+    }
+
     virtual void PrepareStabilizationStep(float fixedTimeStep)
     {
         (void)fixedTimeStep;

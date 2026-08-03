@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <stdexcept>
 #include <utility>
 
@@ -164,6 +165,32 @@ glm::quat SampleQuaternionKeys(
     const float factor = next.interpolation.Evaluate(normalizedTime);
     return glm::normalize(glm::slerp(previous.value, next.value, factor));
 }
+}
+
+CameraTrack::CameraTrack(std::vector<CameraKeyframe> nextKeys)
+    : keys(std::move(nextKeys))
+{
+    for (const CameraKeyframe& key : this->keys)
+        this->endTime = std::max(this->endTime, key.time);
+}
+
+std::span<const CameraKeyframe> CameraTrack::Keys() const noexcept
+{
+    return this->keys;
+}
+
+float CameraTrack::EndTime() const noexcept
+{
+    return this->endTime;
+}
+
+bool CameraTrack::Sample(float time, CameraKeyframe& output) const
+{
+    // TODO(phase 3): interpolate interest/rotation/distance/viewAngle with the
+    // per-channel KeyframeInterpolation curves.
+    (void)time;
+    (void)output;
+    return false;
 }
 
 float KeyframeInterpolation::Evaluate(float normalizedTime) const noexcept

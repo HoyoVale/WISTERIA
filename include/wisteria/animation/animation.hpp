@@ -52,6 +52,33 @@ struct FloatKeyframe
     float value = 0.0f;
 };
 
+// VMD camera channel: one keyframe per recorded frame. The interpolation
+// array covers interest X/Y/Z and distance (four curves).
+struct CameraKeyframe
+{
+    float time = 0.0f;
+    glm::vec3 interest{0.0f};
+    glm::vec3 rotation{0.0f};
+    float distance = 0.0f;
+    float viewAngle = 0.0f;
+    bool perspective = true;
+    std::array<KeyframeInterpolation, 4> interpolation{};
+};
+
+class CameraTrack
+{
+public:
+    explicit CameraTrack(std::vector<CameraKeyframe> keys);
+
+    std::span<const CameraKeyframe> Keys() const noexcept;
+    float EndTime() const noexcept;
+    bool Sample(float time, CameraKeyframe& output) const;
+
+private:
+    std::vector<CameraKeyframe> keys;
+    float endTime = 0.0f;
+};
+
 class MorphWeightTrack
 {
 public:

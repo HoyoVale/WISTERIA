@@ -93,9 +93,27 @@ void Scene::Update(float deltaTime)
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->Update(deltaTime);
 
+    const auto ownsSimulationStep = [](const Entity& entity)
+    {
+        const PhysicsInstance* instance = entity.TryGetPhysicsInstance();
+        return instance != nullptr && instance->OwnsSimulationStep();
+    };
+    bool hasSharedPhysics = this->physicsWorld->BodyCount() > 0U ||
+        this->physicsWorld->ConstraintCount() > 0U;
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        const PhysicsInstance* instance = entity->TryGetPhysicsInstance();
+        if (instance != nullptr && !instance->OwnsSimulationStep())
+            hasSharedPhysics = true;
+    }
+
     const auto physicsBegin = std::chrono::steady_clock::now();
     for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        if (ownsSimulationStep(*entity))
+            continue;
         entity->PrePhysicsUpdate(deltaTime);
+    }
 
     struct PendingStabilization
     {
@@ -110,7 +128,7 @@ void Scene::Update(float deltaTime)
     for (const std::unique_ptr<Entity>& entity : this->entities)
     {
         PhysicsInstance* instance = entity->TryGetPhysicsInstance();
-        if (instance == nullptr)
+        if (instance == nullptr || instance->OwnsSimulationStep())
             continue;
         const PhysicsStabilizationRequest request =
             instance->StabilizationRequest();
@@ -146,7 +164,8 @@ void Scene::Update(float deltaTime)
             if (step < item.request.steps)
                 item.instance->PrepareStabilizationStep(stabilizationStep);
         }
-        this->physicsWorld->StepFixed(stabilizationStep);
+        if (hasSharedPhysics)
+            this->physicsWorld->StepFixed(stabilizationStep);
         for (const PendingStabilization& item : pending)
         {
             if (step < item.request.steps)
@@ -215,23 +234,38 @@ void Scene::Update(float deltaTime)
         }
         for (const std::unique_ptr<Entity>& entity : this->entities)
         {
+            if (ownsSimulationStep(*entity))
+                continue;
             entity->PreparePhysicsSubstep(
                 alpha,
                 settings.fixedTimeStep
             );
         }
-        this->physicsWorld->StepFixed(settings.fixedTimeStep);
+        if (hasSharedPhysics)
+            this->physicsWorld->StepFixed(settings.fixedTimeStep);
         for (const std::unique_ptr<Entity>& entity : this->entities)
+        {
+            if (ownsSimulationStep(*entity))
+                continue;
             entity->ObservePhysicsSubstep(settings.fixedTimeStep);
+        }
         this->physicsAccumulator -= fixedTimeStep;
     }
     if (this->physicsAccumulator < stepTolerance)
         this->physicsAccumulator = 0.0;
 
     for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        if (ownsSimulationStep(*entity))
+            continue;
         entity->PostPhysicsUpdate();
+    }
     for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        if (ownsSimulationStep(*entity))
+            continue;
         entity->SolveAfterPhysicsPose();
+    }
 
     const auto physicsEnd = std::chrono::steady_clock::now();
     this->physicsFrameStatistics.frameDeltaTime = deltaTime;

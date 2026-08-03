@@ -160,4 +160,27 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
 ## 当前状态
 
 - 接口契约：已定（v1）；
-- 实现进度：阶段 0 未开始。
+- 实现进度：
+  - **阶段 0：已完成（2026-08-04）**
+    - `include/wisteria/runtime/runtime_model_base.hpp`：`RuntimeModelBase`；
+    - `include/wisteria/runtime/mmd_runtime_model.hpp`：`MmdRuntimeModel` +
+      `MmdSkinningKind`；
+    - `include/wisteria/assets/saba_mmd_importer.hpp` +
+      `src/assets/saba_mmd_importer.cpp`：导入器骨架（阶段 1 填充）；
+    - `ModelImporter::Import` 改为 virtual，接口可扩展；
+    - `Mesh::UploadDynamicVertices` / `HasDynamicVertexSource`（阶段 2 实现）；
+    - `CameraTrack` / `CameraKeyframe`（阶段 3 实现采样）；
+    - `PhysicsInstance::OwnsSimulationStep()` + Scene 固定步循环跳过逻辑；
+    - 新增 `TestInterfaceCompilation`。
+    - 自动验收：`wisteria_tests.exe` **74/74 PASS，FAIL=0**；
+    - 手动验收：无（纯接口阶段）。
+  - **阶段 1：已完成（2026-08-04）**
+    - `SabaMmdImporter`：PMX 解析（骨骼/物理/morph/材质/网格/纹理）已实现；
+      纹理路径使用 UTF-8 安全转换（MSVC ACP 坑已处理）。
+    - 新增 `TestSabaMmdImporterWhenAvailable`：叶瞬光 Saba vs Assimp 对照。
+    - 对照结果：rigidBodies=495、joints=568、materials=24、morphs=57、
+      meshes=24 完全一致；骨骼 604 vs 605，差异为 Assimp 合成的根骨
+      "Ye Shunguang"（Saba 604 为 PMX 原始骨骼数）。
+    - 小资产 `pmx_physics.pmx`：3 刚体 / 6 关节通过。
+    - 自动验收：`wisteria_tests.exe` **75/75 PASS，FAIL=0**；
+    - 手动验收：数据层无窗口，等待阶段 2 接入渲染。

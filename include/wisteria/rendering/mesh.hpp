@@ -37,6 +37,15 @@ public:
     bool IsSkinned() const noexcept;
     std::size_t RequiredBoneCount() const noexcept;
     std::size_t VertexCount() const noexcept;
+
+    // CPU-skinning bridge (Saba BDEF/SDEF/QDEF): uploads skinned
+    // positions/normals every frame without rebuilding the whole VBO.
+    void UploadDynamicVertices(
+        std::span<const glm::vec3> positions,
+        std::span<const glm::vec3> normals
+    );
+    bool HasDynamicVertexSource() const noexcept;
+
     bool HasMorphTargets() const noexcept;
     std::size_t MorphTargetCount() const noexcept;
     bool CalculateMorphOffsets(

@@ -157,6 +157,7 @@ set(WISTERIA_ASSET_SOURCES
     src/assets/importer.cpp
     src/assets/manager.cpp
     src/assets/model_asset.cpp
+    src/assets/saba_mmd_importer.cpp
 )
 
 set(WISTERIA_PHYSICS_SOURCES
