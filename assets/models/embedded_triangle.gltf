@@ -1,0 +1,74 @@
+{
+  "asset": {"version": "2.0", "generator": "FGGP automated test"},
+  "scene": 0,
+  "scenes": [{"nodes": [0, 1]}],
+  "nodes": [
+    {"name": "first", "mesh": 0, "translation": [1.0, 2.0, 3.0]},
+    {"name": "second", "mesh": 0, "translation": [-1.0, 0.0, 0.0]}
+  ],
+  "meshes": [{
+    "name": "triangle",
+    "primitives": [{
+      "attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2},
+      "indices": 3,
+      "material": 0
+    }]
+  }],
+  "materials": [{
+    "name": "embeddedMaterial",
+    "pbrMetallicRoughness": {
+      "baseColorFactor": [0.25, 0.5, 0.75, 0.8],
+      "baseColorTexture": {"index": 0},
+      "metallicFactor": 0.6,
+      "roughnessFactor": 0.4,
+      "metallicRoughnessTexture": {"index": 2}
+    },
+    "normalTexture": {"index": 1, "scale": 0.75},
+    "occlusionTexture": {"index": 2, "strength": 0.8},
+    "emissiveTexture": {"index": 3},
+    "emissiveFactor": [0.1, 0.2, 0.3],
+    "alphaMode": "BLEND",
+    "alphaCutoff": 0.35,
+    "doubleSided": true
+  }],
+  "textures": [
+    {"source": 0},
+    {"source": 1},
+    {"source": 2},
+    {"source": 3}
+  ],
+  "images": [
+    {
+      "name": "embeddedWhite",
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg=="
+    },
+    {
+      "name": "embeddedFlatNormal",
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNoaPj/HwAGggL/s75RMwAAAABJRU5ErkJggg=="
+    },
+    {
+      "name": "embeddedOrm",
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGM4kzbzPwAGmALLgSxiaAAAAABJRU5ErkJggg=="
+    },
+    {
+      "name": "embeddedEmissive",
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNwUBD4DwAChAFwWa/WswAAAABJRU5ErkJggg=="
+    }
+  ],
+  "buffers": [{
+    "byteLength": 102,
+    "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAABAAIA"
+  }],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 36, "target": 34962},
+    {"buffer": 0, "byteOffset": 72, "byteLength": 24, "target": 34962},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6, "target": 34963}
+  ],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+    {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ]
+}

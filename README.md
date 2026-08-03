@@ -2,6 +2,25 @@
 
 WISTERIA 是一个以 OpenGL、Assimp、GLM 和 Bullet 构建的 C++20 实时渲染实验引擎。当前主线先完成一条可靠的 MMD 纵向链路：PMX 导入、VMD/程序动画、Morph、IK、刚体物理、物理后骨骼与最终渲染。
 
+## 工程结构与物理策略边界
+
+源码已按领域模块整理到 `include/wisteria/<module>` 与 `src/<module>`。物理层分为：
+
+```text
+physics/                 格式无关 Bullet 后端
+mmd/physics/             PMX/MMD 运行时适配
+MmdPhysicsRuntimePolicy  可注入的 WISTERIA 自适应策略
+```
+
+详细审计与后续社区兼容路线：
+
+- `docs/architecture/PHYSICS_LAYER_AUDIT.md`
+- `docs/architecture/PROJECT_LAYOUT.md`
+- `docs/architecture/MMD_PHYSICS_COMMUNITY_ADOPTION_PLAN.md`
+- `docs/architecture/REFACTOR_MIGRATION.md`
+
+本轮只重构边界，不改变默认人物物理行为。默认策略仍为 `wisteria-adaptive-v1`；社区兼容 preset 将在轨迹对照和单位审计完成后单独实现。
+
 ## 运行
 
 Windows PowerShell：
@@ -75,6 +94,28 @@ MmdPhysicsInstance
 ```
 
 `Entity` 不再以 `MmdPhysicsInstance` 作为唯一物理所有权类型。它持有通用 `PhysicsInstance`，Scene 只调用通用生命周期；MMD 专用访问器暂时保留给刚体索引和调试工具。未来 glTF 角色、车辆或其他模型格式可以提供自己的 PhysicsInstance，而不需要修改 Scene 的模拟循环。
+
+### MMD 运行时策略注入
+
+默认创建方式保持不变：
+
+```cpp
+entity.SetMmdPhysics(world, physicsAsset);
+```
+
+也可以显式注入实验策略：
+
+```cpp
+MmdPhysicsRuntimePolicy policy =
+    MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults();
+policy.recovery.enabled = false;
+policy.ccd.adaptive = false;
+policy.enableChainProfiles = false;
+
+entity.SetMmdPhysics(world, physicsAsset, policy);
+```
+
+当前接口先提供代码级配置边界。外部 JSON/TOML model profile 会在 `MMD_COMPAT` 字段和社区差异矩阵稳定后加入，以免过早固化错误配置格式。
 
 ## MMD 刚体模式与调试观察
 

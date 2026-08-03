@@ -1,20 +1,20 @@
-#include "animation.hpp"
-#include "animator.hpp"
-#include "behaviour.hpp"
-#include "demo_scene.hpp"
-#include "Models/cube.hpp"
-#include "entity.hpp"
-#include "importer.hpp"
-#include "input.hpp"
-#include "manager.hpp"
-#include "model_asset.hpp"
-#include "mmd_physics_instance.hpp"
-#include "pose.hpp"
-#include "physics_instance.hpp"
-#include "physics_world.hpp"
-#include "renderer.hpp"
-#include "scene.hpp"
-#include "vmd_importer.hpp"
+#include "wisteria/animation/animation.hpp"
+#include "wisteria/animation/animator.hpp"
+#include "wisteria/scene/behaviour.hpp"
+#include "wisteria/scene/demo_scene.hpp"
+#include "wisteria/rendering/primitives/cube.hpp"
+#include "wisteria/scene/entity.hpp"
+#include "wisteria/assets/importer.hpp"
+#include "wisteria/platform/input.hpp"
+#include "wisteria/assets/manager.hpp"
+#include "wisteria/assets/model_asset.hpp"
+#include "wisteria/mmd/physics/mmd_physics_instance.hpp"
+#include "wisteria/animation/pose.hpp"
+#include "wisteria/physics/physics_instance.hpp"
+#include "wisteria/physics/physics_world.hpp"
+#include "wisteria/rendering/renderer.hpp"
+#include "wisteria/scene/scene.hpp"
+#include "wisteria/mmd/vmd_importer.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <array>
@@ -4631,6 +4631,36 @@ std::unique_ptr<ModelAsset> CreatePhysicsWithBoneFidelityModel()
     return model;
 }
 
+void TestMmdPhysicsRuntimePolicyInjection()
+{
+    MmdPhysicsRuntimePolicy policy =
+        MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults();
+    policy.name = "test-profile";
+    policy.recovery.enabled = false;
+    policy.ccd.adaptive = false;
+    policy.enableChainProfiles = false;
+    policy.skirt.gravityScale = 0.42f;
+
+    std::unique_ptr<ModelAsset> model = CreatePhysicsWithBoneFidelityModel();
+    PhysicsWorld world;
+    Entity entity;
+    entity.SetSkeleton(model->GetSkeleton());
+    entity.SetMmdPhysics(world, model->GetMmdPhysics(), policy);
+
+    const MmdPhysicsRuntimePolicy& applied =
+        entity.GetMmdPhysics().RuntimePolicy();
+    Require(applied.name == "test-profile",
+        "MMD runtime policy name was not preserved");
+    Require(!applied.recovery.enabled && !applied.ccd.adaptive &&
+            !applied.enableChainProfiles,
+        "MMD runtime feature switches were not injected");
+    Require(NearlyEqual(
+            applied.ChainTuning(MmdPhysicsChainKind::Skirt).gravityScale,
+            0.42f
+        ),
+        "MMD chain tuning was not injected");
+}
+
 void TestMmdPhysicsFidelityModesAndDebugLayers()
 {
     std::unique_ptr<ModelAsset> model = CreatePhysicsWithBoneFidelityModel();
@@ -6713,6 +6743,10 @@ int main()
     failures += !RunTest(
         "MMD Physics 2B modes and Pose sync",
         TestMmdPhysics2BModesAndPoseSync
+    );
+    failures += !RunTest(
+        "MMD runtime policy injection",
+        TestMmdPhysicsRuntimePolicyInjection
     );
     failures += !RunTest(
         "MMD P1.2 Mode 2 fidelity strategies",

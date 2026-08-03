@@ -103,55 +103,90 @@ if(MSVC)
     endforeach()
 endif()
 
-# reusable project code
-set(WISTERIA_CORE_SOURCES
-    src/stb_image.cpp
-    src/application.cpp
-    src/demo_scene.cpp
-    src/window.cpp
-    src/window_manager.cpp
-    src/shader.cpp
-    src/vbo.cpp
-    src/vao.cpp
-    src/ebo.cpp
-    src/texture.cpp
-    src/camera.cpp
-    src/input.cpp
-    src/timer.cpp
-    src/model.cpp
-    src/transform.cpp
-    src/root_motion.cpp
-    src/behaviour.cpp
-    src/render_part.cpp
-    src/model_asset.cpp
-    src/mmd_physics_asset.cpp
-    src/mmd_physics_instance.cpp
-    src/physics_types.cpp
-    src/physics_bullet_conversion.cpp
-    src/physics_world.cpp
-    src/morph.cpp
-    src/skeleton.cpp
-    src/pose.cpp
-    src/pose_buffer.cpp
-    src/mmd_pose_solver.cpp
-    src/animation.cpp
-    src/animation_state_machine.cpp
-    src/animator.cpp
-    src/vmd_importer.cpp
-    src/importer.cpp
-    src/entity.cpp
-    src/scene.cpp
-    src/renderer.cpp
-    src/framebuffer.cpp
-    src/environment.cpp
-    src/manager.cpp
-    src/light.cpp
-    src/Models/cube.cpp
-    src/mesh.cpp
-    src/material.cpp
+# reusable project code, grouped by architecture module
+set(WISTERIA_COMMON_SOURCES
+    src/common/stb_image.cpp
 )
 
-add_library(wisteria_core STATIC ${WISTERIA_CORE_SOURCES})
+set(WISTERIA_CORE_SOURCES
+    src/core/timer.cpp
+    src/core/transform.cpp
+    src/core/root_motion.cpp
+)
+
+set(WISTERIA_PLATFORM_SOURCES
+    src/platform/application.cpp
+    src/platform/input.cpp
+    src/platform/window.cpp
+    src/platform/window_manager.cpp
+)
+
+set(WISTERIA_RENDERING_SOURCES
+    src/rendering/camera.cpp
+    src/rendering/ebo.cpp
+    src/rendering/environment.cpp
+    src/rendering/framebuffer.cpp
+    src/rendering/light.cpp
+    src/rendering/material.cpp
+    src/rendering/mesh.cpp
+    src/rendering/model.cpp
+    src/rendering/primitives/cube.cpp
+    src/rendering/render_part.cpp
+    src/rendering/renderer.cpp
+    src/rendering/shader.cpp
+    src/rendering/texture.cpp
+    src/rendering/vao.cpp
+    src/rendering/vbo.cpp
+)
+
+set(WISTERIA_ANIMATION_SOURCES
+    src/animation/animation.cpp
+    src/animation/animation_state_machine.cpp
+    src/animation/animator.cpp
+    src/animation/morph.cpp
+    src/animation/pose.cpp
+    src/animation/pose_buffer.cpp
+    src/animation/skeleton.cpp
+)
+
+set(WISTERIA_ASSET_SOURCES
+    src/assets/importer.cpp
+    src/assets/manager.cpp
+    src/assets/model_asset.cpp
+)
+
+set(WISTERIA_PHYSICS_SOURCES
+    src/physics/physics_bullet_conversion.cpp
+    src/physics/physics_types.cpp
+    src/physics/physics_world.cpp
+)
+
+set(WISTERIA_MMD_SOURCES
+    src/mmd/mmd_pose_solver.cpp
+    src/mmd/vmd_importer.cpp
+    src/mmd/physics/mmd_physics_asset.cpp
+    src/mmd/physics/mmd_physics_instance.cpp
+    src/mmd/physics/mmd_physics_policy.cpp
+)
+
+set(WISTERIA_SCENE_SOURCES
+    src/scene/behaviour.cpp
+    src/scene/demo_scene.cpp
+    src/scene/entity.cpp
+    src/scene/scene.cpp
+)
+
+add_library(wisteria_core STATIC
+    ${WISTERIA_COMMON_SOURCES}
+    ${WISTERIA_CORE_SOURCES}
+    ${WISTERIA_PLATFORM_SOURCES}
+    ${WISTERIA_RENDERING_SOURCES}
+    ${WISTERIA_ANIMATION_SOURCES}
+    ${WISTERIA_ASSET_SOURCES}
+    ${WISTERIA_PHYSICS_SOURCES}
+    ${WISTERIA_MMD_SOURCES}
+    ${WISTERIA_SCENE_SOURCES}
+)
 
 target_include_directories(wisteria_core
     PUBLIC
@@ -171,7 +206,7 @@ if(MSVC)
 endif()
 
 target_precompile_headers(wisteria_core PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/pch.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/wisteria/common/pch.hpp
 )
 
 target_compile_definitions(wisteria_core PUBLIC

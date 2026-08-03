@@ -1,7 +1,7 @@
-#include "pch.hpp"
-#include "application.hpp"
-#include "demo_scene.hpp"
-#include "window.hpp"
+#include "wisteria/common/pch.hpp"
+#include "wisteria/platform/application.hpp"
+#include "wisteria/scene/demo_scene.hpp"
+#include "wisteria/platform/window.hpp"
 
 #include <iostream>
 #include <string_view>
