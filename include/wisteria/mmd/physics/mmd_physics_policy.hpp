@@ -74,6 +74,24 @@ struct MmdPhysicsChainTuning
     float minimumAngularDamping = 0.0f;
 };
 
+// Bullet 2.75 compatibility knobs verified against babylon-mmd's
+// disableOffsetForConstraintFrame path and the shared MMD community settings.
+struct MmdPhysicsBullet275Compatibility
+{
+    // Use btGeneric6DofSpringConstraint instead of
+    // btGeneric6DofSpring2Constraint for MMD spring joints.
+    bool legacySpringConstraint = false;
+    // Bullet 2.76+ defaults the constraint-frame offset to true; MMD's Bullet
+    // 2.75 had no offset. babylon-mmd disables it to restore 2.75 behavior.
+    bool disableOffsetForConstraintFrame = false;
+    float constraintStopErp = 0.475f;
+    // Community MMD runtimes keep every dynamic body awake.
+    bool disableDynamicDeactivation = false;
+    // three.js/Saba/babylon-mmd do not disable collisions between bodies
+    // linked by a joint (addConstraint(..., false)).
+    bool disableLinkedBodyCollisions = true;
+};
+
 struct MmdPhysicsRuntimePolicy
 {
     std::string name = "wisteria-adaptive-v1";
@@ -81,6 +99,7 @@ struct MmdPhysicsRuntimePolicy
     MmdPhysicsRecoveryPolicy recovery{};
     MmdPhysicsCollisionPolicy collision{};
     MmdPhysicsCcdPolicy ccd{};
+    MmdPhysicsBullet275Compatibility bullet275{};
     bool enableChainProfiles = true;
 
     MmdPhysicsChainTuning general{};
@@ -99,4 +118,5 @@ struct MmdPhysicsRuntimePolicy
     ) const noexcept;
 
     static MmdPhysicsRuntimePolicy WisteriaAdaptiveDefaults();
+    static MmdPhysicsRuntimePolicy MmdCompatDefaults();
 };

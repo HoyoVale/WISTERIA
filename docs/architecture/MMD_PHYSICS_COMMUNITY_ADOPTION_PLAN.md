@@ -282,3 +282,21 @@ WISTERIA adaptive 与模型 override
 7. 形成第一份 babylon-mmd / libmmd / Saba 差异矩阵。
 
 在差异矩阵完成前，不再新增裙摆名称规则或全局调参。
+
+## P0 实验状态（2026-08-03 更新）
+
+差异矩阵已核实（three.js / Saba / babylon-mmd / MikuMikuPhysics），结论写入：
+
+- [P0 Bullet 2.75 约束兼容实验](./MMD_PHYSICS_P0_BULLET275_COMPAT.md)
+
+当前 P0 第一轮已完成（2026-08-03）：
+
+- vendor Bullet 3.25 打 2.75 兼容补丁；
+- `PhysicsWorld` 增加 legacy `btGeneric6DofSpringConstraint` 路径；
+- `MmdPhysicsRuntimePolicy` 增加 `MmdCompatDefaults()`；
+- 叶瞬光 720 帧 A/B 回归。
+
+第一轮结果：legacy 约束在 adaptive 下降低线性违规（0.916 → 0.723）和严重关节数
+（4 → 2），raw 下降低角向违规（45.2° → 26.0°）；linked-body 碰撞开启则显著变差，
+已从 `MmdCompatDefaults()` 中排除，留待 P1。完整数据见
+[P0 Bullet 2.75 约束兼容实验](./MMD_PHYSICS_P0_BULLET275_COMPAT.md)。

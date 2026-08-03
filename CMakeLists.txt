@@ -103,6 +103,10 @@ if(MSVC)
     endforeach()
 endif()
 
+# Saba (MIT) vendored MMD runtime. Reference implementation for the MMD
+# adapter rewrite; only the core Base + MMD library is built.
+include(third-party/saba/WISTERIA.cmake)
+
 # reusable project code, grouped by architecture module
 set(WISTERIA_COMMON_SOURCES
     src/common/stb_image.cpp
@@ -219,6 +223,7 @@ target_link_libraries(wisteria_core PUBLIC
     glad
     glm_headers
     assimp
+    saba
     BulletDynamics
     BulletCollision
     LinearMath

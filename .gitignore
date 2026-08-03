@@ -1,6 +1,87 @@
-build
-.vscode
+# ============================================================
+# WISTERIA .gitignore
+#
+# 规则说明：
+#   - 每行一个模式；以 # 开头的是注释。
+#   - 目录以 / 结尾（如 build/）。
+#   - 路径开头的 / 表示“仓库根目录下”（如 /build/ 只匹配根目录 build）。
+#   - * 匹配任意字符，! 表示“不忽略”（取反）。
+#   - 已经被 git 跟踪的文件不受 .gitignore 影响，需要 git rm 才移除。
+# ============================================================
+
+# ---------- 构建产物（CMake / MSVC） ----------
+/build/
+/x64/
+/.vs/
+/out/
+cmake-build-*/
+
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.ncb
+*.sdf
+*.opensdf
+
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.pch
+*.ipch
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Python（构建/转换脚本） ----------
 __pycache__/
 *.py[cod]
-models-copy
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ---------- 运行输出 / 日志 ----------
+traces/
+*.log
+test_output.txt
+
+# ---------- 本地大文件 ----------
+assets/models/
+models-copy/
 WISTERIA.zip
+
+# ------------------------------------------------------------
+# 注意：third-party/saba/.git 是克隆 Saba 时留下的嵌套仓库。
+# .gitignore 无法忽略嵌套的 .git 目录；提交 Saba 之前请先在
+# 文件资源管理器中删除 third-party/saba/.git，否则 git 会把它
+# 当作“嵌入仓库”而不是普通文件（见 third-party/saba/README_WISTERIA.md）。
+#
+# 如果只希望提交 Saba 的核心部分（src/、external/glm、external/spdlog、
+# LICENCE、README_WISTERIA.md、WISTERIA.cmake），可以取消下面注释并按需调整：
+# /third-party/saba/*
+# !/third-party/saba/src/
+# !/third-party/saba/external/glm/
+# !/third-party/saba/external/spdlog/
+# !/third-party/saba/LICENCE
+# !/third-party/saba/README_WISTERIA.md
+# !/third-party/saba/WISTERIA.cmake
+# ------------------------------------------------------------

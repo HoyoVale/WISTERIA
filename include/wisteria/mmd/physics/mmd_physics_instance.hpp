@@ -69,6 +69,17 @@ public:
     const MmdPhysicsRecoveryStatistics& RecoveryStatistics() const noexcept;
     const MmdPhysicsRuntimePolicy& RuntimePolicy() const noexcept;
 
+    struct MmdRuntimeJointDiagnostics
+    {
+        float maximumPositionSeparation = 0.0f;
+        float maximumRotationErrorDegrees = 0.0f;
+        float maximumLinearLimitViolation = 0.0f;
+        float maximumAngularLimitViolationDegrees = 0.0f;
+        std::size_t jointsOverFailureThreshold = 0U;
+        bool finite = true;
+    };
+    MmdRuntimeJointDiagnostics RuntimeJointDiagnostics() const;
+
     void SetFidelityDebugLayer(
         MmdPhysicsFidelityDebugLayer layer
     ) noexcept;

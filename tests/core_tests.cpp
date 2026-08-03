@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace
 {
@@ -6280,6 +6281,203 @@ void TestDemoPmxVmdInitializationStabilizationWhenAvailable()
     entity.GetMmdPhysics().LogAlignmentReport(8U);
 }
 
+void TestP0Bullet275CompatibilityLongRunWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
+        u8"身体动作.vmd";
+    if (!std::filesystem::is_regular_file(motionPath))
+    {
+        motionPath = ProjectAssetDirectory / "motions" /
+            "#U76ae#U5361#U76ae#U5361#U76ae#U5361#U4e18+" /
+            "#U8eab#U4f53#U52a8#U4f5c.vmd";
+    }
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    ImportedModelData imported;
+    try
+    {
+        imported = ModelImporter().Import(modelPath);
+    }
+    catch (const std::runtime_error& error)
+    {
+        if (std::string(error.what()).find("texture was not found") !=
+            std::string::npos)
+        {
+            return;
+        }
+        throw;
+    }
+    Require(
+        imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
+        "P0 A/B source lost skeleton or physics"
+    );
+
+    ModelAsset model("p0Bullet275Compatibility");
+    model.SetSkeleton(std::move(*imported.skeleton));
+    if (!imported.morphs.empty())
+        model.SetMorphs(std::move(imported.morphs));
+    model.SetMmdPhysics(std::move(*imported.mmdPhysics));
+    const MorphSet* morphs = model.HasMorphs() ? &model.GetMorphSet() : nullptr;
+    ImportedVmdAnimationData motion = VmdImporter().Import(
+        motionPath,
+        model.GetSkeleton(),
+        VmdImportOptions{.clipName = "p0Motion"},
+        morphs
+    );
+    model.AddAnimationClip(std::move(motion.clip));
+
+    struct ArmResult
+    {
+        std::string name;
+        MmdPhysicsInstance::MmdRuntimeJointDiagnostics diagnostics{};
+        std::size_t recoveries = 0U;
+        float maximumMode2TranslationDelta = 0.0f;
+        bool finite = true;
+        bool stabilized = true;
+    };
+    std::vector<ArmResult> results;
+
+    const auto runArm = [&model, &results](
+        std::string name,
+        MmdPhysicsRuntimePolicy policy,
+        bool raw
+    )
+    {
+        if (raw)
+        {
+            policy.recovery.enabled = false;
+            policy.enableChainProfiles = false;
+            policy.collision.enableNearNeighborFiltering = false;
+            policy.collision.enableSkirtSemanticFiltering = false;
+            policy.ccd.adaptive = false;
+        }
+
+        Scene scene;
+        Entity& entity = scene.InstantiateModel(
+            model,
+            {},
+            ModelInstantiationOptions{.enablePhysics = false}
+        );
+        entity.SetMmdPhysics(scene.Physics(), model.GetMmdPhysics(), policy);
+        scene.Update(0.0f);
+
+        const MmdPhysicsInstance& physics = entity.GetMmdPhysics();
+        ArmResult result;
+        result.name = std::move(name);
+        result.stabilized =
+            physics.PendingStabilizationSteps() == 0U &&
+            !physics.StabilizationFailed();
+
+        const int longRunFrames =
+            std::getenv("WISTERIA_SANITIZER_SMOKE") != nullptr ? 60 : 720;
+        for (int frame = 0; frame < longRunFrames; ++frame)
+        {
+            scene.Update(1.0f / 60.0f);
+            for (RigidBodyIndex index = 0U;
+                 index < physics.RigidBodyCount();
+                 ++index)
+            {
+                const PhysicsBodyState state = physics.BodyStateAt(index);
+                if (!std::isfinite(state.position.x) ||
+                    !std::isfinite(state.position.y) ||
+                    !std::isfinite(state.position.z) ||
+                    !std::isfinite(state.rotation.w) ||
+                    !std::isfinite(state.rotation.x) ||
+                    !std::isfinite(state.rotation.y) ||
+                    !std::isfinite(state.rotation.z))
+                {
+                    result.finite = false;
+                    break;
+                }
+            }
+            if (physics.StabilizationFailed())
+                result.stabilized = false;
+        }
+
+        result.diagnostics = physics.RuntimeJointDiagnostics();
+        result.recoveries = physics.RecoveryStatistics().totalRecoveries;
+        result.maximumMode2TranslationDelta =
+            physics.FidelityStatistics().maximumMode2TranslationDelta;
+        results.push_back(result);
+
+        std::cout << "[P0 A/B] " << result.name
+                  << " linearViol="
+                  << result.diagnostics.maximumLinearLimitViolation
+                  << " angularViolDeg="
+                  << result.diagnostics.maximumAngularLimitViolationDegrees
+                  << " severe="
+                  << result.diagnostics.jointsOverFailureThreshold
+                  << " maxJointPos="
+                  << result.diagnostics.maximumPositionSeparation
+                  << " recoveries=" << result.recoveries
+                  << " mode2Delta=" << result.maximumMode2TranslationDelta
+                  << " finite=" << (result.finite ? "true" : "false")
+                  << " stabilized="
+                  << (result.stabilized ? "true" : "false")
+                  << std::endl;
+    };
+
+    runArm(
+        "adaptive-default",
+        MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults(),
+        false
+    );
+    runArm(
+        "compat-bullet275",
+        MmdPhysicsRuntimePolicy::MmdCompatDefaults(),
+        false
+    );
+    runArm(
+        "raw-adaptive-default",
+        MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults(),
+        true
+    );
+    runArm(
+        "raw-compat-bullet275",
+        MmdPhysicsRuntimePolicy::MmdCompatDefaults(),
+        true
+    );
+
+    MmdPhysicsRuntimePolicy legacyOnly = MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults();
+    legacyOnly.bullet275.legacySpringConstraint = true;
+    legacyOnly.bullet275.disableOffsetForConstraintFrame = true;
+    runArm("iso-legacy-constraint", legacyOnly, false);
+
+    MmdPhysicsRuntimePolicy deactivationOnly =
+        MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults();
+    deactivationOnly.bullet275.disableDynamicDeactivation = true;
+    runArm("iso-deactivation", deactivationOnly, false);
+
+    MmdPhysicsRuntimePolicy linkedCollisionOnly =
+        MmdPhysicsRuntimePolicy::WisteriaAdaptiveDefaults();
+    linkedCollisionOnly.bullet275.disableLinkedBodyCollisions = false;
+    runArm("iso-linked-collision", linkedCollisionOnly, false);
+
+    Require(results.size() == 7U, "P0 Bullet 2.75 A/B did not run all arms");
+    for (const ArmResult& result : results)
+    {
+        Require(
+            result.finite && result.stabilized,
+            "P0 Bullet 2.75 A/B arm became non-finite or entered safe freeze: " +
+                result.name
+        );
+    }
+}
+
 
 void TestBulletAdditionalConstraintsAndDebugDraw()
 {
@@ -6803,6 +7001,10 @@ int main()
     failures += !RunTest(
         "Demo PMX/VMD initialization and long-run diagnostics",
         TestDemoPmxVmdInitializationStabilizationWhenAvailable
+    );
+    failures += !RunTest(
+        "P0 Bullet 2.75 compatibility A/B long-run",
+        TestP0Bullet275CompatibilityLongRunWhenAvailable
     );
     failures += !RunTest("Skeleton and Pose", TestSkeletonAndPose);
     failures += !RunTest("Skeleton validation", TestSkeletonValidation);

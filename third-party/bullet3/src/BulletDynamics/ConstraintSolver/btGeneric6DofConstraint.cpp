@@ -743,7 +743,7 @@ int btGeneric6DofConstraint::get_limit_motor_info2(
 			else
 			{
 				btVector3 ltd;  // Linear Torque Decoupling vector
-				btVector3 c = m_calculatedTransformB.getOrigin() - transA.getOrigin();
+				btVector3 c = m_calculatedTransformA.getOrigin() - transA.getOrigin();
 				ltd = c.cross(ax1);
 				info->m_J1angularAxis[srow + 0] = ltd[0];
 				info->m_J1angularAxis[srow + 1] = ltd[1];

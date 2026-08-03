@@ -961,6 +961,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             PhysicsBodyDesc description;
             description.shape = MakeShape(definition, entity.scale);
             description.motionType = MakeMotionType(definition.mode);
+            description.disableDeactivation =
+                this->runtimePolicy.bullet275.disableDynamicDeactivation;
             description.position = initial.position;
             description.rotation = initial.rotation;
             description.mass = definition.mass;
@@ -1101,6 +1103,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
             }
 
             PhysicsConstraintHandle handle{};
+            const bool disableLinkedCollisions =
+                this->runtimePolicy.bullet275.disableLinkedBodyCollisions;
             switch (joint.type)
             {
             case MmdJointType::Spring6Dof:
@@ -1116,6 +1120,14 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 description.angularUpper = joint.angularUpper;
                 description.linearStiffness = joint.linearSpring;
                 description.angularStiffness = joint.angularSpring;
+                description.useLegacySpringConstraint =
+                    this->runtimePolicy.bullet275.legacySpringConstraint;
+                description.disableOffsetForConstraintFrame =
+                    this->runtimePolicy.bullet275.disableOffsetForConstraintFrame;
+                description.constraintStopErp =
+                    this->runtimePolicy.bullet275.constraintStopErp;
+                description.disableCollisionsBetweenLinkedBodies =
+                    disableLinkedCollisions;
                 handle = world.CreateSpring6DofConstraint(description);
                 break;
             }
@@ -1130,6 +1142,12 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 description.linearUpper = joint.linearUpper * entity.scale;
                 description.angularLower = joint.angularLower;
                 description.angularUpper = joint.angularUpper;
+                description.bullet275Mode =
+                    this->runtimePolicy.bullet275.disableOffsetForConstraintFrame;
+                description.constraintStopErp =
+                    this->runtimePolicy.bullet275.constraintStopErp;
+                description.disableCollisionsBetweenLinkedBodies =
+                    disableLinkedCollisions;
                 handle = world.CreateSixDofConstraint(description);
                 break;
             }
@@ -1140,6 +1158,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 description.bodyB = bodyB;
                 description.pivotA = frameA.position;
                 description.pivotB = frameB.position;
+                description.disableCollisionsBetweenLinkedBodies =
+                    disableLinkedCollisions;
                 handle = world.CreatePointToPointConstraint(description);
                 break;
             }
@@ -1166,6 +1186,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                     joint.angularLower.z,
                     joint.angularUpper.z
                 );
+                description.disableCollisionsBetweenLinkedBodies =
+                    disableLinkedCollisions;
                 handle = world.CreateConeTwistConstraint(description);
                 break;
             }
@@ -1181,6 +1203,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 description.linearUpper = joint.linearUpper.x * entity.scale;
                 description.angularLower = joint.angularLower.x;
                 description.angularUpper = joint.angularUpper.x;
+                description.disableCollisionsBetweenLinkedBodies =
+                    disableLinkedCollisions;
                 handle = world.CreateSliderConstraint(description);
                 break;
             }
@@ -1194,6 +1218,8 @@ MmdPhysicsInstance::MmdPhysicsInstance(
                 // btHingeConstraint uses the frame's local Z axis.
                 description.lowerAngle = joint.angularLower.z;
                 description.upperAngle = joint.angularUpper.z;
+                description.disableCollisionsBetweenLinkedBodies =
+                    disableLinkedCollisions;
                 handle = world.CreateHingeConstraint(description);
                 break;
             }
@@ -4871,6 +4897,25 @@ MmdPhysicsInstance::CaptureJointSnapshot(
         }
     }
     return snapshot;
+}
+
+MmdPhysicsInstance::MmdRuntimeJointDiagnostics
+MmdPhysicsInstance::RuntimeJointDiagnostics() const
+{
+    const JointSnapshot snapshot = this->CaptureJointSnapshot("runtime");
+    MmdRuntimeJointDiagnostics diagnostics;
+    diagnostics.maximumPositionSeparation =
+        snapshot.maximumPositionSeparation;
+    diagnostics.maximumRotationErrorDegrees =
+        snapshot.maximumRotationErrorDegrees;
+    diagnostics.maximumLinearLimitViolation =
+        snapshot.maximumLinearLimitViolation;
+    diagnostics.maximumAngularLimitViolationDegrees =
+        snapshot.maximumAngularLimitViolationDegrees;
+    diagnostics.jointsOverFailureThreshold =
+        snapshot.jointsOverFailureThreshold;
+    diagnostics.finite = snapshot.finite;
+    return diagnostics;
 }
 
 void MmdPhysicsInstance::LogJointSnapshot(

@@ -2,6 +2,7 @@
 #include "wisteria/physics/physics_bullet_conversion.hpp"
 #include <BulletDynamics/ConstraintSolver/btConeTwistConstraint.h>
 #include <BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h>
+#include <BulletDynamics/ConstraintSolver/btGeneric6DofSpringConstraint.h>
 #include <BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.h>
 #include <BulletDynamics/ConstraintSolver/btHingeConstraint.h>
 #include <BulletDynamics/ConstraintSolver/btPoint2PointConstraint.h>
@@ -260,6 +261,14 @@ void ValidateSpring6Dof(const PhysicsSpring6DofDesc& constraint)
             );
         }
     }
+    if (!std::isfinite(constraint.constraintStopErp) ||
+        constraint.constraintStopErp < 0.0f ||
+        constraint.constraintStopErp > 1.0f)
+    {
+        throw std::invalid_argument(
+            "Physics constraint stop ERP must be in [0, 1]"
+        );
+    }
 }
 
 void ValidateConstraintBodies(
@@ -287,6 +296,14 @@ void ValidateSixDof(const PhysicsSixDofDesc& constraint)
         !IsValidLimitPair(constraint.angularLower, constraint.angularUpper))
     {
         throw std::invalid_argument("6DOF constraint limits are invalid");
+    }
+    if (!std::isfinite(constraint.constraintStopErp) ||
+        constraint.constraintStopErp < 0.0f ||
+        constraint.constraintStopErp > 1.0f)
+    {
+        throw std::invalid_argument(
+            "Physics constraint stop ERP must be in [0, 1]"
+        );
     }
 }
 
@@ -1055,73 +1072,149 @@ PhysicsConstraintHandle PhysicsWorld::CreateSpring6DofConstraint(
         description.frameB.rotation
     );
 
-    std::unique_ptr<btGeneric6DofSpring2Constraint> constraint;
-    if (bodyA != nullptr && bodyB != nullptr)
+    std::unique_ptr<btTypedConstraint> constraint;
+    if (description.useLegacySpringConstraint)
     {
-        constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
-            *bodyA->body,
-            *bodyB->body,
-            frameA,
-            frameB,
-            RO_XYZ
+        std::unique_ptr<btGeneric6DofSpringConstraint> legacy;
+        if (bodyA != nullptr && bodyB != nullptr)
+        {
+            legacy = std::make_unique<btGeneric6DofSpringConstraint>(
+                *bodyA->body,
+                *bodyB->body,
+                frameA,
+                frameB,
+                true
+            );
+        }
+        else if (bodyA != nullptr)
+        {
+            legacy = std::make_unique<btGeneric6DofSpringConstraint>(
+                *bodyA->body,
+                frameA,
+                true
+            );
+        }
+        else
+        {
+            legacy = std::make_unique<btGeneric6DofSpringConstraint>(
+                *bodyB->body,
+                frameB,
+                true
+            );
+        }
+
+        legacy->setUseFrameOffset(
+            !description.disableOffsetForConstraintFrame
         );
-    }
-    else if (bodyA != nullptr)
-    {
-        constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
-            *bodyA->body,
-            frameA,
-            RO_XYZ
+        for (int axis = 0; axis < 6; ++axis)
+        {
+            legacy->setParam(
+                BT_CONSTRAINT_STOP_ERP,
+                description.constraintStopErp,
+                axis
+            );
+        }
+        legacy->setLinearLowerLimit(
+            PhysicsBulletConversion::ToBullet(description.linearLower)
         );
+        legacy->setLinearUpperLimit(
+            PhysicsBulletConversion::ToBullet(description.linearUpper)
+        );
+        legacy->setAngularLowerLimit(
+            PhysicsBulletConversion::ToBullet(description.angularLower)
+        );
+        legacy->setAngularUpperLimit(
+            PhysicsBulletConversion::ToBullet(description.angularUpper)
+        );
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const float stiffness = description.linearStiffness[axis];
+            if (stiffness > 0.0f)
+            {
+                legacy->enableSpring(axis, true);
+                legacy->setStiffness(axis, stiffness);
+            }
+            const float angularStiffness = description.angularStiffness[axis];
+            if (angularStiffness > 0.0f)
+            {
+                const int angularAxis = axis + 3;
+                legacy->enableSpring(angularAxis, true);
+                legacy->setStiffness(angularAxis, angularStiffness);
+            }
+        }
+        constraint = std::move(legacy);
     }
     else
     {
-        constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
-            *bodyB->body,
-            frameB,
-            RO_XYZ
-        );
-    }
+        std::unique_ptr<btGeneric6DofSpring2Constraint> spring2;
+        if (bodyA != nullptr && bodyB != nullptr)
+        {
+            spring2 = std::make_unique<btGeneric6DofSpring2Constraint>(
+                *bodyA->body,
+                *bodyB->body,
+                frameA,
+                frameB,
+                RO_XYZ
+            );
+        }
+        else if (bodyA != nullptr)
+        {
+            spring2 = std::make_unique<btGeneric6DofSpring2Constraint>(
+                *bodyA->body,
+                frameA,
+                RO_XYZ
+            );
+        }
+        else
+        {
+            spring2 = std::make_unique<btGeneric6DofSpring2Constraint>(
+                *bodyB->body,
+                frameB,
+                RO_XYZ
+            );
+        }
 
-    constraint->setLinearLowerLimit(
-        PhysicsBulletConversion::ToBullet(description.linearLower)
-    );
-    constraint->setLinearUpperLimit(
-        PhysicsBulletConversion::ToBullet(description.linearUpper)
-    );
-    constraint->setAngularLowerLimit(
-        PhysicsBulletConversion::ToBullet(description.angularLower)
-    );
-    constraint->setAngularUpperLimit(
-        PhysicsBulletConversion::ToBullet(description.angularUpper)
-    );
-    for (int axis = 0; axis < 3; ++axis)
-    {
-        const float stiffness = description.linearStiffness[axis];
-        if (stiffness > 0.0f)
+        spring2->setLinearLowerLimit(
+            PhysicsBulletConversion::ToBullet(description.linearLower)
+        );
+        spring2->setLinearUpperLimit(
+            PhysicsBulletConversion::ToBullet(description.linearUpper)
+        );
+        spring2->setAngularLowerLimit(
+            PhysicsBulletConversion::ToBullet(description.angularLower)
+        );
+        spring2->setAngularUpperLimit(
+            PhysicsBulletConversion::ToBullet(description.angularUpper)
+        );
+        for (int axis = 0; axis < 3; ++axis)
         {
-            constraint->enableSpring(axis, true);
-            constraint->setStiffness(axis, stiffness, true);
-            constraint->setDamping(
-                axis,
-                description.linearDamping[axis],
-                true
-            );
+            const float stiffness = description.linearStiffness[axis];
+            if (stiffness > 0.0f)
+            {
+                spring2->enableSpring(axis, true);
+                spring2->setStiffness(axis, stiffness, true);
+                spring2->setDamping(
+                    axis,
+                    description.linearDamping[axis],
+                    true
+                );
+            }
+            const float angularStiffness = description.angularStiffness[axis];
+            if (angularStiffness > 0.0f)
+            {
+                const int angularAxis = axis + 3;
+                spring2->enableSpring(angularAxis, true);
+                spring2->setStiffness(angularAxis, angularStiffness, true);
+                spring2->setDamping(
+                    angularAxis,
+                    description.angularDamping[axis],
+                    true
+                );
+            }
         }
-        const float angularStiffness = description.angularStiffness[axis];
-        if (angularStiffness > 0.0f)
-        {
-            const int angularAxis = axis + 3;
-            constraint->enableSpring(angularAxis, true);
-            constraint->setStiffness(angularAxis, angularStiffness, true);
-            constraint->setDamping(
-                angularAxis,
-                description.angularDamping[axis],
-                true
-            );
-        }
+        spring2->setEquilibriumPoint();
+        constraint = std::move(spring2);
     }
-    constraint->setEquilibriumPoint();
 
     return impl->StoreConstraint(
         std::move(constraint),
@@ -1180,6 +1273,18 @@ PhysicsConstraintHandle PhysicsWorld::CreateSixDofConstraint(
     constraint->setAngularUpperLimit(
         PhysicsBulletConversion::ToBullet(description.angularUpper)
     );
+    if (description.bullet275Mode)
+    {
+        constraint->setUseFrameOffset(false);
+        for (int axis = 0; axis < 6; ++axis)
+        {
+            constraint->setParam(
+                BT_CONSTRAINT_STOP_ERP,
+                description.constraintStopErp,
+                axis
+            );
+        }
+    }
     return impl->StoreConstraint(
         std::move(constraint), description.bodyA, description.bodyB,
         description.disableCollisionsBetweenLinkedBodies

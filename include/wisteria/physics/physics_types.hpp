@@ -89,6 +89,15 @@ struct PhysicsSpring6DofDesc
     glm::vec3 angularStiffness{0.0f};
     glm::vec3 linearDamping{0.5f};
     glm::vec3 angularDamping{0.5f};
+
+    // Bullet 2.75-compatible legacy spring path. Community MMD runtimes
+    // (three.js, Saba, babylon-mmd, MikuMikuPhysics) all use
+    // btGeneric6DofSpringConstraint instead of btGeneric6DofSpring2Constraint.
+    bool useLegacySpringConstraint = false;
+    // babylon-mmd's disableOffsetForConstraintFrame: Bullet 2.76+ defaults the
+    // constraint-frame offset to true, while MMD's Bullet 2.75 had no offset.
+    bool disableOffsetForConstraintFrame = false;
+    float constraintStopErp = 0.475f;
     bool disableCollisionsBetweenLinkedBodies = true;
 };
 
@@ -102,6 +111,10 @@ struct PhysicsSixDofDesc
     glm::vec3 linearUpper{0.0f};
     glm::vec3 angularLower{0.0f};
     glm::vec3 angularUpper{0.0f};
+    // Bullet 2.75 compatibility for the classic 6DOF path: disable the
+    // 2.76+ constraint-frame offset and pin the stop ERP like babylon-mmd.
+    bool bullet275Mode = false;
+    float constraintStopErp = 0.475f;
     bool disableCollisionsBetweenLinkedBodies = true;
 };
 
