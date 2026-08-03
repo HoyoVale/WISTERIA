@@ -360,6 +360,8 @@ void Renderer::DrawPart(
     Mesh& mesh = part.GetMesh();
     Material& material = part.GetMaterial();
     mesh.Attach();
+    if (mesh.DynamicVertexProvider())
+        mesh.DynamicVertexProvider()(mesh);
     VAO& vertexArray = this->VertexArrayFor(mesh);
     material.Attach();
     const MaterialMorphValues materialValues =
@@ -1192,7 +1194,20 @@ void Renderer::UploadSkinning(
     if (!shaderInterface.skinningSupported)
         return;
 
-    const bool enabled = mesh.IsSkinned() && pose != nullptr;
+    static int skinningLogCounter = 0;
+    if ((skinningLogCounter++ % 20000) == 0)
+    {
+        std::cout << "[SKINNING] dynamic="
+                  << (mesh.HasDynamicVertexSource() ? "1" : "0")
+                  << " skinned=" << (mesh.IsSkinned() ? "1" : "0")
+                  << " bones=" << mesh.RequiredBoneCount()
+                  << std::endl;
+    }
+
+    // Vertices uploaded by Saba are already CPU-skinned; the GPU skinning
+    // pass must be disabled or they would be transformed a second time.
+    const bool enabled = mesh.IsSkinned() && pose != nullptr &&
+        !mesh.HasDynamicVertexSource();
     program.Uniform1i(shaderInterface.skinningEnabled, enabled ? 1 : 0);
     if (!enabled)
         return;

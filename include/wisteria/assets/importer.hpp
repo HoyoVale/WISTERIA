@@ -57,6 +57,9 @@ struct ImportedMeshData
     std::optional<std::uint32_t> morphMaterialIndex;
     std::size_t requiredBoneCount = 0;
     std::vector<MeshMorphTarget> morphTargets;
+    // Global model-space vertex index for each local vertex of this sub-mesh.
+    // Empty when the sub-mesh already stores the full vertex array.
+    std::vector<std::uint32_t> sourceVertexIndices;
 };
 
 struct ImportedPartData

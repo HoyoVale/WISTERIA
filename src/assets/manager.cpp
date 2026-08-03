@@ -58,6 +58,14 @@ Texture& ResourceManager::CreateTexture(
     TextureData data
 )
 {
+    return *this->CreateTextureShared(name, std::move(data));
+}
+
+std::shared_ptr<Texture> ResourceManager::CreateTextureShared(
+    const std::string& name,
+    TextureData data
+)
+{
     if (this->textures.contains(name))
         throw std::invalid_argument("Texture resource already exists: " + name);
 
@@ -88,7 +96,6 @@ Texture& ResourceManager::CreateTexture(
         createdTexture = true;
     }
 
-    Texture& result = *texture;
     this->textures.emplace(name, texture);
 
     if (cacheKey.has_value() && createdTexture)
@@ -104,6 +111,24 @@ Texture& ResourceManager::CreateTexture(
         }
     }
 
+    return texture;
+}
+
+Material& ResourceManager::CreateMaterial(
+    const std::string& name,
+    const MaterialData& data,
+    MaterialTextureBindings bindings
+)
+{
+    if (this->materials.contains(name))
+        throw std::invalid_argument("Material resource already exists: " + name);
+
+    auto material = std::make_unique<Material>(
+        data,
+        std::move(bindings)
+    );
+    Material& result = *material;
+    this->materials.emplace(name, std::move(material));
     return result;
 }
 
@@ -116,6 +141,163 @@ ModelAsset& ResourceManager::CreateModel(const std::string& name)
     ModelAsset& result = *model;
     this->models.emplace(name, std::move(model));
     return result;
+}
+
+ModelAsset& ResourceManager::CreateModel(
+    const std::string& name,
+    ImportedModelData imported
+)
+{
+    if (name.empty())
+        throw std::invalid_argument("Model resource name must not be empty");
+    if (this->models.contains(name))
+        throw std::invalid_argument("Model resource already exists: " + name);
+
+    std::vector<std::shared_ptr<Texture>> textures;
+    textures.reserve(imported.textures.size());
+    for (std::size_t index = 0U; index < imported.textures.size(); ++index)
+    {
+        textures.push_back(this->CreateTextureShared(
+            name + "::texture::" + std::to_string(index),
+            std::move(imported.textures[index].source)
+        ));
+    }
+
+    std::vector<std::unique_ptr<Material>> materials;
+    materials.reserve(imported.materials.size());
+    for (std::size_t index = 0U; index < imported.materials.size(); ++index)
+    {
+        const ImportedMaterialData& source = imported.materials[index];
+        MaterialData data;
+        data.textureSources.clear();
+        data.baseColorFactor = source.baseColorFactor;
+        data.specularColor = source.specularColor;
+        data.shininess = source.shininess;
+        data.normalScale = source.normalScale;
+        data.shadingModel = source.shadingModel;
+        data.metallicFactor = source.metallicFactor;
+        data.roughnessFactor = source.roughnessFactor;
+        data.emissiveFactor = source.emissiveFactor;
+        data.occlusionStrength = source.occlusionStrength;
+        data.ambientColor = source.ambientColor;
+        data.sphereMapMode = source.sphereMapMode;
+        data.edgeColor = source.edgeColor;
+        data.edgeSize = source.edgeSize;
+        data.edgeEnabled = source.edgeEnabled;
+        data.alphaMode = source.alphaMode;
+        data.alphaCutoff = source.alphaCutoff;
+        data.doubleSided = source.doubleSided;
+        if (source.shadingModel == MaterialShadingModel::MmdToon)
+        {
+            const std::filesystem::path shaderDirectory =
+                std::filesystem::current_path() / "assets" / "shaders";
+            data.shaderFilePath.VertexPath =
+                (shaderDirectory / "mmd.vert").string();
+            data.shaderFilePath.FragmentPath =
+                (shaderDirectory / "mmd.frag").string();
+            data.shaderInterface.imageBasedLightingEnabled = false;
+        }
+
+        MaterialTextureBindings bindings;
+        const auto bindTexture = [&](std::size_t textureIndex,
+                                     const std::string& shaderName)
+        {
+            if (textureIndex < textures.size())
+                bindings.emplace(shaderName, textures[textureIndex]);
+        };
+        if (source.baseColorTexture.has_value())
+            bindTexture(
+                *source.baseColorTexture,
+                data.shaderInterface.baseColorTexture
+            );
+        if (source.sphereTexture.has_value())
+            bindTexture(
+                *source.sphereTexture,
+                data.shaderInterface.sphereTexture
+            );
+        if (source.toonTexture.has_value())
+            bindTexture(
+                *source.toonTexture,
+                data.shaderInterface.toonTexture
+            );
+        materials.push_back(std::make_unique<Material>(
+            data,
+            std::move(bindings)
+        ));
+    }
+
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.reserve(imported.meshes.size());
+    for (std::size_t index = 0U; index < imported.meshes.size(); ++index)
+    {
+        meshes.push_back(std::make_unique<Mesh>(
+            std::move(imported.meshes[index].data),
+            imported.meshes[index].requiredBoneCount,
+            std::move(imported.meshes[index].morphTargets),
+            std::move(imported.meshes[index].sourceVertexIndices)
+        ));
+    }
+
+    auto model = std::make_unique<ModelAsset>(name);
+    if (imported.skeleton.has_value())
+        model->SetSkeleton(std::move(*imported.skeleton));
+    if (imported.mmdPhysics.has_value())
+        model->SetMmdPhysics(std::move(*imported.mmdPhysics));
+    if (!imported.morphs.empty())
+        model->SetMorphs(std::move(imported.morphs));
+    for (AnimationClip& clip : imported.animations)
+        model->AddAnimationClip(std::move(clip));
+    for (const ImportedPartData& part : imported.parts)
+    {
+        const std::size_t materialIndex =
+            imported.meshes[part.meshIndex].materialIndex;
+        model->AddPart(
+            *meshes[part.meshIndex],
+            *materials[materialIndex],
+            part.localTransform,
+            imported.meshes[part.meshIndex].morphMaterialIndex
+        );
+    }
+
+    this->materials.reserve(this->materials.size() + imported.materials.size());
+    this->meshes.reserve(this->meshes.size() + imported.meshes.size());
+    this->models.reserve(this->models.size() + 1);
+
+    std::size_t materialCommitCount = 0U;
+    std::size_t meshCommitCount = 0U;
+    try
+    {
+        for (std::size_t index = 0U; index < materials.size(); ++index)
+        {
+            this->materials.emplace(
+                name + "::material::" + std::to_string(index),
+                std::move(materials[index])
+            );
+            ++materialCommitCount;
+        }
+        for (std::size_t index = 0U; index < meshes.size(); ++index)
+        {
+            this->meshes.emplace(
+                name + "::mesh::" + std::to_string(index),
+                std::move(meshes[index])
+            );
+            ++meshCommitCount;
+        }
+        ModelAsset* result = model.get();
+        this->models.emplace(name, std::move(model));
+        return *result;
+    }
+    catch (...)
+    {
+        this->models.erase(name);
+        for (std::size_t index = 0U; index < materialCommitCount; ++index)
+            this->materials.erase(name + "::material::" + std::to_string(index));
+        for (std::size_t index = 0U; index < meshCommitCount; ++index)
+            this->meshes.erase(name + "::mesh::" + std::to_string(index));
+        for (std::size_t index = 0U; index < textures.size(); ++index)
+            this->textures.erase(name + "::texture::" + std::to_string(index));
+        throw;
+    }
 }
 
 ModelAsset& ResourceManager::LoadModel(
@@ -370,7 +552,8 @@ ModelAsset& ResourceManager::LoadModel(
             std::make_unique<Mesh>(
                 std::move(imported.meshes[index].data),
                 imported.meshes[index].requiredBoneCount,
-                std::move(imported.meshes[index].morphTargets)
+                std::move(imported.meshes[index].morphTargets),
+                std::move(imported.meshes[index].sourceVertexIndices)
             )
         );
     }

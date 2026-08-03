@@ -118,6 +118,10 @@ set(WISTERIA_CORE_SOURCES
     src/core/root_motion.cpp
 )
 
+set(WISTERIA_RUNTIME_SOURCES
+    src/runtime/saba_mmd_runtime_model.cpp
+)
+
 set(WISTERIA_PLATFORM_SOURCES
     src/platform/application.cpp
     src/platform/input.cpp
@@ -186,6 +190,7 @@ set(WISTERIA_SCENE_SOURCES
 add_library(wisteria_core STATIC
     ${WISTERIA_COMMON_SOURCES}
     ${WISTERIA_CORE_SOURCES}
+    ${WISTERIA_RUNTIME_SOURCES}
     ${WISTERIA_PLATFORM_SOURCES}
     ${WISTERIA_RENDERING_SOURCES}
     ${WISTERIA_ANIMATION_SOURCES}

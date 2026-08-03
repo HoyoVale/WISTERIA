@@ -130,22 +130,20 @@ int main(int argumentCount, char* arguments[])
             windowManager.BindScene(primaryWindow, legacyScene);
             windowManager.EnableFreeCameraController(primaryWindow);
 
-            Window& compatWindow = windowManager.CreateWindow(WindowConfig{
+            Window& sabaWindow = windowManager.CreateWindow(WindowConfig{
                 .width = 720,
                 .height = 720,
-                .title = "FLORAL WISTERIA - MMD COMPAT (Saba)"
+                .title = "FLORAL WISTERIA - MMD SABA MESH"
             });
-            const std::shared_ptr<Scene> compatScene =
+            const std::shared_ptr<Scene> sabaScene =
                 windowManager.CreateScene();
-            SetupMmdCharacterDemo(
-                *compatScene,
+            SetupSabaMeshDemoScene(
+                *sabaScene,
                 application.GetResources(),
-                compatWindow,
-                alternateModel,
-                true
+                sabaWindow
             );
-            windowManager.BindScene(compatWindow, compatScene);
-            windowManager.EnableFreeCameraController(compatWindow);
+            windowManager.BindScene(sabaWindow, sabaScene);
+            windowManager.EnableFreeCameraController(sabaWindow);
         }
 
         if (HasArgument(argumentCount, arguments, "--multi-window") &&

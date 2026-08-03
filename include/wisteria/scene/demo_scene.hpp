@@ -17,6 +17,14 @@ void SetupMmdCharacterDemo(
     bool useCompat = false
 );
 
+// Saba-backed demo window: saba::PMXModel drives animation/IK/morph and CPU
+// skinning, then uploads skinned vertices into WISTERIA's Mesh every frame.
+void SetupSabaMeshDemoScene(
+    Scene& scene,
+    ResourceManager& resources,
+    Window& window
+);
+
 // Creates the procedural fallback used when assets/motions/demo.vmd is absent.
 // Kept public so tests validate the exact clip used by the interactive demo.
 const AnimationClip& CreateMmdFullBodyDemoAnimation(ModelAsset& model);

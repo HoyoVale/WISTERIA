@@ -12,6 +12,7 @@
 #include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
 #include "wisteria/runtime/runtime_model_base.hpp"
 #include "wisteria/runtime/mmd_runtime_model.hpp"
+#include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #include "wisteria/assets/saba_mmd_importer.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
@@ -2482,7 +2483,19 @@ void TestInterfaceCompilation()
         !mesh.HasDynamicVertexSource(),
         "Mesh must start without a dynamic vertex source"
     );
-    mesh.UploadDynamicVertices({}, {});
+    bool emptyUploadRejected = false;
+    try
+    {
+        mesh.UploadDynamicVertices({}, {});
+    }
+    catch (const std::invalid_argument&)
+    {
+        emptyUploadRejected = true;
+    }
+    Require(
+        emptyUploadRejected,
+        "Empty mesh must reject dynamic vertex uploads"
+    );
 
     // CameraTrack interface exists (sampling lands in phase 3).
     CameraTrack track({});
@@ -2622,6 +2635,476 @@ void TestSabaMmdImporterWhenAvailable()
             "Saba importer mismatched the PMX Physics 1 fixture"
         );
     }
+}
+
+void TestMeshDynamicUpload()
+{
+    DefaultModelData data;
+    data.layout = {
+        {"position", 3, FLOAT},
+        {"color", 3, FLOAT},
+        {"texCoord", 2, FLOAT},
+        {"normal", 3, FLOAT},
+        {"tangent", 4, FLOAT},
+        {"additionalTexCoord", 2, FLOAT, false, false, 5U},
+        {"edgeScale", 1, FLOAT, false, false, 6U},
+        {"boneIndices", 4, FLOAT, false, false, 7U},
+        {"boneWeights", 4, FLOAT, false, false, 8U}
+    };
+    constexpr std::size_t VertexStride = 26U;
+    data.vertices.resize(3U * VertexStride);
+    for (std::size_t index = 0U; index < data.vertices.size(); ++index)
+        data.vertices[index] = static_cast<float>(index);
+    for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+    {
+        const std::size_t base = vertex * VertexStride;
+        for (std::size_t slot = 18U; slot < 26U; ++slot)
+            data.vertices[base + slot] = 0.0f;
+    }
+    data.indices = {0U, 1U, 2U};
+    const std::vector<float> originalVertices = data.vertices;
+    const std::vector<Layout> originalLayout = data.layout;
+    Mesh mesh(std::move(data), 2U);
+
+    const std::array<glm::vec3, 3> positions{
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    };
+    const std::array<glm::vec3, 3> normals{
+        glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f)
+    };
+
+    Require(
+        !mesh.HasDynamicVertexSource(),
+        "Mesh must start without a dynamic vertex source"
+    );
+    mesh.UploadDynamicVertices(positions, normals);
+    Require(
+        mesh.HasDynamicVertexSource(),
+        "Mesh did not record the dynamic vertex source"
+    );
+
+    const std::vector<float> rebuilt = Mesh::RebuildInterleavedVertices(
+        originalVertices,
+        originalLayout,
+        positions,
+        normals,
+        3U
+    );
+    for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+    {
+        const std::size_t base = vertex * VertexStride;
+        Require(
+            rebuilt[base + 0U] == positions[vertex].x &&
+                rebuilt[base + 1U] == positions[vertex].y &&
+                rebuilt[base + 2U] == positions[vertex].z,
+            "Interleaved rebuild wrote position to the wrong slot"
+        );
+        Require(
+            rebuilt[base + 8U] == normals[vertex].x &&
+                rebuilt[base + 9U] == normals[vertex].y &&
+                rebuilt[base + 10U] == normals[vertex].z,
+            "Interleaved rebuild wrote normal to the wrong slot"
+        );
+        Require(
+            rebuilt[base + 3U] == originalVertices[base + 3U] &&
+                rebuilt[base + 5U] == originalVertices[base + 5U] &&
+                rebuilt[base + 11U] == originalVertices[base + 11U] &&
+                rebuilt[base + 17U] == originalVertices[base + 17U],
+            "Interleaved rebuild modified unrelated vertex attributes"
+        );
+    }
+
+    bool rejected = false;
+    try
+    {
+        mesh.UploadDynamicVertices({}, {});
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected = true;
+    }
+    Require(
+        rejected,
+        "Mesh accepted a dynamic vertex upload with mismatched sizes"
+    );
+}
+
+void TestSabaSkinningWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
+        u8"身体动作.vmd";
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    SabaMmdImporter importer;
+    ImportedModelData imported = importer.Import(modelPath);
+    Require(!imported.meshes.empty(), "Saba import produced no meshes");
+
+    std::vector<glm::vec3> importedBindPositions;
+    std::vector<unsigned int> importedIndices =
+        imported.meshes[0U].data.indices;
+    std::vector<std::uint32_t> mesh0SourceIndices =
+        imported.meshes[0U].sourceVertexIndices;
+    std::vector<std::vector<unsigned int>> allImportedIndices;
+    allImportedIndices.reserve(imported.meshes.size());
+    for (const ImportedMeshData& meshData : imported.meshes)
+        allImportedIndices.push_back(meshData.data.indices);
+    std::vector<std::vector<std::uint32_t>> allSourceIndices;
+    allSourceIndices.reserve(imported.meshes.size());
+    for (const ImportedMeshData& meshData : imported.meshes)
+        allSourceIndices.push_back(meshData.sourceVertexIndices);
+    {
+        const std::vector<float>& vertices =
+            imported.meshes[0U].data.vertices;
+        constexpr std::size_t VertexStride = 26U;
+        importedBindPositions.reserve(vertices.size() / VertexStride);
+        for (std::size_t index = 0U;
+             index + VertexStride <= vertices.size();
+             index += VertexStride)
+        {
+            importedBindPositions.emplace_back(
+                vertices[index],
+                vertices[index + 1U],
+                vertices[index + 2U]
+            );
+        }
+    }
+
+    Mesh mesh(
+        std::move(imported.meshes[0U].data),
+        imported.meshes[0U].requiredBoneCount,
+        std::move(imported.meshes[0U].morphTargets),
+        std::move(imported.meshes[0U].sourceVertexIndices)
+    );
+
+    SabaMmdRuntimeModel runtime(modelPath, motionPath);
+    Require(runtime.Initialize(), "Saba runtime failed to initialize");
+    Require(
+        runtime.NeedsDynamicVertexUpload(),
+        "Saba runtime must request dynamic vertex uploads"
+    );
+
+    const std::span<const glm::vec3> bindPositions =
+        runtime.BindPositions();
+    Require(
+        importedBindPositions.size() == mesh0SourceIndices.size(),
+        "Saba runtime and importer disagree on bind vertex count"
+    );
+    std::size_t bindMismatches = 0U;
+    float maximumBindDifference = 0.0f;
+    for (std::size_t index = 0U; index < importedBindPositions.size(); ++index)
+    {
+        const std::uint32_t globalIndex = mesh0SourceIndices[index];
+        const float difference = glm::distance(
+            bindPositions[globalIndex],
+            importedBindPositions[index]
+        );
+        maximumBindDifference = std::max(
+            maximumBindDifference,
+            difference
+        );
+        if (difference > 0.01f)
+            ++bindMismatches;
+    }
+    std::cout << "[SABA BIND] vertices=" << importedBindPositions.size()
+              << " mismatches=" << bindMismatches
+              << " maxDifference=" << maximumBindDifference
+              << std::endl;
+    Require(
+        bindMismatches < bindPositions.size() / 100U,
+        "Saba runtime and importer bind vertices are out of order or offset"
+    );
+
+    const std::vector<std::uint32_t> runtimeIndices =
+        runtime.Indices();
+    Require(
+        !runtimeIndices.empty() &&
+            importedIndices.size() <= runtimeIndices.size(),
+        "Saba runtime indices are unavailable or shorter than the importer mesh"
+    );
+    std::size_t indexMismatches = 0U;
+    for (std::size_t index = 0U; index < importedIndices.size(); ++index)
+    {
+        if (mesh0SourceIndices.size() <= importedIndices[index] ||
+            runtimeIndices[index] !=
+                mesh0SourceIndices[importedIndices[index]])
+            ++indexMismatches;
+    }
+    std::cout << "[SABA INDEX] mesh0=" << importedIndices.size()
+              << " runtime=" << runtimeIndices.size()
+              << " mismatches=" << indexMismatches
+              << std::endl;
+    Require(
+        indexMismatches == 0U,
+        "Saba importer indices do not match the Saba runtime face order"
+    );
+
+    std::size_t runtimeIndexCursor = 0U;
+    for (std::size_t meshIndex = 0U;
+         meshIndex < allImportedIndices.size();
+         ++meshIndex)
+    {
+        const std::vector<unsigned int>& meshIndices =
+            allImportedIndices[meshIndex];
+        const std::vector<std::uint32_t>& sourceIndices =
+            allSourceIndices[meshIndex];
+        std::size_t mismatches = 0U;
+        for (std::size_t index = 0U; index < meshIndices.size(); ++index)
+        {
+            const bool validLocal =
+                meshIndices[index] < sourceIndices.size();
+            const std::uint32_t globalIndex =
+                validLocal ? sourceIndices[meshIndices[index]] : 0U;
+            if (runtimeIndexCursor + index >= runtimeIndices.size() ||
+                !validLocal ||
+                runtimeIndices[runtimeIndexCursor + index] != globalIndex)
+            {
+                ++mismatches;
+            }
+        }
+        std::cout << "[SABA INDEX] mesh=" << meshIndex
+                  << " indices=" << meshIndices.size()
+                  << " mismatches=" << mismatches
+                  << std::endl;
+        Require(
+            mismatches == 0U,
+            "Saba importer sub-mesh indices are out of order"
+        );
+        runtimeIndexCursor += meshIndices.size();
+    }
+
+    constexpr int LongRunFrames = 600;
+    for (int frame = 0; frame < LongRunFrames; ++frame)
+    {
+        runtime.Update(1.0f / 60.0f);
+        if (frame == 59 || frame == 239 || frame == 479 ||
+            frame == LongRunFrames - 1)
+        {
+            const SabaMmdRuntimeModel::VertexDiagnostics diagnostics =
+                runtime.DiagnoseVertices();
+            std::cout << "[SABA SKIN] frame=" << frame
+                      << " finite="
+                      << (diagnostics.finite ? "true" : "false")
+                      << " min=(" << diagnostics.minimumPosition.x << ", "
+                      << diagnostics.minimumPosition.y << ", "
+                      << diagnostics.minimumPosition.z << ")"
+                      << " max=(" << diagnostics.maximumPosition.x << ", "
+                      << diagnostics.maximumPosition.y << ", "
+                      << diagnostics.maximumPosition.z << ")"
+                      << " maxBindDisplacement="
+                      << diagnostics.maximumDisplacementFromBind
+                      << std::endl;
+        }
+    }
+    runtime.UploadDynamicVertices(mesh);
+    Require(
+        mesh.HasDynamicVertexSource(),
+        "Saba runtime did not upload skinned vertices"
+    );
+
+    const SabaMmdRuntimeModel::VertexDiagnostics finalDiagnostics =
+        runtime.DiagnoseVertices();
+    Require(
+        finalDiagnostics.finite,
+        "Saba skinning produced non-finite vertices"
+    );
+    Require(
+        finalDiagnostics.maximumDisplacementFromBind < 500.0f,
+        "Saba skinning displaced vertices far beyond the bind pose"
+    );
+
+    const std::span<const glm::vec3> updatePositions =
+        runtime.UpdatePositions();
+    const std::span<const glm::vec3> bindPositions2 =
+        runtime.BindPositions();
+    std::size_t abnormalMeshCount = 0U;
+    for (std::size_t meshIndex = 0U;
+         meshIndex < allImportedIndices.size();
+         ++meshIndex)
+    {
+        const std::vector<unsigned int>& meshIndices =
+            allImportedIndices[meshIndex];
+        const std::vector<std::uint32_t>& sourceIndices =
+            allSourceIndices[meshIndex];
+        glm::vec3 minimum(std::numeric_limits<float>::max());
+        glm::vec3 maximum(-std::numeric_limits<float>::max());
+        float maximumDisplacement = 0.0f;
+        bool finite = true;
+        for (const unsigned int index : meshIndices)
+        {
+            if (index >= sourceIndices.size() ||
+                sourceIndices[index] >= updatePositions.size() ||
+                sourceIndices[index] >= bindPositions2.size())
+            {
+                finite = false;
+                break;
+            }
+            const std::uint32_t globalIndex = sourceIndices[index];
+            const glm::vec3& position = updatePositions[globalIndex];
+            if (!std::isfinite(position.x) ||
+                !std::isfinite(position.y) ||
+                !std::isfinite(position.z))
+            {
+                finite = false;
+                break;
+            }
+            minimum = glm::min(minimum, position);
+            maximum = glm::max(maximum, position);
+            maximumDisplacement = std::max(
+                maximumDisplacement,
+                glm::distance(position, bindPositions2[globalIndex])
+            );
+        }
+        const bool abnormal =
+            !finite ||
+            maximumDisplacement > 30.0f ||
+            std::abs(minimum.x) > 40.0f ||
+            std::abs(maximum.x) > 40.0f ||
+            minimum.y < -10.0f ||
+            maximum.y > 40.0f ||
+            std::abs(minimum.z) > 40.0f ||
+            std::abs(maximum.z) > 40.0f;
+        if (abnormal)
+            ++abnormalMeshCount;
+        std::cout << "[SABA MESH] mesh=" << meshIndex
+                  << " name=\""
+                  << imported.materials[meshIndex].name
+                  << "\" alpha="
+                  << static_cast<int>(
+                        imported.materials[meshIndex].alphaMode
+                    )
+                  << " doubleSided="
+                  << (imported.materials[meshIndex].doubleSided
+                        ? "1" : "0")
+                  << " indices=" << meshIndices.size()
+                  << " finite=" << (finite ? "true" : "false")
+                  << " maxDisp=" << maximumDisplacement
+                  << " min=(" << minimum.x << ", "
+                  << minimum.y << ", " << minimum.z << ")"
+                  << " max=(" << maximum.x << ", "
+                  << maximum.y << ", " << maximum.z << ")"
+                  << " abnormal=" << (abnormal ? "true" : "false")
+                  << std::endl;
+    }
+    Require(
+        abnormalMeshCount == 0U,
+        "At least one Saba sub-mesh has abnormal skinned vertices"
+    );
+}
+
+void TestSabaImporterAcrossModelsWhenAvailable()
+{
+    const std::vector<std::filesystem::path> candidates = {
+        ProjectAssetDirectory / "models" / "mmd" /
+            u8"叶瞬光_pmx" / u8"叶瞬光.pmx",
+        ProjectAssetDirectory / "models" / "mmd" /
+            u8"今汐_pmx" / u8"今汐.pmx",
+        ProjectAssetDirectory / "models" / "mmd" /
+            u8"凑企鹅" / u8"凑企鹅.pmx",
+        ProjectAssetDirectory / "models" / "mmd" /
+            u8"爱弥斯_pmx" / u8"爱弥斯.pmx",
+        ProjectAssetDirectory / "models" / "mmd" /
+            u8"今汐皮肤_pmx" / u8"今汐_桃夭灼灼.pmx"
+    };
+
+    std::size_t testedModels = 0U;
+    for (const std::filesystem::path& modelPath : candidates)
+    {
+        if (!std::filesystem::is_regular_file(modelPath))
+            continue;
+
+        const std::u8string u8Name = modelPath.filename().u8string();
+        const std::string modelName(
+            reinterpret_cast<const char*>(u8Name.data()),
+            u8Name.size()
+        );
+
+        ImportedModelData saba;
+        SabaMmdImporter sabaImporter;
+        try
+        {
+            saba = sabaImporter.Import(modelPath);
+        }
+        catch (const std::exception& error)
+        {
+            std::cout << "[SABA MODEL] saba-import-fail: "
+                      << modelName << ": " << error.what() << std::endl;
+            continue;
+        }
+        Require(
+            saba.skeleton.has_value() &&
+                saba.mmdPhysics.has_value() &&
+                !saba.meshes.empty(),
+            "Saba cross-model import is incomplete: " + modelName
+        );
+
+        ImportedModelData assimp;
+        bool assimpAvailable = true;
+        try
+        {
+            assimp = ModelImporter().Import(modelPath);
+        }
+        catch (const std::exception& error)
+        {
+            assimpAvailable = false;
+            std::cout << "[SABA MODEL] assimp-skip: "
+                      << modelName << ": " << error.what() << std::endl;
+        }
+
+        const std::size_t sabaBones = saba.skeleton->BoneCount();
+        std::cout << "[SABA MODEL] " << modelName
+                  << " bones=" << sabaBones
+                  << " bodies=" << saba.mmdPhysics->RigidBodyCount()
+                  << " joints=" << saba.mmdPhysics->JointCount()
+                  << " materials=" << saba.materials.size()
+                  << " morphs=" << saba.morphs.size()
+                  << " assimp=" << (assimpAvailable ? "ok" : "skip")
+                  << std::endl;
+
+        if (assimpAvailable)
+        {
+            Require(
+                assimp.skeleton.has_value() &&
+                    assimp.mmdPhysics.has_value(),
+                "Assimp cross-model comparison lost skeleton or physics"
+            );
+            const std::size_t assimpBones = assimp.skeleton->BoneCount();
+            Require(
+                (sabaBones + 1U == assimpBones ||
+                    sabaBones == assimpBones ||
+                    sabaBones == assimpBones + 1U) &&
+                    saba.mmdPhysics->RigidBodyCount() ==
+                        assimp.mmdPhysics->RigidBodyCount() &&
+                    saba.mmdPhysics->JointCount() ==
+                        assimp.mmdPhysics->JointCount() &&
+                    saba.materials.size() == assimp.materials.size() &&
+                    saba.morphs.size() == assimp.morphs.size(),
+                "Saba/Assimp metadata mismatch on model: " + modelName
+            );
+        }
+        ++testedModels;
+    }
+    Require(
+        testedModels >= 3U,
+        "Saba cross-model comparison did not cover enough models"
+    );
 }
 
 void TestGenericPhysicsInstanceLifecycle()
@@ -7530,6 +8013,18 @@ int main()
     failures += !RunTest(
         "Saba importer PMX data comparison",
         TestSabaMmdImporterWhenAvailable
+    );
+    failures += !RunTest(
+        "Mesh dynamic vertex upload",
+        TestMeshDynamicUpload
+    );
+    failures += !RunTest(
+        "Saba runtime skinning",
+        TestSabaSkinningWhenAvailable
+    );
+    failures += !RunTest(
+        "Saba importer cross-model comparison",
+        TestSabaImporterAcrossModelsWhenAvailable
     );
     failures += !RunTest(
         "MMD full-body demo animation",

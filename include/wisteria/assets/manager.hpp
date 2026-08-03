@@ -3,6 +3,7 @@
 #include "wisteria/rendering/material.hpp"
 #include "wisteria/rendering/mesh.hpp"
 #include "wisteria/assets/model_asset.hpp"
+#include "wisteria/assets/importer.hpp"
 #include "wisteria/rendering/texture.hpp"
 #include "wisteria/rendering/environment.hpp"
 #include "wisteria/mmd/vmd_importer.hpp"
@@ -56,8 +57,23 @@ public:
         const std::string& name,
         const MaterialData& data = {}
     );
+    Material& CreateMaterial(
+        const std::string& name,
+        const MaterialData& data,
+        MaterialTextureBindings bindings
+    );
     Texture& CreateTexture(const std::string& name, TextureData data);
+    std::shared_ptr<Texture> CreateTextureShared(
+        const std::string& name,
+        TextureData data
+    );
     ModelAsset& CreateModel(const std::string& name);
+    // Builds a complete ModelAsset from an already-imported model. Reuses the
+    // same texture path cache / material binding pipeline as LoadModel.
+    ModelAsset& CreateModel(
+        const std::string& name,
+        ImportedModelData imported
+    );
     ModelAsset& LoadModel(
         const std::string& name,
         const std::filesystem::path& filePath

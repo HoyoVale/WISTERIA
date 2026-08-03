@@ -579,6 +579,7 @@ std::optional<std::size_t> TryLoadTexture(
 void BuildMeshesAndMaterials(
     const saba::PMXFile& pmx,
     const std::filesystem::path& modelDirectory,
+    const std::optional<Skeleton>& skeleton,
     ImportedModelData& result
 )
 {
@@ -717,6 +718,9 @@ void BuildMeshesAndMaterials(
         mesh.morphMaterialIndex = static_cast<std::uint32_t>(
             materialIndex
         );
+        mesh.requiredBoneCount = skeleton.has_value()
+            ? skeleton->BoneCount()
+            : 0U;
         mesh.data.layout = {
             {"position", 3, FLOAT},
             {"color", 3, FLOAT},
@@ -728,13 +732,45 @@ void BuildMeshesAndMaterials(
             {"boneIndices", 4, FLOAT, false, false, 7U},
             {"boneWeights", 4, FLOAT, false, false, 8U}
         };
-        mesh.data.vertices.resize(vertexCount * VertexStride);
-        for (std::size_t vertexIndex = 0U;
-             vertexIndex < vertexCount;
-             ++vertexIndex)
+        const std::size_t faceCount =
+            static_cast<std::size_t>(faceVertexCount) / 3U;
+        std::vector<std::uint32_t> localToGlobal;
+        std::unordered_map<std::uint32_t, std::uint32_t> globalToLocal;
+        localToGlobal.reserve(faceCount * 3U);
+        globalToLocal.reserve(faceCount * 3U);
+        for (std::size_t face = 0U; face < faceCount; ++face)
+        {
+            const saba::PMXFace& sourceFace =
+                pmx.m_faces[faceCursor + face];
+            for (int corner = 0; corner < 3; ++corner)
+            {
+                const std::uint32_t globalIndex =
+                    sourceFace.m_vertices[corner];
+                if (globalIndex >= vertexCount)
+                {
+                    throw std::runtime_error(
+                        "PMX face references an invalid vertex"
+                    );
+                }
+                if (globalToLocal.find(globalIndex) == globalToLocal.end())
+                {
+                    globalToLocal.emplace(
+                        globalIndex,
+                        static_cast<std::uint32_t>(localToGlobal.size())
+                    );
+                    localToGlobal.push_back(globalIndex);
+                }
+            }
+        }
+
+        const std::size_t localVertexCount = localToGlobal.size();
+        mesh.data.vertices.resize(localVertexCount * VertexStride);
+        for (std::size_t localVertex = 0U;
+             localVertex < localVertexCount;
+             ++localVertex)
         {
             const saba::PMXVertex& vertex =
-                pmx.m_vertices[vertexIndex];
+                pmx.m_vertices[localToGlobal[localVertex]];
             const glm::vec3 position = ConvertPosition(
                 vertex.m_position
             );
@@ -743,7 +779,7 @@ void BuildMeshesAndMaterials(
             );
             const glm::vec3 tangent = FallbackTangent(normal);
             float* output = mesh.data.vertices.data() +
-                vertexIndex * VertexStride;
+                localVertex * VertexStride;
             std::size_t offset = 0U;
             output[offset++] = position.x;
             output[offset++] = position.y;
@@ -800,26 +836,26 @@ void BuildMeshesAndMaterials(
             }
         }
 
-        const std::size_t faceCount =
-            static_cast<std::size_t>(faceVertexCount) / 3U;
         mesh.data.indices.reserve(faceCount * 3U);
         for (std::size_t face = 0U; face < faceCount; ++face)
         {
             const saba::PMXFace& sourceFace =
                 pmx.m_faces[faceCursor + face];
+            // Saba mirrors Z when building the model, so it reverses each
+            // face's winding (v2, v1, v0). Match that order or back-face
+            // culling will discard every triangle.
             for (int corner = 0; corner < 3; ++corner)
             {
-                const std::uint32_t vertexIndex =
-                    sourceFace.m_vertices[corner];
-                if (vertexIndex >= vertexCount)
-                {
-                    throw std::runtime_error(
-                        "PMX face references an invalid vertex"
-                    );
-                }
-                mesh.data.indices.push_back(vertexIndex);
+                const int reversedCorner = 2 - corner;
+                const std::uint32_t globalIndex =
+                    sourceFace.m_vertices[reversedCorner];
+                const auto local = globalToLocal.find(globalIndex);
+                if (local == globalToLocal.end())
+                    throw std::runtime_error("PMX face remapping failed");
+                mesh.data.indices.push_back(local->second);
             }
         }
+        mesh.sourceVertexIndices = std::move(localToGlobal);
         faceCursor += faceCount;
 
         result.meshes.push_back(std::move(mesh));
@@ -872,6 +908,7 @@ ImportedModelData SabaMmdImporter::Import(
     BuildMeshesAndMaterials(
         pmx,
         absolutePath.parent_path(),
+        result.skeleton,
         result
     );
     if (result.meshes.empty() || result.parts.empty())

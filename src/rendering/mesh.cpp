@@ -94,11 +94,13 @@ std::size_t CalculateVertexCount(const DefaultModelData& data)
 Mesh::Mesh(
     DefaultModelData data,
     std::size_t requiredBoneCount,
-    std::vector<MeshMorphTarget> morphTargets
+    std::vector<MeshMorphTarget> morphTargets,
+    std::vector<std::uint32_t> sourceVertexIndices
 )
     : data(std::move(data)),
       morphTargets(std::move(morphTargets)),
-      requiredBoneCount(requiredBoneCount)
+      requiredBoneCount(requiredBoneCount),
+      sourceVertexIndices(std::move(sourceVertexIndices))
 {
     const auto hasAttribute = [this](const char* name)
     {
@@ -331,20 +333,133 @@ std::size_t Mesh::VertexCount() const noexcept
     return this->vertexCount;
 }
 
+std::vector<float> Mesh::RebuildInterleavedVertices(
+    const std::vector<float>& sourceVertices,
+    std::span<const Layout> layout,
+    std::span<const glm::vec3> positions,
+    std::span<const glm::vec3> normals,
+    std::size_t vertexCount
+)
+{
+    if (positions.size() != vertexCount ||
+        normals.size() != vertexCount)
+    {
+        throw std::invalid_argument(
+            "Dynamic vertex upload size does not match the mesh"
+        );
+    }
+
+    std::size_t stride = 0U;
+    std::size_t positionOffset = 0U;
+    std::size_t normalOffset = 0U;
+    bool foundPosition = false;
+    bool foundNormal = false;
+    for (const Layout& attribute : layout)
+    {
+        if (attribute.name == "position")
+        {
+            positionOffset = stride;
+            foundPosition = true;
+        }
+        else if (attribute.name == "normal")
+        {
+            normalOffset = stride;
+            foundNormal = true;
+        }
+        stride += attribute.size;
+    }
+    if (!foundPosition || !foundNormal)
+    {
+        throw std::invalid_argument(
+            "Dynamic vertex upload requires position and normal attributes"
+        );
+    }
+    if (positionOffset + 3U > stride ||
+        normalOffset + 3U > stride)
+    {
+        throw std::invalid_argument(
+            "Dynamic vertex layout position/normal exceed the vertex stride"
+        );
+    }
+    if (sourceVertices.size() < vertexCount * stride)
+    {
+        throw std::invalid_argument(
+            "Dynamic vertex source array is shorter than vertexCount * stride"
+        );
+    }
+
+    // The vertex buffer is interleaved (one 26-float vertex per stride), so
+    // position/normal cannot be written as contiguous blocks. Rebuild the
+    // interleaved array and upload it as one block.
+    std::vector<float> updatedVertices = sourceVertices;
+    for (std::size_t vertexIndex = 0U; vertexIndex < vertexCount; ++vertexIndex)
+    {
+        const std::size_t base = vertexIndex * stride;
+        updatedVertices[base + positionOffset + 0U] =
+            positions[vertexIndex].x;
+        updatedVertices[base + positionOffset + 1U] =
+            positions[vertexIndex].y;
+        updatedVertices[base + positionOffset + 2U] =
+            positions[vertexIndex].z;
+        updatedVertices[base + normalOffset + 0U] =
+            normals[vertexIndex].x;
+        updatedVertices[base + normalOffset + 1U] =
+            normals[vertexIndex].y;
+        updatedVertices[base + normalOffset + 2U] =
+            normals[vertexIndex].z;
+    }
+    return updatedVertices;
+}
+
 void Mesh::UploadDynamicVertices(
     std::span<const glm::vec3> positions,
     std::span<const glm::vec3> normals
 )
 {
-    // TODO(phase 2): update position/normal ranges in this->vbo without
-    // rebuilding the vertex array. Validate sizes against vertexCount.
-    (void)positions;
-    (void)normals;
+    std::vector<float> updatedVertices = RebuildInterleavedVertices(
+        this->data.vertices,
+        this->data.layout,
+        positions,
+        normals,
+        this->vertexCount
+    );
+    this->dynamicVertexSource = true;
+    if (!this->attached || this->vbo == nullptr)
+        return;
+
+    glBindBuffer(GL_ARRAY_BUFFER, this->vbo->GetVBO());
+    glBufferSubData(
+        GL_ARRAY_BUFFER,
+        0,
+        static_cast<GLsizeiptr>(
+            updatedVertices.size() * sizeof(float)
+        ),
+        updatedVertices.data()
+    );
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 bool Mesh::HasDynamicVertexSource() const noexcept
 {
-    return false;
+    return this->dynamicVertexSource;
+}
+
+void Mesh::SetDynamicVertexProvider(
+    MeshDynamicVertexProvider provider
+)
+{
+    this->dynamicVertexProvider = std::move(provider);
+}
+
+const MeshDynamicVertexProvider&
+Mesh::DynamicVertexProvider() const noexcept
+{
+    return this->dynamicVertexProvider;
+}
+
+std::span<const std::uint32_t> Mesh::SourceVertexIndices() const noexcept
+{
+    return this->sourceVertexIndices;
 }
 
 bool Mesh::HasMorphTargets() const noexcept

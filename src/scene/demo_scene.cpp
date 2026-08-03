@@ -4,12 +4,15 @@
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/mmd/physics/mmd_physics_instance.hpp"
 #include "wisteria/mmd/physics_compat/mmd_compat_physics_instance.hpp"
+#include "wisteria/assets/saba_mmd_importer.hpp"
+#include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #include "wisteria/scene/scene.hpp"
 #include "wisteria/platform/window.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -1249,6 +1252,64 @@ private:
     bool titleDirty = true;
 };
 
+class SabaMeshDemoBehaviour final : public Behaviour
+{
+public:
+    SabaMeshDemoBehaviour(
+        std::shared_ptr<SabaMmdRuntimeModel> runtime,
+        std::vector<Mesh*> meshes
+    )
+        : runtime(std::move(runtime)),
+          meshes(std::move(meshes))
+    {
+    }
+
+    void Update(Entity&, float deltaTime) override
+    {
+        this->runtime->Update(deltaTime);
+        if ((++this->diagnosticCounter % 60) == 1)
+        {
+            const SabaMmdRuntimeModel::VertexDiagnostics diagnostics =
+                this->runtime->DiagnoseVertices();
+            std::cout << "[SABA SKIN] finite="
+                      << (diagnostics.finite ? "true" : "false")
+                      << " min=(" << diagnostics.minimumPosition.x << ", "
+                      << diagnostics.minimumPosition.y << ", "
+                      << diagnostics.minimumPosition.z << ")"
+                      << " max=(" << diagnostics.maximumPosition.x << ", "
+                      << diagnostics.maximumPosition.y << ", "
+                      << diagnostics.maximumPosition.z << ")"
+                      << " maxBindDisplacement="
+                      << diagnostics.maximumDisplacementFromBind
+                      << std::endl;
+            const SabaMmdRuntimeModel::ProfileSnapshot profile =
+                this->runtime->Profile();
+            std::cout << "[SABA PROFILE] frames=" << profile.frameCount
+                      << " updateAvgMs="
+                      << profile.averageUpdateMilliseconds
+                      << " uploadAvgMs="
+                      << profile.averageUploadMilliseconds
+                      << std::endl;
+        }
+    }
+
+private:
+    std::shared_ptr<SabaMmdRuntimeModel> runtime;
+    std::vector<Mesh*> meshes;
+    std::size_t diagnosticCounter = 0U;
+};
+
+ModelAsset& CreateSabaMeshModel(
+    ResourceManager& resources,
+    const std::string& name,
+    const std::filesystem::path& modelPath
+)
+{
+    SabaMmdImporter importer;
+    ImportedModelData imported = importer.Import(modelPath);
+    return resources.CreateModel(name, std::move(imported));
+}
+
 }
 
 const AnimationClip& CreateMmdFullBodyDemoAnimation(ModelAsset& model)
@@ -1343,6 +1404,84 @@ void SetupMmdCharacterDemo(
                         ? entity.GetMmdPhysics().RigidBodyCount()
                         : 0U))
               << std::endl;
+}
+
+void SetupSabaMeshDemoScene(
+    Scene& scene,
+    ResourceManager& resources,
+    Window& window
+)
+{
+    EnvironmentMap* existingEnvironment =
+        resources.FindEnvironment("defaultSky");
+    EnvironmentMap& environment = existingEnvironment != nullptr
+        ? *existingEnvironment
+        : resources.CreateEnvironment(
+            "defaultSky",
+            EnvironmentMapData::ProceduralSky()
+        );
+    scene.SetEnvironment(&environment);
+
+    const std::filesystem::path modelPath = DemoModelPath(false);
+    ModelAsset& model = CreateSabaMeshModel(
+        resources,
+        "sabaMeshModel",
+        modelPath
+    );
+    Entity& entity = scene.InstantiateModel(
+        model,
+        Transform(
+            glm::vec3(0.0f, 0.0f, 0.1f),
+            glm::vec3(0.0f),
+            glm::vec3(1.0f)
+        ),
+        ModelInstantiationOptions{.enablePhysics = false}
+    );
+
+    const std::filesystem::path motionPath = DemoMotionPath1();
+    const std::filesystem::path vmdPath =
+        std::filesystem::is_regular_file(motionPath)
+        ? motionPath
+        : std::filesystem::path{};
+    auto runtime = std::make_shared<SabaMmdRuntimeModel>(
+        modelPath,
+        vmdPath
+    );
+    if (!runtime->Initialize())
+    {
+        throw std::runtime_error(
+            "Saba mesh demo runtime failed to initialize"
+        );
+    }
+    std::vector<Mesh*> sabaMeshes;
+    sabaMeshes.reserve(model.Parts().size());
+    for (const RenderPart& part : model.Parts())
+    {
+        sabaMeshes.push_back(&part.GetMesh());
+        Mesh& mesh = part.GetMesh();
+        if (std::getenv("WISTERIA_SABA_NO_UPDATE") == nullptr)
+        {
+            mesh.SetDynamicVertexProvider(
+                [runtime](Mesh& target)
+                {
+                    runtime->UploadDynamicVertices(target);
+                }
+            );
+        }
+    }
+    entity.AddBehaviour<SabaMeshDemoBehaviour>(
+        runtime,
+        std::move(sabaMeshes)
+    );
+
+    scene.ActiveCamera().SetParam(CameraParam{
+        .Position = {0.0f, 9.0f, 27.0f},
+        .Target = {0.0f, 9.0f, 0.3f},
+        .Up = {0.0f, 1.0f, 0.0f}
+    });
+    ConfigureCharacterLighting(scene);
+    std::cout << "[INFO] MMD SABA MESH demo: meshes="
+              << model.Parts().size() << std::endl;
 }
 
 

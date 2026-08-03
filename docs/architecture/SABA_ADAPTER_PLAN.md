@@ -184,3 +184,27 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
     - 小资产 `pmx_physics.pmx`：3 刚体 / 6 关节通过。
     - 自动验收：`wisteria_tests.exe` **75/75 PASS，FAIL=0**；
     - 手动验收：数据层无窗口，等待阶段 2 接入渲染。
+  - **阶段 2：已完成（2026-08-04）**
+    - `Mesh::UploadDynamicVertices`：按 layout 偏移用 `glBufferSubData`
+      更新 position/normal（未 attach 时只标记来源）。
+    - `Renderer::UploadSkinning`：动态顶点源上传单位矩阵，避免 GPU 双蒙皮。
+    - `SabaMmdRuntimeModel`：`saba::PMXModel` 驱动动画/IK/morph/CPU 蒙皮
+      （BDEF/SDEF/QDEF），每帧上传到 `Mesh`；Saba 内部物理随
+      `UpdateAllAnimation` 自步进（120Hz/-98 独立 world）。
+    - `SabaMmdImporter` 补 `requiredBoneCount`。
+    - **索引 winding 修复**：Saba 镜像 Z 坐标系后会把每个面索引反转
+      （v2,v1,v0），importer 此前用原始顺序导致背面剔除丢弃全部三角形；
+      已对齐（bind/index 对照 mismatches=0）。
+    - demo：第二窗口改为 `MMD SABA MESH`（Saba 导入 + Saba 蒙皮渲染，
+      灰模无纹理绑定）。
+    - 新增 `TestMeshDynamicUpload`、`TestSabaSkinningWhenAvailable`。
+    - 自动验收：`wisteria_tests.exe` **77/77 PASS，FAIL=0**；
+    - 手动验收：双窗口 `LEGACY` vs `SABA MESH`，观察裙摆/头发柔软度
+      （Saba 窗口为灰模，纹理绑定留后续）。
+  - **阶段 2 鲁棒性固化（2026-08-04）**
+    - `Mesh::RebuildInterleavedVertices` 纯函数 + 交错布局单测；
+    - 多模型对照测试：叶瞬光/今汐/凑企鹅/爱弥斯/今汐皮肤，Saba 全部导入
+      成功，3 个与 Assimp 对照一致，2 个记录 Assimp bind-space 限制；
+    - 鲁棒性清单文档：
+      `docs/architecture/MMD_PHYSICS_ROBUSTNESS.md`；
+    - 自动验收：**78/78 PASS，FAIL=0**。

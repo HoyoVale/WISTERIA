@@ -6,19 +6,26 @@
 #include "wisteria/physics/physics_types.hpp"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
 
 class VAO;
 class Pose;
+class Mesh;
+
+// Called by the Renderer with the owning window's GL context current. Used by
+// CPU-skinned models (Saba) to upload vertices at the correct time/context.
+using MeshDynamicVertexProvider = std::function<void(Mesh&)>;
 
 class Mesh{
 public:
     explicit Mesh(
         DefaultModelData data,
         std::size_t requiredBoneCount = 0,
-        std::vector<MeshMorphTarget> morphTargets = {}
+        std::vector<MeshMorphTarget> morphTargets = {},
+        std::vector<std::uint32_t> sourceVertexIndices = {}
     );
     ~Mesh() = default;
 
@@ -45,6 +52,19 @@ public:
         std::span<const glm::vec3> normals
     );
     bool HasDynamicVertexSource() const noexcept;
+    void SetDynamicVertexProvider(MeshDynamicVertexProvider provider);
+    const MeshDynamicVertexProvider& DynamicVertexProvider() const noexcept;
+    std::span<const std::uint32_t> SourceVertexIndices() const noexcept;
+
+    // Pure rebuild of an interleaved vertex array with new position/normal
+    // values. Exposed for regression tests; UploadDynamicVertices uses it.
+    static std::vector<float> RebuildInterleavedVertices(
+        const std::vector<float>& sourceVertices,
+        std::span<const Layout> layout,
+        std::span<const glm::vec3> positions,
+        std::span<const glm::vec3> normals,
+        std::size_t vertexCount
+    );
 
     bool HasMorphTargets() const noexcept;
     std::size_t MorphTargetCount() const noexcept;
@@ -82,4 +102,7 @@ private:
     std::size_t vertexCount = 0U;
     std::size_t requiredBoneCount = 0;
     bool attached = false;
+    bool dynamicVertexSource = false;
+    MeshDynamicVertexProvider dynamicVertexProvider;
+    std::vector<std::uint32_t> sourceVertexIndices;
 };
