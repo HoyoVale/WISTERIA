@@ -79,6 +79,31 @@ private:
     float endTime = 0.0f;
 };
 
+// VMD light channel: MMD stores one keyframe per recorded frame with light
+// color and light position. The interpolation array covers color X/Y/Z and
+// position X/Y/Z (six curves).
+struct LightKeyframe
+{
+    float time = 0.0f;
+    glm::vec3 color{1.0f};
+    glm::vec3 position{0.5f, 1.0f, 0.5f};
+    std::array<KeyframeInterpolation, 6> interpolation{};
+};
+
+class LightTrack
+{
+public:
+    explicit LightTrack(std::vector<LightKeyframe> keys);
+
+    std::span<const LightKeyframe> Keys() const noexcept;
+    float EndTime() const noexcept;
+    bool Sample(float time, LightKeyframe& output) const;
+
+private:
+    std::vector<LightKeyframe> keys;
+    float endTime = 0.0f;
+};
+
 class MorphWeightTrack
 {
 public:

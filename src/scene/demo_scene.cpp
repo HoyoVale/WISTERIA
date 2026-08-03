@@ -332,7 +332,7 @@ void ConfigureCharacterLighting(Scene& scene)
     scene.CreatePointLight(PointLightData{
         .Position = {5.0f, 13.0f, 9.0f},
         .Color = {1.0f, 0.88f, 0.78f},
-        .Intensity = 2.4f,
+        .Intensity = 1.4f,
         .Range = 35.0f,
         .Linear = 0.035f,
         .Quadratic = 0.006f
@@ -1074,7 +1074,7 @@ void SetupMorphDemoScene(
     scene.CreatePointLight(PointLightData{
         .Position = {0.0f, 2.5f, 4.0f},
         .Color = {1.0f, 0.94f, 1.0f},
-        .Intensity = 4.0f,
+        .Intensity = 2.0f,
         .Range = 12.0f
     });
     scene.CreateDirectionalLight(DirectionalLightData{

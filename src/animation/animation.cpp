@@ -186,11 +186,134 @@ float CameraTrack::EndTime() const noexcept
 
 bool CameraTrack::Sample(float time, CameraKeyframe& output) const
 {
-    // TODO(phase 3): interpolate interest/rotation/distance/viewAngle with the
-    // per-channel KeyframeInterpolation curves.
-    (void)time;
-    (void)output;
-    return false;
+    if (this->keys.empty())
+        return false;
+    if (time <= this->keys.front().time)
+    {
+        output = this->keys.front();
+        return true;
+    }
+    if (time >= this->keys.back().time)
+    {
+        output = this->keys.back();
+        return true;
+    }
+
+    const auto upper = std::upper_bound(
+        this->keys.begin(),
+        this->keys.end(),
+        time,
+        [](float sampleTime, const CameraKeyframe& key)
+        {
+            return sampleTime < key.time;
+        }
+    );
+    const CameraKeyframe& next = *upper;
+    const CameraKeyframe& previous = *(upper - 1);
+    const float normalizedTime =
+        (time - previous.time) / (next.time - previous.time);
+    std::array<float, 4> factors{};
+    for (std::size_t channel = 0U; channel < factors.size(); ++channel)
+    {
+        factors[channel] = next.interpolation[channel].Evaluate(
+            normalizedTime
+        );
+    }
+
+    output.time = time;
+    output.interest = glm::mix(
+        previous.interest,
+        next.interest,
+        glm::vec3(factors[0], factors[1], factors[2])
+    );
+    // The track stores four curves (interest X/Y/Z + distance); rotation,
+    // view angle and the perspective flag use linear/step semantics.
+    output.rotation = glm::mix(
+        previous.rotation,
+        next.rotation,
+        normalizedTime
+    );
+    output.distance = glm::mix(
+        previous.distance,
+        next.distance,
+        factors[3]
+    );
+    output.viewAngle = glm::mix(
+        previous.viewAngle,
+        next.viewAngle,
+        normalizedTime
+    );
+    output.perspective = next.perspective;
+    output.interpolation = next.interpolation;
+    return true;
+}
+
+LightTrack::LightTrack(std::vector<LightKeyframe> nextKeys)
+    : keys(std::move(nextKeys))
+{
+    for (const LightKeyframe& key : this->keys)
+        this->endTime = std::max(this->endTime, key.time);
+}
+
+std::span<const LightKeyframe> LightTrack::Keys() const noexcept
+{
+    return this->keys;
+}
+
+float LightTrack::EndTime() const noexcept
+{
+    return this->endTime;
+}
+
+bool LightTrack::Sample(float time, LightKeyframe& output) const
+{
+    if (this->keys.empty())
+        return false;
+    if (time <= this->keys.front().time)
+    {
+        output = this->keys.front();
+        return true;
+    }
+    if (time >= this->keys.back().time)
+    {
+        output = this->keys.back();
+        return true;
+    }
+
+    const auto upper = std::upper_bound(
+        this->keys.begin(),
+        this->keys.end(),
+        time,
+        [](float sampleTime, const LightKeyframe& key)
+        {
+            return sampleTime < key.time;
+        }
+    );
+    const LightKeyframe& next = *upper;
+    const LightKeyframe& previous = *(upper - 1);
+    const float normalizedTime =
+        (time - previous.time) / (next.time - previous.time);
+    std::array<float, 6> factors{};
+    for (std::size_t channel = 0U; channel < factors.size(); ++channel)
+    {
+        factors[channel] = next.interpolation[channel].Evaluate(
+            normalizedTime
+        );
+    }
+
+    output.time = time;
+    output.color = glm::mix(
+        previous.color,
+        next.color,
+        glm::vec3(factors[0], factors[1], factors[2])
+    );
+    output.position = glm::mix(
+        previous.position,
+        next.position,
+        glm::vec3(factors[3], factors[4], factors[5])
+    );
+    output.interpolation = next.interpolation;
+    return true;
 }
 
 float KeyframeInterpolation::Evaluate(float normalizedTime) const noexcept

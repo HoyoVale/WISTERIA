@@ -43,11 +43,34 @@ public:
     PhysicsInstance* TryGetPhysicsInstance() noexcept override;
 
     void SetMmdIkEnabled(BoneIndex bone, bool enabled) override;
+
+    bool LoadMotion(const std::filesystem::path& vmdPath) override;
+    bool HasMotion() const noexcept override;
+    void SetMotionLooping(bool looping) override;
+    bool IsMotionLooping() const noexcept override;
+    void PauseMotion() override;
+    void ResumeMotion() override;
+    bool IsMotionPaused() const noexcept override;
+    void RestartMotion(bool resetPhysics = true) override;
+    double MotionFrame() const noexcept override;
+    void SetMotionFrame(double frame) override;
+    double MotionMaxFrame() const noexcept override;
+
+    bool LoadCameraMotion(const std::filesystem::path& vmdPath) override;
+    void ApplyCameraMotion(float frame, Camera& camera) override;
     void ApplyCameraTrack(
         const CameraTrack& track,
         float time,
         Camera& camera
     ) override;
+    bool LoadLightMotion(const std::filesystem::path& vmdPath) override;
+    void ApplyLightMotion(float frame, DirectionalLight& light) override;
+    void ApplyLightTrack(
+        const LightTrack& track,
+        float time,
+        DirectionalLight& light
+    ) override;
+
     MmdSkinningKind SkinningKind() const noexcept override;
     PhysicsInstance* GetMmdPhysics() noexcept override;
 

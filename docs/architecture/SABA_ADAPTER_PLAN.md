@@ -236,3 +236,14 @@ cmake --build build --config RelWithDebInfo --target wisteria_tests -- -m
     - 自动验收：**57/57 PASS，FAIL=0**（删除 23 个旧物理运行层测试）；
     - 手动验收：单窗口 Saba demo 流畅运行、无 `[ERROR]`；
       用户确认旧实现不再保留。
+  - **接口扩展：动作/相机/灯光（2026-08-04）**
+    - 用户决策：不做播放列表/编排系统，只抽象薄接口；
+    - `MmdRuntimeModel` 新增单动作控制接口（Load/HasMotion、Loop、Pause/
+      Resume、Restart、MotionFrame/MaxFrame），`SabaMmdRuntimeModel` 承接
+      `saba::VMDAnimation`；
+    - 相机：`CameraTrack::Sample` 实现（贝塞尔 + 越界钳制）；
+      `LoadCameraMotion/ApplyCameraMotion` 承接 `saba::VMDCameraAnimation`；
+    - 灯光：新增 `LightKeyframe/LightTrack` 数据层；
+      `LoadLightMotion/ApplyLightMotion` 承接 `VMDFile::m_lights`；
+    - 自动验收：**59/59 PASS，FAIL=0**；
+    - 手动验收：接口层已由测试覆盖，demo 暂未接入相机/灯光（后续可选）。

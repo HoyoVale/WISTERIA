@@ -15,6 +15,7 @@
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/physics/physics_world.hpp"
+#include "wisteria/rendering/light.hpp"
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/scene/scene.hpp"
 #include "wisteria/mmd/vmd_importer.hpp"
@@ -2397,7 +2398,79 @@ public:
     {
     }
 
+    bool LoadMotion(const std::filesystem::path&) override
+    {
+        return false;
+    }
+
+    bool HasMotion() const noexcept override
+    {
+        return false;
+    }
+
+    void SetMotionLooping(bool) override
+    {
+    }
+
+    bool IsMotionLooping() const noexcept override
+    {
+        return true;
+    }
+
+    void PauseMotion() override
+    {
+    }
+
+    void ResumeMotion() override
+    {
+    }
+
+    bool IsMotionPaused() const noexcept override
+    {
+        return false;
+    }
+
+    void RestartMotion(bool) override
+    {
+    }
+
+    double MotionFrame() const noexcept override
+    {
+        return 0.0;
+    }
+
+    void SetMotionFrame(double) override
+    {
+    }
+
+    double MotionMaxFrame() const noexcept override
+    {
+        return 0.0;
+    }
+
+    bool LoadCameraMotion(const std::filesystem::path&) override
+    {
+        return false;
+    }
+
+    void ApplyCameraMotion(float, Camera&) override
+    {
+    }
+
     void ApplyCameraTrack(const CameraTrack&, float, Camera&) override
+    {
+    }
+
+    bool LoadLightMotion(const std::filesystem::path&) override
+    {
+        return false;
+    }
+
+    void ApplyLightMotion(float, DirectionalLight&) override
+    {
+    }
+
+    void ApplyLightTrack(const LightTrack&, float, DirectionalLight&) override
     {
     }
 
@@ -2495,16 +2568,22 @@ void TestInterfaceCompilation()
         "Empty mesh must reject dynamic vertex uploads"
     );
 
-    // CameraTrack interface exists (sampling lands in phase 3).
+    // CameraTrack interface exists; empty tracks reject sampling.
     CameraTrack track({});
     CameraKeyframe cameraSample;
     Require(
         !track.Sample(0.0f, cameraSample),
-        "CameraTrack sampling is not implemented in phase 0"
+        "Empty CameraTrack must reject sampling"
     );
     Require(
         track.EndTime() == 0.0f,
         "Empty CameraTrack end time must be zero"
+    );
+    LightTrack lightTrack({});
+    LightKeyframe lightSample;
+    Require(
+        !lightTrack.Sample(0.0f, lightSample),
+        "Empty LightTrack must reject sampling"
     );
 
     // PhysicsInstance self-stepping hook defaults to false and can be
@@ -3281,6 +3360,211 @@ void TestGenericPhysicsInstanceLifecycle()
     Require(
         duplicateRejected,
         "Entity accepted a second physics runtime without explicit removal"
+    );
+}
+
+void TestCameraLightTrackSampling()
+{
+    CameraTrack track({
+        CameraKeyframe{
+            0.0f,
+            {0.0f, 0.0f, 0.0f},
+            glm::vec3(0.0f),
+            5.0f,
+            30.0f,
+            true,
+            {}
+        },
+        CameraKeyframe{
+            30.0f,
+            {12.0f, 0.0f, 6.0f},
+            glm::vec3(0.0f),
+            11.0f,
+            60.0f,
+            true,
+            {}
+        }
+    });
+    Require(
+        NearlyEqual(track.EndTime(), 30.0f),
+        "CameraTrack end time is incorrect"
+    );
+
+    CameraKeyframe sample;
+    Require(track.Sample(15.0f, sample), "CameraTrack mid sampling failed");
+    Require(
+        NearlyEqual(sample.interest, glm::vec3(6.0f, 0.0f, 3.0f)) &&
+            NearlyEqual(sample.distance, 8.0f) &&
+            NearlyEqual(sample.viewAngle, 45.0f),
+        "CameraTrack interpolation is incorrect"
+    );
+    Require(
+        track.Sample(-5.0f, sample) &&
+            NearlyEqual(sample.interest, glm::vec3(0.0f)),
+        "CameraTrack does not clamp before the first key"
+    );
+    Require(
+        track.Sample(99.0f, sample) &&
+            NearlyEqual(sample.distance, 11.0f),
+        "CameraTrack does not clamp after the last key"
+    );
+
+    LightTrack lightTrack({
+        LightKeyframe{
+            0.0f,
+            {1.0f, 0.0f, 0.0f},
+            {1.0f, 2.0f, 3.0f},
+            {}
+        },
+        LightKeyframe{
+            10.0f,
+            {0.0f, 1.0f, 0.0f},
+            {3.0f, 2.0f, 1.0f},
+            {}
+        }
+    });
+    LightKeyframe lightSample;
+    Require(
+        lightTrack.Sample(5.0f, lightSample),
+        "LightTrack mid sampling failed"
+    );
+    Require(
+        NearlyEqual(lightSample.color, glm::vec3(0.5f, 0.5f, 0.0f)) &&
+            NearlyEqual(lightSample.position, glm::vec3(2.0f, 2.0f, 2.0f)),
+        "LightTrack interpolation is incorrect"
+    );
+}
+
+void TestSabaMotionCameraLightInterfaceWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    const std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
+        u8"身体动作.vmd";
+    const std::filesystem::path cameraPath =
+        ProjectAssetDirectory / "motions" / u8"越南鼓卡点舞 镜头.vmd";
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    SabaMmdRuntimeModel runtime(modelPath, motionPath);
+    Require(runtime.Initialize(), "Saba interface runtime failed to initialize");
+    Require(runtime.HasMotion(), "Saba interface runtime has no motion");
+    const double maxFrame = runtime.MotionMaxFrame();
+    Require(maxFrame > 0.0, "Saba motion reports no key frames");
+
+    // Non-looping advances past the last key and holds the end pose.
+    runtime.SetMotionLooping(false);
+    Require(!runtime.IsMotionLooping(), "Motion looping flag did not change");
+    runtime.SetMotionFrame(maxFrame - 1.0);
+    for (int frame = 0; frame < 5; ++frame)
+        runtime.Update(1.0f / 30.0f);
+    Require(
+        runtime.MotionFrame() > maxFrame,
+        "Non-looping motion did not advance past its last key"
+    );
+
+    // Looping wraps back into the clip.
+    runtime.SetMotionLooping(true);
+    runtime.SetMotionFrame(maxFrame - 1.0);
+    runtime.Update(1.0f / 30.0f);
+    Require(
+        runtime.MotionFrame() < maxFrame,
+        "Looping motion did not wrap at the last key"
+    );
+
+    // Pause freezes the frame, resume advances, restart rewinds.
+    runtime.PauseMotion();
+    Require(runtime.IsMotionPaused(), "Motion pause flag did not change");
+    const double pausedFrame = runtime.MotionFrame();
+    runtime.Update(1.0f / 30.0f);
+    Require(
+        NearlyEqual(runtime.MotionFrame(), pausedFrame),
+        "Paused motion advanced its frame"
+    );
+    runtime.ResumeMotion();
+    Require(!runtime.IsMotionPaused(), "Motion resume flag did not change");
+    runtime.Update(1.0f / 30.0f);
+    Require(
+        runtime.MotionFrame() > pausedFrame,
+        "Resumed motion did not advance its frame"
+    );
+    runtime.RestartMotion(true);
+    Require(
+        NearlyEqual(runtime.MotionFrame(), 0.0),
+        "Restart did not rewind the motion frame"
+    );
+
+    // The interface can replace the loaded motion.
+    Require(
+        runtime.LoadMotion(motionPath) && runtime.HasMotion() &&
+            NearlyEqual(runtime.MotionFrame(), 0.0),
+        "LoadMotion did not replace the current motion"
+    );
+
+    // Camera interface: real camera VMD when available.
+    if (std::filesystem::is_regular_file(cameraPath))
+    {
+        Require(
+            runtime.LoadCameraMotion(cameraPath),
+            "LoadCameraMotion rejected a camera VMD"
+        );
+        Camera camera;
+        runtime.ApplyCameraMotion(10.0f, camera);
+        const CameraParam& param = camera.GetParam();
+        Require(
+            std::isfinite(param.Position.x) &&
+                std::isfinite(param.Position.y) &&
+                std::isfinite(param.Position.z) &&
+                std::isfinite(param.Target.x) &&
+                std::isfinite(param.Target.y) &&
+                std::isfinite(param.Target.z) &&
+                param.VerticalFovDegrees > 0.0f &&
+                param.VerticalFovDegrees < 180.0f,
+            "VMD camera produced non-finite or invalid CameraParam"
+        );
+    }
+
+    // Light interface: VMDs may not carry light frames; both outcomes must be
+    // safe, and the programmatic LightTrack path must always apply.
+    DirectionalLight light;
+    if (runtime.LoadLightMotion(motionPath))
+    {
+        runtime.ApplyLightMotion(0.0f, light);
+        Require(
+            glm::length(light.Direction()) > 0.0f,
+            "VMD light motion produced a zero direction"
+        );
+    }
+    LightTrack lightTrack({
+        LightKeyframe{
+            0.0f,
+            {1.0f, 0.5f, 0.25f},
+            {1.0f, 2.0f, 3.0f},
+            {}
+        },
+        LightKeyframe{
+            30.0f,
+            {0.0f, 0.5f, 1.0f},
+            {0.0f, 2.0f, 1.0f},
+            {}
+        }
+    });
+    runtime.ApplyLightTrack(lightTrack, 15.0f, light);
+    Require(
+        NearlyEqual(light.Color(), glm::vec3(0.5f, 0.5f, 0.625f)) &&
+            glm::length(light.Direction()) > 0.0f,
+        "LightTrack did not apply to the directional light"
     );
 }
 
@@ -5338,6 +5622,14 @@ int main()
     failures += !RunTest(
         "Saba physics 720-frame long-run",
         TestSabaMmdPhysicsLongRunWhenAvailable
+    );
+    failures += !RunTest(
+        "Camera/Light track sampling",
+        TestCameraLightTrackSampling
+    );
+    failures += !RunTest(
+        "Saba motion/camera/light interface",
+        TestSabaMotionCameraLightInterfaceWhenAvailable
     );
     failures += !RunTest(
         "MMD full-body demo animation",

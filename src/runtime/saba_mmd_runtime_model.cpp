@@ -1,17 +1,24 @@
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 
+#include "wisteria/animation/animation.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
+#include "wisteria/rendering/camera.hpp"
+#include "wisteria/rendering/light.hpp"
 #include "wisteria/rendering/mesh.hpp"
 
 #include <btBulletDynamicsCommon.h>
+#include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/MMDPhysics.h>
 #include <Saba/Model/MMD/PMXModel.h>
 #include <Saba/Model/MMD/VMDAnimation.h>
+#include <Saba/Model/MMD/VMDCameraAnimation.h>
 #include <Saba/Model/MMD/VMDFile.h>
 
 #include <cstddef>
+#include <cmath>
 #include <chrono>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -64,6 +71,10 @@ struct SabaMmdRuntimeModel::Impl
     std::unique_ptr<saba::VMDAnimation> vmdAnimation;
     saba::VMDFile vmdFile;
     bool vmdLoaded = false;
+    bool motionLooping = true;
+    bool motionPaused = false;
+    std::unique_ptr<saba::VMDCameraAnimation> cameraAnimation;
+    std::optional<LightTrack> lightTrack;
     double vmdFrame = 0.0;
     double updateMilliseconds = 0.0;
     double uploadMilliseconds = 0.0;
@@ -186,7 +197,17 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
     if (this->impl->model == nullptr)
         return;
     const auto updateStart = std::chrono::steady_clock::now();
-    this->impl->vmdFrame += static_cast<double>(deltaTime) * 30.0;
+    if (!this->impl->motionPaused && this->impl->vmdAnimation != nullptr)
+    {
+        double nextFrame = this->impl->vmdFrame +
+            static_cast<double>(deltaTime) * 30.0;
+        const double maxFrame = static_cast<double>(
+            this->impl->vmdAnimation->GetMaxKeyTime()
+        );
+        if (this->impl->motionLooping && maxFrame > 0.0)
+            nextFrame = std::fmod(nextFrame, maxFrame);
+        this->impl->vmdFrame = nextFrame;
+    }
     this->impl->model->BeginAnimation();
     this->impl->model->UpdateAllAnimation(
         this->impl->vmdAnimation.get(),
@@ -207,6 +228,83 @@ void SabaMmdRuntimeModel::Reset()
     this->impl->vmdFrame = 0.0;
     if (this->impl->model != nullptr)
         this->impl->model->ResetPhysics();
+}
+
+bool SabaMmdRuntimeModel::LoadMotion(
+    const std::filesystem::path& vmdPath
+)
+{
+    if (this->impl->model == nullptr)
+        return false;
+    saba::VMDFile vmd;
+    const std::string narrowPath = ToNarrowUtf8(vmdPath);
+    if (!saba::ReadVMDFile(&vmd, narrowPath.c_str()))
+        return false;
+    auto animation = std::make_unique<saba::VMDAnimation>();
+    if (!animation->Create(this->impl->model))
+        return false;
+    if (!animation->Add(vmd))
+        return false;
+    this->impl->vmdAnimation = std::move(animation);
+    this->impl->vmdFile = std::move(vmd);
+    this->impl->vmdLoaded = true;
+    this->impl->vmdFrame = 0.0;
+    this->impl->motionPaused = false;
+    return true;
+}
+
+bool SabaMmdRuntimeModel::HasMotion() const noexcept
+{
+    return this->impl->vmdAnimation != nullptr;
+}
+
+void SabaMmdRuntimeModel::SetMotionLooping(bool looping)
+{
+    this->impl->motionLooping = looping;
+}
+
+bool SabaMmdRuntimeModel::IsMotionLooping() const noexcept
+{
+    return this->impl->motionLooping;
+}
+
+void SabaMmdRuntimeModel::PauseMotion()
+{
+    this->impl->motionPaused = true;
+}
+
+void SabaMmdRuntimeModel::ResumeMotion()
+{
+    this->impl->motionPaused = false;
+}
+
+bool SabaMmdRuntimeModel::IsMotionPaused() const noexcept
+{
+    return this->impl->motionPaused;
+}
+
+void SabaMmdRuntimeModel::RestartMotion(bool resetPhysics)
+{
+    this->impl->vmdFrame = 0.0;
+    if (resetPhysics && this->impl->model != nullptr)
+        this->impl->model->ResetPhysics();
+}
+
+double SabaMmdRuntimeModel::MotionFrame() const noexcept
+{
+    return this->impl->vmdFrame;
+}
+
+void SabaMmdRuntimeModel::SetMotionFrame(double frame)
+{
+    this->impl->vmdFrame = std::max(0.0, frame);
+}
+
+double SabaMmdRuntimeModel::MotionMaxFrame() const noexcept
+{
+    return this->impl->vmdAnimation != nullptr
+        ? static_cast<double>(this->impl->vmdAnimation->GetMaxKeyTime())
+        : 0.0;
 }
 
 Pose& SabaMmdRuntimeModel::GetPose()
@@ -286,13 +384,124 @@ void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex, bool)
     // TODO(phase 5): bridge VMD IK switches into saba::MMDIkSolver.
 }
 
-void SabaMmdRuntimeModel::ApplyCameraTrack(
-    const CameraTrack&,
-    float,
-    Camera&
+bool SabaMmdRuntimeModel::LoadCameraMotion(
+    const std::filesystem::path& vmdPath
 )
 {
-    // TODO(phase 3): apply VMD camera through SabaMmdRuntimeModel.
+    saba::VMDFile vmd;
+    const std::string narrowPath = ToNarrowUtf8(vmdPath);
+    if (!saba::ReadVMDFile(&vmd, narrowPath.c_str()) ||
+        vmd.m_cameras.empty())
+    {
+        return false;
+    }
+    auto animation = std::make_unique<saba::VMDCameraAnimation>();
+    if (!animation->Create(vmd))
+        return false;
+    this->impl->cameraAnimation = std::move(animation);
+    return true;
+}
+
+void SabaMmdRuntimeModel::ApplyCameraMotion(float frame, Camera& camera)
+{
+    if (this->impl->cameraAnimation == nullptr)
+        return;
+    this->impl->cameraAnimation->Evaluate(frame);
+    const saba::MMDCamera& mmdCamera =
+        this->impl->cameraAnimation->GetCamera();
+    const saba::MMDLookAtCamera look(mmdCamera);
+    CameraParam param;
+    param.Position = look.m_eye;
+    param.Target = look.m_center;
+    param.Up = look.m_up;
+    param.VerticalFovDegrees = glm::degrees(mmdCamera.m_fov);
+    camera.SetParam(param);
+}
+
+void SabaMmdRuntimeModel::ApplyCameraTrack(
+    const CameraTrack& track,
+    float time,
+    Camera& camera
+)
+{
+    CameraKeyframe sample;
+    if (!track.Sample(time, sample))
+        return;
+    saba::MMDCamera mmdCamera;
+    mmdCamera.m_interest = sample.interest;
+    mmdCamera.m_rotate = glm::radians(sample.rotation);
+    mmdCamera.m_distance = sample.distance;
+    mmdCamera.m_fov = glm::radians(sample.viewAngle);
+    const saba::MMDLookAtCamera look(mmdCamera);
+    CameraParam param;
+    param.Position = look.m_eye;
+    param.Target = look.m_center;
+    param.Up = look.m_up;
+    param.VerticalFovDegrees = sample.viewAngle;
+    camera.SetParam(param);
+}
+
+bool SabaMmdRuntimeModel::LoadLightMotion(
+    const std::filesystem::path& vmdPath
+)
+{
+    saba::VMDFile vmd;
+    const std::string narrowPath = ToNarrowUtf8(vmdPath);
+    if (!saba::ReadVMDFile(&vmd, narrowPath.c_str()) ||
+        vmd.m_lights.empty())
+    {
+        return false;
+    }
+    std::vector<LightKeyframe> keys;
+    keys.reserve(vmd.m_lights.size());
+    for (const saba::VMDLight& light : vmd.m_lights)
+    {
+        LightKeyframe key;
+        key.time = static_cast<float>(light.m_frame);
+        key.color = glm::clamp(
+            light.m_color,
+            glm::vec3(0.0f),
+            glm::vec3(1.0f)
+        );
+        key.position = glm::vec3(
+            light.m_position.x,
+            light.m_position.y,
+            -light.m_position.z
+        );
+        keys.push_back(key);
+    }
+    this->impl->lightTrack.emplace(std::move(keys));
+    return true;
+}
+
+void SabaMmdRuntimeModel::ApplyLightMotion(
+    float frame,
+    DirectionalLight& light
+)
+{
+    if (this->impl->lightTrack.has_value())
+        this->ApplyLightTrack(*this->impl->lightTrack, frame, light);
+}
+
+void SabaMmdRuntimeModel::ApplyLightTrack(
+    const LightTrack& track,
+    float time,
+    DirectionalLight& light
+)
+{
+    LightKeyframe sample;
+    if (!track.Sample(time, sample))
+        return;
+    light.SetColor(glm::clamp(
+        sample.color,
+        glm::vec3(0.0f),
+        glm::vec3(1.0f)
+    ));
+    const float positionLength = glm::length(sample.position);
+    const glm::vec3 direction = positionLength > 0.000001f
+        ? -sample.position / positionLength
+        : glm::vec3(0.0f, -1.0f, 0.0f);
+    light.SetDirection(direction);
 }
 
 MmdSkinningKind SabaMmdRuntimeModel::SkinningKind() const noexcept

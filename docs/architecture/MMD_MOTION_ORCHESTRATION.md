@@ -1,6 +1,21 @@
-# MMD 多动作编排设计
+# MMD 动作 / 相机 / 灯光接口设计
 
-## 1. 旧实现是怎么做的（已删除，仅作对照）
+> 状态（2026-08-04）：**不做播放列表/编排系统**。下面第 1、2 节是调研记录，
+> 第 3 节是最终落地的薄接口方案；第 4 节起的“播放列表 v1”设计仅作参考，
+> 不实施。
+
+## 0. 决策
+
+- 动作管理：抽象 `MmdRuntimeModel` 上的单动作控制接口（加载/循环/暂停/恢复/
+  重开/帧位置），由 `SabaMmdRuntimeModel` 承接 Saba 的 `VMDAnimation`。
+- 相机动画：`CameraTrack` 采样 + `LoadCameraMotion/ApplyCameraMotion`，
+  由 Saba 的 `VMDCameraAnimation` 承接。
+- 灯光动画：新增 `LightTrack` 数据层 + `LoadLightMotion/ApplyLightMotion`，
+  由 Saba 解析的 `VMDLight` 帧承接。
+- 明确不做：动作队列、自动切歌、交叉淡化、分层混合。将来需要时再在接口
+  之上加一层，不污染运行时。
+
+## 1. 调研：旧实现与 Saba 原生能力
 
 旧链路是“一个 VMD → 一个 `AnimationClip` → Animator 单 clip 循环”：
 
@@ -34,74 +49,74 @@
 Saba viewer 本身只做单 VMD 播放：按 `GetMaxKeyTime()` 取模循环，没有
 播放列表概念。
 
-## 3. 建议设计：MmdMotionPlaylist（v1）
+## 3. 落地：薄接口（当前实现）
 
-放在 `SabaMmdRuntimeModel` 上（当前唯一 MMD 运行时；未来第二个实现出现时
-再提升到 `MmdRuntimeModel`）。
+接口定义在 `include/wisteria/runtime/mmd_runtime_model.hpp`，实现全部在
+`SabaMmdRuntimeModel`：
 
 ```cpp
-struct MmdMotion
-{
-    std::string name;                 // 播放列表显示名
-    std::vector<std::filesystem::path> vmdPaths; // 可多个 VMD，走 Add 合并
-    std::filesystem::path cameraVmdPath;        // 阶段 3：相机轨道
-    bool loop = false;                // 单个动作是否循环
-    SabaPhysicsSettings physics;      // 每个动作可带自己的物理参数
-};
+// 动作（单 VMD，无播放列表）
+bool LoadMotion(const std::filesystem::path& vmdPath);
+bool HasMotion() const noexcept;
+void SetMotionLooping(bool looping);
+bool IsMotionLooping() const noexcept;
+void PauseMotion();
+void ResumeMotion();
+bool IsMotionPaused() const noexcept;
+void RestartMotion(bool resetPhysics = true);
+double MotionFrame() const noexcept;
+void SetMotionFrame(double frame);
+double MotionMaxFrame() const noexcept;
 
-class MmdMotionPlaylist
-{
-public:
-    void SetMotions(std::vector<MmdMotion> motions);
-    void Play(std::size_t index);            // 立即切换（带物理 warmup）
-    void PlayNext();                          // 序列前进
-    void PlayPrevious();
+// 相机
+bool LoadCameraMotion(const std::filesystem::path& vmdPath);
+void ApplyCameraMotion(float frame, Camera& camera);
+void ApplyCameraTrack(const CameraTrack& track, float time, Camera& camera);
 
-    enum class Mode { SequenceLoop, SingleLoop, Once };
-    void SetMode(Mode mode);
-
-    bool IsEnded() const;                     // Once 模式播完
-    std::size_t CurrentIndex() const;
-    double CurrentTime() const;               // Saba frame
-};
+// 灯光
+bool LoadLightMotion(const std::filesystem::path& vmdPath);
+void ApplyLightMotion(float frame, DirectionalLight& light);
+void ApplyLightTrack(const LightTrack& track, float time, DirectionalLight& light);
 ```
 
-切换语义（对齐 Saba 的 `SyncPhysics`）：
+数据层：
 
-1. 记录当前姿势；
-2. 重建/选择目标 `VMDAnimation`，把该动作的全部 VMD `Add` 进去；
-3. `vmdFrame = 0`；
-4. 调用 `model->SaveBaseAnimation()` + 30 帧
-   `BeginAnimation → Evaluate(t, weight) → morph → node → physics → node
-   → EndAnimation`（即 Saba 现成的 `SyncPhysics`），让物理从旧姿势过渡；
-5. 进入常规 `Update` 循环。
+- `CameraTrack`（已有）现在实现了 `Sample`：interest 用 4 条贝塞尔曲线
+  （X/Y/Z + distance），rotation/viewAngle 线性，越界钳制到首/末键。
+- 新增 `LightTrack`（`LightKeyframe`：time/color/position + 6 条插值曲线），
+  与 `CameraTrack` 同构的 `Sample` 语义。
 
-播放模式：
+Saba 承接关系：
 
-- `SequenceLoop`（默认）：按列表顺序播放，每个动作播完自动 `PlayNext`，
-  末尾回到第一个——这就是“多个动作编排”的最小闭环；
-- `SingleLoop`：当前动作循环，等价旧实现；
-- `Once`：播完停在最后一帧。
+- `LoadMotion` → `saba::VMDAnimation::Create + Add`，替换当前动作；
+- 循环/暂停/帧位置由 runtime 管理，`Update` 在循环模式下用
+  `GetMaxKeyTime()` 取模；
+- `LoadCameraMotion/ApplyCameraMotion` → `saba::VMDCameraAnimation`
+  → `saba::MMDLookAtCamera` → `CameraParam`；
+- `LoadLightMotion` → `VMDFile::m_lights` → `LightTrack`，
+  `ApplyLightTrack` 把 color 写入 `DirectionalLight`，position 反向后
+  归一化为方向（MMD 光源位置 → 光线方向）。
 
-## 4. v1 不做、留给后续
+## 4. 自动验收（已实现）
 
-- **加权交叉淡化**：两段动作同时在场并 50/50 混合。Saba 单实例做不到；
-  可选路线是双 `VMDAnimation` + 采样导出 pose，或双 PMXModel 实例。成本高，
-  等 v1 播放列表跑通后再评估。
-- **动作分层**：身体 + 表情分别独立控制。先靠“骨骼不相交的多 VMD Add
-  合并”满足大部分需求；严格分层需要双 controller 组。
-- **相机编排**：VMD 相机是独立 `VMDCameraAnimation`，播放列表只负责
-  把 `cameraVmdPath` 与动作同步切换（阶段 3）。
+- `TestCameraLightTrackSampling`：CameraTrack/LightTrack 中值插值、越界钳制、
+  空轨道拒绝采样；
+- `TestSabaMotionCameraLightInterfaceWhenAvailable`：真实 VMD 的加载/循环/
+  暂停/恢复/重开/帧接口，真实相机 VMD（越南鼓卡点舞 镜头.vmd）的相机参数
+  有限性，以及 LightTrack 应用到 DirectionalLight。
 
-## 5. 自动验收建议
+## 5. 手动验收
 
-- `TestMmdMotionPlaylist`（无资产，用两个程序化 VMD）：SequenceLoop 在
-  末尾自动切回；SingleLoop 不前进；Once 停住；切换后 30 帧物理 finite。
-- `TestMmdMotionPlaylistWhenAvailable`（叶瞬光 + 两个真实 VMD）：
-  切换 10 次，顶点 finite、无 `[ERROR]`。
+- demo 暂未接这些接口（保持默认单动作循环）；可以用测试资产验证：
 
-## 6. 手动验收
+```powershell
+.\build\RelWithDebInfo\wisteria_tests.exe
+```
 
-- demo 加键盘：`N` 下一个动作、`B` 上一个、`L` 循环模式切换；
-- 重点观察动作切换瞬间裙摆/头发是否有爆裂或穿模（`SyncPhysics` 过渡）；
-- 与 Saba viewer 的观感对比。
+- 后续把 `LoadCameraMotion/ApplyCameraMotion` 接到 demo 相机即可实现
+  “VMD 镜头跟随”，不需要编排系统。
+
+## 6. 将来若要做编排
+
+在薄接口之上加 `MmdMotionPlaylist`（队列 + 模式 + 切换时 `SyncPhysics` 过渡），
+不影响运行时接口；接口层保持现状即可。
