@@ -39,7 +39,7 @@ const int MAX_POINT_LIGHTS = 8;
 const int MAX_DIRECTIONAL_LIGHTS = 4;
 const int MAX_SPOT_LIGHTS = 4;
 
-uniform sampler2D texture;
+uniform sampler2D baseColorTexture;
 uniform sampler2D normalTexture;
 uniform sampler2D metallicRoughnessTexture;
 uniform sampler2D emissiveTexture;
@@ -335,7 +335,7 @@ vec3 CalculateSpotLight(
 void main()
 {
     vec4 sampledColor = hasBaseTexture != 0
-        ? texture(texture, vertexTexCoord)
+        ? texture(baseColorTexture, vertexTexCoord)
         : vec4(1.0);
     vec4 baseColor = sampledColor * materialBaseColorFactor;
 

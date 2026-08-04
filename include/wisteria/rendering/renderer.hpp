@@ -90,6 +90,14 @@ private:
         const std::array<glm::mat4, 4>& lightViews,
         const std::array<glm::mat4, 4>& lightProjections
     );
+    void EnsureGroundShadowResources();
+    void RenderGroundShadowPass(
+        const std::vector<RenderCommand>& commands,
+        const glm::mat4& view,
+        const glm::mat4& projection,
+        const glm::vec3& lightDirection,
+        float groundY
+    );
     void DrawPhysicsDebug(
         const Scene& scene,
         const glm::mat4& view,
@@ -161,6 +169,8 @@ private:
     Framebuffer shadowFramebuffer;
     std::unique_ptr<Shader> shadowShader;
     std::unique_ptr<Program> shadowProgram;
+    std::unique_ptr<Shader> groundShadowShader;
+    std::unique_ptr<Program> groundShadowProgram;
     bool independentBlendSupported = false;
     std::size_t maximumSkinningMatrices = 0;
     const Pose* uploadedPose = nullptr;

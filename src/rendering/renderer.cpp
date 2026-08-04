@@ -249,6 +249,19 @@ void Renderer::Render(
         );
     }
 
+    // MMD ground shadow: flatten ground-shadow materials onto the y=0 plane
+    // along the main light direction, after the opaque ground is in depth.
+    if (shadowsEnabled && !scene.DirectionalLights().empty())
+    {
+        this->RenderGroundShadowPass(
+            opaqueCommands,
+            view,
+            projection,
+            glm::normalize(scene.DirectionalLights().front()->Direction()),
+            0.0f
+        );
+    }
+
     if (environment != nullptr && environment->ShouldDrawSkybox() &&
         !EnvironmentFlagEnabled("WISTERIA_DISABLE_SKYBOX"))
     {
@@ -401,6 +414,8 @@ void Renderer::Release() noexcept
     this->oitCompositeShader.reset();
     this->shadowProgram.reset();
     this->shadowShader.reset();
+    this->groundShadowProgram.reset();
+    this->groundShadowShader.reset();
     if (this->fullscreenVao != 0)
         glDeleteVertexArrays(1, &this->fullscreenVao);
     if (this->physicsDebugVao != 0)

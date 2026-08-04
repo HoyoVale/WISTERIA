@@ -65,7 +65,8 @@ std::string ToNarrowUtf8(const std::filesystem::path& path)
 
 void ConfigureCharacterLighting(Scene& scene)
 {
-    // Main directional light also drives the shadow map (single cascade).
+    // Main directional light also drives the CSM shadow map and the MMD
+    // ground shadow projection.
     scene.CreateDirectionalLight(DirectionalLightData{
         .Direction = {-0.35f, -0.75f, -0.45f},
         .Color = {1.0f, 0.96f, 0.92f},
@@ -340,7 +341,6 @@ void SetupSabaMmdDemoScene(
             glm::vec3(1.0f)
         )
     );
-
     if (motionPath.empty() && !sceneMode)
         motionPath = DemoDreamWingMotionPath();
     const std::filesystem::path cameraPath = DemoDreamWingCameraPath();

@@ -424,6 +424,103 @@ void Renderer::RenderShadowPass(
     this->shadowProgram->unUse();
 }
 
+void Renderer::EnsureGroundShadowResources()
+{
+    if (this->groundShadowProgram != nullptr)
+        return;
+
+    auto nextShader = std::make_unique<Shader>(
+        wisteria::assets::Shader("ground_shadow.vert"),
+        wisteria::assets::Shader("ground_shadow.frag")
+    );
+    auto nextProgram = std::make_unique<Program>(
+        nextShader->GetShaderList()
+    );
+    this->groundShadowShader = std::move(nextShader);
+    this->groundShadowProgram = std::move(nextProgram);
+}
+
+void Renderer::RenderGroundShadowPass(
+    const std::vector<RenderCommand>& commands,
+    const glm::mat4& view,
+    const glm::mat4& projection,
+    const glm::vec3& lightDirection,
+    float groundY
+)
+{
+    // Planar projection: flatten every vertex onto y = groundY along the
+    // light travel direction, folded into the view matrix so the ground
+    // shadow uses the model's already-skinned vertex positions.
+    glm::mat4 shadowProjection(1.0f);
+    if (std::abs(lightDirection.y) > 0.0001f)
+    {
+        const float kx = -lightDirection.x / lightDirection.y;
+        const float kz = -lightDirection.z / lightDirection.y;
+        shadowProjection = glm::mat4(
+            glm::vec4(1.0f, 0.0f, 0.0f, 0.0f),
+            glm::vec4(kx, 0.0f, kz, 0.0f),
+            glm::vec4(0.0f, 0.0f, 0.0f, 0.0f),
+            glm::vec4(-groundY * kx, groundY, -groundY * kz, 1.0f)
+        );
+    }
+
+    this->EnsureGroundShadowResources();
+    const glm::mat4 shadowView = view * shadowProjection;
+    const ShaderInterface groundShadowInterface;
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    this->groundShadowProgram->Use();
+    this->groundShadowProgram->Uniform4f(
+        "shadowColor",
+        0.12f,
+        0.10f,
+        0.10f,
+        0.55f
+    );
+    for (const RenderCommand& command : commands)
+    {
+        if (!command.part->GetMaterial().IsGroundShadow())
+            continue;
+
+        Mesh& mesh = command.part->GetMesh();
+        mesh.Attach();
+        if (mesh.DynamicVertexProvider())
+            mesh.DynamicVertexProvider()(mesh);
+        VAO& vertexArray = this->VertexArrayFor(mesh);
+        this->UploadMorphing(
+            vertexArray,
+            groundShadowInterface,
+            mesh,
+            command.morphState
+        );
+        this->UploadTransforms(
+            *this->groundShadowProgram,
+            groundShadowInterface,
+            command.model,
+            shadowView,
+            projection
+        );
+        vertexArray.Bind();
+        mesh.Draw();
+        vertexArray.unBind();
+    }
+    this->groundShadowProgram->unUse();
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+}
+
 VAO& Renderer::VertexArrayFor(Mesh& mesh)
 {
     const auto cached = this->meshVertexArrays.find(&mesh);
