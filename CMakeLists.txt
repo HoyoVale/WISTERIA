@@ -328,4 +328,14 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME wisteria.core COMMAND wisteria_tests)
+
+    # Minimal render regression: creates a real GL context and verifies that
+    # the engine SceneFramebuffer clears and reads back two consecutive
+    # frames. Skips when no display backend is available (Linux NULL build).
+    add_executable(wisteria_render_tests tests/render_fbo_tests.cpp)
+    target_link_libraries(wisteria_render_tests PRIVATE wisteria_core)
+    if(MSVC)
+        target_compile_options(wisteria_render_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME wisteria.render-fbo COMMAND wisteria_render_tests)
 endif()
