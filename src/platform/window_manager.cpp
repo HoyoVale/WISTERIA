@@ -583,6 +583,17 @@ void WindowManager::BeginInputFrames() noexcept
 
 void WindowManager::DestroyClosedWindows()
 {
+    // Never destroy the last window context here: shared GPU resources
+    // (ResourceManager meshes, shader programs) must be released while a
+    // context of the share group is still alive. Application::Shutdown owns
+    // that final teardown and destroys the remaining window afterwards.
+    if (this->AllWindowsClosed() &&
+        this->windows.size() == 1U &&
+        this->pendingWindows.empty())
+    {
+        return;
+    }
+
     auto iterator = this->windows.begin();
     while (iterator != this->windows.end())
     {

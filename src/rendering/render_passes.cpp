@@ -243,8 +243,12 @@ void Renderer::DrawPart(
         program.UniformTex(shaderInterface.shadowMap, ShadowMapTextureUnit);
         program.Uniform2f(
             shaderInterface.shadowMapSize,
-            static_cast<float>(ShadowMapResolution),
-            static_cast<float>(ShadowMapResolution)
+            static_cast<float>(this->shadowMapSize),
+            static_cast<float>(this->shadowMapSize)
+        );
+        program.Uniform1i(
+            shaderInterface.shadowPcfRadius,
+            this->shadowPcfRadius
         );
     }
 
@@ -295,8 +299,8 @@ void Renderer::EnsureShadowResources()
             GL_TEXTURE_2D_ARRAY,
             0,
             GL_DEPTH_COMPONENT24,
-            ShadowMapResolution,
-            ShadowMapResolution,
+            this->shadowMapSize,
+            this->shadowMapSize,
             static_cast<GLsizei>(ShadowCascadeCount),
             0,
             GL_DEPTH_COMPONENT,
@@ -344,8 +348,8 @@ void Renderer::EnsureShadowResources()
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         std::vector<float> depths(4U, 1.0f);
         glReadPixels(
-            ShadowMapResolution / 2,
-            ShadowMapResolution / 2,
+            this->shadowMapSize / 2,
+            this->shadowMapSize / 2,
             2,
             2,
             GL_DEPTH_COMPONENT,
@@ -367,6 +371,19 @@ void Renderer::RenderShadowPass(
     this->EnsureShadowResources();
     this->shadowProgram->Use();
     const ShaderInterface shadowInterface;
+
+    // Refresh skinned vertex positions once; every cascade shares the same
+    // geometry within a frame, so four uploads would only burn bandwidth.
+    for (const RenderCommand& command : commands)
+    {
+        if (!command.part->GetMaterial().CastsSelfShadow())
+            continue;
+        Mesh& mesh = command.part->GetMesh();
+        mesh.Attach();
+        if (mesh.DynamicVertexProvider())
+            mesh.DynamicVertexProvider()(mesh);
+    }
+
     for (std::size_t cascade = 0U;
          cascade < ShadowCascadeCount;
          ++cascade)
@@ -381,7 +398,7 @@ void Renderer::RenderShadowPass(
         );
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
-        glViewport(0, 0, ShadowMapResolution, ShadowMapResolution);
+        glViewport(0, 0, this->shadowMapSize, this->shadowMapSize);
         glClear(GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
@@ -399,9 +416,6 @@ void Renderer::RenderShadowPass(
                 continue;
 
             Mesh& mesh = command.part->GetMesh();
-            mesh.Attach();
-            if (mesh.DynamicVertexProvider())
-                mesh.DynamicVertexProvider()(mesh);
             VAO& vertexArray = this->VertexArrayFor(mesh);
             this->UploadMorphing(
                 vertexArray,

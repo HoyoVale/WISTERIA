@@ -171,6 +171,10 @@ private:
     std::unique_ptr<Program> shadowProgram;
     std::unique_ptr<Shader> groundShadowShader;
     std::unique_ptr<Program> groundShadowProgram;
+    // Default matches the internal ShadowMapResolution constant (2048); the
+    // runtime knob WISTERIA_SHADOW_MAP_SIZE overrides this at startup.
+    int shadowMapSize = 2048;
+    int shadowPcfRadius = 1;
     bool independentBlendSupported = false;
     std::size_t maximumSkinningMatrices = 0;
     const Pose* uploadedPose = nullptr;

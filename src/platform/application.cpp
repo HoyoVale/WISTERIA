@@ -158,7 +158,8 @@ int Application::Run()
     try
     {
         while (this->windowManager.HasActiveWindows() &&
-            !this->closeRequested)
+            !this->closeRequested &&
+            !this->windowManager.AllWindowsClosed())
         {
             this->timer.Now();
             this->Tick(this->timer.GetDeltaTime());
@@ -283,14 +284,19 @@ void Application::Shutdown() noexcept
         glfwMakeContextCurrent(resourceContext);
         // Verify the registered share-group context, then release every GPU
         // resource owned by the device (programs first, then resources whose
-        // materials hold references into the same cache).
-        try
+        // materials hold references into the same cache). The token is only
+        // registered by Application::CreateWindow; callers that create
+        // windows through WindowManager directly skip the assertion.
+        if (this->graphicsDevice.HasContextToken())
         {
-            this->graphicsDevice.RequireContextToken(resourceContext);
-        }
-        catch (const std::exception& error)
-        {
-            std::cerr << "[WARN] " << error.what() << '\n';
+            try
+            {
+                this->graphicsDevice.RequireContextToken(resourceContext);
+            }
+            catch (const std::exception& error)
+            {
+                std::cerr << "[WARN] " << error.what() << '\n';
+            }
         }
         this->graphicsDevice.ReleaseAll();
         this->resources.Clear();

@@ -75,6 +75,7 @@ uniform sampler2DArray shadowMap;
 uniform int shadowEnabled;
 uniform int receiveShadow;
 uniform vec2 shadowMapSize;
+uniform int shadowPcfRadius;
 uniform float shadowSplitPositions[5];
 
 layout(location = 0) out vec4 outputColor;
@@ -153,19 +154,22 @@ float ShadowFactor()
 
     float bias = 0.003;
     float visibility = 0.0;
+    int radius = clamp(shadowPcfRadius, 1, 3);
+    int tapCount = 0;
     vec2 texelSize = 1.0 / shadowMapSize;
-    for (int x = -1; x <= 1; ++x)
+    for (int x = -radius; x <= radius; ++x)
     {
-        for (int y = -1; y <= 1; ++y)
+        for (int y = -radius; y <= radius; ++y)
         {
             float shadowDepth = texture(
                 shadowMap,
                 vec3(shadowUv + vec2(x, y) * texelSize, float(cascade))
             ).r;
             visibility += (currentDepth - bias) <= shadowDepth ? 1.0 : 0.0;
+            ++tapCount;
         }
     }
-    return visibility / 9.0;
+    return visibility / float(tapCount);
 }
 
 vec3 ToonFactor(float normalDotLight)

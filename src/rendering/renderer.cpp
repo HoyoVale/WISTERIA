@@ -111,6 +111,18 @@ void Renderer::Render(
     // Cascaded shadow mapping: four light-space depth slices fitted to the
     // camera frustum, rendered into a depth texture array. MMD toon
     // materials select the cascade by camera-space depth in the main pass.
+    if (const char* sizeValue = std::getenv("WISTERIA_SHADOW_MAP_SIZE"))
+    {
+        const int parsed = std::atoi(sizeValue);
+        if (parsed >= 256 && parsed <= 4096)
+            this->shadowMapSize = parsed;
+    }
+    if (const char* radiusValue = std::getenv("WISTERIA_SHADOW_PCF_RADIUS"))
+    {
+        const int parsed = std::atoi(radiusValue);
+        if (parsed >= 1 && parsed <= 3)
+            this->shadowPcfRadius = parsed;
+    }
     this->shadowStateEnabled = false;
     const bool shadowsEnabled =
         !EnvironmentFlagEnabled("WISTERIA_DISABLE_SHADOWS");
