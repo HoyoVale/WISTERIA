@@ -63,7 +63,7 @@ struct ShaderInterface
     std::string materialAlphaCutoff = "materialAlphaCutoff";
     std::string oitPass = "oitPass";
     std::string hasBaseTexture = "hasBaseTexture";
-    std::string baseColorTexture = "texture";
+    std::string baseColorTexture = "baseColorTexture";
     std::string hasNormalTexture = "hasNormalTexture";
     std::string normalTexture = "normalTexture";
     std::string materialNormalScale = "materialNormalScale";
@@ -126,7 +126,10 @@ struct MaterialData{
     MaterialShadingModel shadingModel =
         MaterialShadingModel::PbrMetallicRoughness;
     std::unordered_map<std::string, TextureData> textureSources = {
-        {"texture", TextureData::FromFile(textureRootPath + "chessboard.png")}
+        {
+            "baseColorTexture",
+            TextureData::FromFile(textureRootPath + "chessboard.png")
+        }
     };
     glm::vec4 baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     glm::vec3 specularColor = {1.0f, 1.0f, 1.0f}; // Specular reflection color.

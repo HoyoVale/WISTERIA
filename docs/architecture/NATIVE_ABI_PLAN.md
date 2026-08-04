@@ -60,27 +60,38 @@ M1 只做 **headless runtime**：不依赖 OpenGL，天然可编译到 Linux/WAS
 
 ### 步骤
 
-1. 把仓库复制到 WSL 原生文件系统（避免 `/mnt/c` 9P 慢）：
+1. 推荐：**直接在挂载的 Windows 项目里并行构建**（2026-08-04 实测可用，
+   无需复制仓库）。在 WSL 里进入项目目录执行：
 
    ```bash
-   rsync -a --exclude build --exclude .git /mnt/c/Users/hoyo/Desktop/temp/learn/FGGP/ ~/fggp-linux/
+   cd /mnt/c/Users/hoyo/Desktop/temp/learn/FGGP
+   ./build_linux.sh
    ```
 
-2. 配置并构建 headless 目标：
+   脚本会配置 `build-linux/`（Ninja + RelWithDebInfo），并行构建窗口 demo
+   `wisteria`、动态库 `wisteria_native`、测试 `wisteria_tests`，然后自动跑
+   测试。产物与 Windows 的 `build/` 完全隔离。
+
+2. 常用动作（与 `run.ps1` 对应）：
 
    ```bash
-   cd ~/fggp-linux
-   cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-   cmake --build build-linux --target wisteria_native wisteria_tests -j
+   ./build_linux.sh build                 # 配置 + 编译全部目标
+   ./build_linux.sh test                  # 配置 + 编译 + 跑测试（默认动作）
+   ./build_linux.sh run --model assets/models/mmd/爱弥斯_pmx/爱弥斯.pmx
+                                          # 配置 + 编译 + 开窗口 demo
+   ./build_linux.sh configure             # 只配置
+   ./build_linux.sh clean                 # 删除 build-linux（仅限项目内）
    ```
 
-3. 跑测试：
+   支持 `-c Debug|Release|RelWithDebInfo`、`-G <generator>`、`-B <build-dir>`。
+
+3. 可选：如果嫌弃 `/mnt/c` 9P 文件系统慢，仍可 rsync 到 WSL 原生盘再构建：
 
    ```bash
-   ./build-linux/wisteria_tests
+   rsync -a --exclude build --exclude build-linux --exclude .git \
+       /mnt/c/Users/hoyo/Desktop/temp/learn/FGGP/ ~/fggp-linux/
+   cd ~/fggp-linux && ./build_linux.sh
    ```
-
-4. 可选：WSLg 下跑 demo（需要 X/Wayland 显示，WSL2 默认支持）。
 
 ### 已知移植检查点
 
@@ -104,9 +115,26 @@ M1 只做 **headless runtime**：不依赖 OpenGL，天然可编译到 Linux/WAS
 - MSVC 特有警告/`/W4` 语义在 g++ 下重新看一遍；
 - 依赖（Assimp/Bullet/GLFW/Saba）均有 UNIX 分支，理论上无源码改动。
 
-Linux 构建入口：`script/build_linux.sh`（等价于
-`cmake -S . -B build-linux -G Ninja && cmake --build build-linux --target
-wisteria_native wisteria_tests -j && ./build-linux/wisteria_tests`）。
+Linux 构建入口：`./build_linux.sh [action]`，动作包括
+`configure / build / compile / test / run / clean / help`（`compile` 是
+`build` 的别名，`run` 后面可直接跟 demo 参数，如 `--model`）。
+
+### Linux 窗口渲染（2026-08-04 已打通）
+
+WSLg 下窗口 demo 已能编译、启动并渲染（`MESA_DEBUG=1` 下 0 个 GL 错误）。
+过程中修掉两个 Linux 专属问题：
+
+1. **GLSL 内置函数名被遮蔽**：`mmd.frag` 的 `uniform sampler2D texture;`
+   把内置 `texture()` 遮蔽，Windows 的 NVIDIA 驱动容忍，Mesa/glslang 直接
+   拒绝编译。已改名为 `baseColorTexture`，C++ 侧 `ShaderInterface` 与默认
+   材质绑定键同步改名。
+2. **GPU 蒙皮采样器缺少有效缓冲纹理**：`mmd.vert` 静态引用
+   `samplerBuffer boneMatrixPalette`，但 Saba CPU 蒙皮路径（动态顶点）下
+   `UploadSkinning()` 提前返回，采样器默认指向单元 0 的 2D 纹理；Mesa 在
+   draw 时校验 samplerBuffer 纹理完整性，报 `GL_INVALID_OPERATION`（每帧每
+   网格，NVIDIA 不报）。修复：只要网格有骨骼就 `EnsureSkinningResources()`
+   并把皮肤 TBO 绑到专用单元（创建时先分配一个单位矩阵 texel，保证纹理
+   非空），再按需启用 GPU 蒙皮。
 
 ## 下一步
 

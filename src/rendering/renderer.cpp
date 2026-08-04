@@ -1166,6 +1166,17 @@ void Renderer::EnsureSkinningResources()
     }
 
     glBindBuffer(GL_TEXTURE_BUFFER, nextBuffer);
+    // Allocate one identity texel up front. The vertex shader statically
+    // samples boneMatrixPalette, and Mesa validates the sampler's buffer
+    // texture at draw time even when GPU skinning is disabled, so the
+    // texture buffer must never be empty.
+    const glm::mat4 identity(1.0f);
+    glBufferData(
+        GL_TEXTURE_BUFFER,
+        sizeof(glm::mat4),
+        &identity[0][0],
+        GL_DYNAMIC_DRAW
+    );
     glBindTexture(GL_TEXTURE_BUFFER, nextTexture);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, nextBuffer);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
@@ -1209,6 +1220,21 @@ void Renderer::UploadSkinning(
     const bool enabled = mesh.IsSkinned() && pose != nullptr &&
         !mesh.HasDynamicVertexSource();
     program.Uniform1i(shaderInterface.skinningEnabled, enabled ? 1 : 0);
+    if (!mesh.IsSkinned())
+        return;
+
+    // The vertex shader statically samples boneMatrixPalette, so Mesa
+    // validates the sampler's texture unit at draw time even when GPU
+    // skinning is disabled. Keep a valid buffer texture bound on the
+    // skinning unit for every skinned mesh.
+    this->EnsureSkinningResources();
+    glActiveTexture(GL_TEXTURE0 + SkinningTextureUnit);
+    glBindTexture(GL_TEXTURE_BUFFER, this->skinningTexture);
+    program.UniformTex(
+        shaderInterface.boneMatrixPalette,
+        SkinningTextureUnit
+    );
+
     if (!enabled)
         return;
     if (pose->BoneCount() < mesh.RequiredBoneCount())
@@ -1218,7 +1244,6 @@ void Renderer::UploadSkinning(
         );
     }
 
-    this->EnsureSkinningResources();
     const std::span<const glm::mat4> matrices = pose->SkinningMatrices();
     if (matrices.size() > this->maximumSkinningMatrices)
     {

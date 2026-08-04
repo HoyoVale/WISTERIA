@@ -39,7 +39,7 @@ const int MAX_POINT_LIGHTS = 8;
 const int MAX_DIRECTIONAL_LIGHTS = 4;
 const int MAX_SPOT_LIGHTS = 4;
 
-uniform sampler2D texture;
+uniform sampler2D baseColorTexture;
 uniform sampler2D sphereTexture;
 uniform sampler2D toonTexture;
 
@@ -236,7 +236,7 @@ void main()
     }
 
     vec4 sampledColor = hasBaseTexture != 0
-        ? texture(texture, vertexTexCoord) * materialTextureFactor
+        ? texture(baseColorTexture, vertexTexCoord) * materialTextureFactor
         : vec4(1.0);
     vec4 baseColor = sampledColor * materialBaseColorFactor;
     if (materialAlphaMode == 0)
