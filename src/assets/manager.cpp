@@ -23,6 +23,7 @@ std::filesystem::path NormalizeResourcePath(
 
 void ResourceManager::BindGraphicsDevice(GraphicsDevice& device)
 {
+    this->graphicsDevice = &device;
     this->programCache = device.Programs();
 }
 
@@ -39,7 +40,9 @@ Mesh& ResourceManager::CreateMesh(
     auto resource = std::make_unique<Mesh>(
         data,
         requiredBoneCount,
-        std::move(morphTargets)
+        std::move(morphTargets),
+        std::vector<std::uint32_t>{},
+        this->graphicsDevice
     );
     Mesh& result = *resource;
     this->meshes.emplace(name, std::move(resource));
@@ -54,7 +57,11 @@ Material& ResourceManager::CreateMaterial(
     if (this->materials.contains(name))
         throw std::invalid_argument("Material resource already exists: " + name);
 
-    auto material = std::make_unique<Material>(data, this->programCache);
+    auto material = std::make_unique<Material>(
+        data,
+        this->programCache,
+        this->graphicsDevice
+    );
     Material& result = *material;
     this->materials.emplace(name, std::move(material));
     return result;
@@ -133,7 +140,8 @@ Material& ResourceManager::CreateMaterial(
     auto material = std::make_unique<Material>(
         data,
         std::move(bindings),
-        this->programCache
+        this->programCache,
+        this->graphicsDevice
     );
     Material& result = *material;
     this->materials.emplace(name, std::move(material));
@@ -235,7 +243,8 @@ ModelAsset& ResourceManager::CreateModel(
         materials.push_back(std::make_unique<Material>(
             data,
             std::move(bindings),
-            this->programCache
+            this->programCache,
+            this->graphicsDevice
         ));
     }
 
@@ -247,7 +256,8 @@ ModelAsset& ResourceManager::CreateModel(
             std::move(imported.meshes[index].data),
             imported.meshes[index].requiredBoneCount,
             std::move(imported.meshes[index].morphTargets),
-            std::move(imported.meshes[index].sourceVertexIndices)
+            std::move(imported.meshes[index].sourceVertexIndices),
+            this->graphicsDevice
         ));
     }
 
@@ -557,7 +567,11 @@ ModelAsset& ResourceManager::LoadModel(
         }
 
         importedMaterials.push_back(
-            std::make_unique<Material>(data, std::move(bindings))
+            std::make_unique<Material>(
+                data,
+                std::move(bindings),
+                this->graphicsDevice
+            )
         );
     }
 
@@ -570,7 +584,8 @@ ModelAsset& ResourceManager::LoadModel(
                 std::move(imported.meshes[index].data),
                 imported.meshes[index].requiredBoneCount,
                 std::move(imported.meshes[index].morphTargets),
-                std::move(imported.meshes[index].sourceVertexIndices)
+                std::move(imported.meshes[index].sourceVertexIndices),
+                this->graphicsDevice
             )
         );
     }

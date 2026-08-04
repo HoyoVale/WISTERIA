@@ -6,14 +6,17 @@ namespace wisteria
 {
 namespace
 {
-MaterialTextureBindings BuildTextureBindings(const MaterialData& data)
+MaterialTextureBindings BuildTextureBindings(
+    const MaterialData& data,
+    GraphicsDevice* device
+)
 {
     MaterialTextureBindings bindings;
     for (const auto& [uniformName, source] : data.textureSources)
     {
         bindings.emplace(
             uniformName,
-            std::make_shared<Texture>(source)
+            std::make_shared<Texture>(source, device)
         );
     }
     return bindings;
@@ -21,35 +24,26 @@ MaterialTextureBindings BuildTextureBindings(const MaterialData& data)
 
 }
 
-Material::Material(const MaterialData &_data)
+Material::Material(const MaterialData& _data, GraphicsDevice* device)
     : Material(
           _data,
-          BuildTextureBindings(_data),
-          std::make_shared<ProgramCache>()
+          BuildTextureBindings(_data, device),
+          std::make_shared<ProgramCache>(),
+          device
       )
 {
 }
 
 Material::Material(
     const MaterialData& data,
-    std::shared_ptr<ProgramCache> programCache
+    std::shared_ptr<ProgramCache> programCache,
+    GraphicsDevice* device
 )
     : Material(
           data,
-          BuildTextureBindings(data),
-          std::move(programCache)
-      )
-{
-}
-
-Material::Material(
-    const MaterialData& data,
-    MaterialTextureBindings textureBindings
-)
-    : Material(
-          data,
-          std::move(textureBindings),
-          std::make_shared<ProgramCache>()
+          BuildTextureBindings(data, device),
+          std::move(programCache),
+          device
       )
 {
 }
@@ -57,9 +51,25 @@ Material::Material(
 Material::Material(
     const MaterialData& data,
     MaterialTextureBindings textureBindings,
-    std::shared_ptr<ProgramCache> programCache
+    GraphicsDevice* device
 )
-    : programCache(std::move(programCache)),
+    : Material(
+          data,
+          std::move(textureBindings),
+          std::make_shared<ProgramCache>(),
+          device
+      )
+{
+}
+
+Material::Material(
+    const MaterialData& data,
+    MaterialTextureBindings textureBindings,
+    std::shared_ptr<ProgramCache> programCache,
+    GraphicsDevice* device
+)
+    : device(device),
+      programCache(std::move(programCache)),
       textures(std::move(textureBindings)),
       data(data)
 {

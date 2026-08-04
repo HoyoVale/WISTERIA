@@ -139,6 +139,7 @@ public:
     std::size_t EnvironmentCount() const noexcept;
 
 private:
+    GraphicsDevice* graphicsDevice = nullptr;
     std::shared_ptr<ProgramCache> programCache =
         std::make_shared<ProgramCache>();
     std::unordered_map<std::string, std::unique_ptr<Mesh>> meshes;

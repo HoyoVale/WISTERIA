@@ -36,6 +36,13 @@ private:
 };
 }
 
+Renderer::Renderer(GraphicsDevice* device)
+    : device(device),
+      oitFramebuffer(device),
+      shadowFramebuffer(device)
+{
+}
+
 Renderer::~Renderer()
 {
     this->Release();

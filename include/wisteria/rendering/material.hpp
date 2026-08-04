@@ -185,19 +185,25 @@ using MaterialTextureBindings =
 
 class Material{
 public:
-    explicit Material(const MaterialData &_data = {});
-    Material(
-        const MaterialData& data,
-        std::shared_ptr<ProgramCache> programCache
+    explicit Material(
+        const MaterialData& _data = {},
+        GraphicsDevice* device = nullptr
     );
     Material(
         const MaterialData& data,
-        MaterialTextureBindings textureBindings
+        std::shared_ptr<ProgramCache> programCache,
+        GraphicsDevice* device = nullptr
     );
     Material(
         const MaterialData& data,
         MaterialTextureBindings textureBindings,
-        std::shared_ptr<ProgramCache> programCache
+        GraphicsDevice* device = nullptr
+    );
+    Material(
+        const MaterialData& data,
+        MaterialTextureBindings textureBindings,
+        std::shared_ptr<ProgramCache> programCache,
+        GraphicsDevice* device = nullptr
     );
     ~Material() = default;
 
@@ -244,6 +250,7 @@ public:
     void SetOcclusionStrength(float occlusionStrength) noexcept;
 
 private:
+    GraphicsDevice* device = nullptr;
     std::shared_ptr<ProgramCache> programCache;
     std::shared_ptr<Program> program;
     MaterialTextureBindings textures;

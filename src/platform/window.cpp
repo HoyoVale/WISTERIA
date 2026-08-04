@@ -47,7 +47,10 @@ Window::~Window()
 void Window::Release() noexcept
 {
     if (this->window != nullptr)
+    {
         glfwMakeContextCurrent(this->window);
+        GraphicsDevice::SetCurrentContext(this->window);
+    }
     this->cameraController.reset();
     this->camera.reset();
     this->scene.reset();
@@ -62,6 +65,7 @@ void Window::Release() noexcept
 void Window::init()
 {
     glfwMakeContextCurrent(this->GetGLFWwindow());
+    GraphicsDevice::SetCurrentContext(this->GetGLFWwindow());
 
     if (!gladLoadGL(glfwGetProcAddress))
         throw std::runtime_error("Failed to load OpenGL functions");
@@ -144,6 +148,7 @@ void Window::MakeContextCurrent() const
     if (this->window == nullptr)
         throw std::logic_error("Cannot activate a destroyed window");
     glfwMakeContextCurrent(this->window);
+    GraphicsDevice::SetCurrentContext(this->window);
 }
 
 void Window::SwapBuffers() const

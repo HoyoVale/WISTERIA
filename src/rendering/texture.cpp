@@ -63,8 +63,9 @@ bool TextureData::IsRgba8() const noexcept
         this->height > 0 && !this->data.empty();
 }
 
-Texture::Texture(TextureData data)
-    : data(std::move(data))
+Texture::Texture(TextureData data, GraphicsDevice* device)
+    : device(device),
+      data(std::move(data))
 {
 }
 
@@ -72,7 +73,17 @@ Texture::~Texture()
 {
     if (this->texture != 0)
     {
-        glDeleteTextures(1, &this->texture);
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                this->texture
+            );
+        }
+        else
+        {
+            glDeleteTextures(1, &this->texture);
+        }
         this->texture = 0;
     }
 }

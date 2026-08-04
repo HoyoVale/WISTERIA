@@ -42,7 +42,8 @@ private:
 };
 }
 
-EBO::EBO()
+EBO::EBO(GraphicsDevice* device)
+    : device(device)
 {
     glGenBuffers(1, &this->ebo);
 }
@@ -51,7 +52,17 @@ EBO::~EBO()
 {
     if (this->ebo != 0)
     {
-        glDeleteBuffers(1, &this->ebo);
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Buffer,
+                this->ebo
+            );
+        }
+        else
+        {
+            glDeleteBuffers(1, &this->ebo);
+        }
         this->ebo = 0;
         this->capacity = 0;
     }

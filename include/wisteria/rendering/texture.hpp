@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <glad/gl.h>
+#include "wisteria/rendering/graphics_device.hpp"
 #include <span>
 #include <string>
 #include <vector>
@@ -44,7 +45,10 @@ struct TextureData
 
 class Texture{
 public:
-    explicit Texture(TextureData data = {});
+    explicit Texture(
+        TextureData data = {},
+        GraphicsDevice* device = nullptr
+    );
     ~Texture();
 
     Texture(const Texture&) = delete;
@@ -84,6 +88,7 @@ private:
         unsigned int unit
     );
 private:
+    GraphicsDevice* device = nullptr;
     TextureData data;
     GLuint texture = 0;
     bool configured = false;

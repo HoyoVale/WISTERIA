@@ -1,5 +1,6 @@
 #pragma once
 #include <glad/gl.h>
+#include "wisteria/rendering/graphics_device.hpp"
 #include <unordered_map>
 #include <string>
 #include "wisteria/rendering/vbo.hpp"
@@ -8,7 +9,7 @@ namespace wisteria
 {
 class VAO{
 public:
-    VAO();
+    explicit VAO(GraphicsDevice* device = nullptr);
     ~VAO();
 
     VAO(const VAO&) = delete;
@@ -27,6 +28,7 @@ private:
     static GLenum ParseType(DataType type);
     static std::size_t ParseTypeSize(DataType type);
 private:
+    GraphicsDevice* device = nullptr;
     GLuint vao = 0;
     std::unordered_map<unsigned int, std::string> attribList;
     unsigned int index = 0;

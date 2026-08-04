@@ -17,6 +17,8 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -503,6 +505,125 @@ int main()
                 "[RENDER FBO] shadow-darkest single=%d overlap=%d\n",
                 darkestSingle,
                 darkestOverlap
+            );
+        }
+
+        // GraphicsDevice deferred deletion: GPU objects destroyed without
+        // the owning context current must be queued, not passed to glDelete*
+        // with no context, and released once the context returns.
+        {
+            GraphicsDevice deferredDevice;
+            deferredDevice.SetContextToken(window);
+            GraphicsDevice::SetCurrentContext(window);
+            {
+                Texture immediate(
+                    TextureData::FromRgba8(
+                        2,
+                        2,
+                        std::vector<std::uint8_t>(16U, 255U)
+                    ),
+                    &deferredDevice
+                );
+                immediate.Attach();
+            }
+            Require(
+                deferredDevice.PendingDeleteCount() == 0U,
+                "device must delete immediately with its context current"
+            );
+
+            GraphicsDevice::SetCurrentContext(nullptr);
+            {
+                Texture queued(
+                    TextureData::FromRgba8(
+                        2,
+                        2,
+                        std::vector<std::uint8_t>(16U, 255U)
+                    ),
+                    &deferredDevice
+                );
+                queued.Attach();
+            }
+            Require(
+                deferredDevice.PendingDeleteCount() == 1U,
+                "device must queue deletions without its context current"
+            );
+            GraphicsDevice::SetCurrentContext(window);
+            deferredDevice.FlushPendingDeletes();
+            Require(
+                deferredDevice.PendingDeleteCount() == 0U,
+                "flush must release queued objects"
+            );
+            std::printf(
+                "[RENDER FBO] deferred-delete queue flushed\n"
+            );
+        }
+
+        // Renderer VAO cache: a mesh destroyed while a VAO is cached must not
+        // dangle; a later mesh at the same address rebuilds the VAO.
+        {
+            GraphicsDevice cacheDevice;
+            ResourceManager cacheResources;
+            cacheResources.BindGraphicsDevice(cacheDevice);
+            Camera camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            const glm::mat4 projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+            Renderer renderer;
+            std::optional<Mesh> mesh;
+
+            auto renderMesh = [&]()
+            {
+                Scene scene;
+                MaterialData groundData;
+                groundData.textureSources.clear();
+                groundData.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
+                groundData.groundPlane = true;
+                Material groundMaterial(
+                    groundData,
+                    std::make_shared<ProgramCache>(),
+                    &cacheDevice
+                );
+                scene.CreateEntity(*mesh, groundMaterial);
+                sceneFramebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
+                renderer.Render(
+                    scene,
+                    camera,
+                    projection,
+                    sceneFramebuffer
+                );
+                Require(
+                    glGetError() == GL_NO_ERROR,
+                    "GL error during mesh cache lifetime render"
+                );
+            };
+
+            mesh.emplace(
+                BuildGroundQuad(true),
+                0U,
+                std::vector<MeshMorphTarget>{},
+                std::vector<std::uint32_t>{},
+                &cacheDevice
+            );
+            renderMesh();
+            mesh.reset();
+            mesh.emplace(
+                BuildGroundQuad(true),
+                0U,
+                std::vector<MeshMorphTarget>{},
+                std::vector<std::uint32_t>{},
+                &cacheDevice
+            );
+            renderMesh();
+            std::printf(
+                "[RENDER FBO] mesh lifetime cache rebuilt\n"
             );
         }
     }

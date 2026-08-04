@@ -7,7 +7,8 @@
 
 namespace wisteria
 {
-VAO::VAO()
+VAO::VAO(GraphicsDevice* device)
+    : device(device)
 {
     glGenVertexArrays(1, &this->vao);
 }
@@ -16,7 +17,17 @@ VAO::~VAO()
 {
     if (this->vao != 0)
     {
-        glDeleteVertexArrays(1, &this->vao);
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::VertexArray,
+                this->vao
+            );
+        }
+        else
+        {
+            glDeleteVertexArrays(1, &this->vao);
+        }
         this->vao = 0;
     }
 }

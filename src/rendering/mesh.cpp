@@ -97,9 +97,11 @@ Mesh::Mesh(
     DefaultModelData data,
     std::size_t requiredBoneCount,
     std::vector<MeshMorphTarget> morphTargets,
-    std::vector<std::uint32_t> sourceVertexIndices
+    std::vector<std::uint32_t> sourceVertexIndices,
+    GraphicsDevice* device
 )
-    : data(std::move(data)),
+    : device(device),
+      data(std::move(data)),
       morphTargets(std::move(morphTargets)),
       requiredBoneCount(requiredBoneCount),
       sourceVertexIndices(std::move(sourceVertexIndices))
@@ -260,8 +262,8 @@ void Mesh::Attach()
     if (this->attached)
         return;
 
-    auto nextVbo = std::make_unique<VBO>();
-    auto nextEbo = std::make_unique<EBO>();
+    auto nextVbo = std::make_unique<VBO>(this->device);
+    auto nextEbo = std::make_unique<EBO>(this->device);
 
     nextVbo->Upload(
         this->data.vertices.data(),
@@ -457,6 +459,11 @@ const MeshDynamicVertexProvider&
 Mesh::DynamicVertexProvider() const noexcept
 {
     return this->dynamicVertexProvider;
+}
+
+std::shared_ptr<const void> Mesh::LifetimeToken() const noexcept
+{
+    return this->lifetimeToken;
 }
 
 std::span<const std::uint32_t> Mesh::SourceVertexIndices() const noexcept

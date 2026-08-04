@@ -1,12 +1,13 @@
 #pragma once
 #include <glad/gl.h>
+#include "wisteria/rendering/graphics_device.hpp"
 #include <cstddef>
 
 namespace wisteria
 {
 class EBO{
 public:
-    EBO();
+    explicit EBO(GraphicsDevice* device = nullptr);
     ~EBO();
 
     EBO(const EBO&) = delete;
@@ -31,6 +32,7 @@ public:
     std::size_t Capacity() const noexcept { return this->capacity; }
     inline GLuint GetEBO() const noexcept { return this->ebo; };
 private:
+    GraphicsDevice* device = nullptr;
     GLuint ebo = 0;
     std::size_t capacity = 0;
 };

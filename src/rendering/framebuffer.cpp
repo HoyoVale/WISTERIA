@@ -44,6 +44,11 @@ private:
 };
 }
 
+Framebuffer::Framebuffer(GraphicsDevice* device)
+    : device(device)
+{
+}
+
 Framebuffer::~Framebuffer()
 {
     this->Release();
@@ -134,7 +139,19 @@ void Framebuffer::RequireComplete(GLenum target) const
 void Framebuffer::Release() noexcept
 {
     if (this->framebuffer != 0)
-        glDeleteFramebuffers(1, &this->framebuffer);
+    {
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Framebuffer,
+                this->framebuffer
+            );
+        }
+        else
+        {
+            glDeleteFramebuffers(1, &this->framebuffer);
+        }
+    }
     this->framebuffer = 0;
 }
 
@@ -151,6 +168,11 @@ bool Framebuffer::IsCreated() const noexcept
 SceneFramebuffer::~SceneFramebuffer()
 {
     this->Release();
+}
+
+SceneFramebuffer::SceneFramebuffer(GraphicsDevice* device)
+    : framebuffer(device)
+{
 }
 
 void SceneFramebuffer::Resize(int width, int height)

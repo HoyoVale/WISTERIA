@@ -1,5 +1,6 @@
 #pragma once
 #include <glad/gl.h>
+#include "wisteria/rendering/graphics_device.hpp"
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -26,7 +27,7 @@ struct Layout{
 
 class VBO{
 public:
-    VBO();
+    explicit VBO(GraphicsDevice* device = nullptr);
     ~VBO();
 
     VBO(const VBO&) = delete;
@@ -37,6 +38,7 @@ public:
     void Upload(const void* data, std::size_t dataSize);
     inline GLuint GetVBO() const noexcept { return this->vbo; };
 private:
+    GraphicsDevice* device = nullptr;
     GLuint vbo = 0;
 };
 }  // namespace wisteria

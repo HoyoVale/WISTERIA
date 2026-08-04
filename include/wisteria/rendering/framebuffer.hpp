@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glad/gl.h>
+#include "wisteria/rendering/graphics_device.hpp"
 #include <glm/glm.hpp>
 
 // Owns only an OpenGL framebuffer object. Attachments are owned by the
@@ -10,7 +11,7 @@ namespace wisteria
 class Framebuffer
 {
 public:
-    Framebuffer() = default;
+    explicit Framebuffer(GraphicsDevice* device = nullptr);
     ~Framebuffer();
 
     Framebuffer(const Framebuffer&) = delete;
@@ -34,6 +35,7 @@ public:
     bool IsCreated() const noexcept;
 
 private:
+    GraphicsDevice* device = nullptr;
     GLuint framebuffer = 0;
 };
 
@@ -43,7 +45,7 @@ private:
 class SceneFramebuffer
 {
 public:
-    SceneFramebuffer() = default;
+    explicit SceneFramebuffer(GraphicsDevice* device = nullptr);
     ~SceneFramebuffer();
 
     SceneFramebuffer(const SceneFramebuffer&) = delete;

@@ -1,9 +1,13 @@
 #pragma once
 
+#include <glad/gl.h>
+
 #include "wisteria/rendering/program_cache.hpp"
 
 #include <cstddef>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace wisteria
 {
@@ -15,6 +19,14 @@ namespace wisteria
 class GraphicsDevice
 {
 public:
+    enum class ResourceKind
+    {
+        Texture,
+        VertexArray,
+        Buffer,
+        Framebuffer
+    };
+
     GraphicsDevice();
     ~GraphicsDevice();
 
@@ -45,8 +57,31 @@ public:
 
     std::size_t ProgramCount() const noexcept;
 
+    // Unified GPU-object deletion. When the calling thread's current GL
+    // context is this device's share-group context (or the device has no
+    // registered token, i.e. legacy mode), the object is deleted immediately;
+    // otherwise it is queued and released by FlushPendingDeletes the next
+    // time the owning context is current. This makes cross-thread or
+    // after-context resource destruction safe instead of calling glDelete*
+    // with no (or the wrong) context current.
+    void DeleteResource(ResourceKind kind, GLuint name) noexcept;
+
+    // Deletes every queued object. No-op when the owning context is not
+    // current on the calling thread.
+    void FlushPendingDeletes() noexcept;
+
+    std::size_t PendingDeleteCount() const noexcept;
+
+    // Platform hook: records which GL context is current on the calling
+    // thread. The platform layer calls this after every glfwMakeContextCurrent.
+    static void SetCurrentContext(const void* context) noexcept;
+    static const void* CurrentContext() noexcept;
+
 private:
+    bool ContextIsCurrent() const noexcept;
+
     std::shared_ptr<ProgramCache> programs = std::make_shared<ProgramCache>();
     const void* contextToken = nullptr;
+    std::vector<std::pair<ResourceKind, GLuint>> pendingDeletes;
 };
 }  // namespace wisteria

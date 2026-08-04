@@ -37,7 +37,7 @@ struct FxaaSettings
 class Renderer
 {
 public:
-    Renderer() = default;
+    explicit Renderer(GraphicsDevice* device = nullptr);
     ~Renderer();
 
     Renderer(const Renderer&) = delete;
@@ -156,6 +156,7 @@ private:
     );
 
 private:
+    GraphicsDevice* device = nullptr;
     Framebuffer oitFramebuffer;
     GLuint oitAccumulationTexture = 0;
     GLuint oitRevealageTexture = 0;
@@ -197,7 +198,12 @@ private:
     bool shadowStateEnabled = false;
     std::array<glm::mat4, 4> shadowLightViewProjections;
     std::array<float, 5> shadowSplitPositions;
-    std::unordered_map<const Mesh*, std::unique_ptr<VAO>> meshVertexArrays;
+    struct MeshVertexArrayEntry
+    {
+        std::weak_ptr<const void> lifetime;
+        std::unique_ptr<VAO> vertexArray;
+    };
+    std::unordered_map<const Mesh*, MeshVertexArrayEntry> meshVertexArrays;
     std::unordered_map<const EnvironmentMap*, std::unique_ptr<VAO>>
         skyboxVertexArrays;
 };

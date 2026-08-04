@@ -68,6 +68,7 @@ public:
         Window& window,
         const FreeCameraControllerSettings& settings
     );
+    void SetGraphicsDevice(GraphicsDevice& device) noexcept;
 
     std::size_t WindowCount() const noexcept;
 
@@ -78,7 +79,8 @@ private:
     {
         ManagedWindow(
             std::unique_ptr<Window> nextWindow,
-            std::string captureStem
+            std::string captureStem,
+            GraphicsDevice* device
         );
 
         // Reverse member destruction gives framebuffer -> renderer -> window.
@@ -119,6 +121,7 @@ private:
 private:
     std::vector<std::unique_ptr<ManagedWindow>> windows;
     std::vector<std::unique_ptr<ManagedWindow>> pendingWindows;
+    GraphicsDevice* graphicsDevice = nullptr;
     std::vector<std::weak_ptr<Scene>> trackedScenes;
     std::thread::id ownerThread;
     bool running = false;

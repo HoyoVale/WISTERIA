@@ -288,10 +288,13 @@ void SaveWindowScreenshotBmp(
 
 WindowManager::ManagedWindow::ManagedWindow(
     std::unique_ptr<Window> nextWindow,
-    std::string nextCaptureStem
+    std::string nextCaptureStem,
+    GraphicsDevice* device
 )
     : window(std::move(nextWindow)),
-      captureStem(std::move(nextCaptureStem))
+      captureStem(std::move(nextCaptureStem)),
+      renderer(device),
+      framebuffer(device)
 {
     if (this->window == nullptr)
         throw std::invalid_argument("Managed window cannot be null");
@@ -350,15 +353,18 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
     catch (...)
     {
         glfwMakeContextCurrent(previousContext);
+        GraphicsDevice::SetCurrentContext(previousContext);
         throw;
     }
     glfwMakeContextCurrent(previousContext);
+    GraphicsDevice::SetCurrentContext(previousContext);
 
     Window& result = *window;
     this->TrackScene(window->GetSceneHandle());
     auto managed = std::make_unique<ManagedWindow>(
         std::move(window),
-        config.title
+        config.title,
+        this->graphicsDevice
     );
     if (this->running)
         this->pendingWindows.push_back(std::move(managed));
@@ -616,6 +622,11 @@ void WindowManager::UpdateWindowControllers(float deltaTime)
         if (!managed->window->ShouldClose())
             managed->window->Update(deltaTime);
     }
+}
+
+void WindowManager::SetGraphicsDevice(GraphicsDevice& device) noexcept
+{
+    this->graphicsDevice = &device;
 }
 
 std::vector<Scene*> WindowManager::UniqueScenes() const

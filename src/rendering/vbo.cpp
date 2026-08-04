@@ -4,7 +4,8 @@
 
 namespace wisteria
 {
-VBO::VBO()
+VBO::VBO(GraphicsDevice* device)
+    : device(device)
 {
     glGenBuffers(1, &this->vbo);
 }
@@ -13,7 +14,17 @@ VBO::~VBO()
 {
     if (this->vbo != 0)
     {
-        glDeleteBuffers(1, &this->vbo);
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Buffer,
+                this->vbo
+            );
+        }
+        else
+        {
+            glDeleteBuffers(1, &this->vbo);
+        }
         this->vbo = 0;
     }
 }

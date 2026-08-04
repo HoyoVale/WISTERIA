@@ -27,7 +27,8 @@ public:
         DefaultModelData data,
         std::size_t requiredBoneCount = 0,
         std::vector<MeshMorphTarget> morphTargets = {},
-        std::vector<std::uint32_t> sourceVertexIndices = {}
+        std::vector<std::uint32_t> sourceVertexIndices = {},
+        GraphicsDevice* device = nullptr
     );
     ~Mesh() = default;
 
@@ -57,6 +58,10 @@ public:
     void SetDynamicVertexProvider(MeshDynamicVertexProvider provider);
     const MeshDynamicVertexProvider& DynamicVertexProvider() const noexcept;
     std::span<const std::uint32_t> SourceVertexIndices() const noexcept;
+    // Shared lifetime marker. Renderer VAO caches hold a weak reference and
+    // rebuild the VAO once a mesh is destroyed, instead of dangling on the
+    // raw Mesh pointer after the ResourceManager releases it.
+    std::shared_ptr<const void> LifetimeToken() const noexcept;
 
     // Pure rebuild of an interleaved vertex array with new position/normal
     // values. Exposed for regression tests; UploadDynamicVertices uses it.
@@ -95,6 +100,7 @@ private:
         glm::vec4 boneWeights{0.0f};
     };
 
+    GraphicsDevice* device = nullptr;
     DefaultModelData data;
     std::unique_ptr<VBO> vbo;
     std::unique_ptr<EBO> ebo;
@@ -106,6 +112,8 @@ private:
     bool attached = false;
     bool dynamicVertexSource = false;
     MeshDynamicVertexProvider dynamicVertexProvider;
+    std::shared_ptr<const void> lifetimeToken =
+        std::make_shared<int>(0);
     std::vector<std::uint32_t> sourceVertexIndices;
 };
 }  // namespace wisteria

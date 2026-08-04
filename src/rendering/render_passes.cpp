@@ -658,12 +658,22 @@ VAO& Renderer::VertexArrayFor(Mesh& mesh)
 {
     const auto cached = this->meshVertexArrays.find(&mesh);
     if (cached != this->meshVertexArrays.end())
-        return *cached->second;
+    {
+        if (!cached->second.lifetime.expired())
+            return *cached->second.vertexArray;
+        // The mesh was destroyed since this VAO was cached; drop the stale
+        // entry and rebuild from the current mesh.
+        this->meshVertexArrays.erase(cached);
+    }
 
-    auto vertexArray = std::make_unique<VAO>();
+    auto vertexArray = std::make_unique<VAO>(this->device);
     mesh.ConfigureVertexArray(*vertexArray);
-    VAO& result = *vertexArray;
-    this->meshVertexArrays.emplace(&mesh, std::move(vertexArray));
+    MeshVertexArrayEntry entry{
+        mesh.LifetimeToken(),
+        std::move(vertexArray)
+    };
+    VAO& result = *entry.vertexArray;
+    this->meshVertexArrays.emplace(&mesh, std::move(entry));
     return result;
 }
 
@@ -673,7 +683,7 @@ VAO& Renderer::SkyboxVertexArrayFor(EnvironmentMap& environment)
     if (cached != this->skyboxVertexArrays.end())
         return *cached->second;
 
-    auto vertexArray = std::make_unique<VAO>();
+    auto vertexArray = std::make_unique<VAO>(this->device);
     environment.ConfigureSkyboxVertexArray(*vertexArray);
     VAO& result = *vertexArray;
     this->skyboxVertexArrays.emplace(&environment, std::move(vertexArray));

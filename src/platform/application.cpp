@@ -46,6 +46,7 @@ Application::Application()
     // identical shader pairs compile once per application, not once per
     // material.
     this->resources.BindGraphicsDevice(this->graphicsDevice);
+    this->windowManager.SetGraphicsDevice(this->graphicsDevice);
 }
 
 Application::~Application()
@@ -282,6 +283,7 @@ void Application::Shutdown() noexcept
     if (resourceContext != nullptr)
     {
         glfwMakeContextCurrent(resourceContext);
+        GraphicsDevice::SetCurrentContext(resourceContext);
         // Verify the registered share-group context, then release every GPU
         // resource owned by the device (programs first, then resources whose
         // materials hold references into the same cache). The token is only
@@ -307,6 +309,7 @@ void Application::Shutdown() noexcept
     if (this->glfwInitialized)
     {
         glfwMakeContextCurrent(nullptr);
+        GraphicsDevice::SetCurrentContext(nullptr);
         ReleaseGlfw();
         this->glfwInitialized = false;
     }
