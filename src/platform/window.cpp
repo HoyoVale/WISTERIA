@@ -1,6 +1,8 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/window.hpp"
 #include <glad/gl.h>
+#include <cstring>
+#include <iostream>
 #include <utility>
 
 Window::Window(
@@ -61,6 +63,27 @@ void Window::init()
 
     if (!gladLoadGL(glfwGetProcAddress))
         throw std::runtime_error("Failed to load OpenGL functions");
+
+    const char* vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+    const char* renderer =
+        reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    const char* version =
+        reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    std::cout << "[GL] vendor=" << (vendor != nullptr ? vendor : "?")
+              << " renderer=" << (renderer != nullptr ? renderer : "?")
+              << " version=" << (version != nullptr ? version : "?")
+              << std::endl;
+    if (renderer != nullptr &&
+        (std::strstr(renderer, "llvmpipe") != nullptr ||
+         std::strstr(renderer, "softpipe") != nullptr ||
+         std::strstr(renderer, "swrast") != nullptr))
+    {
+        std::cerr << "[WARN] OpenGL is running on a software renderer ("
+                  << renderer
+                  << "). WSLg should provide the D3D12 hardware driver; "
+                     "performance will be poor otherwise."
+                  << std::endl;
+    }
 
     this->input.Attach(*this->window);
     glEnable(GL_DEPTH_TEST);

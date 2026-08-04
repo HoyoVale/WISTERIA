@@ -2,9 +2,118 @@
 #include "wisteria/platform/window_manager.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
+
+namespace
+{
+void SaveWindowScreenshotBmp(
+    const std::string& directory,
+    std::size_t frameIndex,
+    int width,
+    int height
+)
+{
+    if (width <= 0 || height <= 0)
+        return;
+
+    std::vector<unsigned char> rgba(
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U
+    );
+    glReadPixels(
+        0,
+        0,
+        width,
+        height,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        rgba.data()
+    );
+
+    const int rowSize = ((width * 3 + 3) / 4) * 4;
+    const int dataSize = rowSize * height;
+    const int fileSize = 54 + dataSize;
+    char fileName[64];
+    std::snprintf(
+        fileName,
+        sizeof(fileName),
+        "frame_%05zu.bmp",
+        frameIndex
+    );
+    std::ofstream output(
+        (std::filesystem::path(directory) / fileName).string(),
+        std::ios::binary
+    );
+    if (!output)
+        return;
+
+    const auto put32 = [&output](int value)
+    {
+        const unsigned char bytes[4] = {
+            static_cast<unsigned char>(value & 0xFF),
+            static_cast<unsigned char>((value >> 8) & 0xFF),
+            static_cast<unsigned char>((value >> 16) & 0xFF),
+            static_cast<unsigned char>((value >> 24) & 0xFF)
+        };
+        output.write(
+            reinterpret_cast<const char*>(bytes),
+            sizeof(bytes)
+        );
+    };
+    const auto put16 = [&output](int value)
+    {
+        const unsigned char bytes[2] = {
+            static_cast<unsigned char>(value & 0xFF),
+            static_cast<unsigned char>((value >> 8) & 0xFF)
+        };
+        output.write(
+            reinterpret_cast<const char*>(bytes),
+            sizeof(bytes)
+        );
+    };
+
+    output.put('B');
+    output.put('M');
+    put32(fileSize);
+    put16(0);
+    put16(0);
+    put32(54);
+    put32(40);
+    put32(width);
+    put32(height);
+    put16(1);
+    put16(24);
+    put32(0);
+    put32(dataSize);
+    put32(2835);
+    put32(2835);
+    put32(0);
+    put32(0);
+
+    std::vector<unsigned char> row(static_cast<std::size_t>(rowSize), 0U);
+    for (int y = height - 1; y >= 0; --y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            const std::size_t pixel =
+                (static_cast<std::size_t>(y) * width +
+                 static_cast<std::size_t>(x)) * 4U;
+            row[static_cast<std::size_t>(x) * 3U] = rgba[pixel + 2U];
+            row[static_cast<std::size_t>(x) * 3U + 1U] = rgba[pixel + 1U];
+            row[static_cast<std::size_t>(x) * 3U + 2U] = rgba[pixel];
+        }
+        output.write(
+            reinterpret_cast<const char*>(row.data()),
+            row.size()
+        );
+    }
+}
+}
 
 WindowManager::ManagedWindow::ManagedWindow(
     std::unique_ptr<Window> nextWindow
@@ -348,6 +457,10 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
     if (window.ShouldClose())
         return;
 
+    const bool frameProfile =
+        std::getenv("WISTERIA_FRAME_PROFILE") != nullptr;
+    const auto profileStart = std::chrono::steady_clock::now();
+
     window.MakeContextCurrent();
     const WindowSize framebufferSize = window.GetFramebufferSize();
     if (framebufferSize.width <= 0 || framebufferSize.height <= 0)
@@ -362,18 +475,69 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         static_cast<float>(framebufferSize.height);
     const glm::mat4 projection = window.Projection(aspect);
     managedWindow.framebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
+    const auto afterClear = std::chrono::steady_clock::now();
     managedWindow.renderer.Render(
         window.GetScene(),
         window.GetCamera(),
         projection,
         managedWindow.framebuffer
     );
+    const auto afterRender = std::chrono::steady_clock::now();
     managedWindow.renderer.Present(
         managedWindow.framebuffer,
         framebufferSize.width,
         framebufferSize.height
     );
+    const auto afterPresent = std::chrono::steady_clock::now();
+    if (const char* screenshotDirectory =
+            std::getenv("WISTERIA_SCREENSHOT_DIR"))
+    {
+        static std::size_t screenshotFrame = 0U;
+        ++screenshotFrame;
+        if (screenshotFrame % 30U == 1U)
+        {
+            SaveWindowScreenshotBmp(
+                screenshotDirectory,
+                screenshotFrame,
+                framebufferSize.width,
+                framebufferSize.height
+            );
+        }
+    }
     window.SwapBuffers();
+    const auto afterSwap = std::chrono::steady_clock::now();
+
+    if (frameProfile)
+    {
+        static std::size_t profileFrame = 0U;
+        static double totalUpdateMs = 0.0;
+        static double totalRenderMs = 0.0;
+        static double totalPresentMs = 0.0;
+        static double totalSwapMs = 0.0;
+        const auto millis = [](const auto& start, const auto& end)
+        {
+            return std::chrono::duration<double, std::milli>(end - start)
+                .count();
+        };
+        totalUpdateMs += millis(profileStart, afterClear);
+        totalRenderMs += millis(afterClear, afterRender);
+        totalPresentMs += millis(afterRender, afterPresent);
+        totalSwapMs += millis(afterPresent, afterSwap);
+        ++profileFrame;
+        if (profileFrame % 60U == 1U)
+        {
+            const double frames = static_cast<double>(profileFrame);
+            std::cout << "[FRAME PROFILE] frames=" << profileFrame
+                      << " updateMs=" << (totalUpdateMs / frames)
+                      << " renderMs=" << (totalRenderMs / frames)
+                      << " presentMs=" << (totalPresentMs / frames)
+                      << " swapMs=" << (totalSwapMs / frames)
+                      << " totalMs="
+                      << ((totalUpdateMs + totalRenderMs +
+                           totalPresentMs + totalSwapMs) / frames)
+                      << std::endl;
+        }
+    }
 }
 
 void WindowManager::TrackScene(const std::shared_ptr<Scene>& scene)

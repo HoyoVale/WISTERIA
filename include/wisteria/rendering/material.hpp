@@ -169,6 +169,16 @@ public:
     Program& GetProgram();
     const Program& GetProgram() const;
 
+    // Returns a process-wide program shared by every material that uses the
+    // same vertex/fragment shader pair. WSLg's D3D12 driver compiles each
+    // program through LLVM (hundreds of milliseconds), so compiling one
+    // MMD shader 85 times made the first frame take ~15 seconds.
+    static std::shared_ptr<Program> SharedProgram(
+        const std::string& vertexPath,
+        const std::string& fragmentPath
+    );
+    static void ReleaseSharedPrograms() noexcept;
+
     const glm::vec3& SpecularColor() const noexcept;
     float Shininess() const noexcept;
     float NormalScale() const noexcept;
@@ -198,8 +208,7 @@ public:
     void SetOcclusionStrength(float occlusionStrength) noexcept;
 
 private:
-    std::unique_ptr<Shader> shader;
-    std::unique_ptr<Program> program;
+    std::shared_ptr<Program> program;
     MaterialTextureBindings textures;
     MaterialData data;
 };

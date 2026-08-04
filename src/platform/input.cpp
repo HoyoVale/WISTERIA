@@ -1,6 +1,8 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/input.hpp"
 #include <GLFW/glfw3.h>
+#include <cstdlib>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 
@@ -235,6 +237,13 @@ void Input::KeyCallback(
 {
     Input* input = GetInput(window);
     const std::optional<InputKey> mappedKey = ToInputKey(key);
+    if (std::getenv("WISTERIA_INPUT_DEBUG") != nullptr)
+    {
+        std::cerr << "[INPUT] key=" << key
+                  << " action=" << action
+                  << " mapped=" << (mappedKey.has_value() ? "yes" : "no")
+                  << std::endl;
+    }
     if (input == nullptr || !mappedKey.has_value())
         return;
 

@@ -1,6 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/rendering/material.hpp"
 #include <cmath>
+#include <unordered_map>
 
 namespace
 {
@@ -15,6 +16,12 @@ MaterialTextureBindings BuildTextureBindings(const MaterialData& data)
         );
     }
     return bindings;
+}
+
+std::unordered_map<std::string, std::shared_ptr<Program>>& SharedProgramCache()
+{
+    static std::unordered_map<std::string, std::shared_ptr<Program>> cache;
+    return cache;
 }
 }
 
@@ -107,19 +114,34 @@ void Material::Attach()
     if (this->program != nullptr)
         return;
 
-    auto nextShader = std::make_unique<Shader>(
+    this->program = SharedProgram(
         this->data.shaderFilePath.VertexPath,
         this->data.shaderFilePath.FragmentPath
     );
-    auto nextProgram = std::make_unique<Program>(
-        nextShader->GetShaderList()
-    );
     for (const auto& [uniformName, texture] : this->textures)
         texture->Attach();
+}
 
-    // Commit only after every resource has been created successfully.
-    this->program.swap(nextProgram);
-    this->shader.swap(nextShader);
+std::shared_ptr<Program> Material::SharedProgram(
+    const std::string& vertexPath,
+    const std::string& fragmentPath
+)
+{
+    const std::string key = vertexPath + "\n" + fragmentPath;
+    auto& cache = SharedProgramCache();
+    const auto cached = cache.find(key);
+    if (cached != cache.end())
+        return cached->second;
+
+    auto shader = std::make_unique<Shader>(vertexPath, fragmentPath);
+    auto program = std::make_shared<Program>(shader->GetShaderList());
+    cache.emplace(key, program);
+    return program;
+}
+
+void Material::ReleaseSharedPrograms() noexcept
+{
+    SharedProgramCache().clear();
 }
 
 void Material::Bind()

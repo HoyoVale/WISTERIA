@@ -1,5 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/application.hpp"
+#include "wisteria/rendering/material.hpp"
 #include <GLFW/glfw3.h>
 #include <stdexcept>
 #include <utility>
@@ -211,6 +212,9 @@ void Application::Shutdown() noexcept
     {
         glfwMakeContextCurrent(resourceContext);
         this->resources.Clear();
+        // Shared programs must die while a GL context is still current;
+        // otherwise glDeleteProgram would run without a context at exit.
+        Material::ReleaseSharedPrograms();
     }
 
     this->windowManager.DestroyAllWindows();
