@@ -184,6 +184,13 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/model.cpp
     src/rendering/primitives/cube.cpp
     src/rendering/render_part.cpp
+    src/rendering/render_morphing.cpp
+    src/rendering/render_passes.cpp
+    src/rendering/render_physics_debug.cpp
+    src/rendering/render_present.cpp
+    src/rendering/render_skinning.cpp
+    src/rendering/render_state.cpp
+    src/rendering/render_uniforms.cpp
     src/rendering/renderer.cpp
     src/rendering/shader.cpp
     src/rendering/texture.cpp
