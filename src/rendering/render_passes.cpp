@@ -587,8 +587,12 @@ void Renderer::RenderGroundShadowPass(
         );
         for (const RenderCommand& command : commands)
         {
-            if (!command.part->GetMaterial().IsGroundPlane())
+            const Material& material = command.part->GetMaterial();
+            if (!material.IsGroundPlane() &&
+                !material.ReceivesGroundShadow())
+            {
                 continue;
+            }
             drawFlattened(command);
         }
     }

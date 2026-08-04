@@ -159,6 +159,15 @@ void AddDemoGround(Scene& scene, ResourceManager& resources)
     std::cout << "[GROUND] demo ground added: size=60 planeY=0"
               << " texture=chessboard frontFace=+Y" << std::endl;
 }
+
+void MarkModelAsGroundShadowReceiver(ModelAsset& model)
+{
+    // Imported stages are not ground planes, but their floor should catch
+    // the MMD ground shadow. Receivers are drawn before the shadow pass so
+    // the flattened silhouette can depth-test against them.
+    for (const RenderPart& part : model.Parts())
+        part.GetMaterial().SetReceivesGroundShadow(true);
+}
 }
 
 class SabaDemoBehaviour final : public Behaviour
@@ -470,6 +479,7 @@ void SetupSabaMmdDemoScene(
                 glm::vec3(1.0f)
             )
         );
+        MarkModelAsGroundShadowReceiver(sceneModel);
     }
     else
     {
@@ -486,6 +496,7 @@ void SetupSabaMmdDemoScene(
                 glm::vec3(1.0f)
             )
         );
+        MarkModelAsGroundShadowReceiver(sceneModel);
     }
     if (motionPath.empty() && !sceneMode)
         motionPath = DemoDreamWingMotionPath();

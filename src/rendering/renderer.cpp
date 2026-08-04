@@ -255,12 +255,21 @@ void Renderer::Render(
     // and the character (drawn afterwards) still passes at its y=0 feet.
     // Without this margin, moving geometry toggles the shadow/feet boundary
     // every frame, which reads as flicker and a clipped shadow.
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(1.0f, 2.0f);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     for (const RenderCommand& command : opaqueCommands)
     {
-        if (!command.part->GetMaterial().IsGroundPlane())
+        const Material& material = command.part->GetMaterial();
+        if (!material.IsGroundPlane() && !material.ReceivesGroundShadow())
             continue;
+        // Only true ground planes get the depth margin; shadow receivers
+        // such as an imported stage floor keep their exact depth.
+        if (material.IsGroundPlane())
+        {
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 2.0f);
+        }
+        else
+            glDisable(GL_POLYGON_OFFSET_FILL);
         this->DrawPart(
             *command.part,
             command.model,

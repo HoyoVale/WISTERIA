@@ -165,6 +165,12 @@ struct MaterialData{
     bool groundShadow = false;
     bool castSelfShadow = false;
     bool receiveSelfShadow = false;
+    // Marks a surface that the MMD ground shadow may land on (for example an
+    // imported stage floor). Receivers are drawn before the ground shadow
+    // pass so the flattened silhouette can depth-test against them, but they
+    // are not ground planes: they do not receive the ground-plane polygon
+    // offset and are not used to infer floor semantics elsewhere.
+    bool receivesGroundShadow = false;
     // Marks a renderable that occupies the ground plane (y == 0). The
     // renderer draws ground-plane parts before the MMD ground shadow so the
     // shadow can depth-test against the floor, and draws every other opaque
@@ -223,7 +229,9 @@ public:
     bool IsGroundShadow() const noexcept;
     bool CastsSelfShadow() const noexcept;
     bool ReceivesSelfShadow() const noexcept;
+    bool ReceivesGroundShadow() const noexcept;
     bool IsGroundPlane() const noexcept;
+    void SetReceivesGroundShadow(bool enabled) noexcept;
     bool HasTexture(const std::string& uniformName) const noexcept;
     const ShaderInterface& Interface() const noexcept;
 
