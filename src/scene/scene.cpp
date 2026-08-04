@@ -83,7 +83,31 @@ Scene::LastPhysicsFrameStatistics() const noexcept
     return this->physicsFrameStatistics;
 }
 
-void Scene::Update(float deltaTime)
+namespace
+{
+bool EntityOwnsSimulationStep(const Entity& entity)
+{
+    const PhysicsInstance* instance = entity.TryGetPhysicsInstance();
+    return instance != nullptr && instance->OwnsSimulationStep();
+}
+
+bool SceneHasSharedPhysics(const Scene& scene)
+{
+    if (scene.Physics().BodyCount() > 0U ||
+        scene.Physics().ConstraintCount() > 0U)
+    {
+        return true;
+    }
+    for (const std::unique_ptr<Entity>& entity : scene.Entities())
+    {
+        const PhysicsInstance* instance = entity->TryGetPhysicsInstance();
+        if (instance != nullptr && !instance->OwnsSimulationStep())
+            return true;
+    }
+    return false;
+}
+
+void ValidateSceneDeltaTime(float deltaTime)
 {
     if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
     {
@@ -91,32 +115,28 @@ void Scene::Update(float deltaTime)
             "Scene delta time must be finite and non-negative"
         );
     }
+}
+}
 
+void Scene::UpdateAnimation(float deltaTime)
+{
+    ValidateSceneDeltaTime(deltaTime);
     for (const std::unique_ptr<Entity>& entity : this->entities)
         entity->Update(deltaTime);
+}
 
-    const auto ownsSimulationStep = [](const Entity& entity)
-    {
-        const PhysicsInstance* instance = entity.TryGetPhysicsInstance();
-        return instance != nullptr && instance->OwnsSimulationStep();
-    };
-    bool hasSharedPhysics = this->physicsWorld->BodyCount() > 0U ||
-        this->physicsWorld->ConstraintCount() > 0U;
+void Scene::UpdatePrePhysics(float deltaTime)
+{
+    ValidateSceneDeltaTime(deltaTime);
+    this->physicsPhaseBegin = std::chrono::steady_clock::now();
+    const bool hasSharedPhysics = SceneHasSharedPhysics(*this);
+
     for (const std::unique_ptr<Entity>& entity : this->entities)
     {
-        const PhysicsInstance* instance = entity->TryGetPhysicsInstance();
-        if (instance != nullptr && !instance->OwnsSimulationStep())
-            hasSharedPhysics = true;
-    }
-
-    const auto physicsBegin = std::chrono::steady_clock::now();
-    for (const std::unique_ptr<Entity>& entity : this->entities)
-    {
-        if (ownsSimulationStep(*entity))
+        if (EntityOwnsSimulationStep(*entity))
             continue;
         entity->PrePhysicsUpdate(deltaTime);
     }
-
     struct PendingStabilization
     {
         PhysicsInstance* instance = nullptr;
@@ -176,7 +196,13 @@ void Scene::Update(float deltaTime)
     }
     for (const PendingStabilization& item : pending)
         item.instance->CompleteStabilization();
+    this->stabilizationSubstepCount = maximumStabilizationSteps;
+}
 
+void Scene::StepPhysics(float deltaTime)
+{
+    ValidateSceneDeltaTime(deltaTime);
+    const bool hasSharedPhysics = SceneHasSharedPhysics(*this);
     const PhysicsStepSettings& settings =
         this->physicsWorld->StepSettings();
     const double fixedTimeStep =
@@ -236,7 +262,7 @@ void Scene::Update(float deltaTime)
         }
         for (const std::unique_ptr<Entity>& entity : this->entities)
         {
-            if (ownsSimulationStep(*entity))
+            if (EntityOwnsSimulationStep(*entity))
                 continue;
             entity->PreparePhysicsSubstep(
                 alpha,
@@ -247,7 +273,7 @@ void Scene::Update(float deltaTime)
             this->physicsWorld->StepFixed(settings.fixedTimeStep);
         for (const std::unique_ptr<Entity>& entity : this->entities)
         {
-            if (ownsSimulationStep(*entity))
+            if (EntityOwnsSimulationStep(*entity))
                 continue;
             entity->ObservePhysicsSubstep(settings.fixedTimeStep);
         }
@@ -255,19 +281,6 @@ void Scene::Update(float deltaTime)
     }
     if (this->physicsAccumulator < stepTolerance)
         this->physicsAccumulator = 0.0;
-
-    for (const std::unique_ptr<Entity>& entity : this->entities)
-    {
-        if (ownsSimulationStep(*entity))
-            continue;
-        entity->PostPhysicsUpdate();
-    }
-    for (const std::unique_ptr<Entity>& entity : this->entities)
-    {
-        if (ownsSimulationStep(*entity))
-            continue;
-        entity->SolveAfterPhysicsPose();
-    }
 
     const auto physicsEnd = std::chrono::steady_clock::now();
     this->physicsFrameStatistics.frameDeltaTime = deltaTime;
@@ -282,14 +295,49 @@ void Scene::Update(float deltaTime)
         static_cast<float>(droppedTime);
     this->physicsFrameStatistics.physicsCpuMilliseconds =
         std::chrono::duration<double, std::milli>(
-            physicsEnd - physicsBegin
+            physicsEnd - this->physicsPhaseBegin
         ).count();
     this->physicsFrameStatistics.substepCount = substepCount;
     this->physicsFrameStatistics.stabilizationSubstepCount =
-        maximumStabilizationSteps;
+        this->stabilizationSubstepCount;
     this->physicsFrameStatistics.catchUpLimited = droppedTime > 0.0;
     this->physicsFrameStatistics.world =
         this->physicsWorld->Statistics();
+}
+
+void Scene::UpdatePostPhysics()
+{
+    const bool hasSharedPhysics = SceneHasSharedPhysics(*this);
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        if (EntityOwnsSimulationStep(*entity))
+            continue;
+        entity->PostPhysicsUpdate();
+    }
+
+    for (const std::unique_ptr<Entity>& entity : this->entities)
+    {
+        if (EntityOwnsSimulationStep(*entity))
+            continue;
+        entity->SolveAfterPhysicsPose();
+    }
+}
+
+void Scene::UpdateWorldTransforms()
+{
+    // World transforms are derived on demand during rendering (entity
+    // transform * part local transform), so there is no lazy hierarchy to
+    // flush yet. This phase exists so the frame pipeline has an explicit
+    // home for transform finalization if that changes.
+}
+
+void Scene::Update(float deltaTime)
+{
+    this->UpdateAnimation(deltaTime);
+    this->UpdatePrePhysics(deltaTime);
+    this->StepPhysics(deltaTime);
+    this->UpdatePostPhysics();
+    this->UpdateWorldTransforms();
 }
 
 void Scene::Clear() noexcept

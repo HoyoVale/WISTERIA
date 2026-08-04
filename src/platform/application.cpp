@@ -151,18 +151,8 @@ int Application::Run()
         while (this->windowManager.HasActiveWindows() &&
             !this->closeRequested)
         {
-            this->windowManager.CommitPendingWindows();
-            this->windowManager.BeginInputFrames();
-
-            glfwPollEvents();
-            this->windowManager.CommitPendingWindows();
             this->timer.Now();
-            if (this->windowManager.AllWindowsClosed())
-                break;
-            this->windowManager.DestroyClosedWindows();
-
-            this->windowManager.Update(this->timer.GetDeltaTime());
-            this->windowManager.RenderAll();
+            this->Tick(this->timer.GetDeltaTime());
         }
     }
     catch (...)
@@ -179,15 +169,35 @@ int Application::Run()
 
 void Application::PollEventsAndRender(float deltaTime)
 {
+    this->Tick(deltaTime);
+}
+
+void Application::Tick(float deltaTime)
+{
     this->windowManager.RequireOwnerThread();
     this->windowManager.CommitPendingWindows();
     this->windowManager.BeginInputFrames();
     glfwPollEvents();
     this->windowManager.CommitPendingWindows();
+    this->windowManager.DestroyClosedWindows();
     if (this->windowManager.AllWindowsClosed())
         return;
-    this->windowManager.DestroyClosedWindows();
-    this->windowManager.Update(deltaTime);
+
+    // Per-window input/camera controllers.
+    this->windowManager.UpdateWindowControllers(deltaTime);
+
+    // Frame pipeline: every unique scene advances exactly once per frame, in
+    // explicit phase order, before any window renders it. Multi-window setups
+    // render the same scene several times but never advance it more than once.
+    for (Scene* scene : this->windowManager.UniqueScenes())
+    {
+        scene->UpdateAnimation(deltaTime);
+        scene->UpdatePrePhysics(deltaTime);
+        scene->StepPhysics(deltaTime);
+        scene->UpdatePostPhysics();
+        scene->UpdateWorldTransforms();
+    }
+
     this->windowManager.RenderAll();
 }
 

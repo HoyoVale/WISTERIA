@@ -101,7 +101,12 @@ private:
     void CommitPendingWindows();
     void BeginInputFrames() noexcept;
     void DestroyClosedWindows();
-    void Update(float deltaTime);
+    // Per-window input/camera controllers. Application::Tick calls this
+    // before the scene pipeline and once per render.
+    void UpdateWindowControllers(float deltaTime);
+    // Distinct non-closed scenes, deduplicated so a shared scene advances
+    // exactly once per frame even when several windows render it.
+    std::vector<Scene*> UniqueScenes() const;
     void RenderAll();
     void RenderWindow(ManagedWindow& managedWindow);
     void TrackScene(const std::shared_ptr<Scene>& scene);

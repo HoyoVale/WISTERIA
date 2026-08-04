@@ -5,6 +5,7 @@
 #include "wisteria/rendering/light.hpp"
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/physics/physics_world.hpp"
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -31,6 +32,16 @@ public:
     const PhysicsWorld& Physics() const noexcept;
     const PhysicsFrameStatistics& LastPhysicsFrameStatistics() const noexcept;
 
+    // Frame pipeline phases. Application::Tick calls these in a fixed order
+    // so the frame sequence is explicit and a shared scene advances exactly
+    // once per frame even when multiple windows render it.
+    void UpdateAnimation(float deltaTime);
+    void UpdatePrePhysics(float deltaTime);
+    void StepPhysics(float deltaTime);
+    void UpdatePostPhysics();
+    void UpdateWorldTransforms();
+
+    // Convenience: runs the full frame pipeline in order.
     void Update(float deltaTime);
     void Clear() noexcept;
 
@@ -88,5 +99,7 @@ private:
     EnvironmentMap* environment = nullptr;
     double physicsAccumulator = 0.0;
     PhysicsFrameStatistics physicsFrameStatistics{};
+    std::chrono::steady_clock::time_point physicsPhaseBegin{};
+    std::size_t stabilizationSubstepCount = 0;
 };
 }  // namespace wisteria

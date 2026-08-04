@@ -51,6 +51,11 @@ public:
     // input frame -> glfwPollEvents -> scene update -> render -> swap.
     // Frontends call this once per frame instead of blocking in Run().
     void PollEventsAndRender(float deltaTime);
+    // One explicit frame: poll events, advance each unique scene through the
+    // frame pipeline (animation -> pre-physics -> physics -> post-physics ->
+    // world transforms), then render every window. Run() and
+    // PollEventsAndRender() both delegate here.
+    void Tick(float deltaTime);
     void RequestClose() noexcept;
     std::size_t WindowCount() const noexcept;
     bool IsRunning() const noexcept;

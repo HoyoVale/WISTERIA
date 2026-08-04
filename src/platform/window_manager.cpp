@@ -598,27 +598,29 @@ void WindowManager::DestroyClosedWindows()
     }
 }
 
-void WindowManager::Update(float deltaTime)
+void WindowManager::UpdateWindowControllers(float deltaTime)
 {
     for (const std::unique_ptr<ManagedWindow>& managed : this->windows)
     {
         if (!managed->window->ShouldClose())
             managed->window->Update(deltaTime);
     }
+}
 
+std::vector<Scene*> WindowManager::UniqueScenes() const
+{
     std::unordered_set<Scene*> scheduledScenes;
-    std::vector<SceneHandle> scenesToUpdate;
-    scenesToUpdate.reserve(this->windows.size());
+    std::vector<Scene*> scenes;
+    scenes.reserve(this->windows.size());
     for (const std::unique_ptr<ManagedWindow>& managed : this->windows)
     {
         if (managed->window->ShouldClose())
             continue;
-        const SceneHandle& scene = managed->window->GetSceneHandle();
-        if (scheduledScenes.insert(scene.get()).second)
-            scenesToUpdate.push_back(scene);
+        Scene* scene = managed->window->GetSceneHandle().get();
+        if (scheduledScenes.insert(scene).second)
+            scenes.push_back(scene);
     }
-    for (const SceneHandle& scene : scenesToUpdate)
-        scene->Update(deltaTime);
+    return scenes;
 }
 
 void WindowManager::RenderAll()
