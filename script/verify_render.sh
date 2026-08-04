@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIGURATION="RelWithDebInfo"
 BACKEND="${WISTERIA_LINUX_WINDOW_BACKEND:-X11}"
 GENERATOR="Ninja"
-BUILD_DIR="${ROOT}/build-linux-verify"
+BUILD_DIR="${ROOT}/build-linux"
 FRAMES=180
 MODEL=""
 MOTION=""
@@ -18,6 +18,7 @@ PIXEL_PROBE=0
 DISABLE_OIT=0
 DISABLE_SKYBOX=0
 DISABLE_CAMERA_MOTION=0
+SOFTWARE_RENDERER=0
 CAPTURE_SOURCE="${WISTERIA_SCREENSHOT_SOURCE:-scene}"
 OUTPUT_ROOT=""
 
@@ -42,6 +43,8 @@ Options:
   --disable-oit                    Bypass weighted OIT; use normal alpha blend
   --disable-skybox                 Skip skybox drawing (IBL remains enabled)
   --disable-camera-motion          Keep the default/free camera
+  --software-renderer              Force LIBGL_ALWAYS_SOFTWARE=1 (WSLg
+                                   Mesa D3D12 workaround)
   -h, --help                       Show this help
 
 NULL only compiles and runs CTest; it cannot open a desktop window.
@@ -64,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --disable-oit) DISABLE_OIT=1; shift ;;
         --disable-skybox) DISABLE_SKYBOX=1; shift ;;
         --disable-camera-motion) DISABLE_CAMERA_MOTION=1; shift ;;
+        --software-renderer) SOFTWARE_RENDERER=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -121,7 +125,15 @@ fi
 
 if command -v glxinfo >/dev/null && [[ -n "${DISPLAY:-}" ]]; then
     echo "==> OpenGL summary"
-    glxinfo -B || true
+    GLX_SUMMARY="$(glxinfo -B 2>/dev/null || true)"
+    printf '%s\n' "${GLX_SUMMARY}"
+    if grep -qi "Microsoft" <<<"${GLX_SUMMARY}" &&
+        grep -qi "D3D12" <<<"${GLX_SUMMARY}"; then
+        echo "[WSLG COMPATIBILITY WARNING] Mesa D3D12 renderer detected;" \
+            " black frames are possible after the first frame." >&2
+        echo "Retry with: LIBGL_ALWAYS_SOFTWARE=1" \
+            " ./script/verify_render.sh --backend X11 --capture-source scene" >&2
+    fi
 elif command -v eglinfo >/dev/null; then
     echo "==> EGL summary"
     eglinfo -B 2>/dev/null || true
@@ -140,6 +152,7 @@ if (( PIXEL_PROBE == 1 )); then export WISTERIA_GL_PIXEL_PROBE=1; else unset WIS
 if (( DISABLE_OIT == 1 )); then export WISTERIA_DISABLE_OIT=1; else unset WISTERIA_DISABLE_OIT || true; fi
 if (( DISABLE_SKYBOX == 1 )); then export WISTERIA_DISABLE_SKYBOX=1; else unset WISTERIA_DISABLE_SKYBOX || true; fi
 if (( DISABLE_CAMERA_MOTION == 1 )); then export WISTERIA_DISABLE_CAMERA_MOTION=1; else unset WISTERIA_DISABLE_CAMERA_MOTION || true; fi
+if (( SOFTWARE_RENDERER == 1 )); then export LIBGL_ALWAYS_SOFTWARE=1; else unset LIBGL_ALWAYS_SOFTWARE || true; fi
 export WISTERIA_SCREENSHOT_SOURCE="${CAPTURE_SOURCE}"
 export WISTERIA_NATIVE_LIB="${NATIVE_LIB}"
 export LD_LIBRARY_PATH="${BUILD_DIR}:${LD_LIBRARY_PATH:-}"

@@ -272,6 +272,35 @@ WSLg 渲染验收默认读取引擎离屏 Scene FBO，避免默认 back buffer �
 干扰交换链。可用 `--capture-source default` 复现平台缓冲读回，或用
 `--capture-source none` 做纯肉眼窗口检查。
 
+### Linux 平台支持状态（R0.4 归档）
+
+```text
+Windows OpenGL                  Supported
+Linux native X11                Supported
+Linux native Wayland            Supported / 继续扩大测试
+Linux headless NULL             Supported
+WSLg llvmpipe                   Supported fallback
+WSLg Mesa D3D12                 Known compatibility issue
+```
+
+WSLg 的 Mesa D3D12（`vendor=Microsoft` / `renderer=D3D12`）存在已知兼容
+问题：首帧后默认 back buffer 读回可能全黑，但动画、蒙皮与 GL 调用持续
+更新。原生 Debian 与 llvmpipe 均验证正常，因此这不是引擎渲染链路问题。
+程序启动时会打印 `[WSLG COMPATIBILITY WARNING]` 提示。
+
+WSLg 下临时使用软件渲染器（速度较慢，但画面正常）：
+
+```bash
+./script/verify_render.sh --backend X11 --software-renderer
+# 等价于 LIBGL_ALWAYS_SOFTWARE=1 ./script/verify_render.sh --backend X11
+```
+
+或直接运行引擎：
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 ./build-linux/wisteria
+```
+
 无显示环境只做编译与测试：
 
 ```bash

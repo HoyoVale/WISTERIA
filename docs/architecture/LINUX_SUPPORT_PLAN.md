@@ -3,6 +3,11 @@
 状态：2026-08-04，三个用户反馈问题已定位，其中两个已修复，一个为 WSLg
 合成器限制。
 
+更新（R0.4 归档）：WSLg Mesa D3D12 已定性为平台兼容问题，原生 Linux
+渲染链路验证通过；验收口径区分 Native Linux validation 与 WSLg
+compatibility validation。详细结论见
+`R0_RENDER_MANUAL_ACCEPTANCE.md` 的 R0.4 一节。
+
 ## 已定位的三个问题与根因
 
 ### 1. 窗口 demo “只渲染一帧就黑屏”
@@ -66,8 +71,10 @@
 4. [ ] 手动验收：WSLg 下跑 demo，确认动画流畅、Space/←/→/C/鼠标可用
 5. [ ] 评估首帧剩余 3.5s（环境贴图卷积 + 纹理上传）：可考虑启动时预热
    或后台加载，非阻塞项
-6. [ ] 最大化阴影：记录为 WSLg 限制；如需可做无边框模式
-7. [ ] Linux 测试纳入常规验收：`./build_linux.sh test`
+6. [x] 最大化阴影：记录为 WSLg 合成器限制，不做引擎侧绕过
+7. [x] WSLg 使用提示：启动检测 Microsoft+D3D12 打印警告；
+    `verify_render.sh --software-renderer` 强制 llvmpipe
+8. [ ] Linux 测试纳入常规验收：`./build_linux.sh test`
 
 ## 自动验收
 

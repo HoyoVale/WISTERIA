@@ -84,6 +84,25 @@ void Window::init()
                      "performance will be poor otherwise."
                   << std::endl;
     }
+    // WSLg + Mesa D3D12 is a known compatibility issue: the default back
+    // buffer can read back black after the first frame even though animation,
+    // skinning and GL calls keep progressing. Native Linux and llvmpipe are
+    // unaffected, so this is a driver/platform problem, not a WISTERIA
+    // rendering failure. Give the user a concrete escape hatch instead of
+    // silently running into black frames.
+    if (vendor != nullptr &&
+        renderer != nullptr &&
+        std::strstr(vendor, "Microsoft") != nullptr &&
+        std::strstr(renderer, "D3D12") != nullptr)
+    {
+        std::cerr << "[WSLG COMPATIBILITY WARNING] Mesa D3D12 renderer "
+                     "detected (vendor=\""
+                  << vendor << "\" renderer=\"" << renderer
+                  << "\"). This driver may produce black frames after the "
+                     "first frame. Retry with LIBGL_ALWAYS_SOFTWARE=1, or "
+                     "run on native Linux."
+                  << std::endl;
+    }
 
     this->input.Attach(*this->window);
     glEnable(GL_DEPTH_TEST);

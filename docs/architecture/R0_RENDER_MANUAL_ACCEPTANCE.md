@@ -212,6 +212,32 @@ Windows PowerShell 对应参数为：
   平台问题，而非引擎渲染链路问题；R0.2 的 scene-FBO 截图路径保留为
   在该平台上绕开默认 back buffer 读回故障的权威验收方式。
 
+## R0.4：平台支持归档（2026-08-04）
+
+R0.4 只做工程收口，不再修改渲染算法：
+
+- 平台支持状态正式归档为：
+
+  ```text
+  Windows OpenGL                  Supported
+  Linux native X11                Supported
+  Linux native Wayland            Supported / 继续扩大测试
+  Linux headless NULL             Supported
+  WSLg llvmpipe                   Supported fallback
+  WSLg Mesa D3D12                 Known compatibility issue
+  ```
+
+- 引擎启动时检测 `vendor=Microsoft` + `renderer=D3D12`，打印
+  `[WSLG COMPATIBILITY WARNING]`，提示用 `LIBGL_ALWAYS_SOFTWARE=1`
+  或原生 Linux 重试；
+- `verify_render.sh` 新增 `--software-renderer`，等价于
+  `LIBGL_ALWAYS_SOFTWARE=1`；脚本同时检测 `glxinfo -B` 中的
+  Microsoft + D3D12 组合并给出提示；
+- R0.2/R0.3 的诊断能力（像素探针、OIT/天空盒/相机旁路、截图源）保持
+  环境变量门控且默认关闭，只作为开发者诊断开关保留；
+- 验收口径从此区分 **Native Linux validation** 与 **WSLg compatibility
+  validation**：原生 Linux 是发布基线，WSLg 只做兼容性记录，不阻断发布。
+
 ## 手工观察
 
 三组窗口都应满足：
