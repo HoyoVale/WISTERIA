@@ -90,6 +90,66 @@ void ConfigureCharacterLighting(Scene& scene)
     // });
 }
 
+namespace
+{
+constexpr std::size_t GroundVertexStride = 15U;  // pos3 color3 uv2 normal3 tangent4
+
+DefaultModelData BuildGroundMeshData(float size)
+{
+    const float half = size * 0.5f;
+    DefaultModelData data;
+    data.layout = {
+        {"position", 3, FLOAT},
+        {"color", 3, FLOAT},
+        {"texCoord", 2, FLOAT},
+        {"normal", 3, FLOAT},
+        {"tangent", 4, FLOAT, false, false, 4U}
+    };
+    const float positions[4][2] = {
+        {-half, -half},
+        {half, -half},
+        {half, half},
+        {-half, half}
+    };
+    const float uvs[4][2] = {
+        {0.0f, 0.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+    for (int index = 0; index < 4; ++index)
+    {
+        const float vertex[GroundVertexStride] = {
+            positions[index][0], 0.0f, positions[index][1],
+            0.75f, 0.75f, 0.75f,
+            uvs[index][0], uvs[index][1],
+            0.0f, 1.0f, 0.0f,
+            1.0f, 0.0f, 0.0f, 1.0f
+        };
+        for (std::size_t component = 0U;
+             component < GroundVertexStride;
+             ++component)
+        {
+            data.vertices.push_back(vertex[component]);
+        }
+    }
+    data.indices = {0U, 1U, 2U, 0U, 2U, 3U};
+    return data;
+}
+
+void AddDemoGround(Scene& scene, ResourceManager& resources)
+{
+    Mesh& groundMesh = resources.CreateMesh(
+        "demo::groundMesh",
+        BuildGroundMeshData(60.0f)
+    );
+    Material& groundMaterial = resources.CreateMaterial(
+        "demo::groundMaterial"
+    );
+    scene.CreateEntity(groundMesh, groundMaterial);
+}
+}
+
 class SabaDemoBehaviour final : public Behaviour
 {
 public:
@@ -333,14 +393,24 @@ void SetupSabaMmdDemoScene(
             glm::vec3(1.0f)
         )
     );
-    Entity& sceneEntity = scene.InstantiateModel(
-        sceneModel,
-        Transform(
-            glm::vec3(0.0f, 0.0f, 50.1f),
-            glm::vec3(0.0f),
-            glm::vec3(1.0f)
-        )
-    );
+    if (sceneMode)
+    {
+        scene.InstantiateModel(
+            sceneModel,
+            Transform(
+                glm::vec3(0.0f, 0.0f, 50.1f),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f)
+            )
+        );
+    }
+    else
+    {
+        // Character demo: stand the character on a visible ground plane so
+        // the MMD ground shadow has a surface to land on. The distant stage
+        // backdrop stays exclusive to scene mode.
+        AddDemoGround(scene, resources);
+    }
     if (motionPath.empty() && !sceneMode)
         motionPath = DemoDreamWingMotionPath();
     const std::filesystem::path cameraPath = DemoDreamWingCameraPath();

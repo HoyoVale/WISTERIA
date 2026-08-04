@@ -181,14 +181,14 @@ int main(int argumentCount, char* arguments[])
             );
         }
 
-        Window& primaryWindow = windowManager.CreateWindow(WindowConfig{
+        Window& primaryWindow = application.CreateWindow(WindowConfig{
             .width = 960,
             .height = 720,
             .title = sceneMode
                 ? "FLORAL WISTERIA - MMD SCENE"
                 : "FLORAL WISTERIA - MMD DREAM WINGS"
         });
-        const std::shared_ptr<Scene> scene = windowManager.CreateScene();
+        const std::shared_ptr<Scene> scene = application.CreateScene();
         SetupSabaMmdDemoScene(
             *scene,
             application.GetResources(),

@@ -486,7 +486,7 @@ void Renderer::RenderGroundShadowPass(
         shadowProjection = glm::mat4(
             glm::vec4(1.0f, 0.0f, 0.0f, 0.0f),
             glm::vec4(kx, 0.0f, kz, 0.0f),
-            glm::vec4(0.0f, 0.0f, 0.0f, 0.0f),
+            glm::vec4(0.0f, 0.0f, 1.0f, 0.0f),
             glm::vec4(-groundY * kx, groundY, -groundY * kz, 1.0f)
         );
     }
@@ -501,8 +501,6 @@ void Renderer::RenderGroundShadowPass(
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     this->groundShadowProgram->Use();
     this->groundShadowProgram->Uniform4f(
@@ -512,11 +510,13 @@ void Renderer::RenderGroundShadowPass(
         0.10f,
         0.55f
     );
+    std::size_t groundParts = 0U;
     for (const RenderCommand& command : commands)
     {
         if (!command.part->GetMaterial().IsGroundShadow())
             continue;
 
+        ++groundParts;
         Mesh& mesh = command.part->GetMesh();
         mesh.Attach();
         if (mesh.DynamicVertexProvider())
@@ -538,6 +538,11 @@ void Renderer::RenderGroundShadowPass(
         vertexArray.Bind();
         mesh.Draw();
         vertexArray.unBind();
+    }
+    if (std::getenv("WISTERIA_SHADOW_DEBUG") != nullptr)
+    {
+        std::cout << "[GROUND SHADOW] commands=" << commands.size()
+                  << " groundParts=" << groundParts << std::endl;
     }
     this->groundShadowProgram->unUse();
 
