@@ -49,6 +49,9 @@ struct ImportedMaterialData
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
+    bool groundShadow = false;
+    bool castSelfShadow = false;
+    bool receiveSelfShadow = false;
 };
 
 struct ImportedMeshData

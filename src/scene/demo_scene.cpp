@@ -65,11 +65,12 @@ std::string ToNarrowUtf8(const std::filesystem::path& path)
 
 void ConfigureCharacterLighting(Scene& scene)
 {
-    // scene.CreateDirectionalLight(DirectionalLightData{
-    //     .Direction = {-0.35f, -0.75f, -0.45f},
-    //     .Color = {1.0f, 0.96f, 0.92f},
-    //     .Intensity = 0.75f
-    // });
+    // Main directional light also drives the shadow map (single cascade).
+    scene.CreateDirectionalLight(DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = {1.0f, 0.96f, 0.92f},
+        .Intensity = 0.75f
+    });
     scene.CreatePointLight(PointLightData{
         .Position = {5.0f, 13.0f, 9.0f},
         .Color = {1.0f, 0.88f, 0.78f},

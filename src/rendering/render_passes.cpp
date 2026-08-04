@@ -208,6 +208,30 @@ void Renderer::DrawPart(
         );
     }
 
+    if (shaderInterface.shadowingSupported)
+    {
+        program.UniformMat4f(
+            shaderInterface.lightViewProjection,
+            this->shadowLightViewProjection
+        );
+        program.Uniform1i(
+            shaderInterface.shadowEnabled,
+            this->shadowStateEnabled ? 1 : 0
+        );
+        program.Uniform1i(
+            shaderInterface.receiveShadow,
+            this->shadowStateEnabled && material.ReceivesSelfShadow()
+                ? 1
+                : 0
+        );
+        program.UniformTex(shaderInterface.shadowMap, ShadowMapTextureUnit);
+        program.Uniform2f(
+            shaderInterface.shadowMapSize,
+            static_cast<float>(ShadowMapResolution),
+            static_cast<float>(ShadowMapResolution)
+        );
+    }
+
     vertexArray.Bind();
     if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
         material.IsEdgeEnabled() && materialValues.edgeSize > 0.0f)
@@ -228,6 +252,125 @@ void Renderer::DrawPart(
     mesh.Draw();
     vertexArray.unBind();
     material.Unbind();
+}
+
+void Renderer::EnsureShadowResources()
+{
+    if (this->shadowProgram == nullptr)
+    {
+        auto nextShader = std::make_unique<Shader>(
+            wisteria::assets::Shader("shadow.vert"),
+            wisteria::assets::Shader("shadow.frag")
+        );
+        auto nextProgram = std::make_unique<Program>(
+            nextShader->GetShaderList()
+        );
+        this->shadowShader = std::move(nextShader);
+        this->shadowProgram = std::move(nextProgram);
+    }
+
+    if (this->shadowDepthTexture == 0)
+    {
+        glGenTextures(1, &this->shadowDepthTexture);
+        if (this->shadowDepthTexture == 0)
+            throw std::runtime_error("Cannot create shadow depth texture");
+        glBindTexture(GL_TEXTURE_2D, this->shadowDepthTexture);
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_DEPTH_COMPONENT24,
+            ShadowMapResolution,
+            ShadowMapResolution,
+            0,
+            GL_DEPTH_COMPONENT,
+            GL_FLOAT,
+            nullptr
+        );
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        this->shadowFramebuffer.Create();
+        this->shadowFramebuffer.AttachTexture2D(
+            GL_DEPTH_ATTACHMENT,
+            this->shadowDepthTexture
+        );
+        this->shadowFramebuffer.RequireComplete();
+    }
+
+    if (std::getenv("WISTERIA_SHADOW_DEBUG") != nullptr)
+    {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, this->shadowFramebuffer.Id());
+        glReadBuffer(GL_NONE);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        std::vector<float> depths(4U, 1.0f);
+        glReadPixels(
+            ShadowMapResolution / 2,
+            ShadowMapResolution / 2,
+            2,
+            2,
+            GL_DEPTH_COMPONENT,
+            GL_FLOAT,
+            depths.data()
+        );
+        std::cout << "[SHADOW DEBUG] center depths="
+                  << depths[0] << "," << depths[1] << ","
+                  << depths[2] << "," << depths[3] << std::endl;
+    }
+}
+
+void Renderer::RenderShadowPass(
+    const std::vector<RenderCommand>& commands,
+    const glm::mat4& lightView,
+    const glm::mat4& lightProjection
+)
+{
+    this->EnsureShadowResources();
+    this->shadowFramebuffer.Bind();
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glViewport(0, 0, ShadowMapResolution, ShadowMapResolution);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    this->shadowProgram->Use();
+    const ShaderInterface shadowInterface;
+    for (const RenderCommand& command : commands)
+    {
+        Mesh& mesh = command.part->GetMesh();
+        mesh.Attach();
+        if (mesh.DynamicVertexProvider())
+            mesh.DynamicVertexProvider()(mesh);
+        VAO& vertexArray = this->VertexArrayFor(mesh);
+        this->UploadMorphing(
+            vertexArray,
+            shadowInterface,
+            mesh,
+            command.morphState
+        );
+        this->UploadTransforms(
+            *this->shadowProgram,
+            shadowInterface,
+            command.model,
+            lightView,
+            lightProjection
+        );
+        this->UploadSkinning(
+            *this->shadowProgram,
+            shadowInterface,
+            mesh,
+            command.pose
+        );
+        vertexArray.Bind();
+        mesh.Draw();
+        vertexArray.unBind();
+    }
+    this->shadowProgram->unUse();
 }
 
 VAO& Renderer::VertexArrayFor(Mesh& mesh)

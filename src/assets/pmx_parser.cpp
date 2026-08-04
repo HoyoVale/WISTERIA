@@ -392,6 +392,9 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
         material.ambient = ReadPmxVec3(reader);
         const std::uint8_t flags = reader.Read<std::uint8_t>();
         material.doubleSided = (flags & 0x01U) != 0;
+        material.groundShadow = (flags & 0x02U) != 0;
+        material.castSelfShadow = (flags & 0x04U) != 0;
+        material.receiveSelfShadow = (flags & 0x08U) != 0;
         material.edgeEnabled = (flags & 0x10U) != 0;
         material.edgeColor = ReadPmxVec4(reader);
         material.edgeSize = reader.Read<float>();

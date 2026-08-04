@@ -1610,6 +1610,9 @@ ImportedMaterialData ImportMaterial(
             glm::vec3(0.0f)
         );
         imported.doubleSided = mmdMaterial->doubleSided;
+        imported.groundShadow = mmdMaterial->groundShadow;
+        imported.castSelfShadow = mmdMaterial->castSelfShadow;
+        imported.receiveSelfShadow = mmdMaterial->receiveSelfShadow;
         imported.edgeEnabled = mmdMaterial->edgeEnabled;
         imported.edgeColor = glm::clamp(
             mmdMaterial->edgeColor,

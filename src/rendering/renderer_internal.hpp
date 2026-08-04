@@ -42,6 +42,8 @@ constexpr unsigned int SkinningTextureUnit = 11;
 constexpr unsigned int ScenePresentTextureUnit = 12;
 constexpr unsigned int OitAccumulationTextureUnit = 13;
 constexpr unsigned int OitRevealageTextureUnit = 14;
+constexpr unsigned int ShadowMapTextureUnit = 15;
+constexpr int ShadowMapResolution = 2048;
 
 void UnbindTexture2DFromUnit(unsigned int unit, GLuint texture)
 {
@@ -100,6 +102,16 @@ MaterialAlphaMode EffectiveAlphaMode(
 
 }
 
+// Referenced by Renderer's private pass declarations, so it must be visible
+// at wisteria scope (matching the renderer.hpp forward declaration).
+struct RenderCommand
+{
+    RenderPart* part = nullptr;
+    glm::mat4 model{1.0f};
+    const Pose* pose = nullptr;
+    const MorphState* morphState = nullptr;
+};
+
 constexpr unsigned int RendererBoundTextureUnits[] = {
     IrradianceTextureUnit,
     PrefilterTextureUnit,
@@ -107,7 +119,8 @@ constexpr unsigned int RendererBoundTextureUnits[] = {
     SkinningTextureUnit,
     ScenePresentTextureUnit,
     OitAccumulationTextureUnit,
-    OitRevealageTextureUnit
+    OitRevealageTextureUnit,
+    ShadowMapTextureUnit
 };
 constexpr std::size_t RendererTrackedTextureUnitCount =
     std::size(RendererBoundTextureUnits);

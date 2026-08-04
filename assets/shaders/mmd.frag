@@ -5,6 +5,7 @@ in vec3 fragmentPosition;
 in vec3 fragmentNormal;
 in vec3 fragmentViewNormal;
 in vec2 fragmentAdditionalTexCoord;
+in vec4 fragmentShadowCoord;
 
 struct PointLight
 {
@@ -69,6 +70,10 @@ uniform float materialEdgeSize;
 uniform vec4 materialTextureFactor;
 uniform vec4 materialSphereTextureFactor;
 uniform vec4 materialToonTextureFactor;
+uniform sampler2D shadowMap;
+uniform int shadowEnabled;
+uniform int receiveShadow;
+uniform vec2 shadowMapSize;
 
 layout(location = 0) out vec4 outputColor;
 layout(location = 1) out float oitRevealage;
@@ -115,6 +120,39 @@ float Attenuation(
     );
     return attenuation *
         (1.0 - smoothstep(range * 0.8, range, distanceToLight));
+}
+
+float ShadowFactor()
+{
+    if (shadowEnabled == 0 || receiveShadow == 0)
+        return 1.0;
+
+    vec3 projected = fragmentShadowCoord.xyz / fragmentShadowCoord.w;
+    vec2 shadowUv = projected.xy * 0.5 + 0.5;
+    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 ||
+        shadowUv.y < 0.0 || shadowUv.y > 1.0)
+    {
+        return 1.0;
+    }
+    float currentDepth = projected.z * 0.5 + 0.5;
+    if (currentDepth > 1.0)
+        return 1.0;
+
+    float bias = 0.003;
+    float visibility = 0.0;
+    vec2 texelSize = 1.0 / shadowMapSize;
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float shadowDepth = texture(
+                shadowMap,
+                shadowUv + vec2(x, y) * texelSize
+            ).r;
+            visibility += (currentDepth - bias) <= shadowDepth ? 1.0 : 0.0;
+        }
+    }
+    return visibility / 9.0;
 }
 
 vec3 ToonFactor(float normalDotLight)
@@ -178,14 +216,15 @@ vec3 DirectionalContribution(
     DirectionalLight light,
     vec3 normal,
     vec3 viewDirection,
-    vec3 albedo
+    vec3 albedo,
+    float shadowFactor
 )
 {
     return DirectLight(
         normal,
         viewDirection,
         normalize(-light.direction),
-        light.radiance,
+        light.radiance * shadowFactor,
         albedo
     );
 }
@@ -270,6 +309,7 @@ void main()
     }
 
     vec3 color = albedo * (materialAmbientColor + vec3(ambientStrength));
+    float shadowFactor = ShadowFactor();
     for (int index = 0; index < MAX_POINT_LIGHTS; ++index)
     {
         if (index >= pointLightCount)
@@ -283,7 +323,11 @@ void main()
         if (index >= directionalLightCount)
             break;
         color += DirectionalContribution(
-            directionalLights[index], normal, viewDirection, albedo
+            directionalLights[index],
+            normal,
+            viewDirection,
+            albedo,
+            index == 0 ? shadowFactor : 1.0
         );
     }
     for (int index = 0; index < MAX_SPOT_LIGHTS; ++index)

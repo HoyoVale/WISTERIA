@@ -12,14 +12,6 @@ bool EnvironmentFlagEnabled(const char* name)
     return value != nullptr && std::string_view(value) != "0";
 }
 
-struct RenderCommand
-{
-    RenderPart* part = nullptr;
-    glm::mat4 model{1.0f};
-    const Pose* pose = nullptr;
-    const MorphState* morphState = nullptr;
-};
-
 class ScopedDepthState
 {
 public:
@@ -114,6 +106,49 @@ void Renderer::Render(
             else
                 opaqueCommands.push_back(command);
         }
+    }
+
+    // Minimal single-cascade shadow mapping: render the opaque scene from the
+    // main directional light into a depth texture, then let MMD toon
+    // materials sample it in the main pass.
+    this->shadowStateEnabled = false;
+    const bool shadowsEnabled =
+        !EnvironmentFlagEnabled("WISTERIA_DISABLE_SHADOWS");
+    if (shadowsEnabled &&
+        !scene.DirectionalLights().empty() &&
+        !opaqueCommands.empty())
+    {
+        const DirectionalLight& mainLight =
+            *scene.DirectionalLights().front();
+        const glm::vec3 lightDirection = glm::normalize(
+            mainLight.Direction()
+        );
+        const glm::vec3 lightPosition = -lightDirection * 60.0f;
+        const glm::mat4 lightView = glm::lookAt(
+            lightPosition,
+            glm::vec3(0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        );
+        const glm::mat4 lightProjection = glm::ortho(
+            -25.0f,
+            25.0f,
+            -25.0f,
+            25.0f,
+            1.0f,
+            120.0f
+        );
+        this->shadowLightViewProjection = lightProjection * lightView;
+        this->RenderShadowPass(opaqueCommands, lightView, lightProjection);
+        this->shadowStateEnabled = true;
+
+        // Keep the shadow texture bound on its dedicated unit for the main
+        // pass, then restore the scene target the shadow pass replaced.
+        glActiveTexture(GL_TEXTURE0 + ShadowMapTextureUnit);
+        glBindTexture(GL_TEXTURE_2D, this->shadowDepthTexture);
+        glActiveTexture(GL_TEXTURE0);
+        target.Bind();
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glViewport(0, 0, target.Width(), target.Height());
     }
 
     ScopedDepthState depthState;
@@ -284,6 +319,8 @@ void Renderer::Release() noexcept
     this->physicsDebugShader.reset();
     this->oitCompositeProgram.reset();
     this->oitCompositeShader.reset();
+    this->shadowProgram.reset();
+    this->shadowShader.reset();
     if (this->fullscreenVao != 0)
         glDeleteVertexArrays(1, &this->fullscreenVao);
     if (this->physicsDebugVao != 0)
@@ -298,8 +335,11 @@ void Renderer::Release() noexcept
         glDeleteTextures(1, &this->skinningTexture);
     if (this->skinningBuffer != 0)
         glDeleteBuffers(1, &this->skinningBuffer);
+    if (this->shadowDepthTexture != 0)
+        glDeleteTextures(1, &this->shadowDepthTexture);
     this->ReleaseMorphingCache();
     this->oitFramebuffer.Release();
+    this->shadowFramebuffer.Release();
 
     this->fullscreenVao = 0;
     this->physicsDebugVao = 0;
@@ -309,10 +349,12 @@ void Renderer::Release() noexcept
     this->oitRevealageTexture = 0;
     this->skinningTexture = 0;
     this->skinningBuffer = 0;
+    this->shadowDepthTexture = 0;
     this->oitWidth = 0;
     this->oitHeight = 0;
     this->oitDepthAttachment = 0;
     this->independentBlendSupported = false;
+    this->shadowStateEnabled = false;
     this->maximumSkinningMatrices = 0;
     this->uploadedPose = nullptr;
     this->uploadedPoseRevision = 0;

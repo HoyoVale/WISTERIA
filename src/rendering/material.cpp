@@ -280,6 +280,21 @@ bool Material::IsDoubleSided() const noexcept
     return this->data.doubleSided;
 }
 
+bool Material::IsGroundShadow() const noexcept
+{
+    return this->data.groundShadow;
+}
+
+bool Material::CastsSelfShadow() const noexcept
+{
+    return this->data.castSelfShadow;
+}
+
+bool Material::ReceivesSelfShadow() const noexcept
+{
+    return this->data.receiveSelfShadow;
+}
+
 bool Material::HasTexture(const std::string& uniformName) const noexcept
 {
     return this->textures.contains(uniformName);

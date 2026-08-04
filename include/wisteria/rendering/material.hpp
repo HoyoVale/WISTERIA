@@ -99,6 +99,15 @@ struct ShaderInterface
     std::string materialSphereTextureFactor = "materialSphereTextureFactor";
     std::string materialToonTextureFactor = "materialToonTextureFactor";
 
+    // Shadow mapping contract. MMD toon materials set shadowingSupported so
+    // the renderer uploads the shadow map state; PBR/basic shaders stay off.
+    bool shadowingSupported = false;
+    std::string lightViewProjection = "lightViewProjection";
+    std::string shadowMap = "shadowMap";
+    std::string shadowEnabled = "shadowEnabled";
+    std::string receiveShadow = "receiveShadow";
+    std::string shadowMapSize = "shadowMapSize";
+
     std::string pointLights = "pointLights";
     std::string pointLightCount = "pointLightCount";
     std::size_t maxPointLights = 8;
@@ -150,6 +159,10 @@ struct MaterialData{
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
+    // MMD draw-mode flags (PMX material flag bits 1/2/3).
+    bool groundShadow = false;
+    bool castSelfShadow = false;
+    bool receiveSelfShadow = false;
     ShaderInterface shaderInterface;
 };
 
@@ -199,6 +212,9 @@ public:
     MaterialAlphaMode AlphaMode() const noexcept;
     float AlphaCutoff() const noexcept;
     bool IsDoubleSided() const noexcept;
+    bool IsGroundShadow() const noexcept;
+    bool CastsSelfShadow() const noexcept;
+    bool ReceivesSelfShadow() const noexcept;
     bool HasTexture(const std::string& uniformName) const noexcept;
     const ShaderInterface& Interface() const noexcept;
 

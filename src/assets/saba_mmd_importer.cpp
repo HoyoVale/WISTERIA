@@ -1093,6 +1093,9 @@ void BuildMeshesAndMaterials(
             source.m_drawMode
         );
         material.doubleSided = (drawMode & 0x01U) != 0U;
+        material.groundShadow = (drawMode & 0x02U) != 0U;
+        material.castSelfShadow = (drawMode & 0x04U) != 0U;
+        material.receiveSelfShadow = (drawMode & 0x08U) != 0U;
         material.edgeEnabled = (drawMode & 0x10U) != 0U;
         material.edgeColor = glm::clamp(
             source.m_edgeColor,

@@ -1938,6 +1938,24 @@ void TestGraphicsDevice()
     Require(device.ProgramCount() == 0, "ReleaseAll clears the program cache");
 }
 
+void TestMaterialShadowFlags()
+{
+    MaterialData data;
+    data.shadingModel = MaterialShadingModel::MmdToon;
+    data.groundShadow = true;
+    data.castSelfShadow = false;
+    data.receiveSelfShadow = true;
+    data.shaderInterface.shadowingSupported = true;
+    Material material(data);
+    Require(
+        material.IsGroundShadow() &&
+        !material.CastsSelfShadow() &&
+        material.ReceivesSelfShadow() &&
+        material.Interface().shadowingSupported,
+        "Material MMD shadow flags were not preserved"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -2000,5 +2018,6 @@ int main()
     );
     failures += !RunTest("FXAA settings", TestFxaaSettings);
     failures += !RunTest("GraphicsDevice ownership", TestGraphicsDevice);
+    failures += !RunTest("Material shadow flags", TestMaterialShadowFlags);
     return failures == 0 ? 0 : 1;
 }

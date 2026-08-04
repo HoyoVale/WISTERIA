@@ -21,6 +21,10 @@ class MorphState;
 class Pose;
 class VAO;
 
+// Defined in src/rendering/renderer_internal.hpp; forward-declared here so
+// private pass methods can reference command lists in the public header.
+struct RenderCommand;
+
 struct FxaaSettings
 {
     bool enabled = true;
@@ -77,8 +81,14 @@ private:
         int oitPass
     );
     void EnsureOitResources(const SceneFramebuffer& target);
+    void EnsureShadowResources();
     void EnsurePresentResources();
     void EnsurePhysicsDebugResources();
+    void RenderShadowPass(
+        const std::vector<RenderCommand>& commands,
+        const glm::mat4& lightView,
+        const glm::mat4& lightProjection
+    );
     void DrawPhysicsDebug(
         const Scene& scene,
         const glm::mat4& view,
@@ -146,6 +156,10 @@ private:
     int oitWidth = 0;
     int oitHeight = 0;
     GLuint oitDepthAttachment = 0;
+    GLuint shadowDepthTexture = 0;
+    Framebuffer shadowFramebuffer;
+    std::unique_ptr<Shader> shadowShader;
+    std::unique_ptr<Program> shadowProgram;
     bool independentBlendSupported = false;
     std::size_t maximumSkinningMatrices = 0;
     const Pose* uploadedPose = nullptr;
@@ -165,6 +179,8 @@ private:
     GLuint physicsDebugBuffer = 0;
     std::size_t physicsDebugCapacityBytes = 0;
     FxaaSettings fxaaSettings;
+    bool shadowStateEnabled = false;
+    glm::mat4 shadowLightViewProjection{1.0f};
     std::unordered_map<const Mesh*, std::unique_ptr<VAO>> meshVertexArrays;
     std::unordered_map<const EnvironmentMap*, std::unique_ptr<VAO>>
         skyboxVertexArrays;

@@ -89,5 +89,5 @@ WISTERIA.zip
 # Local R0 render acceptance outputs
 /build-verify/
 /build-linux-verify/
-/artifacts/render-smoke/
+/artifacts/
 assets.zip

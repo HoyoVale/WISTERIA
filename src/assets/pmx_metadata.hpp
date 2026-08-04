@@ -29,6 +29,9 @@ struct PmxMaterialMetadata
     bool edgeEnabled = false;
     glm::vec4 edgeColor{0.0f, 0.0f, 0.0f, 1.0f};
     float edgeSize = 0.0f;
+    bool groundShadow = false;
+    bool castSelfShadow = false;
+    bool receiveSelfShadow = false;
     std::optional<std::string> diffuseTexture;
     std::optional<std::string> sphereTexture;
     MmdSphereMapMode sphereMode = MmdSphereMapMode::Disabled;

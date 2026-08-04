@@ -195,6 +195,9 @@ ModelAsset& ResourceManager::CreateModel(
         data.alphaMode = source.alphaMode;
         data.alphaCutoff = source.alphaCutoff;
         data.doubleSided = source.doubleSided;
+        data.groundShadow = source.groundShadow;
+        data.castSelfShadow = source.castSelfShadow;
+        data.receiveSelfShadow = source.receiveSelfShadow;
         if (source.shadingModel == MaterialShadingModel::MmdToon)
         {
             const std::filesystem::path shaderDirectory =
@@ -204,6 +207,7 @@ ModelAsset& ResourceManager::CreateModel(
             data.shaderFilePath.FragmentPath =
                 (shaderDirectory / "mmd.frag").string();
             data.shaderInterface.imageBasedLightingEnabled = false;
+            data.shaderInterface.shadowingSupported = true;
         }
 
         MaterialTextureBindings bindings;
@@ -480,6 +484,9 @@ ModelAsset& ResourceManager::LoadModel(
         data.alphaMode = source.alphaMode;
         data.alphaCutoff = source.alphaCutoff;
         data.doubleSided = source.doubleSided;
+        data.groundShadow = source.groundShadow;
+        data.castSelfShadow = source.castSelfShadow;
+        data.receiveSelfShadow = source.receiveSelfShadow;
         if (source.shadingModel == MaterialShadingModel::MmdToon)
         {
             const std::filesystem::path shaderDirectory =
@@ -489,6 +496,7 @@ ModelAsset& ResourceManager::LoadModel(
             data.shaderFilePath.FragmentPath =
                 (shaderDirectory / "mmd.frag").string();
             data.shaderInterface.imageBasedLightingEnabled = false;
+            data.shaderInterface.shadowingSupported = true;
         }
 
         MaterialTextureBindings bindings;
