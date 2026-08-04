@@ -205,6 +205,7 @@ set(WISTERIA_ASSET_SOURCES
     src/assets/importer.cpp
     src/assets/manager.cpp
     src/assets/model_asset.cpp
+    src/assets/pmx_parser.cpp
     src/assets/saba_mmd_importer.cpp
 )
 
