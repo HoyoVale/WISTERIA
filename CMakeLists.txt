@@ -210,6 +210,10 @@ set(WISTERIA_ASSET_SOURCES
 )
 
 set(WISTERIA_PHYSICS_SOURCES
+    src/physics/bullet_body.cpp
+    src/physics/bullet_constraint.cpp
+    src/physics/bullet_debug_draw.cpp
+    src/physics/bullet_stepper.cpp
     src/physics/physics_bullet_conversion.cpp
     src/physics/physics_types.cpp
     src/physics/physics_world.cpp
