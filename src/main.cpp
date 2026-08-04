@@ -121,6 +121,7 @@ void PrintHelp()
         << "  --model <pmx>       Override character PMX path\n"
         << "  --motion <vmd>      Override character VMD path\n"
         << "  --scene <pmx>       Enable scene mode and load a stage PMX\n"
+        << "  --ground-lab        Fixed-camera ground + cube render lab\n"
         << "  --alternate-model   Use the alternate built-in model preset\n"
         << "  --frames <n>        Run exactly n pull-model frames, then exit\n"
         << "  --fixed-dt <sec>    Delta time used with --frames (default 1/60)\n"
@@ -156,6 +157,17 @@ int main(int argumentCount, char* arguments[])
             arguments,
             "--scene"
         );
+        const bool groundLab = HasArgument(
+            argumentCount,
+            arguments,
+            "--ground-lab"
+        );
+        if (groundLab && sceneMode)
+        {
+            throw std::invalid_argument(
+                "--ground-lab cannot be combined with --scene"
+            );
+        }
         const std::optional<std::filesystem::path> modelPath =
             PathArgument(argumentCount, arguments, "--model");
         const std::optional<std::filesystem::path> motionPath =
@@ -184,24 +196,38 @@ int main(int argumentCount, char* arguments[])
         Window& primaryWindow = application.CreateWindow(WindowConfig{
             .width = 960,
             .height = 720,
-            .title = sceneMode
-                ? "FLORAL WISTERIA - MMD SCENE"
-                : "FLORAL WISTERIA - MMD DREAM WINGS"
+            .title = groundLab
+                ? "FLORAL WISTERIA - GROUND LAB"
+                : (sceneMode
+                    ? "FLORAL WISTERIA - MMD SCENE"
+                    : "FLORAL WISTERIA - MMD DREAM WINGS")
         });
         const std::shared_ptr<Scene> scene = application.CreateScene();
-        SetupSabaMmdDemoScene(
-            *scene,
-            application.GetResources(),
-            primaryWindow,
-            alternateModel,
-            modelPath.value_or(std::filesystem::path{}),
-            scenePath.value_or(std::filesystem::path{}),
-            sceneMode,
-            motionPath.value_or(std::filesystem::path{})
-        );
+        if (groundLab)
+        {
+            SetupGroundShadowLabScene(
+                *scene,
+                application.GetResources()
+            );
+        }
+        else
+        {
+            SetupSabaMmdDemoScene(
+                *scene,
+                application.GetResources(),
+                primaryWindow,
+                alternateModel,
+                modelPath.value_or(std::filesystem::path{}),
+                scenePath.value_or(std::filesystem::path{}),
+                sceneMode,
+                motionPath.value_or(std::filesystem::path{})
+            );
+        }
         windowManager.BindScene(primaryWindow, scene);
         FreeCameraControllerSettings cameraSettings;
-        cameraSettings.moveSpeed = sceneMode ? 12.0f : 2.5f;
+        cameraSettings.moveSpeed = groundLab
+            ? 6.0f
+            : (sceneMode ? 12.0f : 2.5f);
         windowManager.EnableFreeCameraController(
             primaryWindow,
             cameraSettings

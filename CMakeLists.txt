@@ -385,4 +385,7 @@ if(BUILD_TESTING)
         target_compile_options(wisteria_render_tests PRIVATE /utf-8)
     endif()
     add_test(NAME wisteria.render-fbo COMMAND wisteria_render_tests)
+    set_tests_properties(wisteria.render-fbo PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
 endif()

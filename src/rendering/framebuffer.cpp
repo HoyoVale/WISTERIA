@@ -202,12 +202,15 @@ void SceneFramebuffer::Resize(int width, int height)
     glBindRenderbuffer(GL_RENDERBUFFER, this->depthRenderbuffer);
     glRenderbufferStorage(
         GL_RENDERBUFFER,
-        GL_DEPTH_COMPONENT24,
+        // Packed depth+stencil: the renderer uses stencil as a one-shot mask
+        // for the MMD ground shadow so overlapping flattened parts blend
+        // exactly once and the shadow has uniform darkness everywhere.
+        GL_DEPTH24_STENCIL8,
         width,
         height
     );
     this->framebuffer.AttachRenderbuffer(
-        GL_DEPTH_ATTACHMENT,
+        GL_DEPTH_STENCIL_ATTACHMENT,
         this->depthRenderbuffer
     );
 
@@ -237,7 +240,10 @@ void SceneFramebuffer::Clear(const glm::vec4& color) const
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glClearColor(color.r, color.g, color.b, color.a);
     glDepthMask(GL_TRUE);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glStencilMask(0xFF);
+    glClear(
+        GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
+    );
 }
 
 void SceneFramebuffer::BindColorTexture(unsigned int textureUnit) const

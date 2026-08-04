@@ -494,29 +494,11 @@ void Renderer::RenderGroundShadowPass(
     this->EnsureGroundShadowResources();
     const glm::mat4 shadowView = view * shadowProjection;
     const ShaderInterface groundShadowInterface;
+    const bool debugOverdraw =
+        std::getenv("WISTERIA_GROUND_SHADOW_DEBUG") != nullptr;
 
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_FALSE);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    this->groundShadowProgram->Use();
-    this->groundShadowProgram->Uniform4f(
-        "shadowColor",
-        0.12f,
-        0.10f,
-        0.10f,
-        0.55f
-    );
-    std::size_t groundParts = 0U;
-    for (const RenderCommand& command : commands)
+    const auto drawFlattened = [&](const RenderCommand& command)
     {
-        if (!command.part->GetMaterial().IsGroundShadow())
-            continue;
-
-        ++groundParts;
         Mesh& mesh = command.part->GetMesh();
         mesh.Attach();
         if (mesh.DynamicVertexProvider())
@@ -538,7 +520,102 @@ void Renderer::RenderGroundShadowPass(
         vertexArray.Bind();
         mesh.Draw();
         vertexArray.unBind();
+    };
+
+    // The ground shadow must have one uniform darkness everywhere. Drawing
+    // every flattened part with alpha blending accumulates where parts
+    // overlap (hair over torso, skirt over legs), producing darker patches.
+    // Instead the pass first writes the silhouette into the stencil buffer
+    // (each pixel set once, however many parts cover it), then blends the
+    // shadow color exactly once per masked pixel.
+    GLboolean colorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+    const GLboolean stencilTestEnabled = glIsEnabled(GL_STENCIL_TEST);
+    const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+    GLint stencilFunc = GL_ALWAYS;
+    GLint stencilRef = 0;
+    GLint stencilValueMask = 0xFF;
+    glGetIntegerv(GL_STENCIL_FUNC, &stencilFunc);
+    glGetIntegerv(GL_STENCIL_REF, &stencilRef);
+    glGetIntegerv(GL_STENCIL_VALUE_MASK, &stencilValueMask);
+
+    this->groundShadowProgram->Use();
+    std::size_t groundParts = 0U;
+
+    if (!debugOverdraw)
+    {
+        // Mask pass: write stencil 1 wherever a flattened part lands. Depth
+        // still tests LEQUAL against the polygon-offset ground so the
+        // silhouette is confined to the floor, but neither color nor depth
+        // is written, and overlapping parts all set the same value.
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_ALWAYS, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        glStencilMask(0xFF);
+
+        for (const RenderCommand& command : commands)
+        {
+            if (!command.part->GetMaterial().IsGroundShadow())
+                continue;
+            ++groundParts;
+            drawFlattened(command);
+        }
+
+        // Fill pass: draw the ground plane once with the shadow color where
+        // the stencil mask is set. Every pixel receives exactly one blended
+        // fragment, so the shadow has a single uniform darkness. Depth and
+        // culling are irrelevant; the stencil test confines the fill.
+        glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glStencilFunc(GL_EQUAL, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        glStencilMask(0x00);
+        this->groundShadowProgram->Uniform4f(
+            "shadowColor",
+            0.12f,
+            0.10f,
+            0.10f,
+            0.55f
+        );
+        for (const RenderCommand& command : commands)
+        {
+            if (!command.part->GetMaterial().IsGroundPlane())
+                continue;
+            drawFlattened(command);
+        }
     }
+    else
+    {
+        // Debug overdraw: redraw the flattened silhouette on top of the
+        // scene so the overlap accumulation (the old uneven-shadow artifact)
+        // is visible for inspection.
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        this->groundShadowProgram->Uniform4f(
+            "shadowColor",
+            1.0f,
+            0.0f,
+            0.0f,
+            0.85f
+        );
+        for (const RenderCommand& command : commands)
+        {
+            if (!command.part->GetMaterial().IsGroundShadow())
+                continue;
+            ++groundParts;
+            drawFlattened(command);
+        }
+    }
+
     if (std::getenv("WISTERIA_SHADOW_DEBUG") != nullptr)
     {
         std::cout << "[GROUND SHADOW] commands=" << commands.size()
@@ -548,9 +625,29 @@ void Renderer::RenderGroundShadowPass(
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    // The fill pass disables depth testing so the stencil mask alone confines
+    // the overlay; restore the entry state or every later opaque/transparent
+    // part (and the skybox) would draw without depth testing.
+    if (depthTestEnabled == GL_TRUE)
+        glEnable(GL_DEPTH_TEST);
+    else
+        glDisable(GL_DEPTH_TEST);
     glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
+    glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+    if (stencilTestEnabled == GL_TRUE)
+        glEnable(GL_STENCIL_TEST);
+    else
+        glDisable(GL_STENCIL_TEST);
+    glStencilFunc(
+        static_cast<GLenum>(stencilFunc),
+        stencilRef,
+        static_cast<GLuint>(stencilValueMask)
+    );
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    glStencilMask(0xFF);
 }
 
 VAO& Renderer::VertexArrayFor(Mesh& mesh)

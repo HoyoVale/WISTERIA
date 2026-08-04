@@ -10,6 +10,8 @@
 #include "wisteria/platform/window.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/mesh.hpp"
+#include "wisteria/rendering/material.hpp"
+#include "wisteria/rendering/primitives/cube.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -133,7 +135,11 @@ DefaultModelData BuildGroundMeshData(float size)
             data.vertices.push_back(vertex[component]);
         }
     }
-    data.indices = {0U, 1U, 2U, 0U, 2U, 3U};
+    // Winding must be counter-clockwise when viewed from +Y so the plane's
+    // front face points up: the renderer back-face culls non-double-sided
+    // materials, and the previous (0,1,2) winding produced a -Y geometric
+    // normal that got culled by every camera above the ground.
+    data.indices = {0U, 2U, 1U, 0U, 3U, 2U};
     return data;
 }
 
@@ -143,10 +149,15 @@ void AddDemoGround(Scene& scene, ResourceManager& resources)
         "demo::groundMesh",
         BuildGroundMeshData(60.0f)
     );
+    MaterialData groundData;
+    groundData.groundPlane = true;
     Material& groundMaterial = resources.CreateMaterial(
-        "demo::groundMaterial"
+        "demo::groundMaterial",
+        groundData
     );
     scene.CreateEntity(groundMesh, groundMaterial);
+    std::cout << "[GROUND] demo ground added: size=60 planeY=0"
+              << " texture=chessboard frontFace=+Y" << std::endl;
 }
 }
 
@@ -332,6 +343,62 @@ ModelAsset& CreateSabaMeshModel(
 }
 }
 
+void SetupGroundShadowLabScene(Scene& scene, ResourceManager& resources)
+{
+    // Fixed camera: level-ish view that clearly includes the ground plane.
+    scene.ActiveCamera().SetParam(CameraParam{
+        .Position = {9.0f, 8.0f, 11.0f},
+        .Target = {0.0f, 0.8f, 0.0f},
+        .Up = {0.0f, 1.0f, 0.0f},
+        .VerticalFovDegrees = 45.0f
+    });
+
+    scene.CreateDirectionalLight(DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = {1.0f, 0.96f, 0.92f},
+        .Intensity = 1.0f
+    });
+
+    // Ground: large, clearly visible light-gray plane.
+    Mesh& groundMesh = resources.CreateMesh(
+        "lab::groundMesh",
+        BuildGroundMeshData(40.0f)
+    );
+    MaterialData groundData;
+    groundData.baseColorFactor = {0.85f, 0.85f, 0.85f, 1.0f};
+    groundData.emissiveFactor = {0.25f, 0.25f, 0.25f};
+    groundData.roughnessFactor = 1.0f;
+    groundData.groundPlane = true;
+    Material& groundMaterial = resources.CreateMaterial(
+        "lab::groundMaterial",
+        groundData
+    );
+    scene.CreateEntity(groundMesh, groundMaterial);
+
+    // Cube: floats above the ground and casts the ground shadow.
+    Mesh& cubeMesh = resources.CreateMesh("lab::cubeMesh", cubeData);
+    MaterialData cubeDataMaterial;
+    cubeDataMaterial.baseColorFactor = {0.9f, 0.25f, 0.25f, 1.0f};
+    cubeDataMaterial.emissiveFactor = {0.15f, 0.0f, 0.0f};
+    cubeDataMaterial.castSelfShadow = true;
+    cubeDataMaterial.receiveSelfShadow = true;
+    cubeDataMaterial.groundShadow = true;
+    Material& cubeMaterial = resources.CreateMaterial(
+        "lab::cubeMaterial",
+        cubeDataMaterial
+    );
+    scene.CreateEntity(
+        cubeMesh,
+        cubeMaterial,
+        Transform(glm::vec3(0.0f, 2.5f, 0.0f))
+    );
+    std::cout << "[GROUND LAB] ground size=40 planeY=0 cubeY=2.5"
+              << " camera=" << scene.ActiveCamera().GetParam().Position.x
+              << "," << scene.ActiveCamera().GetParam().Position.y
+              << "," << scene.ActiveCamera().GetParam().Position.z
+              << std::endl;
+}
+
 void SetupSabaMmdDemoScene(
     Scene& scene,
     ResourceManager& resources,
@@ -407,9 +474,18 @@ void SetupSabaMmdDemoScene(
     else
     {
         // Character demo: stand the character on a visible ground plane so
-        // the MMD ground shadow has a surface to land on. The distant stage
-        // backdrop stays exclusive to scene mode.
+        // the MMD ground shadow has a surface to land on, and restore the
+        // distant 随便观 stage backdrop for the original
+        // stage + character + motion composition.
         AddDemoGround(scene, resources);
+        scene.InstantiateModel(
+            sceneModel,
+            Transform(
+                glm::vec3(0.0f, 0.0f, 50.1f),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f)
+            )
+        );
     }
     if (motionPath.empty() && !sceneMode)
         motionPath = DemoDreamWingMotionPath();

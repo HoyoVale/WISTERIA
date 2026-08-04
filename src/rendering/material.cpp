@@ -295,6 +295,11 @@ bool Material::ReceivesSelfShadow() const noexcept
     return this->data.receiveSelfShadow;
 }
 
+bool Material::IsGroundPlane() const noexcept
+{
+    return this->data.groundPlane;
+}
+
 bool Material::HasTexture(const std::string& uniformName) const noexcept
 {
     return this->textures.contains(uniformName);

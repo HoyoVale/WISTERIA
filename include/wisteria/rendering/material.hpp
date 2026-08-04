@@ -165,6 +165,12 @@ struct MaterialData{
     bool groundShadow = false;
     bool castSelfShadow = false;
     bool receiveSelfShadow = false;
+    // Marks a renderable that occupies the ground plane (y == 0). The
+    // renderer draws ground-plane parts before the MMD ground shadow so the
+    // shadow can depth-test against the floor, and draws every other opaque
+    // part afterwards so characters correctly occlude the shadow instead of
+    // being overpainted by its coplanar depth bias.
+    bool groundPlane = false;
     ShaderInterface shaderInterface;
 };
 
@@ -217,6 +223,7 @@ public:
     bool IsGroundShadow() const noexcept;
     bool CastsSelfShadow() const noexcept;
     bool ReceivesSelfShadow() const noexcept;
+    bool IsGroundPlane() const noexcept;
     bool HasTexture(const std::string& uniformName) const noexcept;
     const ShaderInterface& Interface() const noexcept;
 

@@ -92,13 +92,12 @@ void Renderer::UploadSkinning(
     const bool enabled = mesh.IsSkinned() && pose != nullptr &&
         !mesh.HasDynamicVertexSource();
     program.Uniform1i(shaderInterface.skinningEnabled, enabled ? 1 : 0);
-    if (!mesh.IsSkinned())
-        return;
 
     // The vertex shader statically samples boneMatrixPalette, so Mesa
-    // validates the sampler's texture unit at draw time even when GPU
-    // skinning is disabled. Keep a valid buffer texture bound on the
-    // skinning unit for every skinned mesh.
+    // validates the sampler's buffer texture at draw time even when GPU
+    // skinning is disabled. Non-skinned meshes (PBR planes, primitives)
+    // must also keep a valid buffer texture bound or llvmpipe reports
+    // GL_INVALID_OPERATION on the first draw call.
     this->EnsureSkinningResources();
     glActiveTexture(GL_TEXTURE0 + SkinningTextureUnit);
     glBindTexture(GL_TEXTURE_BUFFER, this->skinningTexture);
@@ -106,6 +105,9 @@ void Renderer::UploadSkinning(
         shaderInterface.boneMatrixPalette,
         SkinningTextureUnit
     );
+
+    if (!mesh.IsSkinned())
+        return;
 
     if (!enabled)
         return;

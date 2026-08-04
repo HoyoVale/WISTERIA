@@ -246,8 +246,21 @@ void Renderer::Render(
     ScopedDepthState depthState;
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
+    // Ground planes first: the MMD ground shadow pass depth-tests against
+    // the floor, and every remaining opaque part is drawn afterwards so the
+    // character correctly occludes the flattened shadow instead of being
+    // overpainted by a coplanar depth bias.
+    // Push the ground's depth a few depth-buffer steps away from the camera
+    // so the exact-depth shadow overlay wins the LEQUAL test deterministically
+    // and the character (drawn afterwards) still passes at its y=0 feet.
+    // Without this margin, moving geometry toggles the shadow/feet boundary
+    // every frame, which reads as flicker and a clipped shadow.
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(1.0f, 2.0f);
     for (const RenderCommand& command : opaqueCommands)
     {
+        if (!command.part->GetMaterial().IsGroundPlane())
+            continue;
         this->DrawPart(
             *command.part,
             command.model,
@@ -260,10 +273,15 @@ void Renderer::Render(
             0
         );
     }
+    glDisable(GL_POLYGON_OFFSET_FILL);
 
     // MMD ground shadow: flatten ground-shadow materials onto the y=0 plane
-    // along the main light direction, after the opaque ground is in depth.
-    if (shadowsEnabled && !scene.DirectionalLights().empty())
+    // along the main light direction. The shadow uses LEQUAL against the
+    // ground's depth, so the coplanar overlay lands exactly on the floor;
+    // characters drawn afterwards win the depth test and hide the shadow
+    // where they occlude it.
+    if (shadowsEnabled && !scene.DirectionalLights().empty() &&
+        !EnvironmentFlagEnabled("WISTERIA_DISABLE_GROUND_SHADOW"))
     {
         this->RenderGroundShadowPass(
             opaqueCommands,
@@ -271,6 +289,23 @@ void Renderer::Render(
             projection,
             glm::normalize(scene.DirectionalLights().front()->Direction()),
             0.0f
+        );
+    }
+
+    for (const RenderCommand& command : opaqueCommands)
+    {
+        if (command.part->GetMaterial().IsGroundPlane())
+            continue;
+        this->DrawPart(
+            *command.part,
+            command.model,
+            view,
+            projection,
+            camera,
+            scene,
+            command.pose,
+            command.morphState,
+            0
         );
     }
 

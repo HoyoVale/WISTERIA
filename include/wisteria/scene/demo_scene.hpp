@@ -23,4 +23,11 @@ void SetupSabaMmdDemoScene(
     float physicsFps = 0.0f,
     int maxSubSteps = 0
 );
+
+// Minimal ground-shadow test scene: a fixed camera, a clearly visible ground
+// plane and a shadow-casting cube. No VMD camera, no character, no skybox.
+void SetupGroundShadowLabScene(
+    Scene& scene,
+    ResourceManager& resources
+);
 }  // namespace wisteria
