@@ -210,10 +210,26 @@ void Renderer::DrawPart(
 
     if (shaderInterface.shadowingSupported)
     {
-        program.UniformMat4f(
-            shaderInterface.lightViewProjection,
-            this->shadowLightViewProjection
-        );
+        for (std::size_t cascade = 0U;
+             cascade < ShadowCascadeCount;
+             ++cascade)
+        {
+            program.UniformMat4f(
+                shaderInterface.lightViewProjection + "[" +
+                    std::to_string(cascade) + "]",
+                this->shadowLightViewProjections[cascade]
+            );
+        }
+        for (std::size_t index = 0U;
+             index <= ShadowCascadeCount;
+             ++index)
+        {
+            program.Uniform1f(
+                shaderInterface.shadowSplitPositions + "[" +
+                    std::to_string(index) + "]",
+                this->shadowSplitPositions[index]
+            );
+        }
         program.Uniform1i(
             shaderInterface.shadowEnabled,
             this->shadowStateEnabled ? 1 : 0
@@ -274,27 +290,50 @@ void Renderer::EnsureShadowResources()
         glGenTextures(1, &this->shadowDepthTexture);
         if (this->shadowDepthTexture == 0)
             throw std::runtime_error("Cannot create shadow depth texture");
-        glBindTexture(GL_TEXTURE_2D, this->shadowDepthTexture);
-        glTexImage2D(
-            GL_TEXTURE_2D,
+        glBindTexture(GL_TEXTURE_2D_ARRAY, this->shadowDepthTexture);
+        glTexImage3D(
+            GL_TEXTURE_2D_ARRAY,
             0,
             GL_DEPTH_COMPONENT24,
             ShadowMapResolution,
             ShadowMapResolution,
+            static_cast<GLsizei>(ShadowCascadeCount),
             0,
             GL_DEPTH_COMPONENT,
             GL_FLOAT,
             nullptr
         );
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        this->shadowFramebuffer.Create();
-        this->shadowFramebuffer.AttachTexture2D(
-            GL_DEPTH_ATTACHMENT,
-            this->shadowDepthTexture
+        glTexParameteri(
+            GL_TEXTURE_2D_ARRAY,
+            GL_TEXTURE_MIN_FILTER,
+            GL_NEAREST
         );
+        glTexParameteri(
+            GL_TEXTURE_2D_ARRAY,
+            GL_TEXTURE_MAG_FILTER,
+            GL_NEAREST
+        );
+        glTexParameteri(
+            GL_TEXTURE_2D_ARRAY,
+            GL_TEXTURE_WRAP_S,
+            GL_CLAMP_TO_EDGE
+        );
+        glTexParameteri(
+            GL_TEXTURE_2D_ARRAY,
+            GL_TEXTURE_WRAP_T,
+            GL_CLAMP_TO_EDGE
+        );
+        this->shadowFramebuffer.Create();
+        this->shadowFramebuffer.Bind();
+        glFramebufferTextureLayer(
+            GL_FRAMEBUFFER,
+            GL_DEPTH_ATTACHMENT,
+            this->shadowDepthTexture,
+            0,
+            0
+        );
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
         this->shadowFramebuffer.RequireComplete();
     }
 
@@ -321,54 +360,66 @@ void Renderer::EnsureShadowResources()
 
 void Renderer::RenderShadowPass(
     const std::vector<RenderCommand>& commands,
-    const glm::mat4& lightView,
-    const glm::mat4& lightProjection
+    const std::array<glm::mat4, 4>& lightViews,
+    const std::array<glm::mat4, 4>& lightProjections
 )
 {
     this->EnsureShadowResources();
-    this->shadowFramebuffer.Bind();
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-    glViewport(0, 0, ShadowMapResolution, ShadowMapResolution);
-    glClear(GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-
     this->shadowProgram->Use();
     const ShaderInterface shadowInterface;
-    for (const RenderCommand& command : commands)
+    for (std::size_t cascade = 0U;
+         cascade < ShadowCascadeCount;
+         ++cascade)
     {
-        Mesh& mesh = command.part->GetMesh();
-        mesh.Attach();
-        if (mesh.DynamicVertexProvider())
-            mesh.DynamicVertexProvider()(mesh);
-        VAO& vertexArray = this->VertexArrayFor(mesh);
-        this->UploadMorphing(
-            vertexArray,
-            shadowInterface,
-            mesh,
-            command.morphState
+        this->shadowFramebuffer.Bind();
+        glFramebufferTextureLayer(
+            GL_FRAMEBUFFER,
+            GL_DEPTH_ATTACHMENT,
+            this->shadowDepthTexture,
+            0,
+            static_cast<GLint>(cascade)
         );
-        this->UploadTransforms(
-            *this->shadowProgram,
-            shadowInterface,
-            command.model,
-            lightView,
-            lightProjection
-        );
-        this->UploadSkinning(
-            *this->shadowProgram,
-            shadowInterface,
-            mesh,
-            command.pose
-        );
-        vertexArray.Bind();
-        mesh.Draw();
-        vertexArray.unBind();
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        glViewport(0, 0, ShadowMapResolution, ShadowMapResolution);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+
+        for (const RenderCommand& command : commands)
+        {
+            Mesh& mesh = command.part->GetMesh();
+            mesh.Attach();
+            if (mesh.DynamicVertexProvider())
+                mesh.DynamicVertexProvider()(mesh);
+            VAO& vertexArray = this->VertexArrayFor(mesh);
+            this->UploadMorphing(
+                vertexArray,
+                shadowInterface,
+                mesh,
+                command.morphState
+            );
+            this->UploadTransforms(
+                *this->shadowProgram,
+                shadowInterface,
+                command.model,
+                lightViews[cascade],
+                lightProjections[cascade]
+            );
+            this->UploadSkinning(
+                *this->shadowProgram,
+                shadowInterface,
+                mesh,
+                command.pose
+            );
+            vertexArray.Bind();
+            mesh.Draw();
+            vertexArray.unBind();
+        }
     }
     this->shadowProgram->unUse();
 }

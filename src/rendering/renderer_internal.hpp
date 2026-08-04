@@ -44,6 +44,7 @@ constexpr unsigned int OitAccumulationTextureUnit = 13;
 constexpr unsigned int OitRevealageTextureUnit = 14;
 constexpr unsigned int ShadowMapTextureUnit = 15;
 constexpr int ShadowMapResolution = 2048;
+constexpr std::size_t ShadowCascadeCount = 4;
 
 void UnbindTexture2DFromUnit(unsigned int unit, GLuint texture)
 {

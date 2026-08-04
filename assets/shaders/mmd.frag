@@ -5,7 +5,8 @@ in vec3 fragmentPosition;
 in vec3 fragmentNormal;
 in vec3 fragmentViewNormal;
 in vec2 fragmentAdditionalTexCoord;
-in vec4 fragmentShadowCoord;
+in vec4 fragmentShadowCoord[4];
+in float fragmentViewDepth;
 
 struct PointLight
 {
@@ -70,10 +71,11 @@ uniform float materialEdgeSize;
 uniform vec4 materialTextureFactor;
 uniform vec4 materialSphereTextureFactor;
 uniform vec4 materialToonTextureFactor;
-uniform sampler2D shadowMap;
+uniform sampler2DArray shadowMap;
 uniform int shadowEnabled;
 uniform int receiveShadow;
 uniform vec2 shadowMapSize;
+uniform float shadowSplitPositions[5];
 
 layout(location = 0) out vec4 outputColor;
 layout(location = 1) out float oitRevealage;
@@ -127,7 +129,18 @@ float ShadowFactor()
     if (shadowEnabled == 0 || receiveShadow == 0)
         return 1.0;
 
-    vec3 projected = fragmentShadowCoord.xyz / fragmentShadowCoord.w;
+    int cascade = 3;
+    for (int index = 0; index < 4; ++index)
+    {
+        if (fragmentViewDepth <= shadowSplitPositions[index + 1])
+        {
+            cascade = index;
+            break;
+        }
+    }
+
+    vec3 projected =
+        fragmentShadowCoord[cascade].xyz / fragmentShadowCoord[cascade].w;
     vec2 shadowUv = projected.xy * 0.5 + 0.5;
     if (shadowUv.x < 0.0 || shadowUv.x > 1.0 ||
         shadowUv.y < 0.0 || shadowUv.y > 1.0)
@@ -147,7 +160,7 @@ float ShadowFactor()
         {
             float shadowDepth = texture(
                 shadowMap,
-                shadowUv + vec2(x, y) * texelSize
+                vec3(shadowUv + vec2(x, y) * texelSize, float(cascade))
             ).r;
             visibility += (currentDepth - bias) <= shadowDepth ? 1.0 : 0.0;
         }

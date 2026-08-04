@@ -103,6 +103,7 @@ struct ShaderInterface
     // the renderer uploads the shadow map state; PBR/basic shaders stay off.
     bool shadowingSupported = false;
     std::string lightViewProjection = "lightViewProjection";
+    std::string shadowSplitPositions = "shadowSplitPositions";
     std::string shadowMap = "shadowMap";
     std::string shadowEnabled = "shadowEnabled";
     std::string receiveShadow = "receiveShadow";

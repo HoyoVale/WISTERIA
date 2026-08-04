@@ -17,7 +17,7 @@ layout(location = 14) in vec4 morphAdditionalUv4Offset;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
-uniform mat4 lightViewProjection;
+uniform mat4 lightViewProjection[4];
 uniform int outlinePass;
 uniform float materialEdgeSize;
 uniform int skinningEnabled;
@@ -28,7 +28,8 @@ out vec3 fragmentPosition;
 out vec3 fragmentNormal;
 out vec3 fragmentViewNormal;
 out vec2 fragmentAdditionalTexCoord;
-out vec4 fragmentShadowCoord;
+out vec4 fragmentShadowCoord[4];
+out float fragmentViewDepth;
 
 mat4 BoneMatrix(int boneIndex)
 {
@@ -61,7 +62,11 @@ void main()
     mat3 normalMatrix = transpose(inverse(mat3(model)));
     vec3 worldNormal = normalize(normalMatrix * localNormal);
     vec4 worldPosition = model * localPosition;
-    fragmentShadowCoord = lightViewProjection * worldPosition;
+    fragmentViewDepth = -(view * worldPosition).z;
+    fragmentShadowCoord[0] = lightViewProjection[0] * worldPosition;
+    fragmentShadowCoord[1] = lightViewProjection[1] * worldPosition;
+    fragmentShadowCoord[2] = lightViewProjection[2] * worldPosition;
+    fragmentShadowCoord[3] = lightViewProjection[3] * worldPosition;
 
     if (outlinePass != 0)
     {

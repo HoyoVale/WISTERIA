@@ -4,6 +4,7 @@
 #include "wisteria/animation/morph.hpp"
 #include "wisteria/scene/scene.hpp"
 #include <glad/gl.h>
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <memory>
@@ -86,8 +87,8 @@ private:
     void EnsurePhysicsDebugResources();
     void RenderShadowPass(
         const std::vector<RenderCommand>& commands,
-        const glm::mat4& lightView,
-        const glm::mat4& lightProjection
+        const std::array<glm::mat4, 4>& lightViews,
+        const std::array<glm::mat4, 4>& lightProjections
     );
     void DrawPhysicsDebug(
         const Scene& scene,
@@ -180,7 +181,8 @@ private:
     std::size_t physicsDebugCapacityBytes = 0;
     FxaaSettings fxaaSettings;
     bool shadowStateEnabled = false;
-    glm::mat4 shadowLightViewProjection{1.0f};
+    std::array<glm::mat4, 4> shadowLightViewProjections;
+    std::array<float, 5> shadowSplitPositions;
     std::unordered_map<const Mesh*, std::unique_ptr<VAO>> meshVertexArrays;
     std::unordered_map<const EnvironmentMap*, std::unique_ptr<VAO>>
         skyboxVertexArrays;
