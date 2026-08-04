@@ -1,14 +1,13 @@
 #pragma once
 #include "wisteria/rendering/shader.hpp"
+#include "wisteria/rendering/program_cache.hpp"
+#include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/texture.hpp"
 #include <string>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <unordered_map>
-
-inline const std::string textureRootPath =
-    (std::filesystem::current_path() / "assets" / "textures").string() + "\\";
 
 enum class TransformUniformMode
 {
@@ -128,7 +127,9 @@ struct MaterialData{
     std::unordered_map<std::string, TextureData> textureSources = {
         {
             "baseColorTexture",
-            TextureData::FromFile(textureRootPath + "chessboard.png")
+            TextureData::FromFile(
+                wisteria::assets::Texture("chessboard.png")
+            )
         }
     };
     glm::vec4 baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -158,7 +159,16 @@ public:
     explicit Material(const MaterialData &_data = {});
     Material(
         const MaterialData& data,
+        std::shared_ptr<ProgramCache> programCache
+    );
+    Material(
+        const MaterialData& data,
         MaterialTextureBindings textureBindings
+    );
+    Material(
+        const MaterialData& data,
+        MaterialTextureBindings textureBindings,
+        std::shared_ptr<ProgramCache> programCache
     );
     ~Material() = default;
 
@@ -169,15 +179,6 @@ public:
     Program& GetProgram();
     const Program& GetProgram() const;
 
-    // Returns a process-wide program shared by every material that uses the
-    // same vertex/fragment shader pair. WSLg's D3D12 driver compiles each
-    // program through LLVM (hundreds of milliseconds), so compiling one
-    // MMD shader 85 times made the first frame take ~15 seconds.
-    static std::shared_ptr<Program> SharedProgram(
-        const std::string& vertexPath,
-        const std::string& fragmentPath
-    );
-    static void ReleaseSharedPrograms() noexcept;
 
     const glm::vec3& SpecularColor() const noexcept;
     float Shininess() const noexcept;
@@ -208,6 +209,7 @@ public:
     void SetOcclusionStrength(float occlusionStrength) noexcept;
 
 private:
+    std::shared_ptr<ProgramCache> programCache;
     std::shared_ptr<Program> program;
     MaterialTextureBindings textures;
     MaterialData data;

@@ -1,4 +1,5 @@
 #pragma once
+#include "wisteria/core/asset_paths.hpp"
 #include <string>
 #include <filesystem>
 #include <glad/gl.h>
@@ -7,19 +8,16 @@
 #include <unordered_map>
 #include <vector>
 
-inline const std::string shaderRootPath =
-    (std::filesystem::current_path() / "assets" / "shaders").string() + "\\";
-
 struct Path{
-    std::string VertexPath = shaderRootPath + "basicTex.vert"; 
-    std::string FragmentPath = shaderRootPath + "basicTex.frag";
+    std::string VertexPath = wisteria::assets::Shader("basicTex.vert");
+    std::string FragmentPath = wisteria::assets::Shader("basicTex.frag");
 };
 
 class Shader{
 public:
     Shader(
-        std::string vertexPath = shaderRootPath + "basicTex.vert",
-        std::string fragmentPath = shaderRootPath + "basicTex.frag"
+        std::string vertexPath = wisteria::assets::Shader("basicTex.vert"),
+        std::string fragmentPath = wisteria::assets::Shader("basicTex.frag")
     );
     ~Shader();
     Shader(const Shader&) = delete;

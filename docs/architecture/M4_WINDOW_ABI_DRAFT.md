@@ -1,4 +1,4 @@
-# M4 窗口 C ABI 草案（v0.2）
+# M4 窗口 C ABI 草案（v0.3，实验接口）
 
 目标：让 Python / Node / Electron 等前端通过 `wisteria_native` 打开**真实
 桌面窗口**并驱动 MMD demo（模型、动作、物理、镜头、输入），而不是只能跑
@@ -8,8 +8,8 @@ headless。
 
 1. **窗口所有权**：C ABI（`wisteria_native`）拥有 GLFW 原生窗口 + GL 上下文
    + 渲染器；前端只发命令。与现有 `wisteria.exe` 同一条渲染链路。
-2. **驱动模式**：拉模式（pull）。前端每帧调用
-   `wisteria_window_poll_and_render(dt)`，C ABI 内部执行
+2. **驱动模式**：拉模式（pull）。前端对每个 Context 每帧只调用一次
+   `wisteria_poll_and_render(ctx, dt)`，C ABI 内部执行
    `输入帧开始 → glfwPollEvents → 场景更新 → 渲染 → swap`。不做内部自循环，
    方便 Electron rAF / Python 循环接管节奏。
 3. **场景复用**：窗口加载直接复用 `SetupSabaMmdDemoScene`（Saba 全链路：
@@ -18,6 +18,7 @@ headless。
 4. **与 M2 并存**：headless 模型句柄（M2）与窗口句柄（M4）在同一
    `WisteriaContext` 下互不干扰。
 5. **线程契约不变**：一个 context 单线程驱动；跨线程由调用方串行化。
+6. **实验状态**：v0.x 不承诺 ABI 稳定；窗口接口不得作为当前核心架构的反向依赖。
 
 ## 新增句柄与枚举
 
@@ -56,11 +57,15 @@ wisteria_window_load_demo(
 ```
 
 内部调用 `SetupSabaMmdDemoScene`，模型/动作/相机轨道全部就绪，此后每帧
-`poll_and_render` 即可。
+`wisteria_poll_and_render` 即可。
 
 ### 帧驱动
 
 ```c
+wisteria_poll_and_render(
+    WisteriaContext context, float delta_time);
+
+/* v0.2 compatibility wrapper; still advances every window in the context. */
 wisteria_window_poll_and_render(
     WisteriaContext context, WisteriaWindow window, float delta_time);
 wisteria_window_should_close(

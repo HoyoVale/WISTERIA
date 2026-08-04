@@ -1,5 +1,9 @@
 # Native C ABI 门面计划（方案 C）
 
+> **状态：冻结的历史方案。** WISTERIA(17) 之后，C ABI 作为显式 opt-in
+> 实验层维护，不再默认构建，也不继续扩张接口。当前结构决策与后续拆分以
+> `STRUCTURE_STABILIZATION_R0.md` 为准。本文保留用于追溯早期设计动机。
+
 ## 目标
 
 把 WISTERIA 核心打包成动态库（Windows `.dll` / Linux `.so` / macOS `.dylib`），

@@ -1,4 +1,5 @@
 #include "wisteria/common/pch.hpp"
+#include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/rendering/shader.hpp"
 #include "wisteria/rendering/environment.hpp"
@@ -619,11 +620,9 @@ void Renderer::EnsureOitResources(const SceneFramebuffer& target)
                 );
             }
 
-            const std::filesystem::path shaderDirectory =
-                std::filesystem::current_path() / "assets" / "shaders";
             auto nextShader = std::make_unique<Shader>(
-                (shaderDirectory / "oit_composite.vert").string(),
-                (shaderDirectory / "oit_composite.frag").string()
+                wisteria::assets::Shader("oit_composite.vert"),
+                wisteria::assets::Shader("oit_composite.frag")
             );
             auto nextProgram = std::make_unique<Program>(
                 nextShader->GetShaderList()
@@ -733,11 +732,9 @@ void Renderer::EnsurePresentResources()
 {
     if (this->presentProgram == nullptr)
     {
-        const std::filesystem::path shaderDirectory =
-            std::filesystem::current_path() / "assets" / "shaders";
         auto nextShader = std::make_unique<Shader>(
-            (shaderDirectory / "present.vert").string(),
-            (shaderDirectory / "present.frag").string()
+            wisteria::assets::Shader("present.vert"),
+            wisteria::assets::Shader("present.frag")
         );
         auto nextProgram = std::make_unique<Program>(
             nextShader->GetShaderList()
@@ -758,11 +755,9 @@ void Renderer::EnsurePhysicsDebugResources()
 {
     if (this->physicsDebugProgram == nullptr)
     {
-        const std::filesystem::path shaderDirectory =
-            std::filesystem::current_path() / "assets" / "shaders";
         auto nextShader = std::make_unique<Shader>(
-            (shaderDirectory / "physics_debug.vert").string(),
-            (shaderDirectory / "physics_debug.frag").string()
+            wisteria::assets::Shader("physics_debug.vert"),
+            wisteria::assets::Shader("physics_debug.frag")
         );
         auto nextProgram = std::make_unique<Program>(
             nextShader->GetShaderList()

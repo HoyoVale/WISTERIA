@@ -5,15 +5,72 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <string_view>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
 
 namespace
 {
+std::string SafeFileStem(std::string_view text)
+{
+    std::string result;
+    result.reserve(text.size());
+    for (const unsigned char character : text)
+    {
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z') ||
+            (character >= '0' && character <= '9') ||
+            character == '-' || character == '_')
+        {
+            result.push_back(static_cast<char>(character));
+        }
+        else if (character == ' ')
+        {
+            result.push_back('_');
+        }
+    }
+    if (result.empty())
+        result = "window";
+    return result;
+}
+
+void ReportGlErrors(
+    const char* stage,
+    std::size_t frameIndex,
+    std::string_view windowTitle
+)
+{
+    if (std::getenv("WISTERIA_GL_DIAGNOSTICS") == nullptr)
+        return;
+
+    bool found = false;
+    for (int index = 0; index < 32; ++index)
+    {
+        const GLenum error = glGetError();
+        if (error == GL_NO_ERROR)
+            break;
+        found = true;
+        std::cerr << "[GL ERROR] frame=" << frameIndex
+                  << " stage=" << stage
+                  << " window=\"" << windowTitle << "\""
+                  << " code=0x" << std::hex << std::uppercase << error
+                  << std::dec << std::nouppercase << std::endl;
+    }
+    if (!found && (frameIndex <= 3U || frameIndex % 60U == 0U))
+    {
+        std::cout << "[GL CHECK] frame=" << frameIndex
+                  << " stage=" << stage
+                  << " status=OK" << std::endl;
+    }
+}
+
 void SaveWindowScreenshotBmp(
     const std::string& directory,
+    std::string_view windowTitle,
     std::size_t frameIndex,
     int width,
     int height
@@ -22,9 +79,19 @@ void SaveWindowScreenshotBmp(
     if (width <= 0 || height <= 0)
         return;
 
+    std::error_code directoryError;
+    std::filesystem::create_directories(directory, directoryError);
+    if (directoryError)
+    {
+        std::cerr << "[FRAME CAPTURE] cannot create directory: "
+                  << directoryError.message() << std::endl;
+        return;
+    }
+
     std::vector<unsigned char> rgba(
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U
     );
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(
         0,
         0,
@@ -35,22 +102,41 @@ void SaveWindowScreenshotBmp(
         rgba.data()
     );
 
+    std::uint64_t hash = 1469598103934665603ULL;
+    unsigned int minimumRgb = 255U;
+    unsigned int maximumRgb = 0U;
+    for (std::size_t index = 0; index < rgba.size(); index += 4U)
+    {
+        for (std::size_t component = 0; component < 3U; ++component)
+        {
+            const unsigned int value = rgba[index + component];
+            minimumRgb = std::min(minimumRgb, value);
+            maximumRgb = std::max(maximumRgb, value);
+            hash ^= static_cast<std::uint64_t>(value);
+            hash *= 1099511628211ULL;
+        }
+    }
+
     const int rowSize = ((width * 3 + 3) / 4) * 4;
     const int dataSize = rowSize * height;
     const int fileSize = 54 + dataSize;
-    char fileName[64];
+    char fileName[160];
     std::snprintf(
         fileName,
         sizeof(fileName),
-        "frame_%05zu.bmp",
+        "%s_frame_%05zu.bmp",
+        SafeFileStem(windowTitle).c_str(),
         frameIndex
     );
-    std::ofstream output(
-        (std::filesystem::path(directory) / fileName).string(),
-        std::ios::binary
-    );
+    const std::filesystem::path outputPath =
+        std::filesystem::path(directory) / fileName;
+    std::ofstream output(outputPath, std::ios::binary);
     if (!output)
+    {
+        std::cerr << "[FRAME CAPTURE] cannot open "
+                  << outputPath.string() << std::endl;
         return;
+    }
 
     const auto put32 = [&output](int value)
     {
@@ -112,6 +198,13 @@ void SaveWindowScreenshotBmp(
             row.size()
         );
     }
+    output.close();
+
+    std::cout << "[FRAME CAPTURE] frame=" << frameIndex
+              << " size=" << width << "x" << height
+              << " rgbRange=" << minimumRgb << ".." << maximumRgb
+              << " fnv1a=0x" << std::hex << hash << std::dec
+              << " file=" << outputPath.string() << std::endl;
 }
 }
 
@@ -457,14 +550,25 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
     if (window.ShouldClose())
         return;
 
+    ++managedWindow.renderedFrames;
+    const std::size_t frameIndex = managedWindow.renderedFrames;
     const bool frameProfile =
         std::getenv("WISTERIA_FRAME_PROFILE") != nullptr;
     const auto profileStart = std::chrono::steady_clock::now();
 
     window.MakeContextCurrent();
+    ReportGlErrors("frame-begin", frameIndex, window.Title());
     const WindowSize framebufferSize = window.GetFramebufferSize();
     if (framebufferSize.width <= 0 || framebufferSize.height <= 0)
+    {
+        if (frameIndex <= 3U || frameIndex % 60U == 0U)
+        {
+            std::cout << "[FRAME SKIP] frame=" << frameIndex
+                      << " framebuffer=" << framebufferSize.width << "x"
+                      << framebufferSize.height << std::endl;
+        }
         return;
+    }
 
     managedWindow.framebuffer.Resize(
         framebufferSize.width,
@@ -475,6 +579,7 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         static_cast<float>(framebufferSize.height);
     const glm::mat4 projection = window.Projection(aspect);
     managedWindow.framebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
+    ReportGlErrors("clear", frameIndex, window.Title());
     const auto afterClear = std::chrono::steady_clock::now();
     managedWindow.renderer.Render(
         window.GetScene(),
@@ -482,59 +587,83 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         projection,
         managedWindow.framebuffer
     );
+    ReportGlErrors("render", frameIndex, window.Title());
     const auto afterRender = std::chrono::steady_clock::now();
     managedWindow.renderer.Present(
         managedWindow.framebuffer,
         framebufferSize.width,
         framebufferSize.height
     );
+    ReportGlErrors("present", frameIndex, window.Title());
     const auto afterPresent = std::chrono::steady_clock::now();
     if (const char* screenshotDirectory =
             std::getenv("WISTERIA_SCREENSHOT_DIR"))
     {
-        static std::size_t screenshotFrame = 0U;
-        ++screenshotFrame;
-        if (screenshotFrame % 30U == 1U)
+        std::size_t interval = 30U;
+        if (const char* configuredInterval =
+                std::getenv("WISTERIA_SCREENSHOT_INTERVAL"))
+        {
+            try
+            {
+                interval = std::max<std::size_t>(
+                    1U,
+                    std::stoull(configuredInterval)
+                );
+            }
+            catch (...)
+            {
+                interval = 30U;
+            }
+        }
+        if (frameIndex == 1U || (frameIndex - 1U) % interval == 0U)
         {
             SaveWindowScreenshotBmp(
                 screenshotDirectory,
-                screenshotFrame,
+                window.Title(),
+                frameIndex,
                 framebufferSize.width,
                 framebufferSize.height
             );
+            ReportGlErrors("capture", frameIndex, window.Title());
         }
     }
     window.SwapBuffers();
+    ReportGlErrors("swap", frameIndex, window.Title());
     const auto afterSwap = std::chrono::steady_clock::now();
 
     if (frameProfile)
     {
-        static std::size_t profileFrame = 0U;
-        static double totalUpdateMs = 0.0;
-        static double totalRenderMs = 0.0;
-        static double totalPresentMs = 0.0;
-        static double totalSwapMs = 0.0;
         const auto millis = [](const auto& start, const auto& end)
         {
             return std::chrono::duration<double, std::milli>(end - start)
                 .count();
         };
-        totalUpdateMs += millis(profileStart, afterClear);
-        totalRenderMs += millis(afterClear, afterRender);
-        totalPresentMs += millis(afterRender, afterPresent);
-        totalSwapMs += millis(afterPresent, afterSwap);
-        ++profileFrame;
-        if (profileFrame % 60U == 1U)
+        managedWindow.profileUpdateMilliseconds +=
+            millis(profileStart, afterClear);
+        managedWindow.profileRenderMilliseconds +=
+            millis(afterClear, afterRender);
+        managedWindow.profilePresentMilliseconds +=
+            millis(afterRender, afterPresent);
+        managedWindow.profileSwapMilliseconds +=
+            millis(afterPresent, afterSwap);
+        if (frameIndex <= 3U || frameIndex % 60U == 0U)
         {
-            const double frames = static_cast<double>(profileFrame);
-            std::cout << "[FRAME PROFILE] frames=" << profileFrame
-                      << " updateMs=" << (totalUpdateMs / frames)
-                      << " renderMs=" << (totalRenderMs / frames)
-                      << " presentMs=" << (totalPresentMs / frames)
-                      << " swapMs=" << (totalSwapMs / frames)
+            const double frames = static_cast<double>(frameIndex);
+            std::cout << "[FRAME PROFILE] window=\"" << window.Title()
+                      << "\" frames=" << frameIndex
+                      << " updateMs="
+                      << (managedWindow.profileUpdateMilliseconds / frames)
+                      << " renderMs="
+                      << (managedWindow.profileRenderMilliseconds / frames)
+                      << " presentMs="
+                      << (managedWindow.profilePresentMilliseconds / frames)
+                      << " swapMs="
+                      << (managedWindow.profileSwapMilliseconds / frames)
                       << " totalMs="
-                      << ((totalUpdateMs + totalRenderMs +
-                           totalPresentMs + totalSwapMs) / frames)
+                      << ((managedWindow.profileUpdateMilliseconds +
+                           managedWindow.profileRenderMilliseconds +
+                           managedWindow.profilePresentMilliseconds +
+                           managedWindow.profileSwapMilliseconds) / frames)
                       << std::endl;
         }
     }

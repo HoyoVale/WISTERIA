@@ -1,7 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/rendering/material.hpp"
 #include <cmath>
-#include <unordered_map>
 
 namespace
 {
@@ -18,15 +17,26 @@ MaterialTextureBindings BuildTextureBindings(const MaterialData& data)
     return bindings;
 }
 
-std::unordered_map<std::string, std::shared_ptr<Program>>& SharedProgramCache()
-{
-    static std::unordered_map<std::string, std::shared_ptr<Program>> cache;
-    return cache;
-}
 }
 
 Material::Material(const MaterialData &_data)
-    : Material(_data, BuildTextureBindings(_data))
+    : Material(
+          _data,
+          BuildTextureBindings(_data),
+          std::make_shared<ProgramCache>()
+      )
+{
+}
+
+Material::Material(
+    const MaterialData& data,
+    std::shared_ptr<ProgramCache> programCache
+)
+    : Material(
+          data,
+          BuildTextureBindings(data),
+          std::move(programCache)
+      )
 {
 }
 
@@ -34,9 +44,25 @@ Material::Material(
     const MaterialData& data,
     MaterialTextureBindings textureBindings
 )
-    : textures(std::move(textureBindings)),
+    : Material(
+          data,
+          std::move(textureBindings),
+          std::make_shared<ProgramCache>()
+      )
+{
+}
+
+Material::Material(
+    const MaterialData& data,
+    MaterialTextureBindings textureBindings,
+    std::shared_ptr<ProgramCache> programCache
+)
+    : programCache(std::move(programCache)),
+      textures(std::move(textureBindings)),
       data(data)
 {
+    if (this->programCache == nullptr)
+        throw std::invalid_argument("Material program cache must not be null");
     for (const auto& [uniformName, texture] : this->textures)
     {
         if (uniformName.empty())
@@ -114,34 +140,12 @@ void Material::Attach()
     if (this->program != nullptr)
         return;
 
-    this->program = SharedProgram(
+    this->program = this->programCache->Acquire(
         this->data.shaderFilePath.VertexPath,
         this->data.shaderFilePath.FragmentPath
     );
     for (const auto& [uniformName, texture] : this->textures)
         texture->Attach();
-}
-
-std::shared_ptr<Program> Material::SharedProgram(
-    const std::string& vertexPath,
-    const std::string& fragmentPath
-)
-{
-    const std::string key = vertexPath + "\n" + fragmentPath;
-    auto& cache = SharedProgramCache();
-    const auto cached = cache.find(key);
-    if (cached != cache.end())
-        return cached->second;
-
-    auto shader = std::make_unique<Shader>(vertexPath, fragmentPath);
-    auto program = std::make_shared<Program>(shader->GetShaderList());
-    cache.emplace(key, program);
-    return program;
-}
-
-void Material::ReleaseSharedPrograms() noexcept
-{
-    SharedProgramCache().clear();
 }
 
 void Material::Bind()

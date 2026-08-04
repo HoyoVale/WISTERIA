@@ -1,5 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/scene/demo_scene.hpp"
+#include "wisteria/core/asset_paths.hpp"
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/assets/saba_mmd_importer.hpp"
@@ -25,7 +26,7 @@ namespace
 {
 std::filesystem::path DemoModelPath(bool alternate)
 {
-    return std::filesystem::current_path() / "assets" / "models" /
+    return wisteria::assets::Root() / "models" /
         "mmd" /
         (alternate ? u8"叶瞬光皮肤_pmx" : u8"蕾米埃尔-白") /
         u8"蕾米埃尔-白.pmx";
@@ -33,7 +34,7 @@ std::filesystem::path DemoModelPath(bool alternate)
 
 std::filesystem::path DemoScenePath(bool alternate)
 {
-    return std::filesystem::current_path() / "assets" / "models" /
+    return wisteria::assets::Root() / "models" /
         "mmd" /
         (alternate ? u8"星穹列车-观景车厢" : u8"随便观") /
         (alternate ? u8"Stage0514.pmx" : u8"随便观.pmx");
@@ -41,13 +42,13 @@ std::filesystem::path DemoScenePath(bool alternate)
 
 std::filesystem::path DemoDreamWingMotionPath()
 {
-    return std::filesystem::current_path() / "assets" / "motions" /
+    return wisteria::assets::Root() / "motions" /
         u8"梦的翅膀" / u8"梦的翅膀motion.vmd";
 }
 
 std::filesystem::path DemoDreamWingCameraPath()
 {
-    return std::filesystem::current_path() / "assets" / "motions" /
+    return wisteria::assets::Root() / "motions" /
         u8"梦的翅膀" / u8"梦的翅膀camera.vmd";
 }
 

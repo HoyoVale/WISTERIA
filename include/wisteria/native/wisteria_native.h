@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #define WISTERIA_NATIVE_VERSION_MAJOR 0
-#define WISTERIA_NATIVE_VERSION_MINOR 2
+#define WISTERIA_NATIVE_VERSION_MINOR 3
 
 #if defined(_WIN32)
 #  if defined(WISTERIA_NATIVE_BUILD)
@@ -238,6 +238,19 @@ WISTERIA_API enum WisteriaStatus wisteria_window_load_demo(
     int32_t max_sub_steps
 );
 
+/*
+ * Advances input, scene simulation and rendering for every window owned by
+ * this context. Call exactly once per frontend frame; delta_time is seconds.
+ */
+WISTERIA_API enum WisteriaStatus wisteria_poll_and_render(
+    WisteriaContext context,
+    float delta_time
+);
+
+/*
+ * Compatibility wrapper retained for ABI v0.2 callers. The window is only
+ * validated; the frame step is context-wide, not window-local.
+ */
 WISTERIA_API enum WisteriaStatus wisteria_window_poll_and_render(
     WisteriaContext context,
     WisteriaWindow window,

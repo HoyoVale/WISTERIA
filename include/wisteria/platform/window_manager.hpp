@@ -80,6 +80,11 @@ private:
         std::unique_ptr<Window> window;
         Renderer renderer;
         SceneFramebuffer framebuffer;
+        std::size_t renderedFrames = 0U;
+        double profileUpdateMilliseconds = 0.0;
+        double profileRenderMilliseconds = 0.0;
+        double profilePresentMilliseconds = 0.0;
+        double profileSwapMilliseconds = 0.0;
     };
 
     ManagedWindow& Find(Window& window);

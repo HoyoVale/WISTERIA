@@ -3,9 +3,13 @@
 #include "wisteria/scene/demo_scene.hpp"
 #include "wisteria/platform/window.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace
@@ -24,38 +28,107 @@ bool HasArgument(
     return false;
 }
 
-std::optional<std::filesystem::path> ModelPathArgument(
+std::optional<std::string_view> ArgumentValue(
     int argumentCount,
-    char* arguments[]
+    char* arguments[],
+    std::string_view option
 )
 {
     for (int index = 1; index + 1 < argumentCount; ++index)
     {
         if (arguments[index] != nullptr &&
-            std::string_view(arguments[index]) == "--model" &&
+            std::string_view(arguments[index]) == option &&
             arguments[index + 1] != nullptr)
         {
-            return std::filesystem::path(arguments[index + 1]);
+            return std::string_view(arguments[index + 1]);
         }
     }
     return std::nullopt;
 }
 
-std::optional<std::filesystem::path> ScenePathArgument(
+std::optional<std::filesystem::path> PathArgument(
     int argumentCount,
-    char* arguments[]
+    char* arguments[],
+    std::string_view option
 )
 {
-    for (int index = 1; index + 1 < argumentCount; ++index)
+    const std::optional<std::string_view> value =
+        ArgumentValue(argumentCount, arguments, option);
+    if (!value.has_value())
+        return std::nullopt;
+    return std::filesystem::path(std::string(*value));
+}
+
+std::optional<std::size_t> PositiveSizeArgument(
+    int argumentCount,
+    char* arguments[],
+    std::string_view option
+)
+{
+    const std::optional<std::string_view> value =
+        ArgumentValue(argumentCount, arguments, option);
+    if (!value.has_value())
+        return std::nullopt;
+
+    std::size_t parsedCharacters = 0U;
+    const unsigned long long parsed = std::stoull(
+        std::string(*value),
+        &parsedCharacters
+    );
+    if (parsedCharacters != value->size() || parsed == 0ULL ||
+        parsed > static_cast<unsigned long long>(
+            std::numeric_limits<std::size_t>::max()))
     {
-        if (arguments[index] != nullptr &&
-            std::string_view(arguments[index]) == "--scene" &&
-            arguments[index + 1] != nullptr)
-        {
-            return std::filesystem::path(arguments[index + 1]);
-        }
+        throw std::invalid_argument(
+            std::string(option) + " must be a positive integer"
+        );
     }
-    return std::nullopt;
+    return static_cast<std::size_t>(parsed);
+}
+
+std::optional<float> PositiveFloatArgument(
+    int argumentCount,
+    char* arguments[],
+    std::string_view option
+)
+{
+    const std::optional<std::string_view> value =
+        ArgumentValue(argumentCount, arguments, option);
+    if (!value.has_value())
+        return std::nullopt;
+
+    std::size_t parsedCharacters = 0U;
+    const float parsed = std::stof(std::string(*value), &parsedCharacters);
+    if (parsedCharacters != value->size() || !std::isfinite(parsed) ||
+        parsed <= 0.0f)
+    {
+        throw std::invalid_argument(
+            std::string(option) + " must be a positive finite number"
+        );
+    }
+    return parsed;
+}
+
+void PrintHelp()
+{
+    std::cout
+        << "WISTERIA desktop MMD demo\n\n"
+        << "Usage:\n"
+        << "  wisteria [options]\n\n"
+        << "Options:\n"
+        << "  --model <pmx>       Override character PMX path\n"
+        << "  --motion <vmd>      Override character VMD path\n"
+        << "  --scene <pmx>       Enable scene mode and load a stage PMX\n"
+        << "  --alternate-model   Use the alternate built-in model preset\n"
+        << "  --frames <n>        Run exactly n pull-model frames, then exit\n"
+        << "  --fixed-dt <sec>    Delta time used with --frames (default 1/60)\n"
+        << "  --render-smoke      Shorthand for --frames 180 --fixed-dt 1/60\n"
+        << "  --help              Show this help\n\n"
+        << "Useful diagnostics environment variables:\n"
+        << "  WISTERIA_ASSET_ROOT=<project>/assets\n"
+        << "  WISTERIA_FRAME_PROFILE=1\n"
+        << "  WISTERIA_SCREENSHOT_DIR=<output directory>\n"
+        << "  WISTERIA_GL_DIAGNOSTICS=1\n";
 }
 }
 
@@ -63,6 +136,12 @@ int main(int argumentCount, char* arguments[])
 {
     try
     {
+        if (HasArgument(argumentCount, arguments, "--help"))
+        {
+            PrintHelp();
+            return 0;
+        }
+
         Application application;
         WindowManager& windowManager = application.GetWindowManager();
         const bool alternateModel = HasArgument(
@@ -76,9 +155,29 @@ int main(int argumentCount, char* arguments[])
             "--scene"
         );
         const std::optional<std::filesystem::path> modelPath =
-            ModelPathArgument(argumentCount, arguments);
+            PathArgument(argumentCount, arguments, "--model");
+        const std::optional<std::filesystem::path> motionPath =
+            PathArgument(argumentCount, arguments, "--motion");
         const std::optional<std::filesystem::path> scenePath =
-            ScenePathArgument(argumentCount, arguments);
+            PathArgument(argumentCount, arguments, "--scene");
+
+        std::optional<std::size_t> frameLimit =
+            PositiveSizeArgument(argumentCount, arguments, "--frames");
+        std::optional<float> fixedDelta =
+            PositiveFloatArgument(argumentCount, arguments, "--fixed-dt");
+        if (HasArgument(argumentCount, arguments, "--render-smoke"))
+        {
+            if (!frameLimit.has_value())
+                frameLimit = 180U;
+            if (!fixedDelta.has_value())
+                fixedDelta = 1.0f / 60.0f;
+        }
+        if (fixedDelta.has_value() && !frameLimit.has_value())
+        {
+            throw std::invalid_argument(
+                "--fixed-dt requires --frames or --render-smoke"
+            );
+        }
 
         Window& primaryWindow = windowManager.CreateWindow(WindowConfig{
             .width = 960,
@@ -95,19 +194,46 @@ int main(int argumentCount, char* arguments[])
             alternateModel,
             modelPath.value_or(std::filesystem::path{}),
             scenePath.value_or(std::filesystem::path{}),
-            sceneMode
+            sceneMode,
+            motionPath.value_or(std::filesystem::path{})
         );
         windowManager.BindScene(primaryWindow, scene);
         FreeCameraControllerSettings cameraSettings;
-        // Scene PMX can span hundreds of units; give scene mode a faster
-        // default so the user can cross the whole set without holding Shift.
         cameraSettings.moveSpeed = sceneMode ? 12.0f : 2.5f;
         windowManager.EnableFreeCameraController(
             primaryWindow,
             cameraSettings
         );
 
-        const int result = application.Run();
+        int result = 0;
+        if (frameLimit.has_value())
+        {
+            const float deltaTime = fixedDelta.value_or(1.0f / 60.0f);
+            std::cout << "[RENDER SMOKE] begin frames=" << *frameLimit
+                      << " fixedDt=" << deltaTime << std::endl;
+            std::size_t completedFrames = 0U;
+            while (completedFrames < *frameLimit &&
+                   !primaryWindow.ShouldClose())
+            {
+                application.PollEventsAndRender(deltaTime);
+                ++completedFrames;
+                if (completedFrames <= 3U || completedFrames % 60U == 0U)
+                {
+                    std::cout << "[RENDER SMOKE] frame="
+                              << completedFrames << std::endl;
+                }
+            }
+            std::cout << "[RENDER SMOKE] completed=" << completedFrames
+                      << " requested=" << *frameLimit
+                      << " closed="
+                      << (primaryWindow.ShouldClose() ? "true" : "false")
+                      << std::endl;
+        }
+        else
+        {
+            result = application.Run();
+        }
+
         std::cout << "[INFO] Application was closed" << std::endl;
         return result;
     }

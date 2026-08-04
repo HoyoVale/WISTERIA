@@ -6,8 +6,8 @@
 #include <cstddef>
 #include <memory>
 
-// Owns process-wide GLFW state, the frame clock and shared resources.
-// WindowManager owns native windows and context-local rendering state.
+// Holds one reference to process-wide GLFW state and owns one OpenGL
+// resource share group. WindowManager owns its windows and context-local state.
 class Application
 {
 public:

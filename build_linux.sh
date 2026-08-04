@@ -5,7 +5,7 @@
 #
 # Actions:
 #   configure   只做 CMake 配置（生成 build-linux）
-#   build       配置 + 编译全部目标（wisteria / wisteria_native / wisteria_tests）
+#   build       配置 + 编译启用的目标（wisteria / 可选 wisteria_native / wisteria_tests）
 #   compile     同 build（兼容 run.ps1 的习惯叫法）
 #   test        配置 + 编译 + 运行 wisteria_tests
 #   run         配置 + 编译 + 运行窗口 demo，后面可跟 demo 参数
@@ -16,6 +16,8 @@
 #   -c, --configuration <Debug|Release|RelWithDebInfo>   默认 RelWithDebInfo
 #   -G, --generator <Ninja|Unix Makefiles>               默认 Ninja
 #   -B, --build-dir <dir>                                默认 <root>/build-linux
+#   --backend <X11|WAYLAND|BOTH|NULL>                     默认 X11
+#   --native / --no-native                                构建/跳过实验 C ABI
 #   -h, --help                                           显示帮助
 #   --                                                  后面全部作为 demo 参数
 #
@@ -28,6 +30,8 @@ ACTION=""
 CONFIGURATION="RelWithDebInfo"
 GENERATOR="Ninja"
 BUILD_DIR="${ROOT}/build-linux"
+LINUX_BACKEND="${WISTERIA_LINUX_WINDOW_BACKEND:-X11}"
+BUILD_NATIVE="${WISTERIA_BUILD_NATIVE:-OFF}"
 APP_ARGS=()
 
 ShowHelp()
@@ -50,6 +54,18 @@ while [ $# -gt 0 ]; do
         -B|--build-dir)
             BUILD_DIR="$2"
             shift 2
+            ;;
+        --backend)
+            LINUX_BACKEND="${2^^}"
+            shift 2
+            ;;
+        --native)
+            BUILD_NATIVE="ON"
+            shift
+            ;;
+        --no-native)
+            BUILD_NATIVE="OFF"
+            shift
             ;;
         -h|--help)
             ShowHelp
@@ -92,19 +108,41 @@ case "${CONFIGURATION}" in
         ;;
 esac
 
+case "${LINUX_BACKEND}" in
+    X11|WAYLAND|BOTH|NULL) ;;
+    *)
+        echo "无效 Linux 后端: ${LINUX_BACKEND}" >&2
+        exit 2
+        ;;
+esac
+
+case "${BUILD_NATIVE}" in
+    ON|OFF) ;;
+    *)
+        echo "WISTERIA_BUILD_NATIVE 只能是 ON 或 OFF" >&2
+        exit 2
+        ;;
+esac
+
 Configure()
 {
     echo "==> CMake 配置 [${CONFIGURATION}] (${GENERATOR})"
     cmake -S "${ROOT}" -B "${BUILD_DIR}" -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="${CONFIGURATION}"
+        -DCMAKE_BUILD_TYPE="${CONFIGURATION}" \
+        -DWISTERIA_LINUX_WINDOW_BACKEND="${LINUX_BACKEND}" \
+        -DWISTERIA_BUILD_NATIVE="${BUILD_NATIVE}"
 }
 
 Build()
 {
     Configure
-    echo "==> 编译 wisteria / wisteria_native / wisteria_tests"
+    local targets=(wisteria wisteria_tests)
+    if [ "${BUILD_NATIVE}" = "ON" ]; then
+        targets+=(wisteria_native)
+    fi
+    echo "==> 编译 ${targets[*]}（backend=${LINUX_BACKEND}）"
     cmake --build "${BUILD_DIR}" \
-        --target wisteria wisteria_native wisteria_tests \
+        --target "${targets[@]}" \
         -j "$(nproc)"
 }
 
@@ -141,6 +179,10 @@ case "${ACTION}" in
         "${BUILD_DIR}/wisteria_tests"
         ;;
     run)
+        if [ "${LINUX_BACKEND}" = "NULL" ]; then
+            echo "NULL 后端不能运行桌面窗口；请选择 X11 或 WAYLAND" >&2
+            exit 2
+        fi
         Build
         echo "==> 运行窗口 demo"
         exec "${BUILD_DIR}/wisteria" "${APP_ARGS[@]}"

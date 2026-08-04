@@ -3,7 +3,7 @@
 
 Opens a REAL desktop window and drives the same Saba MMD demo as
 `wisteria.exe`: model + motion + physics + VMD camera, using the pull model
-(the script calls wisteria_window_poll_and_render once per frame).
+(the script calls the context-wide wisteria_poll_and_render once per frame).
 
 Usage (from the project root):
     python examples/python/native_window_demo.py [--frames 360]
@@ -95,8 +95,16 @@ def main() -> int:
     )
     parser.add_argument("--scene", default="")
     args = parser.parse_args()
+    if args.frames <= 0:
+        parser.error("--frames must be positive")
+    if args.fps <= 0.0 or args.physics_fps <= 0.0:
+        parser.error("--fps and --physics-fps must be positive")
+    if args.max_substeps <= 0:
+        parser.error("--max-substeps must be positive")
 
-    library = ctypes.CDLL(str(find_library(project_root)))
+    library_path = find_library(project_root)
+    print(f"[FFI] library={library_path}")
+    library = ctypes.CDLL(str(library_path))
 
     def bind(name, argtypes, restype):
         function = getattr(library, name)
@@ -141,9 +149,9 @@ def main() -> int:
          ctypes.c_char_p, ctypes.c_float, ctypes.c_int32],
         ctypes.c_int,
     )
-    window_poll_and_render = bind(
-        "wisteria_window_poll_and_render",
-        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_float],
+    poll_and_render = bind(
+        "wisteria_poll_and_render",
+        [ctypes.c_uint64, ctypes.c_float],
         ctypes.c_int,
     )
     window_should_close = bind(
@@ -229,9 +237,8 @@ def main() -> int:
         cursor_y = ctypes.c_float(0.0)
         for frame in range(args.frames):
             check(
-                window_poll_and_render(
+                poll_and_render(
                     context.value,
-                    window.value,
                     ctypes.c_float(delta_time),
                 ),
                 "poll and render",
@@ -247,7 +254,7 @@ def main() -> int:
             if closed.value:
                 print("[FFI] window close requested by user")
                 break
-            if (frame + 1) % 60 == 0:
+            if frame < 3 or (frame + 1) % 60 == 0:
                 check(
                     window_camera_pose(
                         context.value,

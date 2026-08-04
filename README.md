@@ -254,3 +254,28 @@ P1.3 不再把 Zero G 下仍存在的异常归因于重力参数，而是修正�
 - 用 FollowBone 锚点距离、Bind 链长和归一化伸长率判断 runaway，不再仅凭离纯动画目标过远恢复。
 
 `H` 报告新增 `constraintImpulse`、`anchorSpeed`、`anchorDistance`、`extensionMax`；F3/`[PHYSICS STATS]` 新增聚合约束冲量、最大伸长率和语义过滤数量。完整设计与验收步骤见 `P1_3_CHAIN_SEMANTICS_ANCHOR_RECOVERY.md`。
+
+## R0 跨平台渲染人工验收
+
+结构稳定化补丁提供固定帧、自动截图、OpenGL error 检查，以及 C ABI
+双 Context 生命周期回归：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\script\verify_render.ps1
+```
+
+```bash
+./script/verify_render.sh --backend X11
+```
+
+无显示环境只做编译与测试：
+
+```bash
+./script/verify_render.sh --backend NULL
+```
+
+详细步骤、日志判断和回传材料见：
+
+```text
+docs/architecture/R0_RENDER_MANUAL_ACCEPTANCE.md
+```

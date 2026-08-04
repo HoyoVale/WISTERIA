@@ -10,9 +10,42 @@ project(FLORA LANGUAGES C CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(WISTERIA_BUILD_NATIVE
-    "Build the native C ABI shared library (wisteria_native)"
-    ON
+    "Build the experimental native C ABI shared library (wisteria_native)"
+    OFF
 )
+option(WISTERIA_BUILD_SABA_VIEWER
+    "Build Saba's standalone reference OpenGL viewer"
+    OFF
+)
+
+# GLFW 3.4 enables X11 and Wayland together by default. That makes a Linux
+# build depend on both complete development stacks even though WISTERIA only
+# needs one window backend. X11 is the conservative default and works through
+# XWayland on WSLg. NULL is a compile/test backend with no desktop window.
+set(WISTERIA_LINUX_WINDOW_BACKEND "X11" CACHE STRING
+    "Linux GLFW backend: X11, WAYLAND, BOTH, or NULL")
+set_property(CACHE WISTERIA_LINUX_WINDOW_BACKEND PROPERTY STRINGS
+    X11 WAYLAND BOTH NULL)
+if(UNIX AND NOT APPLE)
+    string(TOUPPER "${WISTERIA_LINUX_WINDOW_BACKEND}"
+        WISTERIA_LINUX_WINDOW_BACKEND_NORMALIZED)
+    if(WISTERIA_LINUX_WINDOW_BACKEND_NORMALIZED STREQUAL "X11")
+        set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+    elseif(WISTERIA_LINUX_WINDOW_BACKEND_NORMALIZED STREQUAL "WAYLAND")
+        set(GLFW_BUILD_X11 OFF CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
+    elseif(WISTERIA_LINUX_WINDOW_BACKEND_NORMALIZED STREQUAL "BOTH")
+        set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
+    elseif(WISTERIA_LINUX_WINDOW_BACKEND_NORMALIZED STREQUAL "NULL")
+        set(GLFW_BUILD_X11 OFF CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+    else()
+        message(FATAL_ERROR
+            "WISTERIA_LINUX_WINDOW_BACKEND must be X11, WAYLAND, BOTH, or NULL")
+    endif()
+endif()
 
 # 不编译 GLFW 自带的文档、测试和示例
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -146,6 +179,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/framebuffer.cpp
     src/rendering/light.cpp
     src/rendering/material.cpp
+    src/rendering/program_cache.cpp
     src/rendering/mesh.cpp
     src/rendering/model.cpp
     src/rendering/primitives/cube.cpp
@@ -246,7 +280,10 @@ target_link_libraries(wisteria_core PUBLIC
 # native C ABI shared library for FFI / frontend integration
 if(WISTERIA_BUILD_NATIVE)
     add_library(wisteria_native SHARED
-        src/native/wisteria_native.cpp
+        src/native/internal/native_context.cpp
+        src/native/native_common.cpp
+        src/native/native_model.cpp
+        src/native/native_window.cpp
         src/native/windows_path.cpp
     )
     target_include_directories(wisteria_native PRIVATE
@@ -276,6 +313,9 @@ if(BUILD_TESTING)
     target_link_libraries(wisteria_tests PRIVATE wisteria_core)
     if(WISTERIA_BUILD_NATIVE)
         target_link_libraries(wisteria_tests PRIVATE wisteria_native)
+        target_compile_definitions(wisteria_tests PRIVATE
+            WISTERIA_TEST_NATIVE_ABI=1
+        )
     endif()
     target_compile_definitions(wisteria_tests PRIVATE
         WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"

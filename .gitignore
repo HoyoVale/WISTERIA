@@ -85,3 +85,8 @@ WISTERIA.zip
 # !/third-party/saba/README_WISTERIA.md
 # !/third-party/saba/WISTERIA.cmake
 # ------------------------------------------------------------
+
+# Local R0 render acceptance outputs
+/build-verify/
+/build-linux-verify/
+/artifacts/render-smoke/

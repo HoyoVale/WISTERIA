@@ -1,13 +1,38 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/application.hpp"
-#include "wisteria/rendering/material.hpp"
 #include <GLFW/glfw3.h>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
+namespace
+{
+std::mutex GlfwLifecycleMutex;
+std::size_t GlfwApplicationCount = 0U;
+
+bool AcquireGlfw()
+{
+    std::lock_guard<std::mutex> lock(GlfwLifecycleMutex);
+    if (GlfwApplicationCount == 0U && !glfwInit())
+        return false;
+    ++GlfwApplicationCount;
+    return true;
+}
+
+void ReleaseGlfw() noexcept
+{
+    std::lock_guard<std::mutex> lock(GlfwLifecycleMutex);
+    if (GlfwApplicationCount == 0U)
+        return;
+    --GlfwApplicationCount;
+    if (GlfwApplicationCount == 0U)
+        glfwTerminate();
+}
+}
+
 Application::Application()
 {
-    if (!glfwInit())
+    if (!AcquireGlfw())
         throw std::runtime_error("GLFW initialization failed");
 
     this->glfwInitialized = true;
@@ -225,10 +250,10 @@ void Application::Shutdown() noexcept
     if (resourceContext != nullptr)
     {
         glfwMakeContextCurrent(resourceContext);
+        // ResourceManager owns the shader program cache for this OpenGL
+        // share group. Clearing it here prevents program IDs from leaking
+        // across independent Application/GL contexts.
         this->resources.Clear();
-        // Shared programs must die while a GL context is still current;
-        // otherwise glDeleteProgram would run without a context at exit.
-        Material::ReleaseSharedPrograms();
     }
 
     this->windowManager.DestroyAllWindows();
@@ -236,7 +261,7 @@ void Application::Shutdown() noexcept
     if (this->glfwInitialized)
     {
         glfwMakeContextCurrent(nullptr);
-        glfwTerminate();
+        ReleaseGlfw();
         this->glfwInitialized = false;
     }
 }

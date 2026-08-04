@@ -62,5 +62,29 @@ python examples/python/native_window_demo.py --frames 360
 ```
 
 窗口内快捷键：Space 暂停/恢复、C 切换 VMD 相机、←/→ 调速度、Esc 关闭。
-脚本每帧调用 `wisteria_window_poll_and_render`（拉模式），并定期输出相机
+脚本每帧调用 `wisteria_poll_and_render`（Context 级拉模式，每帧一次），并定期输出相机
 位姿与按键/鼠标增量。
+
+## 双 Context 回归 demo（R0）
+
+`native_multi_context_demo.py` 同时创建两个独立的 C ABI Context，每个
+Context 都拥有自己的 `Application`、OpenGL Context/share group 和 shader
+Program 缓存。运行到一半时销毁 Context A，Context B 必须继续渲染：
+
+```powershell
+python examples/python/native_multi_context_demo.py --frames 240
+```
+
+```bash
+python3 examples/python/native_multi_context_demo.py --frames 240
+```
+
+成功标志：
+
+```text
+[MULTI] destroying context A; context B must keep rendering
+[MULTI] PASS: context B survived context A destruction
+```
+
+这个 demo 专门防止两类回归：跨 OpenGL Context 复用 Program ID，以及任意
+Context 析构时过早执行 `glfwTerminate()`。

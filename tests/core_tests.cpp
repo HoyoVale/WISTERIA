@@ -11,7 +11,9 @@
 #include "wisteria/runtime/runtime_model_base.hpp"
 #include "wisteria/runtime/mmd_runtime_model.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
+#if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_native.h"
+#endif
 #include "wisteria/assets/saba_mmd_importer.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
@@ -3573,6 +3575,7 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
     );
 }
 
+#if defined(WISTERIA_TEST_NATIVE_ABI)
 void TestNativeAbiLifecycle()
 {
     WisteriaContext context = 0U;
@@ -3715,9 +3718,8 @@ void TestNativeAbiWindowWhenAvailable()
     for (int frame = 0; frame < 30; ++frame)
     {
         Require(
-            wisteria_window_poll_and_render(
+            wisteria_poll_and_render(
                 context,
-                window,
                 1.0f / 60.0f
             ) == WISTERIA_OK,
             "ABI window render failed"
@@ -3947,6 +3949,8 @@ void TestNativeAbiSabaWhenAvailable()
         "ABI model/context teardown failed"
     );
 }
+
+#endif
 
 void TestRenderPartAndModelAsset()
 {
@@ -5791,6 +5795,7 @@ int main()
         "Saba motion/camera/light interface",
         TestSabaMotionCameraLightInterfaceWhenAvailable
     );
+#if defined(WISTERIA_TEST_NATIVE_ABI)
     failures += !RunTest(
         "Native ABI lifecycle",
         TestNativeAbiLifecycle
@@ -5803,6 +5808,7 @@ int main()
         "Native ABI window",
         TestNativeAbiWindowWhenAvailable
     );
+#endif
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);

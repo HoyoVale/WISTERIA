@@ -1,4 +1,5 @@
 #include "wisteria/common/pch.hpp"
+#include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/environment.hpp"
 #include "wisteria/rendering/shader.hpp"
 #include "wisteria/rendering/vao.hpp"
@@ -33,7 +34,7 @@ unsigned int MaximumMipLevels(unsigned int resolution)
 
 std::filesystem::path ShaderPath(const char* name)
 {
-    return std::filesystem::current_path() / "assets" / "shaders" / name;
+    return std::filesystem::path(wisteria::assets::Shader(name));
 }
 
 glm::mat4 CaptureProjection()

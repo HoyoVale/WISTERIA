@@ -93,7 +93,7 @@ struct Api
         float,
         std::int32_t
     );
-    int (*windowPollAndRender)(WisteriaContext, WisteriaWindow, float);
+    int (*pollAndRender)(WisteriaContext, float);
     int (*windowShouldClose)(WisteriaContext, WisteriaWindow, std::int32_t*);
     int (*windowCameraPose)(
         WisteriaContext,
@@ -200,7 +200,7 @@ bool LoadApi(Api& api, std::string& error)
     WISTERIA_LOAD_SYMBOL(windowCreate, "wisteria_window_create")
     WISTERIA_LOAD_SYMBOL(windowDestroy, "wisteria_window_destroy")
     WISTERIA_LOAD_SYMBOL(windowLoadDemo, "wisteria_window_load_demo")
-    WISTERIA_LOAD_SYMBOL(windowPollAndRender, "wisteria_window_poll_and_render")
+    WISTERIA_LOAD_SYMBOL(pollAndRender, "wisteria_poll_and_render")
     WISTERIA_LOAD_SYMBOL(windowShouldClose, "wisteria_window_should_close")
     WISTERIA_LOAD_SYMBOL(windowCameraPose, "wisteria_window_camera_pose")
     WISTERIA_LOAD_SYMBOL(windowIsKeyDown, "wisteria_window_is_key_down")
@@ -674,7 +674,7 @@ napi_value RunWindowDemo(napi_env env, napi_callback_info info)
     std::uint32_t sampleIndex = 0U;
     for (int index = 0; index < frameCount; ++index)
     {
-        if (api.windowPollAndRender(context, window, deltaTime) != kWisteriaOk)
+        if (api.pollAndRender(context, deltaTime) != kWisteriaOk)
             return fail(1, "render");
         if (api.windowShouldClose(context, window, &closed) != kWisteriaOk ||
             closed != 0)
