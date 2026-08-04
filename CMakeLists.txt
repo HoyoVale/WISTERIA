@@ -5,6 +5,15 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY
 
 project(FLORA LANGUAGES C CXX)
 
+# The native C ABI library is a shared object on Linux/macOS; every static
+# dependency it links must be compiled with position-independent code.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+option(WISTERIA_BUILD_NATIVE
+    "Build the native C ABI shared library (wisteria_native)"
+    ON
+)
+
 # 不编译 GLFW 自带的文档、测试和示例
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -110,6 +119,7 @@ include(third-party/saba/WISTERIA.cmake)
 # reusable project code, grouped by architecture module
 set(WISTERIA_COMMON_SOURCES
     src/common/stb_image.cpp
+    src/common/miniz.cpp
 )
 
 set(WISTERIA_CORE_SOURCES
@@ -233,6 +243,26 @@ target_link_libraries(wisteria_core PUBLIC
     LinearMath
 )
 
+# native C ABI shared library for FFI / frontend integration
+if(WISTERIA_BUILD_NATIVE)
+    add_library(wisteria_native SHARED
+        src/native/wisteria_native.cpp
+    )
+    target_include_directories(wisteria_native PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_features(wisteria_native PRIVATE cxx_std_20)
+    target_link_libraries(wisteria_native PRIVATE wisteria_core)
+    target_compile_definitions(wisteria_native PRIVATE WISTERIA_NATIVE_BUILD)
+    set_target_properties(wisteria_native PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN YES
+    )
+    if(MSVC)
+        target_compile_options(wisteria_native PRIVATE /utf-8 /FS)
+    endif()
+endif()
+
 # application
 add_executable(wisteria src/main.cpp)
 target_link_libraries(wisteria PRIVATE wisteria_core)
@@ -243,6 +273,9 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(wisteria_tests tests/core_tests.cpp)
     target_link_libraries(wisteria_tests PRIVATE wisteria_core)
+    if(WISTERIA_BUILD_NATIVE)
+        target_link_libraries(wisteria_tests PRIVATE wisteria_native)
+    endif()
     target_compile_definitions(wisteria_tests PRIVATE
         WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
         WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"

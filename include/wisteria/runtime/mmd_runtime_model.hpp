@@ -32,6 +32,7 @@ public:
     // Saba evaluates one VMD animation at a time; these methods expose that
     // capability without committing to an orchestration/playlist design.
     virtual bool LoadMotion(const std::filesystem::path& vmdPath) = 0;
+    virtual void ClearMotion() = 0;
     virtual bool HasMotion() const noexcept = 0;
     virtual void SetMotionLooping(bool looping) = 0;
     virtual bool IsMotionLooping() const noexcept = 0;

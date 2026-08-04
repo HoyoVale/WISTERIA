@@ -253,6 +253,15 @@ bool SabaMmdRuntimeModel::LoadMotion(
     return true;
 }
 
+void SabaMmdRuntimeModel::ClearMotion()
+{
+    this->impl->vmdAnimation.reset();
+    this->impl->vmdFile = saba::VMDFile{};
+    this->impl->vmdLoaded = false;
+    this->impl->vmdFrame = 0.0;
+    this->impl->motionPaused = false;
+}
+
 bool SabaMmdRuntimeModel::HasMotion() const noexcept
 {
     return this->impl->vmdAnimation != nullptr;

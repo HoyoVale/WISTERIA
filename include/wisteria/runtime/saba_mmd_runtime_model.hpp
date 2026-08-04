@@ -45,6 +45,7 @@ public:
     void SetMmdIkEnabled(BoneIndex bone, bool enabled) override;
 
     bool LoadMotion(const std::filesystem::path& vmdPath) override;
+    void ClearMotion() override;
     bool HasMotion() const noexcept override;
     void SetMotionLooping(bool looping) override;
     bool IsMotionLooping() const noexcept override;

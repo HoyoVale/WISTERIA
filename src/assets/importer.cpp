@@ -1,6 +1,8 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/assets/importer.hpp"
 
+#include "texture_path_utils.hpp"
+
 #include <assimp/GltfMaterial.h>
 #include <assimp/Importer.hpp>
 #include <assimp/material.h>
@@ -2584,7 +2586,13 @@ std::size_t ImportTexture(
             externalPath = modelDirectory / externalPath;
         externalPath = externalPath.lexically_normal();
         if (!std::filesystem::is_regular_file(externalPath))
+        {
+            externalPath = wisteria::ResolvePathCaseInsensitive(externalPath);
+        }
+        if (!std::filesystem::is_regular_file(externalPath))
+        {
             throw std::runtime_error("External model texture was not found: " + externalPath.string());
+        }
         imported.source = TextureData::FromFile(externalPath, colorSpace);
     }
 

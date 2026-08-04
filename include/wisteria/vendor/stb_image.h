@@ -4084,7 +4084,14 @@ static int stbi__jpeg_info(stbi__context *s, int *x, int *y, int *comp)
 //    performance
 //      - fast huffman
 
-#ifndef STBI_NO_ZLIB
+#if !defined(STBI_NO_ZLIB) && !defined(WISTERIA_STBI_USE_TINFL)
+
+// WISTERIA: stb_image v2.30's own zlib decoder crashes on some valid PNG
+// streams (reproduced with a 2048x2048 RGB texture whose single 4MB IDAT
+// uses maximum compression; pngcheck reports "No errors detected"). The
+// decoder below is compiled out when WISTERIA_STBI_USE_TINFL is defined
+// (src/common/stb_image.cpp), and the six zlib entry points are implemented
+// with miniz's tinfl instead. See docs/architecture/NATIVE_ABI_PLAN.md.
 
 // fast-way is faster to check than jpeg huffman, but slow way is slower
 #define STBI__ZFAST_BITS  9 // accelerate all cases in default tables
@@ -4590,6 +4597,9 @@ STBIDEF int stbi_zlib_decode_noheader_buffer(char *obuffer, int olen, const char
    else
       return -1;
 }
+#else
+// WISTERIA: with WISTERIA_STBI_USE_TINFL the six zlib entry points above are
+// implemented in src/common/stb_image.cpp using miniz's tinfl decoder.
 #endif
 
 // public domain "baseline" PNG decoder   v0.10  Sean Barrett 2006-11-18

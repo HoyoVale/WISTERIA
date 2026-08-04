@@ -11,6 +11,7 @@
 #include "wisteria/runtime/runtime_model_base.hpp"
 #include "wisteria/runtime/mmd_runtime_model.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
+#include "wisteria/native/wisteria_native.h"
 #include "wisteria/assets/saba_mmd_importer.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/physics/physics_instance.hpp"
@@ -2403,6 +2404,10 @@ public:
         return false;
     }
 
+    void ClearMotion() override
+    {
+    }
+
     bool HasMotion() const noexcept override
     {
         return false;
@@ -3565,6 +3570,203 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
         NearlyEqual(light.Color(), glm::vec3(0.5f, 0.5f, 0.625f)) &&
             glm::length(light.Direction()) > 0.0f,
         "LightTrack did not apply to the directional light"
+    );
+}
+
+void TestNativeAbiLifecycle()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK && context != 0U,
+        "wisteria_create_context failed"
+    );
+    Require(
+        wisteria_version_major() == WISTERIA_NATIVE_VERSION_MAJOR &&
+            wisteria_version_minor() == WISTERIA_NATIVE_VERSION_MINOR,
+        "wisteria_native version mismatch"
+    );
+
+    char errorBuffer[256] = {};
+    Require(
+        wisteria_last_error_message(
+            context,
+            errorBuffer,
+            sizeof(errorBuffer)
+        ) == WISTERIA_OK,
+        "wisteria_last_error_message query failed"
+    );
+
+    WisteriaModel model = 0U;
+    Require(
+        wisteria_load_model(context, nullptr, &model) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "null model path was accepted"
+    );
+    Require(
+        wisteria_load_model(context, "", &model) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "empty model path was accepted"
+    );
+    Require(
+        wisteria_load_model(context, "no/such/file.pmx", &model) ==
+            WISTERIA_ERROR_IO,
+        "missing model file did not report IO"
+    );
+    Require(
+        wisteria_update(context, 1234U, 1.0f / 60.0f) ==
+            WISTERIA_ERROR_NOT_FOUND,
+        "invalid model handle was accepted"
+    );
+    Require(
+        wisteria_destroy_context(999999U) == WISTERIA_ERROR_NOT_FOUND,
+        "invalid context handle was accepted"
+    );
+    Require(
+        wisteria_destroy_context(context) == WISTERIA_OK,
+        "wisteria_destroy_context failed"
+    );
+}
+
+void TestNativeAbiSabaWhenAvailable()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    const std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
+        u8"梦的翅膀motion.vmd";
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(motionPath))
+    {
+        return;
+    }
+
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI context creation failed"
+    );
+    WisteriaModel model = 0U;
+    Require(
+        wisteria_load_model(
+            context,
+            modelPath.string().c_str(),
+            &model
+        ) == WISTERIA_OK,
+        "ABI model load failed"
+    );
+    WisteriaMotion motion = 0U;
+    Require(
+        wisteria_load_motion(
+            context,
+            model,
+            motionPath.string().c_str(),
+            &motion
+        ) == WISTERIA_OK,
+        "ABI motion load failed"
+    );
+
+    double maxFrame = 0.0;
+    Require(
+        wisteria_motion_max_frame(context, model, &maxFrame) == WISTERIA_OK &&
+            maxFrame > 0.0,
+        "ABI motion max frame is invalid"
+    );
+    Require(
+        wisteria_play_motion(context, model, motion) == WISTERIA_OK,
+        "ABI play motion failed"
+    );
+    for (int frame = 0; frame < 120; ++frame)
+    {
+        Require(
+            wisteria_update(context, model, 1.0f / 60.0f) == WISTERIA_OK,
+            "ABI update failed"
+        );
+    }
+
+    double frame = 0.0;
+    Require(
+        wisteria_motion_frame(context, model, &frame) == WISTERIA_OK &&
+            frame > 0.0,
+        "ABI motion frame did not advance"
+    );
+    WisteriaVertexBounds bounds{};
+    Require(
+        wisteria_vertex_bounds(context, model, &bounds) == WISTERIA_OK &&
+            bounds.finite == 1 &&
+            bounds.vertexCount > 0U &&
+            std::isfinite(bounds.maximumDisplacementFromBind),
+        "ABI vertex bounds are invalid"
+    );
+
+    Require(
+        wisteria_pause_motion(context, model) == WISTERIA_OK,
+        "ABI pause motion failed"
+    );
+    const double pausedFrame = frame;
+    Require(
+        wisteria_update(context, model, 1.0f / 60.0f) == WISTERIA_OK,
+        "ABI update while paused failed"
+    );
+    Require(
+        wisteria_motion_frame(context, model, &frame) == WISTERIA_OK &&
+            NearlyEqual(frame, pausedFrame),
+        "Paused ABI motion advanced its frame"
+    );
+    Require(
+        wisteria_resume_motion(context, model) == WISTERIA_OK,
+        "ABI resume motion failed"
+    );
+    Require(
+        wisteria_update(context, model, 1.0f / 60.0f) == WISTERIA_OK,
+        "ABI update after resume failed"
+    );
+    Require(
+        wisteria_motion_frame(context, model, &frame) == WISTERIA_OK &&
+            frame > pausedFrame,
+        "Resumed ABI motion did not advance"
+    );
+
+    Require(
+        wisteria_set_motion_frame(context, model, 5.0) == WISTERIA_OK &&
+            wisteria_motion_frame(context, model, &frame) == WISTERIA_OK &&
+            NearlyEqual(frame, 5.0),
+        "ABI set motion frame failed"
+    );
+    Require(
+        wisteria_set_motion_looping(context, model, 1) == WISTERIA_OK &&
+            wisteria_set_physics_settings(
+                context,
+                model,
+                1.0f / 60.0f,
+                4,
+                0.0f,
+                -98.0f,
+                0.0f
+            ) == WISTERIA_OK,
+        "ABI looping or physics settings failed"
+    );
+    Require(
+        wisteria_update(context, model, 1.0f / 60.0f) == WISTERIA_OK,
+        "ABI update after settings failed"
+    );
+
+    Require(
+        wisteria_unload_motion(context, model, motion) == WISTERIA_OK &&
+            wisteria_unload_motion(context, model, motion) ==
+                WISTERIA_ERROR_NOT_FOUND,
+        "ABI motion unload did not invalidate the handle"
+    );
+    Require(
+        wisteria_unload_model(context, model) == WISTERIA_OK &&
+            wisteria_destroy_context(context) == WISTERIA_OK,
+        "ABI model/context teardown failed"
     );
 }
 
@@ -5410,6 +5612,14 @@ int main()
     failures += !RunTest(
         "Saba motion/camera/light interface",
         TestSabaMotionCameraLightInterfaceWhenAvailable
+    );
+    failures += !RunTest(
+        "Native ABI lifecycle",
+        TestNativeAbiLifecycle
+    );
+    failures += !RunTest(
+        "Native ABI Saba runtime",
+        TestNativeAbiSabaWhenAvailable
     );
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);

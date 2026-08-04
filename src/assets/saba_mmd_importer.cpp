@@ -1,5 +1,7 @@
 #include "wisteria/assets/saba_mmd_importer.hpp"
 
+#include "texture_path_utils.hpp"
+
 #include "wisteria/rendering/texture.hpp"
 
 #include <Saba/Model/MMD/PMXFile.h>
@@ -1025,14 +1027,19 @@ std::optional<std::size_t> TryLoadTexture(
     const auto existing = cache.find(name);
     if (existing != cache.end())
         return existing->second;
-    if (!std::filesystem::is_regular_file(path))
+    std::filesystem::path resolvedPath = path;
+    if (!std::filesystem::is_regular_file(resolvedPath))
+    {
+        resolvedPath = wisteria::ResolvePathCaseInsensitive(resolvedPath);
+    }
+    if (!std::filesystem::is_regular_file(resolvedPath))
         return std::nullopt;
     try
     {
         ImportedTextureData imported;
         imported.name = name;
         imported.source = TextureData::FromFile(
-            path,
+            resolvedPath,
             TextureColorSpace::Srgb
         );
         const std::size_t index = result.textures.size();
