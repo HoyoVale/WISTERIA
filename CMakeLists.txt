@@ -167,6 +167,7 @@ set(WISTERIA_RUNTIME_SOURCES
 
 set(WISTERIA_PLATFORM_SOURCES
     src/platform/application.cpp
+    src/platform/free_camera_controller.cpp
     src/platform/input.cpp
     src/platform/window.cpp
     src/platform/window_manager.cpp
@@ -345,25 +346,28 @@ target_link_libraries(wisteria PRIVATE wisteria_platform)
 include(CTest)
 
 if(BUILD_TESTING)
-    add_executable(wisteria_tests tests/core_tests.cpp)
-    target_link_libraries(wisteria_tests PRIVATE wisteria_platform)
+    # Test pyramid: pure logic (unit), engine runtime without windows (runtime),
+    # asset/importer/Saba/native integration (integration), and the render
+    # regression below. Each tier builds and runs independently.
+    foreach(TIER unit runtime integration)
+        add_executable(wisteria_${TIER}_tests tests/${TIER}_tests.cpp)
+        target_link_libraries(wisteria_${TIER}_tests PRIVATE wisteria_platform)
+        target_compile_definitions(wisteria_${TIER}_tests PRIVATE
+            WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
+            WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+            WISTERIA_PROJECT_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+        )
+        if(MSVC)
+            target_compile_options(wisteria_${TIER}_tests PRIVATE /utf-8)
+        endif()
+        add_test(NAME wisteria.${TIER} COMMAND wisteria_${TIER}_tests)
+    endforeach()
     if(WISTERIA_BUILD_NATIVE)
-        target_link_libraries(wisteria_tests PRIVATE wisteria_native)
-        target_compile_definitions(wisteria_tests PRIVATE
+        target_link_libraries(wisteria_integration_tests PRIVATE wisteria_native)
+        target_compile_definitions(wisteria_integration_tests PRIVATE
             WISTERIA_TEST_NATIVE_ABI=1
         )
     endif()
-    target_compile_definitions(wisteria_tests PRIVATE
-        WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
-        WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
-        WISTERIA_PROJECT_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
-    )
-
-    if(MSVC)
-        target_compile_options(wisteria_tests PRIVATE /utf-8)
-    endif()
-
-    add_test(NAME wisteria.core COMMAND wisteria_tests)
 
     # Minimal render regression: creates a real GL context and verifies that
     # the engine SceneFramebuffer clears and reads back two consecutive

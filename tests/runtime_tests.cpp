@@ -1,0 +1,631 @@
+#include "test_support.hpp"
+
+namespace
+{
+void TestMeshDynamicUpload()
+{
+    DefaultModelData data;
+    data.layout = {
+        {"position", 3, FLOAT},
+        {"color", 3, FLOAT},
+        {"texCoord", 2, FLOAT},
+        {"normal", 3, FLOAT},
+        {"tangent", 4, FLOAT},
+        {"additionalTexCoord", 2, FLOAT, false, false, 5U},
+        {"edgeScale", 1, FLOAT, false, false, 6U},
+        {"boneIndices", 4, FLOAT, false, false, 7U},
+        {"boneWeights", 4, FLOAT, false, false, 8U}
+    };
+    constexpr std::size_t VertexStride = 26U;
+    data.vertices.resize(3U * VertexStride);
+    for (std::size_t index = 0U; index < data.vertices.size(); ++index)
+        data.vertices[index] = static_cast<float>(index);
+    for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+    {
+        const std::size_t base = vertex * VertexStride;
+        for (std::size_t slot = 18U; slot < 26U; ++slot)
+            data.vertices[base + slot] = 0.0f;
+    }
+    data.indices = {0U, 1U, 2U};
+    const std::vector<float> originalVertices = data.vertices;
+    const std::vector<Layout> originalLayout = data.layout;
+    Mesh mesh(std::move(data), 2U);
+
+    const std::array<glm::vec3, 3> positions{
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    };
+    const std::array<glm::vec3, 3> normals{
+        glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f)
+    };
+
+    Require(
+        !mesh.HasDynamicVertexSource(),
+        "Mesh must start without a dynamic vertex source"
+    );
+    mesh.UploadDynamicVertices(positions, normals);
+    Require(
+        mesh.HasDynamicVertexSource(),
+        "Mesh did not record the dynamic vertex source"
+    );
+
+    const std::vector<float> rebuilt = Mesh::RebuildInterleavedVertices(
+        originalVertices,
+        originalLayout,
+        positions,
+        normals,
+        3U
+    );
+    for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+    {
+        const std::size_t base = vertex * VertexStride;
+        Require(
+            rebuilt[base + 0U] == positions[vertex].x &&
+                rebuilt[base + 1U] == positions[vertex].y &&
+                rebuilt[base + 2U] == positions[vertex].z,
+            "Interleaved rebuild wrote position to the wrong slot"
+        );
+        Require(
+            rebuilt[base + 8U] == normals[vertex].x &&
+                rebuilt[base + 9U] == normals[vertex].y &&
+                rebuilt[base + 10U] == normals[vertex].z,
+            "Interleaved rebuild wrote normal to the wrong slot"
+        );
+        Require(
+            rebuilt[base + 3U] == originalVertices[base + 3U] &&
+                rebuilt[base + 5U] == originalVertices[base + 5U] &&
+                rebuilt[base + 11U] == originalVertices[base + 11U] &&
+                rebuilt[base + 17U] == originalVertices[base + 17U],
+            "Interleaved rebuild modified unrelated vertex attributes"
+        );
+    }
+
+    bool rejected = false;
+    try
+    {
+        mesh.UploadDynamicVertices({}, {});
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected = true;
+    }
+    Require(
+        rejected,
+        "Mesh accepted a dynamic vertex upload with mismatched sizes"
+    );
+}
+
+class CountingSelfSteppingInstance final : public PhysicsInstance
+{
+public:
+    bool OwnsSimulationStep() const noexcept override
+    {
+        return true;
+    }
+
+    void PrepareSimulation(float) override
+    {
+        ++this->prepareCount;
+    }
+
+    void FinishSimulation() override
+    {
+        ++this->finishCount;
+    }
+
+    void ResetSimulation() override
+    {
+        ++this->resetCount;
+    }
+
+    std::size_t prepareCount = 0U;
+    std::size_t finishCount = 0U;
+    std::size_t resetCount = 0U;
+};
+
+void TestSceneOwnsSimulationStep()
+{
+    Scene scene;
+    Entity& entity = scene.CreateEntity();
+    auto instance = std::make_unique<CountingSelfSteppingInstance>();
+    CountingSelfSteppingInstance* raw = instance.get();
+    entity.SetPhysicsInstance(std::move(instance));
+
+    for (int frame = 0; frame < 5; ++frame)
+        scene.Update(1.0f / 60.0f);
+
+    Require(
+        raw->prepareCount == 0U &&
+            raw->finishCount == 0U &&
+            raw->resetCount == 0U,
+        "Scene drove a self-stepping physics instance"
+    );
+}
+
+void TestGenericPhysicsInstanceLifecycle()
+{
+    Entity entity;
+    PhysicsLifecycleCounters counters;
+    entity.SetPhysicsInstance(
+        std::make_unique<CountingPhysicsInstance>(counters)
+    );
+    Require(
+        entity.HasPhysicsInstance() &&
+        entity.TryGetPhysicsInstance() != nullptr &&
+        &entity.GetPhysicsInstance() == entity.TryGetPhysicsInstance(),
+        "Entity generic physics slot did not preserve the runtime"
+    );
+
+    entity.PrePhysicsUpdate(0.25f);
+    entity.PreparePhysicsSubstep(0.5f, 1.0f / 60.0f);
+    entity.PostPhysicsUpdate();
+    entity.ResetPhysicsToCurrentPose();
+    Require(
+        counters.prepareCount == 1 &&
+        counters.substepCount == 1 &&
+        counters.finishCount == 1 &&
+        counters.resetCount == 1 &&
+        NearlyEqual(counters.lastDeltaTime, 0.25f) &&
+        NearlyEqual(counters.lastSubstepAlpha, 0.5f) &&
+        NearlyEqual(counters.lastFixedTimeStep, 1.0f / 60.0f),
+        "Entity did not route simulation lifecycle through PhysicsInstance"
+    );
+
+    bool duplicateRejected = false;
+    try
+    {
+        entity.SetPhysicsInstance(
+            std::make_unique<CountingPhysicsInstance>(counters)
+        );
+    }
+    catch (const std::logic_error&)
+    {
+        duplicateRejected = true;
+    }
+    Require(
+        duplicateRejected,
+        "Entity accepted a second physics runtime without explicit removal"
+    );
+}
+
+void TestCameraLightTrackSampling()
+{
+    CameraTrack track({
+        CameraKeyframe{
+            0.0f,
+            {0.0f, 0.0f, 0.0f},
+            glm::vec3(0.0f),
+            5.0f,
+            30.0f,
+            true,
+            {}
+        },
+        CameraKeyframe{
+            30.0f,
+            {12.0f, 0.0f, 6.0f},
+            glm::vec3(0.0f),
+            11.0f,
+            60.0f,
+            true,
+            {}
+        }
+    });
+    Require(
+        NearlyEqual(track.EndTime(), 30.0f),
+        "CameraTrack end time is incorrect"
+    );
+
+    CameraKeyframe sample;
+    Require(track.Sample(15.0f, sample), "CameraTrack mid sampling failed");
+    Require(
+        NearlyEqual(sample.interest, glm::vec3(6.0f, 0.0f, 3.0f)) &&
+            NearlyEqual(sample.distance, 8.0f) &&
+            NearlyEqual(sample.viewAngle, 45.0f),
+        "CameraTrack interpolation is incorrect"
+    );
+    Require(
+        track.Sample(-5.0f, sample) &&
+            NearlyEqual(sample.interest, glm::vec3(0.0f)),
+        "CameraTrack does not clamp before the first key"
+    );
+    Require(
+        track.Sample(99.0f, sample) &&
+            NearlyEqual(sample.distance, 11.0f),
+        "CameraTrack does not clamp after the last key"
+    );
+
+    LightTrack lightTrack({
+        LightKeyframe{
+            0.0f,
+            {1.0f, 0.0f, 0.0f},
+            {1.0f, 2.0f, 3.0f},
+            {}
+        },
+        LightKeyframe{
+            10.0f,
+            {0.0f, 1.0f, 0.0f},
+            {3.0f, 2.0f, 1.0f},
+            {}
+        }
+    });
+    LightKeyframe lightSample;
+    Require(
+        lightTrack.Sample(5.0f, lightSample),
+        "LightTrack mid sampling failed"
+    );
+    Require(
+        NearlyEqual(lightSample.color, glm::vec3(0.5f, 0.5f, 0.0f)) &&
+            NearlyEqual(lightSample.position, glm::vec3(2.0f, 2.0f, 2.0f)),
+        "LightTrack interpolation is incorrect"
+    );
+}
+
+void TestRenderPartAndModelAsset()
+{
+    Mesh mesh(DefaultModelData{});
+    Material material(MaterialData{});
+    const glm::mat4 localTransform = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(1.0f, 2.0f, 3.0f)
+    );
+
+    ModelAsset model("testModel");
+    std::vector<MmdRigidBodyDefinition> bodies(3U);
+    for (std::size_t index = 0; index < bodies.size(); ++index)
+        bodies[index].name = "body" + std::to_string(index);
+    model.SetMmdPhysics(MmdPhysicsAsset(std::move(bodies), {}));
+    model.AddPart(mesh, material, localTransform);
+
+    Require(model.Name() == "testModel", "ModelAsset name was not preserved");
+    Require(
+        model.HasMmdPhysics() &&
+        model.TryGetMmdPhysics() == &model.GetMmdPhysics() &&
+        model.MmdRigidBodyCount() == 3U &&
+        model.GetMmdPhysics().JointCount() == 0U,
+        "ModelAsset did not preserve PMX physics metadata"
+    );
+    Require(model.PartCount() == 1, "ModelAsset did not store its part");
+    Require(&model.Parts()[0].GetMesh() == &mesh, "ModelAsset mesh reference changed");
+    Require(
+        &model.Parts()[0].GetMaterial() == &material,
+        "ModelAsset material reference changed"
+    );
+    Require(
+        NearlyEqual(model.Parts()[0].LocalTransform()[3].x, 1.0f) &&
+        NearlyEqual(model.Parts()[0].LocalTransform()[3].y, 2.0f) &&
+        NearlyEqual(model.Parts()[0].LocalTransform()[3].z, 3.0f),
+        "RenderPart local transform changed"
+    );
+}
+
+void TestBuiltInCubeTangents()
+{
+    constexpr std::size_t VertexCount = 24;
+    constexpr std::size_t VertexStride = 15;
+    Require(cubeData.layout.size() == 5, "Cube tangent layout is missing");
+    Require(
+        cubeData.vertices.size() == VertexCount * VertexStride,
+        "Cube vertex stride does not match its layout"
+    );
+
+    for (std::size_t vertex = 0; vertex < VertexCount; ++vertex)
+    {
+        const std::size_t offset = vertex * VertexStride;
+        const glm::vec3 normal(
+            cubeData.vertices[offset + 8],
+            cubeData.vertices[offset + 9],
+            cubeData.vertices[offset + 10]
+        );
+        const glm::vec3 tangent(
+            cubeData.vertices[offset + 11],
+            cubeData.vertices[offset + 12],
+            cubeData.vertices[offset + 13]
+        );
+        Require(NearlyEqual(glm::length(tangent), 1.0f), "Cube tangent is not normalized");
+        Require(NearlyEqual(glm::dot(normal, tangent), 0.0f), "Cube tangent is not orthogonal");
+        Require(
+            NearlyEqual(std::abs(cubeData.vertices[offset + 14]), 1.0f),
+            "Cube tangent handedness is invalid"
+        );
+    }
+}
+
+void TestMeshBoundsCenter()
+{
+    DefaultModelData data{
+        {
+            -4.0f, 2.0f, -1.0f,
+             2.0f, 8.0f,  5.0f,
+             0.0f, 3.0f,  1.0f
+        },
+        {0U, 1U, 2U},
+        {{"position", 3, FLOAT}}
+    };
+    const Mesh mesh(std::move(data));
+    const glm::vec3 center = mesh.LocalBoundsCenter();
+    Require(
+        NearlyEqual(center.x, -1.0f) &&
+        NearlyEqual(center.y, 5.0f) &&
+        NearlyEqual(center.z, 2.0f),
+        "Mesh local bounds center is incorrect"
+    );
+}
+
+void TestModelInstantiation()
+{
+    Mesh firstMesh(DefaultModelData{});
+    Mesh secondMesh(DefaultModelData{});
+    Material firstMaterial(MaterialData{});
+    Material secondMaterial(MaterialData{});
+
+    ModelAsset model("multiPartModel");
+    model.AddPart(firstMesh, firstMaterial);
+    model.AddPart(
+        secondMesh,
+        secondMaterial,
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f))
+    );
+
+    Scene scene;
+    Entity& instance = scene.InstantiateModel(
+        model,
+        Transform(glm::vec3(5.0f, 0.0f, 0.0f))
+    );
+
+    Require(scene.EntityCount() == 1, "Scene did not create one model Entity");
+    Require(instance.RenderPartCount() == 2, "Entity did not receive all model parts");
+    Require(
+        &instance.RenderParts()[1].GetMesh() == &secondMesh,
+        "Second model part references the wrong mesh"
+    );
+    Require(
+        NearlyEqual(instance.GetTransform().Position().x, 5.0f),
+        "Model instance root transform changed"
+    );
+}
+
+void TestFrameRateIndependentBehaviours()
+{
+    Mesh mesh(DefaultModelData{});
+    Material material(MaterialData{});
+    Entity entity(mesh, material);
+
+    entity.AddBehaviour<MoveBehaviour>(glm::vec3(2.0f, 0.0f, 0.0f));
+    entity.AddBehaviour<RotateBehaviour>(glm::vec3(0.0f, 90.0f, 0.0f));
+    entity.AddBehaviour<ScaleBehaviour>(glm::vec3(2.0f, 1.0f, 0.5f));
+
+    entity.UpdateBehaviours(0.5f);
+    entity.UpdateBehaviours(0.5f);
+
+    Require(NearlyEqual(entity.GetTransform().Position().x, 2.0f), "MoveBehaviour is frame dependent");
+    Require(NearlyEqual(entity.GetTransform().Rotation().y, 90.0f), "RotateBehaviour is frame dependent");
+    Require(NearlyEqual(entity.GetTransform().Scale().x, 2.0f), "ScaleBehaviour X result is incorrect");
+    Require(NearlyEqual(entity.GetTransform().Scale().z, 0.5f), "ScaleBehaviour Z result is incorrect");
+}
+
+void TestInputFrameTransitions()
+{
+    Input input;
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::W, true);
+    Require(input.IsKeyDown(InputKey::W), "Pressed key was not held");
+    Require(input.WasKeyPressed(InputKey::W), "Key press transition was lost");
+    Require(!input.WasKeyReleased(InputKey::W), "Pressed key was reported released");
+
+    input.BeginFrame();
+    Require(input.IsKeyDown(InputKey::W), "BeginFrame cleared held key state");
+    Require(!input.WasKeyPressed(InputKey::W), "Key press leaked into the next frame");
+
+    input.HandleKey(InputKey::W, false);
+    Require(!input.IsKeyDown(InputKey::W), "Released key remained held");
+    Require(input.WasKeyReleased(InputKey::W), "Key release transition was lost");
+
+    input.HandleKey(InputKey::Right, true);
+    input.HandleKey(InputKey::Space, true);
+    Require(
+        input.WasKeyPressed(InputKey::Right) &&
+        input.WasKeyPressed(InputKey::Space),
+        "Morph Lab navigation keys were not tracked"
+    );
+
+    input.HandleCursorPosition(10.0, 20.0);
+    input.HandleCursorPosition(14.0, 17.0);
+    input.HandleScroll(2.0);
+    Require(NearlyEqual(static_cast<float>(input.CursorDelta().x), 4.0f), "Mouse X delta is incorrect");
+    Require(NearlyEqual(static_cast<float>(input.CursorDelta().y), -3.0f), "Mouse Y delta is incorrect");
+    Require(NearlyEqual(static_cast<float>(input.ScrollDeltaY()), 2.0f), "Scroll delta is incorrect");
+
+    input.BeginFrame();
+    Require(NearlyEqual(static_cast<float>(input.CursorDelta().x), 0.0f), "Mouse delta was not cleared");
+    Require(NearlyEqual(static_cast<float>(input.ScrollDeltaY()), 0.0f), "Scroll delta was not cleared");
+}
+
+void TestFreeCameraController()
+{
+    Camera camera(CameraParam{
+        .Position = {0.0f, 0.0f, 3.0f},
+        .Target = {0.0f, 0.0f, 0.0f},
+        .Up = {0.0f, 1.0f, 0.0f},
+        .VerticalFovDegrees = 45.0f
+    });
+    Input input;
+    FreeCameraControllerBehaviour controller(
+        camera,
+        input,
+        FreeCameraControllerSettings{
+            .moveSpeed = 2.0f,
+            .sprintMultiplier = 2.0f,
+            .mouseSensitivity = 1.0f,
+            .scrollSensitivity = 5.0f
+        }
+    );
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::W, true);
+    controller.Update(0.5f);
+    Require(NearlyEqual(camera.Position().z, 2.0f), "Free camera forward movement is incorrect");
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::LeftShift, true);
+    controller.Update(0.5f);
+    Require(NearlyEqual(camera.Position().z, 0.0f), "Free camera sprint movement is incorrect");
+    input.HandleKey(InputKey::W, false);
+    input.HandleKey(InputKey::LeftShift, false);
+
+    input.BeginFrame();
+    input.HandleScroll(2.0);
+    controller.Update(0.0f);
+    Require(NearlyEqual(camera.VerticalFovDegrees(), 35.0f), "Free camera zoom is incorrect");
+
+    input.BeginFrame();
+    input.HandleMouseButton(InputMouseButton::Right, true);
+    controller.Update(0.0f);
+    Require(input.IsCursorCaptured(), "Right mouse button did not capture the cursor");
+
+    input.BeginFrame();
+    input.HandleMouseButton(InputMouseButton::Right, false);
+    input.HandleCursorPosition(100.0, 100.0);
+    input.HandleCursorPosition(110.0, 100.0);
+    controller.Update(0.0f);
+    Require(camera.Target().x > camera.Position().x, "Mouse movement did not rotate the camera");
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::Escape, true);
+    controller.Update(0.0f);
+    Require(!input.IsCursorCaptured(), "Escape did not release the cursor");
+
+    input.BeginFrame();
+    input.HandleKey(InputKey::R, true);
+    controller.Update(0.0f);
+    Require(NearlyEqual(camera.Position().z, 3.0f), "Camera reset did not restore position");
+    Require(NearlyEqual(camera.Target().x, 0.0f), "Camera reset did not restore direction");
+    Require(NearlyEqual(camera.VerticalFovDegrees(), 45.0f), "Camera reset did not restore FOV");
+}
+
+void TestResourceManagerModelRegistry()
+{
+    ResourceManager resources;
+    ModelAsset& model = resources.CreateModel("registeredModel");
+
+    Require(resources.FindModel("registeredModel") == &model, "FindModel failed");
+    Require(&resources.GetModel("registeredModel") == &model, "GetModel failed");
+
+    bool duplicateRejected = false;
+    try
+    {
+        resources.CreateModel("registeredModel");
+    }
+    catch (const std::invalid_argument&)
+    {
+        duplicateRejected = true;
+    }
+    Require(duplicateRejected, "Duplicate model name was accepted");
+}
+
+void TestEnvironmentResourceAndSceneBinding()
+{
+    EnvironmentMapData data = EnvironmentMapData::ProceduralSky();
+    data.environmentResolution = 64;
+    data.irradianceResolution = 16;
+    data.prefilterResolution = 64;
+    data.prefilterMipLevels = 4;
+    data.brdfResolution = 64;
+    data.intensity = 1.5f;
+
+    ResourceManager resources;
+    EnvironmentMap& environment = resources.CreateEnvironment(
+        "testEnvironment",
+        data
+    );
+    Scene scene;
+    scene.SetEnvironment(&environment);
+
+    Require(
+        scene.Environment() == &environment,
+        "Scene did not preserve its environment reference"
+    );
+    Require(
+        resources.FindEnvironment("testEnvironment") == &environment &&
+        &resources.GetEnvironment("testEnvironment") == &environment,
+        "ResourceManager environment lookup failed"
+    );
+    Require(
+        resources.EnvironmentCount() == 1,
+        "ResourceManager environment count is incorrect"
+    );
+    Require(!environment.IsAttached(), "CPU test unexpectedly created OpenGL IBL resources");
+    Require(NearlyEqual(environment.Intensity(), 1.5f), "Environment intensity changed");
+    Require(NearlyEqual(environment.MaxReflectionLod(), 3.0f), "Environment mip range changed");
+
+    environment.SetIntensity(0.75f);
+    environment.SetDrawSkybox(false);
+    Require(NearlyEqual(environment.Intensity(), 0.75f), "Environment intensity setter failed");
+    Require(!environment.ShouldDrawSkybox(), "Environment skybox setter failed");
+
+    scene.ClearEnvironment();
+    Require(scene.Environment() == nullptr, "Scene environment was not cleared");
+
+    bool duplicateRejected = false;
+    try
+    {
+        resources.CreateEnvironment("testEnvironment", data);
+    }
+    catch (const std::invalid_argument&)
+    {
+        duplicateRejected = true;
+    }
+    Require(duplicateRejected, "Duplicate environment name was accepted");
+
+    bool invalidMipCountRejected = false;
+    try
+    {
+        EnvironmentMapData invalid = data;
+        invalid.prefilterMipLevels = 8;
+        EnvironmentMap invalidEnvironment(invalid);
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidMipCountRejected = true;
+    }
+    Require(invalidMipCountRejected, "Invalid environment mip count was accepted");
+}
+
+}
+
+int main()
+{
+    int failures = 0;
+    failures += !RunTest(
+        "Generic PhysicsInstance lifecycle",
+        TestGenericPhysicsInstanceLifecycle
+    );
+    failures += !RunTest(
+        "Mesh dynamic vertex upload",
+        TestMeshDynamicUpload
+    );
+    failures += !RunTest(
+        "Scene skips self-stepping physics",
+        TestSceneOwnsSimulationStep
+    );
+    failures += !RunTest(
+        "Camera/Light track sampling",
+        TestCameraLightTrackSampling
+    );
+    failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
+    failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
+    failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);
+    failures += !RunTest("Model instantiation", TestModelInstantiation);
+    failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
+    failures += !RunTest("Input frame transitions", TestInputFrameTransitions);
+    failures += !RunTest("Free camera controller", TestFreeCameraController);
+    failures += !RunTest("ResourceManager model registry", TestResourceManagerModelRegistry);
+    failures += !RunTest(
+        "Environment resource and Scene binding",
+        TestEnvironmentResourceAndSceneBinding
+    );
+    return failures == 0 ? 0 : 1;
+}

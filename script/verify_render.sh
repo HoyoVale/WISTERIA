@@ -95,7 +95,8 @@ if (( SKIP_BUILD == 0 )); then
 
     echo "==> Build wisteria / tests / native"
     cmake --build "${BUILD_DIR}" \
-        --target wisteria wisteria_tests wisteria_native \
+        --target wisteria wisteria_unit_tests wisteria_runtime_tests \
+        wisteria_integration_tests wisteria_native \
         -j "$(nproc)"
 fi
 

@@ -68,7 +68,8 @@ chmod +x ./script/verify_render.sh
 
 ```text
 1. WISTERIA_BUILD_NATIVE=ON 配置
-2. 编译 wisteria / wisteria_tests / wisteria_native
+2. 编译 wisteria / wisteria_unit_tests / wisteria_runtime_tests /
+   wisteria_integration_tests / wisteria_native
 3. CTest
 4. C++ 桌面 demo 固定推进 180 帧
 5. Python ctypes 单 Context 窗口 demo

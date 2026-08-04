@@ -5,9 +5,9 @@
 #
 # Actions:
 #   configure   只做 CMake 配置（生成 build-linux）
-#   build       配置 + 编译启用的目标（wisteria / 可选 wisteria_native / wisteria_tests）
+#   build       配置 + 编译启用的目标（wisteria / 三个测试 tier / 可选 wisteria_native）
 #   compile     同 build（兼容 run.ps1 的习惯叫法）
-#   test        配置 + 编译 + 运行 wisteria_tests
+#   test        配置 + 编译 + 运行 unit / runtime / integration 测试
 #   run         配置 + 编译 + 运行窗口 demo，后面可跟 demo 参数
 #   clean       删除 build-linux（默认目录，或 -B 指定的目录）
 #   help        显示本帮助
@@ -136,7 +136,12 @@ Configure()
 Build()
 {
     Configure
-    local targets=(wisteria wisteria_tests)
+    local targets=(
+        wisteria
+        wisteria_unit_tests
+        wisteria_runtime_tests
+        wisteria_integration_tests
+    )
     if [ "${BUILD_NATIVE}" = "ON" ]; then
         targets+=(wisteria_native)
     fi
@@ -176,7 +181,9 @@ case "${ACTION}" in
     test)
         Build
         echo "==> 运行测试"
-        "${BUILD_DIR}/wisteria_tests"
+        "${BUILD_DIR}/wisteria_unit_tests"
+        "${BUILD_DIR}/wisteria_runtime_tests"
+        "${BUILD_DIR}/wisteria_integration_tests"
         ;;
     run)
         if [ "${LINUX_BACKEND}" = "NULL" ]; then

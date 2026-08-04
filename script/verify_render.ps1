@@ -94,7 +94,8 @@ if (-not $SkipBuild) {
     Invoke-Checked $CMake @(
         '--build', $BuildPath,
         '--config', $Configuration,
-        '--target', 'wisteria', 'wisteria_tests', 'wisteria_native',
+        '--target', 'wisteria', 'wisteria_unit_tests', 'wisteria_runtime_tests',
+        'wisteria_integration_tests', 'wisteria_native',
         '--parallel'
     )
 }
