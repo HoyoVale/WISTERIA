@@ -234,7 +234,6 @@ set(WISTERIA_MMD_SOURCES
 
 set(WISTERIA_SCENE_SOURCES
     src/scene/behaviour.cpp
-    src/scene/demo_scene.cpp
     src/scene/entity.cpp
     src/scene/scene.cpp
 )
@@ -243,7 +242,6 @@ add_library(wisteria_core STATIC
     ${WISTERIA_COMMON_SOURCES}
     ${WISTERIA_CORE_SOURCES}
     ${WISTERIA_RUNTIME_SOURCES}
-    ${WISTERIA_PLATFORM_SOURCES}
     ${WISTERIA_RENDERING_SOURCES}
     ${WISTERIA_ANIMATION_SOURCES}
     ${WISTERIA_ASSET_SOURCES}
@@ -274,12 +272,10 @@ target_precompile_headers(wisteria_core PRIVATE
 )
 
 target_compile_definitions(wisteria_core PUBLIC
-    GLFW_INCLUDE_NONE
     WISTERIA_BUILD_CONFIGURATION="$<CONFIG>"
 )
 
 target_link_libraries(wisteria_core PUBLIC
-    glfw
     glad
     glm_headers
     assimp
@@ -288,6 +284,31 @@ target_link_libraries(wisteria_core PUBLIC
     BulletCollision
     LinearMath
 )
+
+# GLFW-bound platform layer: windowing, input callbacks, the Application frame
+# loop and the Saba demo scene. Kept out of wisteria_core so the core library
+# compiles and links without GLFW (headless/NULL backend, tests, tooling).
+add_library(wisteria_platform STATIC
+    ${WISTERIA_PLATFORM_SOURCES}
+    src/scene/demo_scene.cpp
+)
+
+target_link_libraries(wisteria_platform PUBLIC
+    wisteria_core
+    glfw
+)
+
+target_compile_features(wisteria_platform PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(wisteria_platform PRIVATE /utf-8 /FS)
+endif()
+
+target_precompile_headers(wisteria_platform PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/wisteria/common/pch.hpp
+)
+
+target_compile_definitions(wisteria_platform PUBLIC GLFW_INCLUDE_NONE)
 
 # native C ABI shared library for FFI / frontend integration
 if(WISTERIA_BUILD_NATIVE)
@@ -302,7 +323,10 @@ if(WISTERIA_BUILD_NATIVE)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_features(wisteria_native PRIVATE cxx_std_20)
-    target_link_libraries(wisteria_native PRIVATE wisteria_core)
+    target_link_libraries(wisteria_native PRIVATE
+        wisteria_core
+        wisteria_platform
+    )
     target_compile_definitions(wisteria_native PRIVATE WISTERIA_NATIVE_BUILD)
     set_target_properties(wisteria_native PROPERTIES
         CXX_VISIBILITY_PRESET hidden
@@ -315,14 +339,14 @@ endif()
 
 # application
 add_executable(wisteria src/main.cpp)
-target_link_libraries(wisteria PRIVATE wisteria_core)
+target_link_libraries(wisteria PRIVATE wisteria_platform)
 
 # automated tests
 include(CTest)
 
 if(BUILD_TESTING)
     add_executable(wisteria_tests tests/core_tests.cpp)
-    target_link_libraries(wisteria_tests PRIVATE wisteria_core)
+    target_link_libraries(wisteria_tests PRIVATE wisteria_platform)
     if(WISTERIA_BUILD_NATIVE)
         target_link_libraries(wisteria_tests PRIVATE wisteria_native)
         target_compile_definitions(wisteria_tests PRIVATE
@@ -345,7 +369,13 @@ if(BUILD_TESTING)
     # the engine SceneFramebuffer clears and reads back two consecutive
     # frames. Skips when no display backend is available (Linux NULL build).
     add_executable(wisteria_render_tests tests/render_fbo_tests.cpp)
-    target_link_libraries(wisteria_render_tests PRIVATE wisteria_core)
+    target_link_libraries(wisteria_render_tests PRIVATE
+        wisteria_core
+        glfw
+    )
+    target_compile_definitions(wisteria_render_tests PRIVATE
+        GLFW_INCLUDE_NONE
+    )
     if(MSVC)
         target_compile_options(wisteria_render_tests PRIVATE /utf-8)
     endif()

@@ -64,9 +64,20 @@ remain opt-in) and makes the Saba viewer opt-in.
 
 ## Target architecture
 
-The current `wisteria_core` is still too broad. Do not split it mechanically;
-first remove type-level dependencies that would recreate the same coupling in
-several libraries.
+更新（R1 收尾）：`wisteria_core` 已拆出 GLFW 依赖。当前结构为两个库：
+
+```text
+wisteria_core
+  动画 / 资源 / 物理 / 渲染(OpenGL) / MMD / Scene
+  不包含、不链接 GLFW；Timer 使用 std::chrono
+
+wisteria_platform
+  Application 帧循环 / Window / WindowManager / Input(GLFW) / demo_scene
+  链接 wisteria_core + glfw
+```
+
+后续若出现第二个后端（Vulkan、软件渲染器）或需要独立 MMD 运行时，再按
+下面的细粒度方向拆分；当前不继续机械切分。
 
 ```text
 wisteria_foundation

@@ -1,13 +1,14 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/core/timer.hpp"
 #include <algorithm>
-#include <GLFW/glfw3.h>
+#include <chrono>
 
 namespace wisteria
 {
 double Timer::GetCurrentTime() const
 {
-    return glfwGetTime();
+    const auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(now.time_since_epoch()).count();
 }
 
 void Timer::Start()
