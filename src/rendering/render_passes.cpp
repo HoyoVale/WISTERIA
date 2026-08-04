@@ -390,8 +390,14 @@ void Renderer::RenderShadowPass(
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
 
+        std::size_t drawnParts = 0U;
         for (const RenderCommand& command : commands)
         {
+            // Only materials flagged CastSelfShadow contribute to the depth
+            // map; non-casting materials neither occlude nor receive CSM.
+            if (!command.part->GetMaterial().CastsSelfShadow())
+                continue;
+
             Mesh& mesh = command.part->GetMesh();
             mesh.Attach();
             if (mesh.DynamicVertexProvider())
@@ -419,6 +425,13 @@ void Renderer::RenderShadowPass(
             vertexArray.Bind();
             mesh.Draw();
             vertexArray.unBind();
+            ++drawnParts;
+        }
+        if (std::getenv("WISTERIA_SHADOW_DEBUG") != nullptr)
+        {
+            std::cout << "[SHADOW DEBUG] cascade=" << cascade
+                      << " commands=" << commands.size()
+                      << " castParts=" << drawnParts << std::endl;
         }
     }
     this->shadowProgram->unUse();
