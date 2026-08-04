@@ -2,6 +2,8 @@
 
 #include "physics_world_impl.hpp"
 
+namespace wisteria
+{
 PhysicsWorld::PhysicsWorld(const PhysicsStepSettings& settings)
     : impl(std::make_unique<Impl>(settings))
 {
@@ -287,3 +289,4 @@ PhysicsWorldStatistics PhysicsWorld::Statistics() const noexcept
     return statistics;
 }
 
+}  // namespace wisteria

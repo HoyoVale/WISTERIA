@@ -3,6 +3,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+namespace wisteria
+{
 namespace PhysicsBulletConversion
 {
 btVector3 ToBullet(const glm::vec3& value) noexcept
@@ -52,3 +54,4 @@ glm::mat4 FromBullet(const btTransform& transform) noexcept
     ) * glm::mat4_cast(FromBullet(transform.getRotation()));
 }
 }
+}  // namespace wisteria

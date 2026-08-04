@@ -6,6 +6,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 Entity::Entity(const Transform& transform)
     : transform(transform)
 {
@@ -509,3 +511,4 @@ void Entity::FlushPendingBehaviourRemovals() noexcept
     }
     this->pendingBehaviourRemovals.clear();
 }
+}  // namespace wisteria

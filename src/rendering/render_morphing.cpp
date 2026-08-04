@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 void Renderer::BeginMorphingFrame()
 {
     if (this->morphingFrame == std::numeric_limits<std::uint64_t>::max())
@@ -181,3 +183,4 @@ void Renderer::UploadMorphing(
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     vertexArray.unBind();
 }
+}  // namespace wisteria

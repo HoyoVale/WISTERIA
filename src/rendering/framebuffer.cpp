@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 class ScopedFramebufferSetupState
@@ -293,3 +295,4 @@ GLuint SceneFramebuffer::DepthRenderbuffer() const noexcept
 {
     return this->depthRenderbuffer;
 }
+}  // namespace wisteria

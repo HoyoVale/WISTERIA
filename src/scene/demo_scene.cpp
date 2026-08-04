@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 std::filesystem::path DemoModelPath(bool alternate)
@@ -454,3 +456,4 @@ void SetupSabaMmdDemoScene(
               << " maxSubSteps=" << physicsSettings.maxSubSteps
               << std::endl;
 }
+}  // namespace wisteria

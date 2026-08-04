@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 const char* ShaderTypeName(GLenum shaderType)
@@ -226,3 +228,4 @@ void Program::UniformTex(const std::string& uniformName, unsigned int textureUni
 {
     this->Uniform1i(uniformName, static_cast<int>(textureUnit));
 }
+}  // namespace wisteria

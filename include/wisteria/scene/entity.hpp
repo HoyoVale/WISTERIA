@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+namespace wisteria
+{
 class PhysicsInstance;
 class PhysicsWorld;
 
@@ -158,3 +160,4 @@ private:
     std::uint64_t observedAnimatorDiscontinuityRevision = 0U;
     bool visible = true;
 };
+}  // namespace wisteria

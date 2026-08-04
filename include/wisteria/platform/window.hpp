@@ -6,6 +6,8 @@
 #include <memory>
 #include <string>
 
+namespace wisteria
+{
 class Application;
 class WindowManager;
 
@@ -77,3 +79,4 @@ private:
     CameraHandle camera;
     std::unique_ptr<FreeCameraControllerBehaviour> cameraController;
 };
+}  // namespace wisteria

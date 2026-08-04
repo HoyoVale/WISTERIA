@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 void Renderer::EnsureSkinningResources()
 {
     if (this->skinningBuffer != 0 && this->skinningTexture != 0)
@@ -174,3 +176,4 @@ void Renderer::UploadTransforms(
     program.UniformMat4f(shaderInterface.view, view);
     program.UniformMat4f(shaderInterface.projection, projection);
 }
+}  // namespace wisteria

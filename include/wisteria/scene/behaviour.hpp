@@ -3,6 +3,8 @@
 #include "wisteria/rendering/camera.hpp"
 #include <glm/glm.hpp>
 
+namespace wisteria
+{
 class Entity;
 class Event;
 class Input;
@@ -118,3 +120,4 @@ private:
     float pitchDegrees = 0.0f;
     float targetDistance = 1.0f;
 };
+}  // namespace wisteria

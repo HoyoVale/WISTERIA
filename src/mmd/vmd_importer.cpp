@@ -23,6 +23,8 @@
 #include <iconv.h>
 #endif
 
+namespace wisteria
+{
 namespace
 {
 constexpr std::string_view VmdSignature = "Vocaloid Motion Data 0002";
@@ -723,3 +725,4 @@ ImportedVmdAnimationData VmdImporter::Import(
         )
     };
 }
+}  // namespace wisteria

@@ -7,6 +7,8 @@
 
 // Temporary local-space skeleton pose used by animation sampling and blending.
 // Unlike Pose, it does not evaluate hierarchy/global/skinning matrices.
+namespace wisteria
+{
 class PoseBuffer
 {
 public:
@@ -42,3 +44,4 @@ void BlendPoseBuffers(
     float weight,
     PoseBuffer& output
 );
+}  // namespace wisteria

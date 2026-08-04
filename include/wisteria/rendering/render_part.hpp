@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <optional>
 
+namespace wisteria
+{
 class Material;
 class Mesh;
 
@@ -37,3 +39,4 @@ private:
     glm::mat4 localTransform{1.0f};
     std::optional<std::uint32_t> morphMaterialIndex;
 };
+}  // namespace wisteria

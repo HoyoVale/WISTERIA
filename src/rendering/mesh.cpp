@@ -9,6 +9,8 @@
 #include <unordered_set>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 std::size_t DataTypeSize(DataType type)
@@ -679,3 +681,4 @@ std::size_t Mesh::AppendSkinningDebugLines(
     }
     return sampled;
 }
+}  // namespace wisteria

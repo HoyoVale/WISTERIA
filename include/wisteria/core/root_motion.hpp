@@ -5,6 +5,8 @@
 
 // Local-space translation and rotation produced by one Animator update.
 // Scale intentionally remains an Entity/Transform property.
+namespace wisteria
+{
 struct RootMotionDelta
 {
     glm::vec3 translation{0.0f};
@@ -12,3 +14,4 @@ struct RootMotionDelta
 
     bool IsIdentity(float epsilon = 0.000001f) const noexcept;
 };
+}  // namespace wisteria

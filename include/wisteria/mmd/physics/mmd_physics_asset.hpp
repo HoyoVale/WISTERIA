@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 enum class MmdRigidBodyShape : std::uint8_t
 {
     Sphere = 0,
@@ -101,3 +103,4 @@ private:
     std::vector<MmdJointDefinition> joints;
     std::unordered_map<std::string, RigidBodyIndex> rigidBodyIndices;
 };
+}  // namespace wisteria

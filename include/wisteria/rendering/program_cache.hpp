@@ -5,6 +5,8 @@
 #include <string>
 #include <unordered_map>
 
+namespace wisteria
+{
 class Program;
 
 // One cache belongs to one OpenGL resource share group. It must be destroyed
@@ -22,3 +24,4 @@ public:
 private:
     std::unordered_map<std::string, std::shared_ptr<Program>> programs;
 };
+}  // namespace wisteria

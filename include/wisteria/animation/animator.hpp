@@ -14,6 +14,8 @@
 
 // Per-entity playback state. AnimationClip and Skeleton remain shared model
 // resources; only time and the sampled Pose are instance-local.
+namespace wisteria
+{
 class Animator
 {
 public:
@@ -146,3 +148,4 @@ private:
     bool looping = true;
     bool rootMotionEnabled = false;
 };
+}  // namespace wisteria

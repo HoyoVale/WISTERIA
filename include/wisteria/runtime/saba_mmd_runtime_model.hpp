@@ -6,6 +6,8 @@
 #include <memory>
 #include <span>
 
+namespace wisteria
+{
 struct SabaPhysicsSettings
 {
     float fixedTimeStep = 1.0f / 120.0f;
@@ -100,3 +102,4 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
+}  // namespace wisteria

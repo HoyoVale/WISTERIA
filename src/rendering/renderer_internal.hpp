@@ -27,6 +27,8 @@
 #include <string_view>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 constexpr unsigned int IrradianceTextureUnit = 8;
@@ -147,3 +149,4 @@ public:
 private:
     RenderState saved;
 };
+}  // namespace wisteria

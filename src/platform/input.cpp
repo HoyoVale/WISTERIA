@@ -6,6 +6,8 @@
 #include <optional>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 Input* GetInput(GLFWwindow* window) noexcept
@@ -295,3 +297,4 @@ std::size_t Input::Index(InputMouseButton button) noexcept
 {
     return static_cast<std::size_t>(button);
 }
+}  // namespace wisteria

@@ -27,6 +27,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::vec3& value) noexcept
@@ -891,3 +893,4 @@ public:
     std::vector<PhysicsContactPair> contactPairs;
 };
 
+}  // namespace wisteria

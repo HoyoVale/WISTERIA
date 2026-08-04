@@ -9,6 +9,8 @@
 #include "wisteria/rendering/vao.hpp"
 #include "wisteria/rendering/vbo.hpp"
 
+namespace wisteria
+{
 template<
     typename VertexType = float,
     typename IndexType = unsigned int
@@ -60,3 +62,4 @@ public:
 private:
     DefaultModelData data;
 };
+}  // namespace wisteria

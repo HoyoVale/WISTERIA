@@ -4,6 +4,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+namespace wisteria
+{
 namespace PhysicsBulletConversion
 {
 btVector3 ToBullet(const glm::vec3& value) noexcept;
@@ -19,3 +21,4 @@ btTransform ToBullet(
 
 glm::mat4 FromBullet(const btTransform& transform) noexcept;
 }
+}  // namespace wisteria

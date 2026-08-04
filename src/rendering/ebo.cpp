@@ -3,6 +3,8 @@
 #include <limits>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 GLsizeiptr BufferSize(std::size_t size)
@@ -117,3 +119,4 @@ void EBO::Update(
         data
     );
 }
+}  // namespace wisteria

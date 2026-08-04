@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace wisteria
+{
 struct VmdImportOptions
 {
     std::string clipName;
@@ -49,3 +51,4 @@ public:
         const MorphSet* morphSet = nullptr
     ) const;
 };
+}  // namespace wisteria

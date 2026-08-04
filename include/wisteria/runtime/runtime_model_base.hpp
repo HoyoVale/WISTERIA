@@ -1,5 +1,7 @@
 #pragma once
 
+namespace wisteria
+{
 class Pose;
 class Mesh;
 class PhysicsInstance;
@@ -32,3 +34,4 @@ public:
     // Optional physics adapter. Scene drives it through PhysicsInstance.
     virtual PhysicsInstance* TryGetPhysicsInstance() noexcept = 0;
 };
+}  // namespace wisteria

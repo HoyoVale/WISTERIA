@@ -3,6 +3,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::vec3& value)
@@ -119,3 +121,4 @@ void Camera::SetClipPlanes(float nearClip, float farClip)
     next.FarClip = farClip;
     this->SetParam(next);
 }
+}  // namespace wisteria

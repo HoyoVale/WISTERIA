@@ -1,5 +1,7 @@
 #pragma once
 
+namespace wisteria
+{
 class Timer{
 public:
     Timer() = default;
@@ -14,3 +16,4 @@ private:
     double currentTime = 0.0;
     float deltaTime = 0.0f;
 };
+}  // namespace wisteria

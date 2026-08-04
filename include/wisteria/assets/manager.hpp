@@ -13,6 +13,8 @@
 #include <string>
 #include <unordered_map>
 
+namespace wisteria
+{
 class Application;
 
 struct TexturePathKey
@@ -149,3 +151,4 @@ private:
 
     friend class Application;
 };
+}  // namespace wisteria

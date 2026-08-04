@@ -11,6 +11,8 @@
 #include <span>
 #include <vector>
 
+namespace wisteria
+{
 class VAO;
 class Pose;
 class Mesh;
@@ -106,3 +108,4 @@ private:
     MeshDynamicVertexProvider dynamicVertexProvider;
     std::vector<std::uint32_t> sourceVertexIndices;
 };
+}  // namespace wisteria

@@ -13,6 +13,7 @@
 #include <memory>
 
 using namespace wisteria::native;
+using namespace wisteria;
 
 extern "C"
 {

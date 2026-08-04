@@ -10,6 +10,8 @@
 #include <limits>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 std::string ParameterName(std::string_view name)
@@ -965,3 +967,4 @@ void Animator::ValidateClip(const AnimationClip& clip) const
         }
     }
 }
+}  // namespace wisteria

@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 void AppendUtf8(std::string& output, std::uint32_t codePoint)
@@ -1145,3 +1147,4 @@ PmxMetadata ParsePmxMetadata(const std::vector<std::uint8_t>& bytes)
     }
     return result;
 }
+}  // namespace wisteria

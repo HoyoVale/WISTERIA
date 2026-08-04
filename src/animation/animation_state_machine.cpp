@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 void AnimationStateMachine::AddState(AnimationState state)
 {
     if (state.name.empty())
@@ -173,3 +175,4 @@ void AnimationStateMachine::ApplyInitialState(Animator& animator)
     animator.Play(*state.clip);
     this->stateNeedsApply = false;
 }
+}  // namespace wisteria

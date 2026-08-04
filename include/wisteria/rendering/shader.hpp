@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 struct Path{
     std::string VertexPath = wisteria::assets::Shader("basicTex.vert");
     std::string FragmentPath = wisteria::assets::Shader("basicTex.frag");
@@ -64,3 +66,4 @@ private:
     GLuint program = 0;
     mutable std::unordered_map<std::string, GLint> uniformLocationCache;
 };
+}  // namespace wisteria

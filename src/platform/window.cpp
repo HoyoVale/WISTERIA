@@ -5,6 +5,8 @@
 #include <iostream>
 #include <utility>
 
+namespace wisteria
+{
 Window::Window(
     int width,
     int height,
@@ -244,3 +246,4 @@ void Window::BindRenderView(
     this->scene = std::move(nextScene);
     this->camera = std::move(nextCamera);
 }
+}  // namespace wisteria

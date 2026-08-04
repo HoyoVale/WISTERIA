@@ -5,6 +5,8 @@
 #include <glm/glm.hpp>
 #include <memory>
 
+namespace wisteria
+{
 class Program;
 class Shader;
 class VAO;
@@ -91,3 +93,4 @@ private:
     std::unique_ptr<Program> skyboxProgram;
     bool attached = false;
 };
+}  // namespace wisteria

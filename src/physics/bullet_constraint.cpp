@@ -2,6 +2,8 @@
 
 #include "physics_world_impl.hpp"
 
+namespace wisteria
+{
 PhysicsConstraintHandle PhysicsWorld::CreateSpring6DofConstraint(
     const PhysicsSpring6DofDesc& description
 )
@@ -391,3 +393,4 @@ std::size_t PhysicsWorld::ConstraintCount() const noexcept
     return impl->constraintCount;
 }
 
+}  // namespace wisteria

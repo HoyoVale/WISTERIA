@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+namespace wisteria
+{
 struct PmxMaterialMetadata
 {
     std::string name;
@@ -118,3 +120,4 @@ struct PmxMetadata
     std::vector<UvMorphMetadata> uvMorphs;
 };
 
+}  // namespace wisteria

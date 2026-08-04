@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 class Program;
 class Shader;
 struct ShaderInterface;
@@ -167,3 +169,4 @@ private:
     std::unordered_map<const EnvironmentMap*, std::unique_ptr<VAO>>
         skyboxVertexArrays;
 };
+}  // namespace wisteria

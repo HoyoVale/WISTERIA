@@ -7,6 +7,8 @@
 #include "wisteria/vendor/stb_image.h"
 #include <utility>
 
+namespace wisteria
+{
 TextureData TextureData::FromFile(
     std::filesystem::path filePath,
     TextureColorSpace colorSpace
@@ -289,3 +291,4 @@ void Texture::Configure()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     this->configured = true;
 }
+}  // namespace wisteria

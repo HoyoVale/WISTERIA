@@ -6,6 +6,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::mat4& matrix) noexcept
@@ -234,3 +236,4 @@ std::size_t Pose::CheckedIndex(BoneIndex boneIndex) const
         throw std::out_of_range("Pose bone index is out of range");
     return index;
 }
+}  // namespace wisteria

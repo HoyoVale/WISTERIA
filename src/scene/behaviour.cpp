@@ -6,6 +6,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::vec3& value)
@@ -297,3 +299,4 @@ glm::vec3 FreeCameraControllerBehaviour::Forward() const
         std::sin(yaw) * std::cos(pitch)
     ));
 }
+}  // namespace wisteria

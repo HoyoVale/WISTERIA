@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 using MorphIndex = std::uint32_t;
 inline constexpr MorphIndex InvalidMorphIndex =
     static_cast<MorphIndex>(-1);
@@ -222,3 +224,4 @@ private:
         std::numeric_limits<std::uint64_t>::max();
     std::uint64_t revision = 0U;
 };
+}  // namespace wisteria

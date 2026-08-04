@@ -2,6 +2,8 @@
 
 #include <filesystem>
 
+namespace wisteria
+{
 class ResourceManager;
 class Scene;
 class Window;
@@ -21,3 +23,4 @@ void SetupSabaMmdDemoScene(
     float physicsFps = 0.0f,
     int maxSubSteps = 0
 );
+}  // namespace wisteria

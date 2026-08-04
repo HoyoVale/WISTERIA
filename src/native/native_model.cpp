@@ -5,6 +5,7 @@
 #include <filesystem>
 
 using namespace wisteria::native;
+using namespace wisteria;
 
 extern "C"
 {

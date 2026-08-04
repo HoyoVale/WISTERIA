@@ -2,6 +2,8 @@
 #include "wisteria/rendering/vbo.hpp"
 #include <cstdint>
 
+namespace wisteria
+{
 VBO::VBO()
 {
     glGenBuffers(1, &this->vbo);
@@ -38,3 +40,4 @@ void VBO::Upload(const void* data, std::size_t dataSize)
 }
 
 
+}  // namespace wisteria

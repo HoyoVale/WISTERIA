@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 void Renderer::Present(
     const SceneFramebuffer& source,
     int destinationWidth,
@@ -93,3 +95,4 @@ void Renderer::EnsurePresentResources()
             throw std::runtime_error("Cannot create fullscreen vertex array");
     }
 }
+}  // namespace wisteria

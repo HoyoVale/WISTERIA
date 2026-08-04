@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+namespace wisteria
+{
 enum class TextureColorSpace
 {
     Linear,
@@ -87,3 +89,4 @@ private:
     bool configured = false;
     bool attached = false;
 };
+}  // namespace wisteria

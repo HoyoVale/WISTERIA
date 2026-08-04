@@ -36,6 +36,8 @@
 #include <unordered_set>
 #include <vector>
 
+using namespace wisteria;
+
 namespace
 {
 constexpr float Epsilon = 0.0001f;

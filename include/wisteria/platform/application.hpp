@@ -8,6 +8,8 @@
 
 // Holds one reference to process-wide GLFW state and owns one OpenGL
 // resource share group. WindowManager owns its windows and context-local state.
+namespace wisteria
+{
 class Application
 {
 public:
@@ -71,3 +73,4 @@ private:
     bool running = false;
     bool closeRequested = false;
 };
+}  // namespace wisteria

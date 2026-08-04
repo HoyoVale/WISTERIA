@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 constexpr float DirectionEpsilon = 0.000001f;
@@ -335,3 +337,4 @@ void MmdPoseSolver::RecalculateSubtree(
         }
     }
 }
+}  // namespace wisteria

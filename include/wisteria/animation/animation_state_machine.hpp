@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 class AnimationClip;
 class Animator;
 
@@ -56,3 +58,4 @@ private:
     std::optional<std::size_t> currentStateIndex;
     bool stateNeedsApply = false;
 };
+}  // namespace wisteria

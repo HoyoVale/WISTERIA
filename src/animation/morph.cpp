@@ -10,6 +10,8 @@
 #include <unordered_set>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::vec3& value)
@@ -704,3 +706,4 @@ std::size_t MorphState::CheckedIndex(MorphIndex index) const
         throw std::out_of_range("Morph index is out of range");
     return static_cast<std::size_t>(index);
 }
+}  // namespace wisteria

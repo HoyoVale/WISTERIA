@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+namespace wisteria
+{
 struct ImportedTextureData
 {
     std::string name;
@@ -92,3 +94,4 @@ public:
         const std::filesystem::path& filePath
     ) const;
 };
+}  // namespace wisteria

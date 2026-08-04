@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <vector>
 
+namespace wisteria
+{
 struct PhysicsStabilizationRequest
 {
     std::size_t steps = 0U;
@@ -95,3 +97,4 @@ public:
 protected:
     PhysicsInstance() = default;
 };
+}  // namespace wisteria

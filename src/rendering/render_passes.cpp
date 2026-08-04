@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 void Renderer::DrawPart(
     RenderPart& part,
     const glm::mat4& model,
@@ -449,3 +451,4 @@ void Renderer::CompositeOit(const SceneFramebuffer& target)
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
 }
+}  // namespace wisteria

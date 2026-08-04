@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 // Marker instance so Scene knows Saba drives its own per-model Bullet world
@@ -623,3 +625,4 @@ std::span<const glm::vec3> SabaMmdRuntimeModel::UpdatePositions() const
         vertexCount
     );
 }
+}  // namespace wisteria

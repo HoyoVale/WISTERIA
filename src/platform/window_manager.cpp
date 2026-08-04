@@ -13,6 +13,8 @@
 #include <unordered_set>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 std::string SafeFileStem(std::string_view text)
@@ -888,3 +890,4 @@ void WindowManager::RequireOwnerThread() const
         );
     }
 }
+}  // namespace wisteria

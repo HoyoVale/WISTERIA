@@ -1,6 +1,8 @@
 #pragma once
 #include <glm/glm.hpp>
 
+namespace wisteria
+{
 struct PointLightData
 {
     glm::vec3 Position = glm::vec3(3.5f);
@@ -114,3 +116,4 @@ public:
 private:
     SpotLightData data;
 };
+}  // namespace wisteria

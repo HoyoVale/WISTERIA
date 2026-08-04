@@ -4,6 +4,8 @@
 #include <string>
 #include "wisteria/rendering/vbo.hpp"
 
+namespace wisteria
+{
 class VAO{
 public:
     VAO();
@@ -29,3 +31,4 @@ private:
     std::unordered_map<unsigned int, std::string> attribList;
     unsigned int index = 0;
 };
+}  // namespace wisteria

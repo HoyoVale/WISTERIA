@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(float value) noexcept
@@ -200,3 +202,4 @@ const MmdJointDefinition& MmdPhysicsAsset::JointAt(std::size_t index) const
         throw std::out_of_range("MMD joint index is out of range");
     return this->joints[index];
 }
+}  // namespace wisteria

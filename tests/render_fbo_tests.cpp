@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 
+using namespace wisteria;
+
 namespace
 {
 constexpr int TestWidth = 64;

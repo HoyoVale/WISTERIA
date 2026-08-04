@@ -7,6 +7,8 @@
 
 // WISTERIA-facing rigid-body world. Bullet types are intentionally hidden
 // behind the implementation boundary so engine code does not depend on bt*.
+namespace wisteria
+{
 class PhysicsWorld
 {
 public:
@@ -146,3 +148,4 @@ private:
     class Impl;
     std::unique_ptr<Impl> impl;
 };
+}  // namespace wisteria

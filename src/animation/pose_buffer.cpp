@@ -4,6 +4,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 PoseBuffer::PoseBuffer(const Skeleton& skeleton)
     : skeleton(&skeleton)
 {
@@ -158,3 +160,4 @@ void BlendPoseBuffers(
         output.SetTransform(boneIndex, blended);
     }
 }
+}  // namespace wisteria

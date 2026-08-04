@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 namespace
 {
 struct PhysicsDebugVertex
@@ -121,3 +123,4 @@ void Renderer::DrawPhysicsDebug(
     this->physicsDebugProgram->unUse();
     glDepthMask(GL_TRUE);
 }
+}  // namespace wisteria

@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::vec3& value) noexcept
@@ -777,3 +779,4 @@ void AnimationClip::Sample(float time, PoseBuffer& output) const
         );
     }
 }
+}  // namespace wisteria

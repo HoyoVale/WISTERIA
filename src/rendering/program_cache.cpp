@@ -2,6 +2,8 @@
 #include "wisteria/rendering/program_cache.hpp"
 #include "wisteria/rendering/shader.hpp"
 
+namespace wisteria
+{
 std::shared_ptr<Program> ProgramCache::Acquire(
     const std::string& vertexPath,
     const std::string& fragmentPath
@@ -27,3 +29,4 @@ std::size_t ProgramCache::Size() const noexcept
 {
     return this->programs.size();
 }
+}  // namespace wisteria

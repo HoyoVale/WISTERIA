@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 namespace
 {
 bool EnvironmentFlagEnabled(const char* name)
@@ -316,3 +318,4 @@ void Renderer::Release() noexcept
     this->uploadedPoseRevision = 0;
     this->morphingFrame = 0;
 }
+}  // namespace wisteria

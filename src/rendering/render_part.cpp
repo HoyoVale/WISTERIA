@@ -5,6 +5,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::mat4& matrix)
@@ -81,3 +83,4 @@ std::optional<std::uint32_t> RenderPart::MorphMaterialIndex() const noexcept
 {
     return this->morphMaterialIndex;
 }
+}  // namespace wisteria

@@ -2,6 +2,8 @@
 
 #include "physics_world_impl.hpp"
 
+namespace wisteria
+{
 void PhysicsWorld::StepFixed(float fixedTimeStep)
 {
     if (!std::isfinite(fixedTimeStep) || fixedTimeStep <= 0.0f)
@@ -73,3 +75,4 @@ int PhysicsWorld::StepSimulation(
     return substeps;
 }
 
+}  // namespace wisteria

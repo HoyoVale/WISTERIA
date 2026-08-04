@@ -5,6 +5,8 @@
 #include <limits>
 #include <stdexcept>
 
+namespace wisteria
+{
 VAO::VAO()
 {
     glGenVertexArrays(1, &this->vao);
@@ -147,3 +149,4 @@ std::size_t VAO::ParseTypeSize(DataType type)
     }
     throw std::invalid_argument("Unsupported vertex attribute data type");
 }
+}  // namespace wisteria

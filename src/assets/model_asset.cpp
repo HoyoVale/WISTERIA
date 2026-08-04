@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 ModelAsset::ModelAsset(std::string name)
     : name(std::move(name))
 {
@@ -211,3 +213,4 @@ RenderPart& ModelAsset::AddPart(
         morphMaterialIndex
     );
 }
+}  // namespace wisteria

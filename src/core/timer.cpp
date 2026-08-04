@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <GLFW/glfw3.h>
 
+namespace wisteria
+{
 double Timer::GetCurrentTime() const
 {
     return glfwGetTime();
@@ -20,3 +22,4 @@ void Timer::Now()
     this->lastTime = this->currentTime;
     this->deltaTime = std::clamp(this->deltaTime, 0.0f, 0.1f);
 }
+}  // namespace wisteria

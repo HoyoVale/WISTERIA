@@ -2,6 +2,8 @@
 
 #include "physics_world_impl.hpp"
 
+namespace wisteria
+{
 std::span<const PhysicsContactPair> PhysicsWorld::ContactPairs() const noexcept
 {
     return impl->contactPairs;
@@ -24,3 +26,4 @@ std::span<const PhysicsDebugLine> PhysicsWorld::DebugLines() const noexcept
     return impl->debugCollector.lines;
 }
 
+}  // namespace wisteria

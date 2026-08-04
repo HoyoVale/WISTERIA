@@ -9,6 +9,8 @@
 #include <memory>
 #include <vector>
 
+namespace wisteria
+{
 class EnvironmentMap;
 
 // Scene owns scene objects. Mesh and Material stay externally owned resources.
@@ -87,3 +89,4 @@ private:
     double physicsAccumulator = 0.0;
     PhysicsFrameStatistics physicsFrameStatistics{};
 };
+}  // namespace wisteria

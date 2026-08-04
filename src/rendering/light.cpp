@@ -3,6 +3,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 glm::vec3 NormalizeLightDirection(const glm::vec3& direction)
@@ -259,3 +261,4 @@ glm::vec3 SpotLight::Radiance() const noexcept
 {
     return this->data.Color * this->data.Intensity;
 }
+}  // namespace wisteria

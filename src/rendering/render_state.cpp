@@ -4,6 +4,8 @@
 
 #include <cstddef>
 
+namespace wisteria
+{
 void CaptureRenderState(RenderState& state)
 {
     glGetIntegerv(GL_ACTIVE_TEXTURE, &state.activeTexture);
@@ -84,3 +86,4 @@ void RestoreRenderState(const RenderState& state)
         state.colorWriteMask[3]
     );
 }
+}  // namespace wisteria

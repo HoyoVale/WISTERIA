@@ -21,6 +21,8 @@
 #include <utility>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinitePmx(const glm::vec3& value) noexcept
@@ -1396,3 +1398,4 @@ ImportedModelData SabaMmdImporter::Import(
     }
     return result;
 }
+}  // namespace wisteria

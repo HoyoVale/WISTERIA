@@ -3,6 +3,8 @@
 
 #include <cmath>
 
+namespace wisteria
+{
 bool RootMotionDelta::IsIdentity(float epsilon) const noexcept
 {
     if (!std::isfinite(epsilon) || epsilon < 0.0f)
@@ -24,3 +26,4 @@ bool RootMotionDelta::IsIdentity(float epsilon) const noexcept
     return glm::length(this->translation) <= epsilon &&
         std::abs(std::abs(normalized.w) - 1.0f) <= epsilon;
 }
+}  // namespace wisteria

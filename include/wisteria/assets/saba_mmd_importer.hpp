@@ -6,6 +6,8 @@
 
 // PMX/PMD/VMD/VPD importer backed by Saba's own parsers. Output stays in the
 // format-agnostic ImportedModelData so the resource layer is unchanged.
+namespace wisteria
+{
 class SabaMmdImporter final : public ModelImporter
 {
 public:
@@ -13,3 +15,4 @@ public:
         const std::filesystem::path& filePath
     ) const override;
 };
+}  // namespace wisteria

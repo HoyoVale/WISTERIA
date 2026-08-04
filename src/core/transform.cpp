@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <string>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::vec3& value)
@@ -170,3 +172,4 @@ void Transform::ApplyLocalMotion(const RootMotionDelta& motion)
         ExtractEulerAngleXYZ(combinedRotation)
     ));
 }
+}  // namespace wisteria

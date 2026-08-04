@@ -8,6 +8,8 @@
 #include <unordered_set>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 bool IsFinite(const glm::mat4& matrix) noexcept
@@ -281,3 +283,4 @@ std::span<const BoneIndex> Skeleton::MmdAfterPhysicsConstraintOrder() const noex
 {
     return this->mmdAfterPhysicsConstraintOrder;
 }
+}  // namespace wisteria

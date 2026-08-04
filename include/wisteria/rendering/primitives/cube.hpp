@@ -1,6 +1,8 @@
 #pragma once
 #include "wisteria/rendering/model.hpp"
 
+namespace wisteria
+{
 inline const DefaultModelData cubeData({
     {
         // front (+Z)
@@ -62,3 +64,4 @@ public:
     ~Cube() override = default;
 };
 
+}  // namespace wisteria

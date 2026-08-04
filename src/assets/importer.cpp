@@ -27,6 +27,8 @@
 #include <unordered_set>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 glm::mat4 MakePmxModelTransform(
@@ -1987,3 +1989,4 @@ ImportedModelData ModelImporter::Import(
         throw std::runtime_error("Imported model contains no drawable mesh parts");
     return result;
 }
+}  // namespace wisteria

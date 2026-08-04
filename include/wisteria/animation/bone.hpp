@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+namespace wisteria
+{
 using BoneIndex = std::uint32_t;
 
 inline constexpr BoneIndex InvalidBoneIndex =
@@ -50,3 +52,4 @@ struct Bone
     std::optional<MmdAppendTransform> appendTransform;
     std::optional<MmdIkConstraint> ikConstraint;
 };
+}  // namespace wisteria

@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+namespace wisteria
+{
 enum class PhysicsMotionType : std::uint8_t
 {
     Static,
@@ -293,3 +295,4 @@ struct PhysicsFrameStatistics
     bool catchUpLimited = false;
     PhysicsWorldStatistics world{};
 };
+}  // namespace wisteria

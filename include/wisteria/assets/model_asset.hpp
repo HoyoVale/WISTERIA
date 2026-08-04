@@ -15,6 +15,8 @@
 #include <vector>
 
 // Shared, scene-independent description of an imported or procedural model.
+namespace wisteria
+{
 class ModelAsset
 {
 public:
@@ -68,3 +70,4 @@ private:
     // its current shared clip while more clips may still be added.
     std::vector<std::unique_ptr<AnimationClip>> animationClips;
 };
+}  // namespace wisteria

@@ -5,6 +5,8 @@
 
 // Owns only an OpenGL framebuffer object. Attachments are owned by the
 // specialized render target that creates them.
+namespace wisteria
+{
 class Framebuffer
 {
 public:
@@ -69,3 +71,4 @@ private:
     int width = 0;
     int height = 0;
 };
+}  // namespace wisteria

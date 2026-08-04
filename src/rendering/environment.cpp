@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+namespace wisteria
+{
 namespace
 {
 constexpr unsigned int CubemapFaceCount = 6;
@@ -923,3 +925,4 @@ void EnvironmentMap::Release() noexcept
     this->cubeVbo = 0;
     this->attached = false;
 }
+}  // namespace wisteria

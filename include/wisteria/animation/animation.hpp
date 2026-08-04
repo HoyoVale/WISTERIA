@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace wisteria
+{
 enum class AnimationInterpolation
 {
     Linear,
@@ -215,3 +217,4 @@ private:
     std::unordered_map<BoneIndex, std::size_t> mmdIkStateTrackLookup;
     std::unordered_map<MorphIndex, std::size_t> morphWeightTrackLookup;
 };
+}  // namespace wisteria

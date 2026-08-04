@@ -8,6 +8,8 @@
 #include <mutex>
 #include <utility>
 
+using namespace wisteria;
+
 namespace wisteria::native
 {
 namespace

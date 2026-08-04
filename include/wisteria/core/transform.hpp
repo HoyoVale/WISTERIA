@@ -3,6 +3,8 @@
 #include "wisteria/core/root_motion.hpp"
 #include <glm/glm.hpp>
 
+namespace wisteria
+{
 class Transform {
 public:
     Transform(
@@ -31,3 +33,4 @@ private:
     glm::vec3 rotationDegrees{0.0f};
     glm::vec3 scale{1.0f};
 };
+}  // namespace wisteria

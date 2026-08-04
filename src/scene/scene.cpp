@@ -6,6 +6,8 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace wisteria
+{
 namespace
 {
 template<typename T>
@@ -467,3 +469,4 @@ const std::vector<std::unique_ptr<SpotLight>>& Scene::SpotLights() const noexcep
 {
     return this->spotLights;
 }
+}  // namespace wisteria

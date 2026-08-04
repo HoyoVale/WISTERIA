@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <limits>
 
+namespace wisteria
+{
 enum DataType{
     FLOAT, INT, UINT, UCHAR
 };
@@ -37,3 +39,4 @@ public:
 private:
     GLuint vbo = 0;
 };
+}  // namespace wisteria

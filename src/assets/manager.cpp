@@ -4,6 +4,8 @@
 #include <optional>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 std::filesystem::path NormalizeResourcePath(
@@ -958,3 +960,4 @@ void ResourceManager::Clear() noexcept
     this->textures.clear();
     this->meshes.clear();
 }
+}  // namespace wisteria

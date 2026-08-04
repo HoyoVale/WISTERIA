@@ -3,8 +3,12 @@
 #include <array>
 #include <cstddef>
 
+// External GLFW type; must stay in the global namespace so it matches the
+// real GLFWwindow defined by <GLFW/glfw3.h>.
 struct GLFWwindow;
 
+namespace wisteria
+{
 enum class InputKey : std::size_t
 {
     W,
@@ -125,3 +129,4 @@ private:
     bool hasPreviousCursorPosition = false;
     bool cursorCaptured = false;
 };
+}  // namespace wisteria

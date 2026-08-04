@@ -7,6 +7,8 @@
 #include <span>
 #include <vector>
 
+namespace wisteria
+{
 struct BoneTransform
 {
     glm::vec3 translation{0.0f};
@@ -56,3 +58,4 @@ private:
     mutable bool dirty = true;
     std::uint64_t revision = 0;
 };
+}  // namespace wisteria

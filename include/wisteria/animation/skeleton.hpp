@@ -10,6 +10,8 @@
 
 // Shared, model-space skeleton definition. Skeleton validates the hierarchy
 // once and stores a parent-before-child order used by every Pose instance.
+namespace wisteria
+{
 class Skeleton
 {
 public:
@@ -48,3 +50,4 @@ private:
     glm::mat4 inverseRootMatrix{1.0f};
     std::size_t rootCount = 0;
 };
+}  // namespace wisteria

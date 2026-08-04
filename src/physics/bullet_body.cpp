@@ -2,6 +2,8 @@
 
 #include "physics_world_impl.hpp"
 
+namespace wisteria
+{
 PhysicsBodyState PhysicsWorld::State(PhysicsBodyHandle body) const
 {
     const Impl::BodySlot& slot = impl->Require(body);
@@ -278,3 +280,4 @@ void PhysicsWorld::Activate(PhysicsBodyHandle body)
     impl->Require(body).body->activate(true);
 }
 
+}  // namespace wisteria

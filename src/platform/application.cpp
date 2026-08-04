@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+namespace wisteria
+{
 namespace
 {
 std::mutex GlfwLifecycleMutex;
@@ -265,3 +267,4 @@ void Application::Shutdown() noexcept
         this->glfwInitialized = false;
     }
 }
+}  // namespace wisteria

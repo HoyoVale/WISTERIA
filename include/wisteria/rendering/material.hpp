@@ -9,6 +9,8 @@
 #include <memory>
 #include <unordered_map>
 
+namespace wisteria
+{
 enum class TransformUniformMode
 {
     SeparateModelViewProjection,
@@ -214,3 +216,4 @@ private:
     MaterialTextureBindings textures;
     MaterialData data;
 };
+}  // namespace wisteria

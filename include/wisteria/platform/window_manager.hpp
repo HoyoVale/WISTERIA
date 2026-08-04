@@ -10,6 +10,8 @@
 #include <thread>
 #include <vector>
 
+namespace wisteria
+{
 class Application;
 
 struct WindowConfig
@@ -116,3 +118,4 @@ private:
     std::thread::id ownerThread;
     bool running = false;
 };
+}  // namespace wisteria

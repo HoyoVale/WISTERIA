@@ -12,6 +12,8 @@
 #include <string>
 #include <string_view>
 
+using namespace wisteria;
+
 namespace
 {
 bool HasArgument(

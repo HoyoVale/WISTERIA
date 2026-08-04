@@ -2,6 +2,7 @@
 #include "internal/native_context.hpp"
 
 using namespace wisteria::native;
+using namespace wisteria;
 
 extern "C"
 {

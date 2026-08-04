@@ -1,5 +1,7 @@
 #include "wisteria/physics/physics_types.hpp"
 
+namespace wisteria
+{
 PhysicsShapeDesc PhysicsShapeDesc::Sphere(float radius) noexcept
 {
     return PhysicsShapeDesc{
@@ -41,3 +43,4 @@ bool PhysicsConstraintHandle::IsValid() const noexcept
     return this->index != std::numeric_limits<std::uint32_t>::max() &&
         this->generation != 0U;
 }
+}  // namespace wisteria

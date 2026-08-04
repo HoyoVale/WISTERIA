@@ -2,6 +2,8 @@
 #include <glad/gl.h>
 #include <cstddef>
 
+namespace wisteria
+{
 class EBO{
 public:
     EBO();
@@ -32,3 +34,4 @@ private:
     GLuint ebo = 0;
     std::size_t capacity = 0;
 };
+}  // namespace wisteria

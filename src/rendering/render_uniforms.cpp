@@ -2,6 +2,8 @@
 
 #include "renderer_internal.hpp"
 
+namespace wisteria
+{
 namespace
 {
 int LightCount(std::size_t available, std::size_t capacity)
@@ -225,3 +227,4 @@ void Renderer::UploadSpotLights(
         );
     }
 }
+}  // namespace wisteria

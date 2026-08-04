@@ -8,8 +8,11 @@
 #include <string>
 #include <unordered_map>
 
+namespace wisteria
+{
 class Application;
 class Window;
+}
 
 namespace wisteria::native
 {

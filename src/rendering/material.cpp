@@ -2,6 +2,8 @@
 #include "wisteria/rendering/material.hpp"
 #include <cmath>
 
+namespace wisteria
+{
 namespace
 {
 MaterialTextureBindings BuildTextureBindings(const MaterialData& data)
@@ -340,3 +342,4 @@ void Material::SetOcclusionStrength(float occlusionStrength) noexcept
         );
     }
 }
+}  // namespace wisteria

@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <filesystem>
 
+namespace wisteria
+{
 class Camera;
 class CameraTrack;
 class DirectionalLight;
@@ -71,3 +73,4 @@ public:
     // MMD physics adapter (Saba or WISTERIA compat).
     virtual PhysicsInstance* GetMmdPhysics() noexcept = 0;
 };
+}  // namespace wisteria

@@ -2,6 +2,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+namespace wisteria
+{
 struct CameraParam{
     glm::vec3 Position{0.0f, 0.0f, 3.0f};
     glm::vec3 Target{0.0f, 0.0f, 0.0f};
@@ -36,3 +38,4 @@ public:
 private:
     CameraParam param;
 };
+}  // namespace wisteria

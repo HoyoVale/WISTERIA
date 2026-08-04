@@ -5,6 +5,8 @@
 #include <functional>
 #include <vector>
 
+namespace wisteria
+{
 enum class MmdPosePhase : std::uint8_t
 {
     BeforePhysics,
@@ -32,3 +34,4 @@ private:
     std::vector<std::uint8_t> changed;
     std::vector<BoneIndex> traversalStack;
 };
+}  // namespace wisteria
