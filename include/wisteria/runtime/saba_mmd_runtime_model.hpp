@@ -45,6 +45,7 @@ public:
     PhysicsInstance* TryGetPhysicsInstance() noexcept override;
 
     void SetMmdIkEnabled(BoneIndex bone, bool enabled) override;
+    BoneIndex FindBoneIndex(const std::string& name) const override;
 
     bool LoadMotion(const std::filesystem::path& vmdPath) override;
     void ClearMotion() override;
@@ -99,6 +100,8 @@ public:
     ProfileSnapshot Profile() const;
 
 private:
+    void ApplyMmdIkOverrides() noexcept;
+
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

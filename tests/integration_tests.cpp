@@ -3148,6 +3148,46 @@ void TestDirectPmxGroupMorphImportWhenAvailable()
     );
 }
 
+void TestSabaIkSwitchBridgeWhenAvailable()
+{
+    const std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"蕾米埃尔-白" / u8"蕾米埃尔-白.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    SabaMmdRuntimeModel runtime(modelPath, {}, SabaPhysicsSettings{});
+    Require(runtime.Initialize(), "Saba model failed to initialize");
+
+    // The 蕾米埃尔 model drives leg IK from the エンジン/エンジンIK bone pair.
+    const std::string ikBoneName(
+        reinterpret_cast<const char*>(u8"エンジンIK")
+    );
+    const BoneIndex ikBone = runtime.FindBoneIndex(ikBoneName);
+    Require(
+        ikBone != InvalidBoneIndex,
+        "Saba IK controller bone was not exposed in the engine bone space"
+    );
+    Require(
+        runtime.FindBoneIndex("no_such_bone") == InvalidBoneIndex,
+        "Unknown bone name must map to InvalidBoneIndex"
+    );
+
+    // Bridge must toggle the saba solver without throwing and survive a frame
+    // where the VMD/IK evaluation would normally restore the VMD state.
+    runtime.SetMmdIkEnabled(ikBone, false);
+    runtime.Update(1.0f / 30.0f);
+    runtime.SetMmdIkEnabled(ikBone, true);
+    runtime.Update(1.0f / 30.0f);
+
+    const SabaMmdRuntimeModel::VertexDiagnostics diagnostics =
+        runtime.DiagnoseVertices();
+    Require(
+        diagnostics.finite && diagnostics.vertexCount > 0U,
+        "Saba IK switch bridge produced non-finite vertices"
+    );
+}
+
 }
 
 int main()
@@ -3237,6 +3277,10 @@ int main()
     failures += !RunTest(
         "Direct PMX Group Morph integration",
         TestDirectPmxGroupMorphImportWhenAvailable
+    );
+    failures += !RunTest(
+        "Saba VMD IK switch bridge",
+        TestSabaIkSwitchBridgeWhenAvailable
     );
     return failures == 0 ? 0 : 1;
 }

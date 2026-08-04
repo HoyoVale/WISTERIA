@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -54,6 +55,31 @@ public:
 
 namespace
 {
+void ApplyIkEnable(
+    const std::shared_ptr<saba::PMXModel>& model,
+    const std::string& boneName,
+    bool enabled
+)
+{
+    if (model == nullptr)
+        return;
+    saba::MMDIKManager* ikManager = model->GetIKManager();
+    if (ikManager == nullptr)
+        return;
+    saba::MMDIkSolver* solver = ikManager->GetMMDIKSolver(boneName);
+    if (solver != nullptr)
+        solver->Enable(enabled);
+}
+
+bool IsValidBoneIndex(
+    BoneIndex bone,
+    const std::vector<Bone>& bones
+) noexcept
+{
+    return bone != InvalidBoneIndex &&
+        static_cast<std::size_t>(bone) < bones.size();
+}
+
 std::string ToNarrowUtf8(const std::filesystem::path& path)
 {
     const std::u8string u8 = path.u8string();
@@ -86,6 +112,7 @@ struct SabaMmdRuntimeModel::Impl
     std::vector<Bone> bones;
     Skeleton skeleton;
     Pose pose;
+    std::unordered_map<BoneIndex, bool> mmdIkOverrides;
 
     Impl(
         std::filesystem::path modelPath_,
@@ -160,6 +187,22 @@ bool SabaMmdRuntimeModel::Initialize()
         this->impl->model.reset();
         return false;
     }
+    // Expose the model's node list as the engine BoneIndex space so
+    // SetMmdIkEnabled / FindBoneIndex can address saba bones by name.
+    this->impl->mmdIkOverrides.clear();
+    this->impl->bones.clear();
+    if (saba::MMDNodeManager* nodes = this->impl->model->GetNodeManager())
+    {
+        this->impl->bones.reserve(nodes->GetNodeCount());
+        for (std::size_t index = 0U; index < nodes->GetNodeCount(); ++index)
+        {
+            saba::MMDNode* node = nodes->GetMMDNode(index);
+            Bone bone;
+            if (node != nullptr)
+                bone.name = node->GetName();
+            this->impl->bones.push_back(std::move(bone));
+        }
+    }
     // Saba's viewer calls InitializeAnimation right after loading the model;
     // it resets node animation state and rebuilds the physics reset pose.
     // Skipping it leaves physics and VMD evaluation on inconsistent baselines.
@@ -210,12 +253,22 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
             nextFrame = std::fmod(nextFrame, maxFrame);
         this->impl->vmdFrame = nextFrame;
     }
+    // Mirrors saba::MMDModel::UpdateAllAnimation step by step so engine-level
+    // IK overrides can be injected between the VMD evaluation and the IK
+    // solves inside UpdateNodeAnimation. Calling UpdateAllAnimation directly
+    // would re-apply the VMD's IK switches after our override.
     this->impl->model->BeginAnimation();
-    this->impl->model->UpdateAllAnimation(
-        this->impl->vmdAnimation.get(),
-        static_cast<float>(this->impl->vmdFrame),
-        deltaTime
-    );
+    if (this->impl->vmdAnimation != nullptr)
+    {
+        this->impl->vmdAnimation->Evaluate(
+            static_cast<float>(this->impl->vmdFrame)
+        );
+    }
+    this->impl->model->UpdateMorphAnimation();
+    this->ApplyMmdIkOverrides();
+    this->impl->model->UpdateNodeAnimation(false);
+    this->impl->model->UpdatePhysicsAnimation(deltaTime);
+    this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->EndAnimation();
     this->impl->model->Update();
     const auto updateEnd = std::chrono::steady_clock::now();
@@ -390,9 +443,40 @@ PhysicsInstance* SabaMmdRuntimeModel::TryGetPhysicsInstance() noexcept
     return this->impl->ownedPhysics.get();
 }
 
-void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex, bool)
+void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex bone, bool enabled)
 {
-    // TODO(phase 5): bridge VMD IK switches into saba::MMDIkSolver.
+    if (!IsValidBoneIndex(bone, this->impl->bones))
+        return;
+    this->impl->mmdIkOverrides[bone] = enabled;
+    ApplyIkEnable(
+        this->impl->model,
+        this->impl->bones[bone].name,
+        enabled
+    );
+}
+
+BoneIndex SabaMmdRuntimeModel::FindBoneIndex(const std::string& name) const
+{
+    for (std::size_t index = 0U; index < this->impl->bones.size(); ++index)
+    {
+        if (this->impl->bones[index].name == name)
+            return static_cast<BoneIndex>(index);
+    }
+    return InvalidBoneIndex;
+}
+
+void SabaMmdRuntimeModel::ApplyMmdIkOverrides() noexcept
+{
+    for (const auto& [bone, enabled] : this->impl->mmdIkOverrides)
+    {
+        if (!IsValidBoneIndex(bone, this->impl->bones))
+            continue;
+        ApplyIkEnable(
+            this->impl->model,
+            this->impl->bones[bone].name,
+            enabled
+        );
+    }
 }
 
 bool SabaMmdRuntimeModel::LoadCameraMotion(

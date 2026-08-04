@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 
 namespace wisteria
 {
@@ -26,8 +27,13 @@ enum class MmdSkinningKind : std::uint8_t
 class MmdRuntimeModel : public RuntimeModelBase
 {
 public:
-    // VMD IK state switches.
+    // VMD IK state switches. The engine may override the VMD's per-frame IK
+    // state for individual controller bones; the override persists until a
+    // later call changes it.
     virtual void SetMmdIkEnabled(BoneIndex bone, bool enabled) = 0;
+    // Maps a bone name (UTF-8, matching PMX bone names) to this runtime's
+    // BoneIndex space, or InvalidBoneIndex when the model has no such bone.
+    virtual BoneIndex FindBoneIndex(const std::string& name) const = 0;
 
     // --- Single-motion control (thin adapter, no playlist) ---
     //
