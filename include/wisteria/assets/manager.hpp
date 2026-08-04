@@ -6,6 +6,7 @@
 #include "wisteria/assets/importer.hpp"
 #include "wisteria/rendering/texture.hpp"
 #include "wisteria/rendering/environment.hpp"
+#include "wisteria/rendering/graphics_device.hpp"
 #include "wisteria/mmd/vmd_importer.hpp"
 #include <cstddef>
 #include <filesystem>
@@ -48,6 +49,11 @@ public:
     ResourceManager& operator=(const ResourceManager&) = delete;
     ResourceManager(ResourceManager&&) noexcept = default;
     ResourceManager& operator=(ResourceManager&&) noexcept = default;
+
+    // Binds this manager to the application GraphicsDevice. After binding,
+    // every material created here shares the device's shader program cache.
+    // Resources still release through the device's context rules.
+    void BindGraphicsDevice(GraphicsDevice& device);
 
     Mesh& CreateMesh(
         const std::string& name,
@@ -133,6 +139,8 @@ public:
     std::size_t EnvironmentCount() const noexcept;
 
 private:
+    std::shared_ptr<ProgramCache> programCache =
+        std::make_shared<ProgramCache>();
     std::unordered_map<std::string, std::unique_ptr<Mesh>> meshes;
     std::unordered_map<std::string, std::unique_ptr<Material>> materials;
     std::unordered_map<std::string, std::shared_ptr<Texture>> textures;

@@ -178,6 +178,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/ebo.cpp
     src/rendering/environment.cpp
     src/rendering/framebuffer.cpp
+    src/rendering/graphics_device.cpp
     src/rendering/light.cpp
     src/rendering/material.cpp
     src/rendering/program_cache.cpp

@@ -66,11 +66,16 @@ public:
     const WindowManager& GetWindowManager() const noexcept;
     ResourceManager& GetResources() noexcept;
     const ResourceManager& GetResources() const noexcept;
+    GraphicsDevice& GetGraphicsDevice() noexcept;
+    const GraphicsDevice& GetGraphicsDevice() const noexcept;
 
 private:
     void Shutdown() noexcept;
 
 private:
+    // One device per Application: owns the share-group GPU resources (shader
+    // programs, program cache) and the context identity for all windows.
+    GraphicsDevice graphicsDevice;
     ResourceManager resources;
     WindowManager windowManager;
     Timer timer;

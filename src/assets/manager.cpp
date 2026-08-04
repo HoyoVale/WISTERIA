@@ -21,6 +21,11 @@ std::filesystem::path NormalizeResourcePath(
 }
 }
 
+void ResourceManager::BindGraphicsDevice(GraphicsDevice& device)
+{
+    this->programCache = device.Programs();
+}
+
 Mesh& ResourceManager::CreateMesh(
     const std::string& name,
     const DefaultModelData& data,
@@ -49,7 +54,7 @@ Material& ResourceManager::CreateMaterial(
     if (this->materials.contains(name))
         throw std::invalid_argument("Material resource already exists: " + name);
 
-    auto material = std::make_unique<Material>(data);
+    auto material = std::make_unique<Material>(data, this->programCache);
     Material& result = *material;
     this->materials.emplace(name, std::move(material));
     return result;
@@ -127,7 +132,8 @@ Material& ResourceManager::CreateMaterial(
 
     auto material = std::make_unique<Material>(
         data,
-        std::move(bindings)
+        std::move(bindings),
+        this->programCache
     );
     Material& result = *material;
     this->materials.emplace(name, std::move(material));
@@ -224,7 +230,8 @@ ModelAsset& ResourceManager::CreateModel(
             );
         materials.push_back(std::make_unique<Material>(
             data,
-            std::move(bindings)
+            std::move(bindings),
+            this->programCache
         ));
     }
 
@@ -952,6 +959,9 @@ std::size_t ResourceManager::EnvironmentCount() const noexcept
 
 void ResourceManager::Clear() noexcept
 {
+    // Programs must be released while a context of the device's share group
+    // is current; Application guarantees this before calling Clear.
+    this->programCache->Clear();
     this->modelPathCache.clear();
     this->texturePathCache.clear();
     this->models.clear();

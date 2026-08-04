@@ -1763,6 +1763,36 @@ void TestBulletAdditionalConstraintsAndDebugDraw()
 
 }
 
+void TestGraphicsDevice()
+{
+    GraphicsDevice device;
+    Require(device.Programs() != nullptr, "device owns a program cache");
+    Require(device.ProgramCount() == 0, "fresh device has no programs");
+    Require(!device.HasContextToken(), "fresh device has no context token");
+
+    const void* token = reinterpret_cast<const void*>(std::uintptr_t(0x1234));
+    device.SetContextToken(token);
+    Require(device.HasContextToken(), "context token registered");
+    Require(device.ContextToken() == token, "context token preserved");
+    device.RequireContextToken(token);
+
+    bool threw = false;
+    try
+    {
+        device.RequireContextToken(
+            reinterpret_cast<const void*>(std::uintptr_t(0x5678))
+        );
+    }
+    catch (const std::logic_error&)
+    {
+        threw = true;
+    }
+    Require(threw, "mismatched context token must throw");
+
+    device.ReleaseAll();
+    Require(device.ProgramCount() == 0, "ReleaseAll clears the program cache");
+}
+
 int main()
 {
     int failures = 0;
@@ -1820,5 +1850,6 @@ int main()
         TestInterfaceCompilation
     );
     failures += !RunTest("FXAA settings", TestFxaaSettings);
+    failures += !RunTest("GraphicsDevice ownership", TestGraphicsDevice);
     return failures == 0 ? 0 : 1;
 }

@@ -41,6 +41,11 @@ Application::Application()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    // All resources created through the manager share one program cache so
+    // identical shader pairs compile once per application, not once per
+    // material.
+    this->resources.BindGraphicsDevice(this->graphicsDevice);
 }
 
 Application::~Application()
@@ -52,7 +57,11 @@ Window& Application::CreateWindow(const WindowConfig& config)
 {
     if (!this->glfwInitialized)
         throw std::logic_error("Application is not initialized");
-    return this->windowManager.CreateWindow(config);
+    Window& window = this->windowManager.CreateWindow(config);
+    // The first window context identifies the device's share group.
+    if (!this->graphicsDevice.HasContextToken())
+        this->graphicsDevice.SetContextToken(window.GetGLFWwindow());
+    return window;
 }
 
 void Application::DestroyWindow(Window& window)
@@ -246,6 +255,16 @@ const ResourceManager& Application::GetResources() const noexcept
     return this->resources;
 }
 
+GraphicsDevice& Application::GetGraphicsDevice() noexcept
+{
+    return this->graphicsDevice;
+}
+
+const GraphicsDevice& Application::GetGraphicsDevice() const noexcept
+{
+    return this->graphicsDevice;
+}
+
 void Application::Shutdown() noexcept
 {
     this->running = false;
@@ -262,9 +281,18 @@ void Application::Shutdown() noexcept
     if (resourceContext != nullptr)
     {
         glfwMakeContextCurrent(resourceContext);
-        // ResourceManager owns the shader program cache for this OpenGL
-        // share group. Clearing it here prevents program IDs from leaking
-        // across independent Application/GL contexts.
+        // Verify the registered share-group context, then release every GPU
+        // resource owned by the device (programs first, then resources whose
+        // materials hold references into the same cache).
+        try
+        {
+            this->graphicsDevice.RequireContextToken(resourceContext);
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "[WARN] " << error.what() << '\n';
+        }
+        this->graphicsDevice.ReleaseAll();
         this->resources.Clear();
     }
 
