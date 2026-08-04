@@ -662,7 +662,10 @@ struct PendingMorph
     std::vector<std::pair<int, float>> flipMembers;
 };
 
-std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
+std::vector<MorphDefinition> BuildMorphs(
+    const saba::PMXFile& pmx,
+    std::vector<MorphIndex>& sourceToRuntime
+)
 {
     const std::size_t morphCount = pmx.m_morphs.size();
     const std::size_t boneCount = pmx.m_bones.size();
@@ -878,10 +881,7 @@ std::vector<MorphDefinition> BuildMorphs(const saba::PMXFile& pmx)
         pending.push_back(std::move(morph));
     }
 
-    std::vector<MorphIndex> sourceToRuntime(
-        morphCount,
-        InvalidMorphIndex
-    );
+    sourceToRuntime.assign(morphCount, InvalidMorphIndex);
     for (std::size_t index = 0U; index < pending.size(); ++index)
         sourceToRuntime[pending[index].sourceIndex] =
             static_cast<MorphIndex>(index);
@@ -1059,6 +1059,7 @@ void BuildMeshesAndMaterials(
     const saba::PMXFile& pmx,
     const std::filesystem::path& modelDirectory,
     const std::optional<Skeleton>& skeleton,
+    const std::vector<MorphIndex>& sourceToRuntime,
     ImportedModelData& result
 )
 {
@@ -1335,6 +1336,71 @@ void BuildMeshesAndMaterials(
             }
         }
         mesh.sourceVertexIndices = std::move(localToGlobal);
+
+        // Per-mesh morph targets: remap global PMX vertex indices to this
+        // sub-mesh's local vertices. Position offsets use the same Z-mirror as
+        // vertex positions; UV offsets stay in raw PMX space (channels 0-4).
+        for (std::size_t morphIndex = 0U;
+             morphIndex < pmx.m_morphs.size();
+             ++morphIndex)
+        {
+            const saba::PMXMorph& source = pmx.m_morphs[morphIndex];
+            const MorphIndex runtimeIndex = sourceToRuntime[morphIndex];
+            if (runtimeIndex == InvalidMorphIndex)
+                continue;
+
+            if (source.m_morphType == saba::PMXMorphType::Position)
+            {
+                MeshMorphTarget target;
+                target.morphIndex = runtimeIndex;
+                for (const saba::PMXMorph::PositionMorph& offset :
+                     source.m_positionMorph)
+                {
+                    const auto local = globalToLocal.find(
+                        static_cast<std::uint32_t>(offset.m_vertexIndex)
+                    );
+                    if (local != globalToLocal.end())
+                    {
+                        target.offsets.push_back(VertexMorphOffset{
+                            local->second,
+                            ConvertPosition(offset.m_position)
+                        });
+                    }
+                }
+                if (!target.offsets.empty())
+                    mesh.morphTargets.push_back(std::move(target));
+            }
+            else if (
+                source.m_morphType == saba::PMXMorphType::UV ||
+                source.m_morphType == saba::PMXMorphType::AddUV1 ||
+                source.m_morphType == saba::PMXMorphType::AddUV2 ||
+                source.m_morphType == saba::PMXMorphType::AddUV3 ||
+                source.m_morphType == saba::PMXMorphType::AddUV4)
+            {
+                MeshMorphTarget target;
+                target.morphIndex = runtimeIndex;
+                const std::uint8_t channel = static_cast<std::uint8_t>(
+                    source.m_morphType
+                ) - static_cast<std::uint8_t>(saba::PMXMorphType::UV);
+                for (const saba::PMXMorph::UVMorph& offset :
+                     source.m_uvMorph)
+                {
+                    const auto local = globalToLocal.find(
+                        static_cast<std::uint32_t>(offset.m_vertexIndex)
+                    );
+                    if (local != globalToLocal.end())
+                    {
+                        target.uvOffsets.push_back(UvMorphOffset{
+                            local->second,
+                            channel,
+                            offset.m_uv
+                        });
+                    }
+                }
+                if (!target.uvOffsets.empty())
+                    mesh.morphTargets.push_back(std::move(target));
+            }
+        }
         faceCursor += faceCount;
 
         result.meshes.push_back(std::move(mesh));
@@ -1383,11 +1449,13 @@ ImportedModelData SabaMmdImporter::Import(
     {
         result.mmdPhysics.emplace(BuildPhysics(pmx, result.skeleton));
     }
-    result.morphs = BuildMorphs(pmx);
+    std::vector<MorphIndex> sourceToRuntime;
+    result.morphs = BuildMorphs(pmx, sourceToRuntime);
     BuildMeshesAndMaterials(
         pmx,
         absolutePath.parent_path(),
         result.skeleton,
+        sourceToRuntime,
         result
     );
     if (result.meshes.empty() || result.parts.empty())

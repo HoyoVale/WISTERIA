@@ -1,5 +1,7 @@
 #include "test_support.hpp"
 
+#include <glm/gtc/constants.hpp>
+
 namespace
 {
 void TestSkeletonAndPose()
@@ -878,6 +880,144 @@ void TestMorphRuntime()
     Require(cycleRejected, "MorphSet accepted a cyclic Group Morph graph");
 }
 
+void TestBoneAndUvMorphEvaluation()
+{
+    Bone root;
+    root.name = "root";
+    root.bindLocalMatrix = glm::mat4(1.0f);
+    root.inverseBindMatrix = glm::mat4(1.0f);
+    Skeleton skeleton({root});
+
+    const MorphIndex boneMorph = 0U;
+    const MorphIndex uvMorph = 1U;
+    MorphSet morphSet({
+        MorphDefinition{
+            "boneShift",
+            MorphCategory::Other,
+            MorphKind::Bone,
+            {},
+            {},
+            {
+                BoneMorphOffset{
+                    0U,
+                    glm::vec3(1.0f, 2.0f, 3.0f),
+                    glm::angleAxis(glm::half_pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f))
+                }
+            }
+        },
+        MorphDefinition{
+            "uvShift",
+            MorphCategory::Other,
+            MorphKind::Uv
+        }
+    });
+
+    // Bone morph: translation accumulates offset * weight; rotation slerps
+    // from identity toward the offset quaternion and post-multiplies.
+    MorphState boneState(morphSet);
+    PoseBuffer poseBuffer(skeleton);
+    poseBuffer.ResetToBindPose();
+    boneState.SetWeight(boneMorph, 0.5f);
+    morphSet.ApplyBoneMorphs(boneState.Weights(), poseBuffer);
+    const BoneTransform transformed = poseBuffer.TransformAt(0U);
+    Require(
+        NearlyEqual(transformed.translation, glm::vec3(0.5f, 1.0f, 1.5f)),
+        "Bone morph translation did not accumulate offset * weight"
+    );
+    const glm::quat expectedHalfRotation = glm::angleAxis(
+        glm::quarter_pi<float>(),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    Require(
+        NearlySameRotation(transformed.rotation, expectedHalfRotation),
+        "Bone morph rotation did not slerp with the morph weight"
+    );
+
+    // UV morph: per-channel vec4 offsets accumulate into channels 1..4.
+    DefaultModelData data{
+        {
+            0.0f, 0.0f, 0.0f,
+            1.0f, 1.0f, 1.0f
+        },
+        {0U},
+        {{"position", 3, FLOAT}, {"color", 3, FLOAT}}
+    };
+    Mesh uvMesh(
+        std::move(data),
+        0U,
+        {
+            MeshMorphTarget{
+                uvMorph,
+                {},
+                {
+                    UvMorphOffset{
+                        0U,
+                        1U,
+                        glm::vec4(0.1f, 0.2f, 0.3f, 0.4f)
+                    },
+                    UvMorphOffset{
+                        0U,
+                        4U,
+                        glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)
+                    }
+                }
+            }
+        }
+    );
+    MorphState uvState(morphSet);
+    uvState.SetWeight(uvMorph, 0.5f);
+    std::vector<MorphVertexDelta> deltas;
+    Require(
+        uvMesh.CalculateMorphDeltas(uvState.EffectiveWeights(), deltas) &&
+        deltas.size() == 1U,
+        "UV morph mesh did not produce per-vertex deltas"
+    );
+    Require(
+        NearlyEqual(
+            deltas[0U].uv[1U],
+            glm::vec4(0.05f, 0.10f, 0.15f, 0.20f)
+        ) &&
+        NearlyEqual(deltas[0U].uv[4U].x, 0.5f) &&
+        NearlyEqual(deltas[0U].uv[0U], glm::vec4(0.0f)),
+        "UV morph deltas did not accumulate into the correct channels"
+    );
+
+    // Flip morph: PMX 2.1 flip slots overwrite the target weight.
+    MorphSet flipSet({
+        MorphDefinition{
+            "target",
+            MorphCategory::Other,
+            MorphKind::Vertex
+        },
+        MorphDefinition{
+            "flip",
+            MorphCategory::Other,
+            MorphKind::Flip,
+            {},
+            {
+                FlipMorphMember{0U, 0.25f},
+                FlipMorphMember{0U, 0.75f}
+            }
+        }
+    });
+    MorphState flipState(flipSet);
+    flipState.SetWeight(1U, 0.5f);
+    Require(
+        NearlyEqual(flipState.EffectiveWeights()[0U], 0.25f),
+        "Flip morph did not select the low-weight slot"
+    );
+    flipState.SetWeight(1U, 1.0f);
+    Require(
+        NearlyEqual(flipState.EffectiveWeights()[0U], 0.75f),
+        "Flip morph did not select the last slot at full control"
+    );
+    flipState.SetWeight(1U, 0.0f);
+    Require(
+        NearlyEqual(flipState.EffectiveWeights()[0U], 0.0f),
+        "Zero flip control must not overwrite the target"
+    );
+}
+
 class InterfaceCompilationRuntime final : public MmdRuntimeModel
 {
 public:
@@ -920,6 +1060,11 @@ public:
 
     void SetMmdIkEnabled(BoneIndex, bool) override
     {
+    }
+
+    BoneIndex FindBoneIndex(const std::string&) const override
+    {
+        return InvalidBoneIndex;
     }
 
     bool LoadMotion(const std::filesystem::path&) override
@@ -1845,6 +1990,10 @@ int main()
     failures += !RunTest("Root motion", TestRootMotion);
     failures += !RunTest("MMD append and IK constraints", TestMmdBoneConstraints);
     failures += !RunTest("Morph runtime", TestMorphRuntime);
+    failures += !RunTest(
+        "Bone and UV morph evaluation",
+        TestBoneAndUvMorphEvaluation
+    );
     failures += !RunTest(
         "Saba adapter interface compilation",
         TestInterfaceCompilation

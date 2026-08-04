@@ -3188,6 +3188,54 @@ void TestSabaIkSwitchBridgeWhenAvailable()
     );
 }
 
+void TestSabaImporterMorphTargets()
+{
+    const std::filesystem::path modelPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+        "extended_morph.pmx";
+    const ImportedModelData imported = SabaMmdImporter().Import(modelPath);
+
+    const MorphSet morphSet(imported.morphs);
+    const std::optional<MorphIndex> vertexMorph =
+        morphSet.FindMorph("vertex");
+    const std::optional<MorphIndex> uvMorph = morphSet.FindMorph("uv");
+    Require(
+        vertexMorph.has_value() && uvMorph.has_value() &&
+        !imported.meshes.empty(),
+        "Saba importer lost the extended morph fixture"
+    );
+
+    bool foundVertexTarget = false;
+    bool foundUvTarget = false;
+    for (const ImportedMeshData& mesh : imported.meshes)
+    {
+        for (const MeshMorphTarget& target : mesh.morphTargets)
+        {
+            if (target.morphIndex == *vertexMorph && !target.offsets.empty())
+                foundVertexTarget = true;
+            if (target.morphIndex == *uvMorph && !target.uvOffsets.empty())
+            {
+                foundUvTarget = true;
+                for (const UvMorphOffset& offset : target.uvOffsets)
+                {
+                    Require(
+                        offset.channel < MmdUvChannelCount,
+                        "Saba UV morph offset channel is out of range"
+                    );
+                }
+            }
+        }
+    }
+    Require(
+        foundVertexTarget,
+        "Saba importer dropped vertex morph offsets from mesh targets"
+    );
+    Require(
+        foundUvTarget,
+        "Saba importer dropped UV morph offsets from mesh targets"
+    );
+}
+
 }
 
 int main()
@@ -3281,6 +3329,10 @@ int main()
     failures += !RunTest(
         "Saba VMD IK switch bridge",
         TestSabaIkSwitchBridgeWhenAvailable
+    );
+    failures += !RunTest(
+        "Saba importer morph targets",
+        TestSabaImporterMorphTargets
     );
     return failures == 0 ? 0 : 1;
 }
