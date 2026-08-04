@@ -44,6 +44,11 @@ public:
     void DisableFreeCameraController(Window& window) noexcept;
 
     int Run();
+
+    // Pull-model frame step used by the native C ABI window layer (M4):
+    // input frame -> glfwPollEvents -> scene update -> render -> swap.
+    // Frontends call this once per frame instead of blocking in Run().
+    void PollEventsAndRender(float deltaTime);
     void RequestClose() noexcept;
     std::size_t WindowCount() const noexcept;
     bool IsRunning() const noexcept;

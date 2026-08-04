@@ -247,6 +247,7 @@ target_link_libraries(wisteria_core PUBLIC
 if(WISTERIA_BUILD_NATIVE)
     add_library(wisteria_native SHARED
         src/native/wisteria_native.cpp
+        src/native/windows_path.cpp
     )
     target_include_directories(wisteria_native PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

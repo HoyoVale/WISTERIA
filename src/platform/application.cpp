@@ -150,6 +150,20 @@ int Application::Run()
     return 0;
 }
 
+void Application::PollEventsAndRender(float deltaTime)
+{
+    this->windowManager.RequireOwnerThread();
+    this->windowManager.CommitPendingWindows();
+    this->windowManager.BeginInputFrames();
+    glfwPollEvents();
+    this->windowManager.CommitPendingWindows();
+    if (this->windowManager.AllWindowsClosed())
+        return;
+    this->windowManager.DestroyClosedWindows();
+    this->windowManager.Update(deltaTime);
+    this->windowManager.RenderAll();
+}
+
 void Application::RequestClose() noexcept
 {
     this->closeRequested = true;

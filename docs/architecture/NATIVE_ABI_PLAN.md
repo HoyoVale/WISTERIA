@@ -45,8 +45,48 @@ M1 只做 **headless runtime**：不依赖 OpenGL，天然可编译到 Linux/WAS
 |---|---|---|
 | M1 | 头文件 + 句柄注册表 + Linux 编译 | Windows/Linux 都能编出 `wisteria_native` |
 | M2 | 包装 Saba runtime：load model/motion、play/pause/reset、update、顶点诊断 | C ABI 测试：叶瞬光 load→play→720 帧 finite |
-| M3 | FFI 客户端示例（Python ctypes / Node NAPI） | 示例脚本能驱动模型并读取统计 |
-| M4 | 渲染/app 层命令（窗口、相机、事件） | Electron 面板控制桌面窗口 |
+| M3 | FFI 客户端示例（Python ctypes / Node NAPI） | Python 与 Node 示例双平台跑通（见下） |
+| M4 | 渲染/app 层命令（窗口、相机、事件） | Python/Node 开窗示例双平台跑通（见下） |
+
+## M3 进度（2026-08-04）
+
+已完成 Python ctypes 与 Node N-API 示例：
+
+- `examples/python/native_mmd_demo.py`：加载蕾米埃尔-白 + 梦的翅膀 VMD，
+  配置 120Hz / 10 子步 / -98 重力，步进 300/720 帧，每 60 帧打印动作帧号
+  与顶点诊断，演示 pause→update 不推进→resume，最后卸载销毁；
+- `examples/node/`（`binding.cc` N-API 插件 + `native_mmd_demo.js`）：同样
+  流程，运行时动态加载 `wisteria_native`，node-gyp 构建；
+- 两个示例在 Windows（Node v24）与 Linux（Node v12）双平台运行通过，顶点
+  包围盒数据跨语言、跨平台一致；
+- 修了一个 ABI 契约 bug：C ABI 接收 **UTF-8 路径**，但 Windows 上
+  `std::filesystem::path(const char*)` 按 ANSI 代码页（zh-CN 为 GBK）解释，
+  中文路径会损坏甚至抛异常。`PathFromUtf8()` 现在在 Windows 显式
+  UTF-8→UTF-16 转换；所有包装函数补了 `catch (...)` 防止 C++ 异常跨 ABI
+  逃逸；原生测试也改成传 UTF-8 路径验证。
+
+> 注意：M3 示例是 **headless** 的（无 GL、无窗口），这是分层设计——C ABI
+> 目前只包装 Saba headless runtime。要让脚本真正开窗渲染，属于 M4
+> （窗口/相机/事件/渲染命令）。
+
+## M4 进度（2026-08-04）
+
+M4 窗口层已完成，接口草案见 `docs/architecture/M4_WINDOW_ABI_DRAFT.md`：
+
+- C ABI v0.2：新增 `WisteriaWindow`、键/鼠标枚举与 15 个窗口函数
+  （创建/销毁、demo 加载、拉模式渲染、输入查询、相机控制）；
+- `Application::PollEventsAndRender(dt)`：把 `Run()` 的私有循环体拆成公开
+  拉模式入口，前端每帧驱动；
+- `SetupSabaMmdDemoScene` 支持显式 motion 路径与物理参数；
+- 自动测试 `Native ABI window`：开窗 → 载 demo → 渲染 30 帧 → 相机/输入
+  查询 → 关闭（无显示环境自动跳过）；
+- Python `native_window_demo.py` 与 Node `--window` 示例双平台跑通，
+  相机位姿跨平台一致；
+- 修了一个 Windows 编译冲突：把 `windows.h` 隔离到独立 TU
+  （`windows_path.cpp`），避免与渲染层全局枚举 `FLOAT/INT/UINT/UCHAR`
+  同名冲突。
+
+剩余可选项：`wisteria_window_capture_bmp` 截图 API、Electron 面板示例。
 
 ## Linux（WSL Ubuntu-22.04）测试计划
 

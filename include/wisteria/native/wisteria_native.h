@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #define WISTERIA_NATIVE_VERSION_MAJOR 0
-#define WISTERIA_NATIVE_VERSION_MINOR 1
+#define WISTERIA_NATIVE_VERSION_MINOR 2
 
 #if defined(_WIN32)
 #  if defined(WISTERIA_NATIVE_BUILD)
@@ -37,6 +37,7 @@ extern "C" {
 typedef uint64_t WisteriaContext;
 typedef uint64_t WisteriaModel;
 typedef uint64_t WisteriaMotion;
+typedef uint64_t WisteriaWindow;
 
 enum WisteriaStatus
 {
@@ -57,6 +58,40 @@ struct WisteriaVertexBounds
     float maximum[3];
     float maximumDisplacementFromBind;
     uint64_t vertexCount;
+};
+
+enum WisteriaKey
+{
+    WISTERIA_KEY_W = 0,
+    WISTERIA_KEY_A = 1,
+    WISTERIA_KEY_S = 2,
+    WISTERIA_KEY_D = 3,
+    WISTERIA_KEY_Q = 4,
+    WISTERIA_KEY_E = 5,
+    WISTERIA_KEY_LEFT_SHIFT = 6,
+    WISTERIA_KEY_ESCAPE = 7,
+    WISTERIA_KEY_R = 8,
+    WISTERIA_KEY_P = 9,
+    WISTERIA_KEY_B = 10,
+    WISTERIA_KEY_L = 11,
+    WISTERIA_KEY_V = 12,
+    WISTERIA_KEY_M = 13,
+    WISTERIA_KEY_C = 14,
+    WISTERIA_KEY_G = 15,
+    WISTERIA_KEY_H = 16,
+    WISTERIA_KEY_F3 = 17,
+    WISTERIA_KEY_SPACE = 18,
+    WISTERIA_KEY_LEFT = 19,
+    WISTERIA_KEY_RIGHT = 20,
+    WISTERIA_KEY_COUNT = 21
+};
+
+enum WisteriaMouseButton
+{
+    WISTERIA_MOUSE_LEFT = 0,
+    WISTERIA_MOUSE_RIGHT = 1,
+    WISTERIA_MOUSE_MIDDLE = 2,
+    WISTERIA_MOUSE_COUNT = 3
 };
 
 WISTERIA_API const char* wisteria_status_name(
@@ -176,6 +211,116 @@ WISTERIA_API enum WisteriaStatus wisteria_vertex_bounds(
     WisteriaContext context,
     WisteriaModel model,
     struct WisteriaVertexBounds* out_bounds
+);
+
+/* --- Window (M4): native desktop window driven by the frontend ---------- */
+
+WISTERIA_API enum WisteriaStatus wisteria_window_create(
+    WisteriaContext context,
+    int width,
+    int height,
+    const char* title,
+    WisteriaWindow* out_window
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_destroy(
+    WisteriaContext context,
+    WisteriaWindow window
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_load_demo(
+    WisteriaContext context,
+    WisteriaWindow window,
+    const char* model_path,
+    const char* motion_path,
+    const char* scene_path,
+    float physics_fps,
+    int32_t max_sub_steps
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_poll_and_render(
+    WisteriaContext context,
+    WisteriaWindow window,
+    float delta_time
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_should_close(
+    WisteriaContext context,
+    WisteriaWindow window,
+    int32_t* out_closed
+);
+
+/* --- Window input ------------------------------------------------------- */
+
+WISTERIA_API enum WisteriaStatus wisteria_window_is_key_down(
+    WisteriaContext context,
+    WisteriaWindow window,
+    enum WisteriaKey key,
+    int32_t* out_down
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_was_key_pressed(
+    WisteriaContext context,
+    WisteriaWindow window,
+    enum WisteriaKey key,
+    int32_t* out_pressed
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_was_key_released(
+    WisteriaContext context,
+    WisteriaWindow window,
+    enum WisteriaKey key,
+    int32_t* out_released
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_is_mouse_button_down(
+    WisteriaContext context,
+    WisteriaWindow window,
+    enum WisteriaMouseButton button,
+    int32_t* out_down
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_cursor_delta(
+    WisteriaContext context,
+    WisteriaWindow window,
+    float* out_x,
+    float* out_y
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_scroll_delta(
+    WisteriaContext context,
+    WisteriaWindow window,
+    float* out_y
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_set_cursor_captured(
+    WisteriaContext context,
+    WisteriaWindow window,
+    int32_t captured
+);
+
+/* --- Window camera ------------------------------------------------------ */
+
+WISTERIA_API enum WisteriaStatus wisteria_window_set_camera(
+    WisteriaContext context,
+    WisteriaWindow window,
+    const float position[3],
+    const float target[3],
+    const float up[3]
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_camera_pose(
+    WisteriaContext context,
+    WisteriaWindow window,
+    float out_position[3],
+    float out_target[3],
+    float out_up[3]
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_set_camera_speed(
+    WisteriaContext context,
+    WisteriaWindow window,
+    float move_speed
 );
 
 #ifdef __cplusplus

@@ -3627,6 +3627,172 @@ void TestNativeAbiLifecycle()
     );
 }
 
+void TestNativeAbiWindowWhenAvailable()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI window context creation failed"
+    );
+
+    WisteriaWindow window = 0U;
+    const WisteriaStatus createStatus = wisteria_window_create(
+        context,
+        320,
+        240,
+        "WISTERIA ABI window test",
+        &window
+    );
+    if (createStatus != WISTERIA_OK)
+    {
+        // No display available (e.g. headless CI): the window layer cannot
+        // run, so skip the rest of this test.
+        wisteria_destroy_context(context);
+        return;
+    }
+
+    // The renderer resolves shaders/assets relative to the current working
+    // directory. CTest runs from build/, so temporarily switch to the
+    // project root and restore it on every exit path.
+    const std::filesystem::path previousWorkingDirectory =
+        std::filesystem::current_path();
+    try
+    {
+        std::filesystem::current_path(ProjectAssetDirectory.parent_path());
+
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    Require(
+        std::filesystem::is_regular_file(modelPath),
+        "ABI window test model is missing"
+    );
+    const std::u8string modelPathU8 = modelPath.u8string();
+    const std::string modelPathUtf8(
+        reinterpret_cast<const char*>(modelPathU8.data()),
+        modelPathU8.size()
+    );
+    const std::filesystem::path motionPath =
+        ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
+        u8"梦的翅膀motion.vmd";
+    const std::u8string motionPathU8 = motionPath.u8string();
+    const std::string motionPathUtf8(
+        reinterpret_cast<const char*>(motionPathU8.data()),
+        motionPathU8.size()
+    );
+    const std::filesystem::path scenePath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"随便观" / u8"随便观.pmx";
+    const std::u8string scenePathU8 = scenePath.u8string();
+    const std::string scenePathUtf8(
+        reinterpret_cast<const char*>(scenePathU8.data()),
+        scenePathU8.size()
+    );
+    Require(
+        std::filesystem::is_regular_file(motionPath) &&
+            std::filesystem::is_regular_file(scenePath),
+        "ABI window test motion/scene assets are missing"
+    );
+
+    Require(
+        wisteria_window_load_demo(
+            context,
+            window,
+            modelPathUtf8.c_str(),
+            motionPathUtf8.c_str(),
+            scenePathUtf8.c_str(),
+            0.0f,
+            0
+        ) == WISTERIA_OK,
+        "ABI window demo load failed"
+    );
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        Require(
+            wisteria_window_poll_and_render(
+                context,
+                window,
+                1.0f / 60.0f
+            ) == WISTERIA_OK,
+            "ABI window render failed"
+        );
+    }
+
+    int32_t closed = 1;
+    Require(
+        wisteria_window_should_close(context, window, &closed) ==
+                WISTERIA_OK &&
+            closed == 0,
+        "ABI window reported close before it was requested"
+    );
+
+    float pose[9] = {};
+    Require(
+        wisteria_window_camera_pose(
+            context,
+            window,
+            pose,
+            pose + 3,
+            pose + 6
+        ) == WISTERIA_OK &&
+            std::isfinite(pose[0]) &&
+            std::isfinite(pose[3]) &&
+            std::isfinite(pose[6]),
+        "ABI window camera pose is invalid"
+    );
+    Require(
+        wisteria_window_set_camera_speed(context, window, 5.0f) ==
+            WISTERIA_OK,
+        "ABI window camera speed failed"
+    );
+
+    int32_t keyDown = 0;
+    Require(
+        wisteria_window_is_key_down(
+            context,
+            window,
+            WISTERIA_KEY_SPACE,
+            &keyDown
+        ) == WISTERIA_OK,
+        "ABI window key query failed"
+    );
+    float cursorX = 0.0f;
+    float cursorY = 0.0f;
+    Require(
+        wisteria_window_cursor_delta(
+            context,
+            window,
+            &cursorX,
+            &cursorY
+        ) == WISTERIA_OK &&
+            std::isfinite(cursorX) &&
+            std::isfinite(cursorY),
+        "ABI window cursor delta failed"
+    );
+
+    Require(
+        wisteria_window_destroy(context, window) == WISTERIA_OK,
+        "ABI window destroy failed"
+    );
+    }
+    catch (...)
+    {
+        std::filesystem::current_path(previousWorkingDirectory);
+        throw;
+    }
+    std::filesystem::current_path(previousWorkingDirectory);
+    Require(
+        wisteria_destroy_context(context) == WISTERIA_OK,
+        "ABI window context destroy failed"
+    );
+}
+
 void TestNativeAbiSabaWhenAvailable()
 {
     std::filesystem::path modelPath =
@@ -3653,20 +3819,32 @@ void TestNativeAbiSabaWhenAvailable()
         "ABI context creation failed"
     );
     WisteriaModel model = 0U;
+    // The C ABI contract is UTF-8 paths; .string() would use the ANSI code
+    // page on Windows and bypass the UTF-8 conversion in the wrapper.
+    const std::u8string modelPathU8 = modelPath.u8string();
+    const std::string modelPathUtf8(
+        reinterpret_cast<const char*>(modelPathU8.data()),
+        modelPathU8.size()
+    );
     Require(
         wisteria_load_model(
             context,
-            modelPath.string().c_str(),
+            modelPathUtf8.c_str(),
             &model
         ) == WISTERIA_OK,
         "ABI model load failed"
     );
     WisteriaMotion motion = 0U;
+    const std::u8string motionPathU8 = motionPath.u8string();
+    const std::string motionPathUtf8(
+        reinterpret_cast<const char*>(motionPathU8.data()),
+        motionPathU8.size()
+    );
     Require(
         wisteria_load_motion(
             context,
             model,
-            motionPath.string().c_str(),
+            motionPathUtf8.c_str(),
             &motion
         ) == WISTERIA_OK,
         "ABI motion load failed"
@@ -5620,6 +5798,10 @@ int main()
     failures += !RunTest(
         "Native ABI Saba runtime",
         TestNativeAbiSabaWhenAvailable
+    );
+    failures += !RunTest(
+        "Native ABI window",
+        TestNativeAbiWindowWhenAvailable
     );
     failures += !RunTest("RenderPart and ModelAsset", TestRenderPartAndModelAsset);
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);

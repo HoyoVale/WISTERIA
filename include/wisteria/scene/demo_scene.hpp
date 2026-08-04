@@ -16,5 +16,8 @@ void SetupSabaMmdDemoScene(
     bool alternateModel = false,
     std::filesystem::path modelPath = {},
     std::filesystem::path scenePath = {},
-    bool sceneMode = false
+    bool sceneMode = false,
+    std::filesystem::path motionPath = {},
+    float physicsFps = 0.0f,
+    int maxSubSteps = 0
 );

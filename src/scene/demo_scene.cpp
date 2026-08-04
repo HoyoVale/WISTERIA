@@ -271,7 +271,10 @@ void SetupSabaMmdDemoScene(
     bool alternateModel,
     std::filesystem::path modelPath,
     std::filesystem::path scenePath,
-    bool sceneMode
+    bool sceneMode,
+    std::filesystem::path motionPath,
+    float physicsFps,
+    int maxSubSteps
 )
 {
     EnvironmentMap* existingEnvironment =
@@ -331,20 +334,27 @@ void SetupSabaMmdDemoScene(
         )
     );
 
-    const std::filesystem::path motionPath = sceneMode
-        ? std::filesystem::path{}
-        : DemoDreamWingMotionPath();
+    if (motionPath.empty() && !sceneMode)
+        motionPath = DemoDreamWingMotionPath();
     const std::filesystem::path cameraPath = DemoDreamWingCameraPath();
     SabaPhysicsSettings physicsSettings;
-    if (const char* fpsValue =
-            std::getenv("WISTERIA_SABA_PHYSICS_FPS"))
+    if (physicsFps > 0.0f)
+    {
+        physicsSettings.fixedTimeStep = 1.0f / physicsFps;
+    }
+    else if (const char* fpsValue =
+                 std::getenv("WISTERIA_SABA_PHYSICS_FPS"))
     {
         const float fps = static_cast<float>(std::atof(fpsValue));
         if (fps > 0.0f)
             physicsSettings.fixedTimeStep = 1.0f / fps;
     }
-    if (const char* stepsValue =
-            std::getenv("WISTERIA_SABA_PHYSICS_MAXSTEPS"))
+    if (maxSubSteps > 0)
+    {
+        physicsSettings.maxSubSteps = maxSubSteps;
+    }
+    else if (const char* stepsValue =
+                 std::getenv("WISTERIA_SABA_PHYSICS_MAXSTEPS"))
     {
         const int steps = std::atoi(stepsValue);
         if (steps > 0)
