@@ -70,47 +70,52 @@ if(MSVC)
         "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
-# Saba's official GLFW viewer: a self-contained PMX/PMD + VMD demo with MMD
-# style edge/ground-shadow rendering. It only needs the core Saba library.
-find_package(OpenGL REQUIRED)
+# Saba's official GLFW viewer is an optional reference executable. It must
+# not pull a system OpenGL development package into WISTERIA's NULL/headless
+# compile path.
+if(WISTERIA_BUILD_SABA_VIEWER)
+    # Saba's official GLFW viewer: a self-contained PMX/PMD + VMD demo with MMD
+    # style edge/ground-shadow rendering. It only needs the core Saba library.
+    find_package(OpenGL REQUIRED)
 
-add_executable(simple_mmd_viewer_glfw
-    ${WISTERIA_SABA_ROOT}/example/simple_mmd_viewer_glfw.cpp
-    ${WISTERIA_SABA_ROOT}/external/gl3w/src/gl3w.c
-)
+    add_executable(simple_mmd_viewer_glfw
+        ${WISTERIA_SABA_ROOT}/example/simple_mmd_viewer_glfw.cpp
+        ${WISTERIA_SABA_ROOT}/external/gl3w/src/gl3w.c
+    )
 
-target_include_directories(simple_mmd_viewer_glfw
-    PRIVATE
-        ${WISTERIA_SABA_ROOT}/src
-        ${WISTERIA_SABA_ROOT}/external/glm/include
-        ${WISTERIA_SABA_ROOT}/external/spdlog/include
-        ${WISTERIA_SABA_ROOT}/external/gl3w/include
-        ${WISTERIA_SABA_ROOT}/external/stb/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glfw/include
-        ${WISTERIA_BULLET_ROOT}/src
-)
+    target_include_directories(simple_mmd_viewer_glfw
+        PRIVATE
+            ${WISTERIA_SABA_ROOT}/src
+            ${WISTERIA_SABA_ROOT}/external/glm/include
+            ${WISTERIA_SABA_ROOT}/external/spdlog/include
+            ${WISTERIA_SABA_ROOT}/external/gl3w/include
+            ${WISTERIA_SABA_ROOT}/external/stb/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glfw/include
+            ${WISTERIA_BULLET_ROOT}/src
+    )
 
-target_compile_features(simple_mmd_viewer_glfw PRIVATE cxx_std_14)
+    target_compile_features(simple_mmd_viewer_glfw PRIVATE cxx_std_14)
 
-target_link_libraries(simple_mmd_viewer_glfw PRIVATE
-    saba
-    glfw
-    ${OPENGL_LIBRARIES}
-)
+    target_link_libraries(simple_mmd_viewer_glfw PRIVATE
+        saba
+        glfw
+        ${OPENGL_LIBRARIES}
+    )
 
-if(WIN32)
-    target_compile_definitions(simple_mmd_viewer_glfw PRIVATE UNICODE _UNICODE)
+    if(WIN32)
+        target_compile_definitions(simple_mmd_viewer_glfw PRIVATE UNICODE _UNICODE)
+    endif()
+
+    if(MSVC)
+        target_compile_options(simple_mmd_viewer_glfw PRIVATE /utf-8 /FS)
+        set_property(TARGET simple_mmd_viewer_glfw PROPERTY
+            MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    endif()
+
+    add_custom_command(TARGET simple_mmd_viewer_glfw POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${WISTERIA_SABA_ROOT}/viewer/Saba/Viewer/resource
+            $<TARGET_FILE_DIR:simple_mmd_viewer_glfw>/resource
+    )
 endif()
-
-if(MSVC)
-    target_compile_options(simple_mmd_viewer_glfw PRIVATE /utf-8 /FS)
-    set_property(TARGET simple_mmd_viewer_glfw PROPERTY
-        MSVC_RUNTIME_LIBRARY
-        "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-endif()
-
-add_custom_command(TARGET simple_mmd_viewer_glfw POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${WISTERIA_SABA_ROOT}/viewer/Saba/Viewer/resource
-        $<TARGET_FILE_DIR:simple_mmd_viewer_glfw>/resource
-)

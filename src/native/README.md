@@ -28,3 +28,6 @@ not render only the selected window.
 - Desktop calls should be driven from one process UI thread because GLFW has
   process-level state and platform-specific main-thread restrictions.
 - OpenGL objects never cross independent `Application` resource share groups.
+
+`wisteria_window_load_demo(..., physics_fps, ...)` receives physics frequency
+in Hz. Pass `120.0f` for 120 Hz; do not pass `1.0f / 120.0f`.

@@ -268,6 +268,10 @@ powershell -ExecutionPolicy Bypass -File .\script\verify_render.ps1
 ./script/verify_render.sh --backend X11
 ```
 
+WSLg 渲染验收默认读取引擎离屏 Scene FBO，避免默认 back buffer 读回
+干扰交换链。可用 `--capture-source default` 复现平台缓冲读回，或用
+`--capture-source none` 做纯肉眼窗口检查。
+
 无显示环境只做编译与测试：
 
 ```bash

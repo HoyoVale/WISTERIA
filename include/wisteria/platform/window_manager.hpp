@@ -74,10 +74,14 @@ private:
 
     struct ManagedWindow
     {
-        explicit ManagedWindow(std::unique_ptr<Window> nextWindow);
+        ManagedWindow(
+            std::unique_ptr<Window> nextWindow,
+            std::string captureStem
+        );
 
         // Reverse member destruction gives framebuffer -> renderer -> window.
         std::unique_ptr<Window> window;
+        std::string captureStem;
         Renderer renderer;
         SceneFramebuffer framebuffer;
         std::size_t renderedFrames = 0U;

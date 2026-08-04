@@ -9,6 +9,9 @@ param(
     [string]$Model = '',
     [string]$Motion = '',
 
+    [ValidateSet('scene', 'default', 'none')]
+    [string]$CaptureSource = 'scene',
+
     [switch]$SkipNativeDemos,
     [switch]$SkipBuild
 )
@@ -32,6 +35,24 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-LoggedNative {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath
+    )
+
+    $global:LASTEXITCODE = 0
+    & $FilePath @Arguments 2>&1 | Tee-Object -FilePath $LogPath
+    $ExitCode = $LASTEXITCODE
+    if ($ExitCode -ne 0) {
+        throw "命令执行失败（退出码 $ExitCode）：$FilePath $($Arguments -join ' ')"
+    }
+}
+
 function Find-Executable {
     param([string[]]$Candidates)
     foreach ($Candidate in $Candidates) {
@@ -50,22 +71,11 @@ function Reset-Directory {
 
 function Show-CaptureSummary {
     param([string]$Path)
-    $Files = @(Get-ChildItem -LiteralPath $Path -Filter '*.bmp' -File | Sort-Object Name)
-    if ($Files.Count -lt 2) {
-        throw "截图数量不足：$Path 中只找到 $($Files.Count) 张 BMP。"
-    }
-
-    $Hashes = @()
-    foreach ($File in $Files) {
-        $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $File.FullName).Hash
-        $Hashes += $Hash
-        Write-Host ("[CAPTURE] {0}  {1}" -f $Hash.Substring(0, 16), $File.Name)
-    }
-    $UniqueCount = @($Hashes | Sort-Object -Unique).Count
-    if ($UniqueCount -le 1) {
-        throw "所有截图完全相同，疑似动画/渲染卡在同一帧：$Path"
-    }
-    Write-Host "[CAPTURE] $($Files.Count) 张截图，$UniqueCount 个不同 SHA256。" -ForegroundColor Green
+    $AnalyzerArguments = $PythonPrefix + @(
+        (Join-Path $ProjectRoot 'script/analyze_render_captures.py'),
+        $Path
+    )
+    Invoke-Checked $PythonCommand $AnalyzerArguments
 }
 
 $CMake = (Get-Command cmake.exe -ErrorAction Stop).Source
@@ -114,8 +124,8 @@ if (Get-Command py.exe -ErrorAction SilentlyContinue) {
 elseif (Get-Command python.exe -ErrorAction SilentlyContinue) {
     $PythonCommand = (Get-Command python.exe).Source
 }
-elseif (-not $SkipNativeDemos) {
-    throw '找不到 Python 3。可安装 Python，或使用 -SkipNativeDemos 只测 C++ 窗口。'
+else {
+    throw '找不到 Python 3；截图像素校验需要 Python。'
 }
 
 $OldEnvironment = @{
@@ -124,6 +134,7 @@ $OldEnvironment = @{
     WISTERIA_GL_DIAGNOSTICS = $env:WISTERIA_GL_DIAGNOSTICS
     WISTERIA_SCREENSHOT_DIR = $env:WISTERIA_SCREENSHOT_DIR
     WISTERIA_SCREENSHOT_INTERVAL = $env:WISTERIA_SCREENSHOT_INTERVAL
+    WISTERIA_SCREENSHOT_SOURCE = $env:WISTERIA_SCREENSHOT_SOURCE
     WISTERIA_NATIVE_LIB = $env:WISTERIA_NATIVE_LIB
 }
 
@@ -132,11 +143,17 @@ try {
     $env:WISTERIA_FRAME_PROFILE = '1'
     $env:WISTERIA_GL_DIAGNOSTICS = '1'
     $env:WISTERIA_SCREENSHOT_INTERVAL = '30'
+    $env:WISTERIA_SCREENSHOT_SOURCE = $CaptureSource
     $env:WISTERIA_NATIVE_LIB = $NativeLibrary
 
     $DesktopOutput = Join-Path $OutputRoot 'desktop'
     Reset-Directory $DesktopOutput
-    $env:WISTERIA_SCREENSHOT_DIR = $DesktopOutput
+    if ($CaptureSource -eq 'none') {
+        Remove-Item Env:WISTERIA_SCREENSHOT_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:WISTERIA_SCREENSHOT_DIR = $DesktopOutput
+    }
 
     $DesktopArguments = @('--frames', "$Frames", '--fixed-dt', '0.016666667')
     if (-not [string]::IsNullOrWhiteSpace($Model)) {
@@ -146,20 +163,30 @@ try {
         $DesktopArguments += @('--motion', $Motion)
     }
 
-    Write-Host "==> C++ 桌面 demo：固定运行 $Frames 帧" -ForegroundColor Cyan
+    Write-Host "==> C++ 桌面 demo：固定运行 $Frames 帧（capture=$CaptureSource）" -ForegroundColor Cyan
     Push-Location $ProjectRoot
     try {
-        Invoke-Checked $WisteriaExe $DesktopArguments
+        Invoke-LoggedNative `
+            $WisteriaExe `
+            $DesktopArguments `
+            (Join-Path $DesktopOutput 'run.log')
     }
     finally {
         Pop-Location
     }
-    Show-CaptureSummary $DesktopOutput
+    if ($CaptureSource -ne 'none') {
+        Show-CaptureSummary $DesktopOutput
+    }
 
     if (-not $SkipNativeDemos) {
         $NativeOutput = Join-Path $OutputRoot 'native-single'
         Reset-Directory $NativeOutput
-        $env:WISTERIA_SCREENSHOT_DIR = $NativeOutput
+        if ($CaptureSource -eq 'none') {
+            Remove-Item Env:WISTERIA_SCREENSHOT_DIR -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:WISTERIA_SCREENSHOT_DIR = $NativeOutput
+        }
         $NativeArguments = @(
             'examples/python/native_window_demo.py',
             '--frames', "$Frames"
@@ -174,16 +201,26 @@ try {
         Write-Host "==> Python ctypes 单 Context demo：$Frames 帧" -ForegroundColor Cyan
         Push-Location $ProjectRoot
         try {
-            Invoke-Checked $PythonCommand ($PythonPrefix + $NativeArguments)
+            Invoke-LoggedNative `
+                $PythonCommand `
+                ($PythonPrefix + $NativeArguments) `
+                (Join-Path $NativeOutput 'run.log')
         }
         finally {
             Pop-Location
         }
-        Show-CaptureSummary $NativeOutput
+        if ($CaptureSource -ne 'none') {
+            Show-CaptureSummary $NativeOutput
+        }
 
         $MultiOutput = Join-Path $OutputRoot 'native-multi'
         Reset-Directory $MultiOutput
-        $env:WISTERIA_SCREENSHOT_DIR = $MultiOutput
+        if ($CaptureSource -eq 'none') {
+            Remove-Item Env:WISTERIA_SCREENSHOT_DIR -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:WISTERIA_SCREENSHOT_DIR = $MultiOutput
+        }
         $DestroyAt = [Math]::Max(30, [Math]::Floor($Frames / 2))
         $MultiArguments = @(
             'examples/python/native_multi_context_demo.py',
@@ -200,12 +237,17 @@ try {
         Write-Host '==> Python ctypes 双 Context 生命周期 demo' -ForegroundColor Cyan
         Push-Location $ProjectRoot
         try {
-            Invoke-Checked $PythonCommand ($PythonPrefix + $MultiArguments)
+            Invoke-LoggedNative `
+                $PythonCommand `
+                ($PythonPrefix + $MultiArguments) `
+                (Join-Path $MultiOutput 'run.log')
         }
         finally {
             Pop-Location
         }
-        Show-CaptureSummary $MultiOutput
+        if ($CaptureSource -ne 'none') {
+            Show-CaptureSummary $MultiOutput
+        }
     }
 }
 finally {

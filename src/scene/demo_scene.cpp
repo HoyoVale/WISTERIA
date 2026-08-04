@@ -104,6 +104,9 @@ public:
           window(&window),
           input(&input),
           sceneMode(sceneMode),
+          cameraFollowEnabled(
+              std::getenv("WISTERIA_DISABLE_CAMERA_MOTION") == nullptr
+          ),
           cameraSpeed(cameraSpeed)
     {
     }

@@ -221,12 +221,18 @@ void SceneFramebuffer::Bind() const
     if (!this->IsValid())
         throw std::logic_error("Cannot bind an uninitialized scene framebuffer");
     this->framebuffer.Bind();
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
     glViewport(0, 0, this->width, this->height);
 }
 
 void SceneFramebuffer::Clear(const glm::vec4& color) const
 {
     this->Bind();
+    // glClear obeys the color mask and scissor state. Establish a complete
+    // render-target baseline at the frame boundary instead of inheriting
+    // state from post-processing or third-party rendering code.
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glClearColor(color.r, color.g, color.b, color.a);
     glDepthMask(GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

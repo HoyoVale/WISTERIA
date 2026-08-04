@@ -68,12 +68,68 @@ void ReportGlErrors(
     }
 }
 
+void ReportScenePixel(
+    const char* stage,
+    std::size_t frameIndex,
+    const SceneFramebuffer& framebuffer
+)
+{
+    if (std::getenv("WISTERIA_GL_PIXEL_PROBE") == nullptr ||
+        !framebuffer.IsValid() ||
+        !(frameIndex <= 3U || frameIndex % 30U == 1U))
+    {
+        return;
+    }
+
+    GLint previousReadFramebuffer = 0;
+    GLint previousReadBuffer = GL_BACK;
+    GLint previousPackAlignment = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+    glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.Id());
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    unsigned char rgba[4] = {0U, 0U, 0U, 0U};
+    glReadPixels(
+        framebuffer.Width() / 2,
+        framebuffer.Height() / 2,
+        1,
+        1,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        rgba
+    );
+
+    glBindFramebuffer(
+        GL_READ_FRAMEBUFFER,
+        static_cast<GLuint>(previousReadFramebuffer)
+    );
+    glReadBuffer(static_cast<GLenum>(previousReadBuffer));
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
+
+    std::cout << "[GL PIXEL] frame=" << frameIndex
+              << " stage=" << stage
+              << " center="
+              << static_cast<unsigned int>(rgba[0]) << ","
+              << static_cast<unsigned int>(rgba[1]) << ","
+              << static_cast<unsigned int>(rgba[2]) << ","
+              << static_cast<unsigned int>(rgba[3])
+              << " fbo=" << framebuffer.Id()
+              << " colorTexture=" << framebuffer.ColorTexture()
+              << std::endl;
+}
+
 void SaveWindowScreenshotBmp(
     const std::string& directory,
     std::string_view windowTitle,
     std::size_t frameIndex,
     int width,
-    int height
+    int height,
+    GLuint readFramebuffer,
+    GLenum readBuffer,
+    std::string_view sourceName
 )
 {
     if (width <= 0 || height <= 0)
@@ -88,6 +144,16 @@ void SaveWindowScreenshotBmp(
         return;
     }
 
+    GLint previousReadFramebuffer = 0;
+    GLint previousReadBuffer = GL_BACK;
+    GLint previousPackAlignment = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+    glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, readFramebuffer);
+    glReadBuffer(readBuffer);
+
     std::vector<unsigned char> rgba(
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U
     );
@@ -101,6 +167,13 @@ void SaveWindowScreenshotBmp(
         GL_UNSIGNED_BYTE,
         rgba.data()
     );
+
+    glBindFramebuffer(
+        GL_READ_FRAMEBUFFER,
+        static_cast<GLuint>(previousReadFramebuffer)
+    );
+    glReadBuffer(static_cast<GLenum>(previousReadBuffer));
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
 
     std::uint64_t hash = 1469598103934665603ULL;
     unsigned int minimumRgb = 255U;
@@ -201,6 +274,9 @@ void SaveWindowScreenshotBmp(
     output.close();
 
     std::cout << "[FRAME CAPTURE] frame=" << frameIndex
+              << " source=" << sourceName
+              << " readFbo=" << readFramebuffer
+              << " readBuffer=0x" << std::hex << readBuffer << std::dec
               << " size=" << width << "x" << height
               << " rgbRange=" << minimumRgb << ".." << maximumRgb
               << " fnv1a=0x" << std::hex << hash << std::dec
@@ -209,9 +285,11 @@ void SaveWindowScreenshotBmp(
 }
 
 WindowManager::ManagedWindow::ManagedWindow(
-    std::unique_ptr<Window> nextWindow
+    std::unique_ptr<Window> nextWindow,
+    std::string nextCaptureStem
 )
-    : window(std::move(nextWindow))
+    : window(std::move(nextWindow)),
+      captureStem(std::move(nextCaptureStem))
 {
     if (this->window == nullptr)
         throw std::invalid_argument("Managed window cannot be null");
@@ -276,7 +354,10 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
 
     Window& result = *window;
     this->TrackScene(window->GetSceneHandle());
-    auto managed = std::make_unique<ManagedWindow>(std::move(window));
+    auto managed = std::make_unique<ManagedWindow>(
+        std::move(window),
+        config.title
+    );
     if (this->running)
         this->pendingWindows.push_back(std::move(managed));
     else
@@ -580,6 +661,7 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
     const glm::mat4 projection = window.Projection(aspect);
     managedWindow.framebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
     ReportGlErrors("clear", frameIndex, window.Title());
+    ReportScenePixel("after-clear", frameIndex, managedWindow.framebuffer);
     const auto afterClear = std::chrono::steady_clock::now();
     managedWindow.renderer.Render(
         window.GetScene(),
@@ -588,7 +670,54 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         managedWindow.framebuffer
     );
     ReportGlErrors("render", frameIndex, window.Title());
+    ReportScenePixel("after-render", frameIndex, managedWindow.framebuffer);
     const auto afterRender = std::chrono::steady_clock::now();
+
+    const char* screenshotDirectory = std::getenv("WISTERIA_SCREENSHOT_DIR");
+    const std::string_view screenshotSource = []() -> std::string_view
+    {
+        const char* configured = std::getenv("WISTERIA_SCREENSHOT_SOURCE");
+        return configured != nullptr ? std::string_view(configured) : "scene";
+    }();
+    std::size_t screenshotInterval = 30U;
+    if (const char* configuredInterval =
+            std::getenv("WISTERIA_SCREENSHOT_INTERVAL"))
+    {
+        try
+        {
+            screenshotInterval = std::max<std::size_t>(
+                1U,
+                std::stoull(configuredInterval)
+            );
+        }
+        catch (...)
+        {
+            screenshotInterval = 30U;
+        }
+    }
+    const bool captureFrame = screenshotDirectory != nullptr &&
+        (frameIndex == 1U ||
+         (frameIndex - 1U) % screenshotInterval == 0U);
+
+    // The scene framebuffer is the authoritative renderer output. Reading it
+    // avoids touching the platform swapchain. This matters on WSLg/Mesa D3D12,
+    // where glReadPixels from the default back buffer can make later frames
+    // appear black even though scene update and rendering continue normally.
+    if (captureFrame && screenshotSource != "default")
+    {
+        SaveWindowScreenshotBmp(
+            screenshotDirectory,
+            managedWindow.captureStem,
+            frameIndex,
+            framebufferSize.width,
+            framebufferSize.height,
+            managedWindow.framebuffer.Id(),
+            GL_COLOR_ATTACHMENT0,
+            "scene"
+        );
+        ReportGlErrors("capture-scene", frameIndex, window.Title());
+    }
+
     managedWindow.renderer.Present(
         managedWindow.framebuffer,
         framebufferSize.width,
@@ -596,36 +725,25 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
     );
     ReportGlErrors("present", frameIndex, window.Title());
     const auto afterPresent = std::chrono::steady_clock::now();
-    if (const char* screenshotDirectory =
-            std::getenv("WISTERIA_SCREENSHOT_DIR"))
+
+    // Keep the old default-framebuffer readback as an explicit diagnostic. It
+    // is intentionally not the default acceptance path because it interacts
+    // with the platform compositor and driver swapchain.
+    if (captureFrame && screenshotSource == "default")
     {
-        std::size_t interval = 30U;
-        if (const char* configuredInterval =
-                std::getenv("WISTERIA_SCREENSHOT_INTERVAL"))
-        {
-            try
-            {
-                interval = std::max<std::size_t>(
-                    1U,
-                    std::stoull(configuredInterval)
-                );
-            }
-            catch (...)
-            {
-                interval = 30U;
-            }
-        }
-        if (frameIndex == 1U || (frameIndex - 1U) % interval == 0U)
-        {
-            SaveWindowScreenshotBmp(
-                screenshotDirectory,
-                window.Title(),
-                frameIndex,
-                framebufferSize.width,
-                framebufferSize.height
-            );
-            ReportGlErrors("capture", frameIndex, window.Title());
-        }
+        GLboolean doubleBuffered = GL_TRUE;
+        glGetBooleanv(GL_DOUBLEBUFFER, &doubleBuffered);
+        SaveWindowScreenshotBmp(
+            screenshotDirectory,
+            managedWindow.captureStem,
+            frameIndex,
+            framebufferSize.width,
+            framebufferSize.height,
+            0,
+            doubleBuffered == GL_TRUE ? GL_BACK : GL_FRONT,
+            "default"
+        );
+        ReportGlErrors("capture-default", frameIndex, window.Title());
     }
     window.SwapBuffers();
     ReportGlErrors("swap", frameIndex, window.Title());

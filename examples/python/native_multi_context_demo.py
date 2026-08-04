@@ -163,7 +163,7 @@ def main() -> int:
                 args.model.encode("utf-8"),
                 args.motion.encode("utf-8"),
                 None,
-                ctypes.c_float(1.0 / args.physics_fps),
+                ctypes.c_float(args.physics_fps),
                 ctypes.c_int32(args.max_substeps),
             ),
             f"load demo {label}",

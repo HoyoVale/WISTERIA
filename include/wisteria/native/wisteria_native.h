@@ -228,6 +228,10 @@ WISTERIA_API enum WisteriaStatus wisteria_window_destroy(
     WisteriaWindow window
 );
 
+/*
+ * physics_fps is a frequency in Hz (for example 120.0f), not a fixed
+ * timestep. Pass 0 to use the runtime/environment default.
+ */
 WISTERIA_API enum WisteriaStatus wisteria_window_load_demo(
     WisteriaContext context,
     WisteriaWindow window,
