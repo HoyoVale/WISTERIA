@@ -20,6 +20,8 @@ struct WindowConfig
     int height = 480;
     std::string title = "FLORAL WISTERIA";
     bool shareOpenGlResources = true;
+    // Hidden windows are offscreen render targets (headless frontends).
+    bool visible = true;
 };
 
 // Owns native windows and all context-local rendering state. Application owns

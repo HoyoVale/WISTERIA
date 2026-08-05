@@ -2774,6 +2774,33 @@ void TestNativeAbiSceneWhenAvailable()
             ) == WISTERIA_OK,
             "ABI entity transform failed"
         );
+        float outPosition[3] = {};
+        float outEuler[3] = {};
+        float outScale[3] = {};
+        Require(
+            wisteria_entity_get_transform(
+                context,
+                scene,
+                entity,
+                outPosition,
+                outEuler,
+                outScale
+            ) == WISTERIA_OK &&
+                NearlyEqual(outPosition[0], position[0]) &&
+                NearlyEqual(outEuler[1], euler[1]) &&
+                NearlyEqual(outScale[2], scale[2]),
+            "ABI entity transform get failed"
+        );
+        int32_t visible = 0;
+        Require(
+            wisteria_entity_get_visible(
+                context,
+                scene,
+                entity,
+                &visible
+            ) == WISTERIA_OK,
+            "ABI entity visibility get failed"
+        );
         Require(
             wisteria_entity_set_visible(context, scene, entity, 1) ==
                     WISTERIA_OK &&
@@ -2838,6 +2865,32 @@ void TestNativeAbiSceneWhenAvailable()
             ) == WISTERIA_OK,
             "ABI directional light update failed"
         );
+        float outDirection[3] = {};
+        float outColor[3] = {};
+        float outIntensity = 0.0f;
+        float range = 0.0f;
+        const float directionLength = std::sqrt(
+            newDirection[0] * newDirection[0] +
+            newDirection[1] * newDirection[1] +
+            newDirection[2] * newDirection[2]
+        );
+        Require(
+            wisteria_directional_light_get(
+                context,
+                scene,
+                light,
+                outDirection,
+                outColor,
+                &outIntensity
+            ) == WISTERIA_OK &&
+                NearlyEqual(
+                    outDirection[0],
+                    newDirection[0] / directionLength
+                ) &&
+                NearlyEqual(outColor[1], warmColor[1]) &&
+                NearlyEqual(outIntensity, 0.8f),
+            "ABI directional light get failed"
+        );
         const float lightPosition2[3] = {0.0f, 5.0f, 0.0f};
         WisteriaLight pointLight = 0U;
         Require(
@@ -2859,6 +2912,17 @@ void TestNativeAbiSceneWhenAvailable()
                     1.2f,
                     25.0f
                 ) == WISTERIA_OK &&
+                wisteria_point_light_get(
+                    context,
+                    scene,
+                    pointLight,
+                    outPosition,
+                    outColor,
+                    &outIntensity,
+                    &range
+                ) == WISTERIA_OK &&
+                NearlyEqual(outIntensity, 1.2f) &&
+                NearlyEqual(range, 25.0f) &&
                 wisteria_light_destroy(context, scene, pointLight) ==
                     WISTERIA_OK &&
                 wisteria_light_destroy(context, scene, pointLight) ==
@@ -2979,6 +3043,9 @@ void TestNativeAbiSceneWhenAvailable()
         const float cubePosition[3] = {0.0f, 1.0f, 0.0f};
         WisteriaEntity cube = 0U;
         WisteriaEntity ground = 0U;
+        WisteriaEntity sphere = 0U;
+        WisteriaEntity cylinder = 0U;
+        WisteriaEntity capsule = 0U;
         Require(
             wisteria_scene_add_cube(
                 context,
@@ -2995,8 +3062,41 @@ void TestNativeAbiSceneWhenAvailable()
                     position,
                     &ground
                 ) == WISTERIA_OK &&
+                wisteria_scene_add_sphere(
+                    context,
+                    scene,
+                    0.5f,
+                    8,
+                    12,
+                    cubeColor,
+                    cubePosition,
+                    &sphere
+                ) == WISTERIA_OK &&
+                wisteria_scene_add_cylinder(
+                    context,
+                    scene,
+                    0.3f,
+                    1.0f,
+                    12,
+                    cubeColor,
+                    cubePosition,
+                    &cylinder
+                ) == WISTERIA_OK &&
+                wisteria_scene_add_capsule(
+                    context,
+                    scene,
+                    0.3f,
+                    1.0f,
+                    12,
+                    cubeColor,
+                    cubePosition,
+                    &capsule
+                ) == WISTERIA_OK &&
                 cube != 0U &&
-                ground != 0U,
+                ground != 0U &&
+                sphere != 0U &&
+                cylinder != 0U &&
+                capsule != 0U,
             "ABI scene primitives failed"
         );
 
@@ -3083,6 +3183,137 @@ void TestNativeAbiSceneWhenAvailable()
             wisteria_destroy_context(context) == WISTERIA_OK,
         "ABI scene teardown failed"
     );
+}
+
+void TestNativeAbiHeadlessRenderWhenAvailable()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI headless context creation failed"
+    );
+    WisteriaWindow window = 0U;
+    if (wisteria_window_create_hidden(
+            context,
+            160,
+            120,
+            &window
+        ) != WISTERIA_OK)
+    {
+        wisteria_destroy_context(context);
+        return;
+    }
+
+    const std::filesystem::path previousWorkingDirectory =
+        std::filesystem::current_path();
+    try
+    {
+        std::filesystem::current_path(
+            std::filesystem::path(WISTERIA_PROJECT_ASSET_DIR).parent_path()
+        );
+
+    WisteriaScene scene = 0U;
+    Require(
+        wisteria_scene_create(context, window, &scene) == WISTERIA_OK,
+        "ABI headless scene create failed"
+    );
+    const float position[3] = {0.0f, 0.0f, 0.0f};
+    const float cubeColor[3] = {0.9f, 0.3f, 0.2f};
+    const float cubePosition[3] = {0.0f, 0.5f, 0.0f};
+    WisteriaEntity cube = 0U;
+    Require(
+        wisteria_scene_add_cube(
+            context,
+            scene,
+            1.0f,
+            cubeColor,
+            cubePosition,
+            &cube
+        ) == WISTERIA_OK,
+        "ABI headless cube failed"
+    );
+    const float direction[3] = {-0.35f, -0.75f, -0.45f};
+    const float lightColor[3] = {1.0f, 0.96f, 0.92f};
+    WisteriaLight light = 0U;
+    Require(
+        wisteria_scene_add_directional_light(
+            context,
+            scene,
+            direction,
+            lightColor,
+            1.0f,
+            &light
+        ) == WISTERIA_OK,
+        "ABI headless light failed"
+    );
+
+    for (int frame = 0; frame < 10; ++frame)
+    {
+        Require(
+            wisteria_poll_and_render(context, 1.0f / 60.0f) == WISTERIA_OK,
+            "ABI headless render failed"
+        );
+    }
+    int32_t width = 0;
+    int32_t height = 0;
+    const WisteriaStatus sizeStatus = wisteria_window_framebuffer_size(
+        context,
+        window,
+        &width,
+        &height
+    );
+    std::fprintf(
+        stderr,
+        "ABI headless framebuffer size: status=%d %dx%d\n",
+        static_cast<int>(sizeStatus),
+        width,
+        height
+    );
+    Require(
+        sizeStatus == WISTERIA_OK &&
+            width > 0 &&
+            height > 0,
+        "ABI headless framebuffer size is invalid"
+    );
+    std::vector<unsigned char> pixels(
+        static_cast<std::size_t>(width) * height * 4U
+    );
+    Require(
+        wisteria_window_read_pixels(
+            context,
+            window,
+            pixels.data(),
+            pixels.size()
+        ) == WISTERIA_OK,
+        "ABI headless readback failed"
+    );
+    bool hasContent = false;
+    for (const unsigned char value : pixels)
+    {
+        if (value != 0U)
+        {
+            hasContent = true;
+            break;
+        }
+    }
+    Require(
+        hasContent,
+        "ABI headless readback returned an all-zero frame"
+    );
+
+        Require(
+            wisteria_scene_destroy(context, scene) == WISTERIA_OK &&
+                wisteria_window_destroy(context, window) == WISTERIA_OK &&
+                wisteria_destroy_context(context) == WISTERIA_OK,
+            "ABI headless teardown failed"
+        );
+    }
+    catch (...)
+    {
+        std::filesystem::current_path(previousWorkingDirectory);
+        throw;
+    }
+    std::filesystem::current_path(previousWorkingDirectory);
 }
 
 #endif
@@ -3987,6 +4218,10 @@ int main()
     failures += !RunTest(
         "Native ABI scene",
         TestNativeAbiSceneWhenAvailable
+    );
+    failures += !RunTest(
+        "Native ABI headless render",
+        TestNativeAbiHeadlessRenderWhenAvailable
     );
     #endif
     failures += !RunTest("Static model importer", TestStaticModelImporter);

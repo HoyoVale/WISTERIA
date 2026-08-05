@@ -63,7 +63,8 @@ private:
         int width,
         int height,
         std::string title,
-        GLFWwindow* sharedContext = nullptr
+        GLFWwindow* sharedContext = nullptr,
+        bool visible = true
     );
     void init();
     void BindScene(SceneHandle nextScene);

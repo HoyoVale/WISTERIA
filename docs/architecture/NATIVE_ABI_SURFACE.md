@@ -34,6 +34,9 @@
 
 - 生命周期：`wisteria_window_create` / `wisteria_window_destroy` /
   `wisteria_window_load_demo` / `wisteria_window_should_close`
+- 无头渲染：`wisteria_window_create_hidden`（离屏渲染目标，配合
+  `wisteria_scene_create` + `wisteria_poll_and_render` +
+  `wisteria_window_read_pixels` 使用）
 - 帧循环：`wisteria_poll_and_render`（旧符号为兼容包装）
 - 输入：键按下/按下沿/释放沿、鼠标按钮、光标 delta、滚轮、光标捕获
 - 相机：`wisteria_window_set_camera` / `wisteria_window_camera_pose` /
@@ -48,14 +51,18 @@
 - 场景模型：`wisteria_scene_load_model`（PMX via Saba，OBJ/glTF via
   assimp）/ `wisteria_scene_unload_model`
 - 实体：`wisteria_scene_instantiate_model` / `wisteria_entity_set_transform` /
-  `wisteria_entity_set_visible` / `wisteria_entity_destroy`
+  `wisteria_entity_get_transform` / `wisteria_entity_set_visible` /
+  `wisteria_entity_get_visible` / `wisteria_entity_destroy`
 - Morph：`wisteria_entity_set_morph_weight` / `wisteria_entity_get_morph_weight`
 - 灯光：`wisteria_scene_add_directional_light` / `wisteria_scene_add_point_light`
   / `wisteria_scene_add_spot_light` / `wisteria_directional_light_set` /
-  `wisteria_point_light_set` / `wisteria_spot_light_set` /
-  `wisteria_light_destroy`
+  `wisteria_directional_light_get` / `wisteria_point_light_set` /
+  `wisteria_point_light_get` / `wisteria_spot_light_set` /
+  `wisteria_spot_light_get` / `wisteria_light_destroy`
 - 环境：`wisteria_scene_set_environment`（天空盒开关 + 强度）
-- 图元：`wisteria_scene_add_cube` / `wisteria_scene_add_ground_plane`
+- 图元：`wisteria_scene_add_cube` / `wisteria_scene_add_ground_plane` /
+  `wisteria_scene_add_sphere` / `wisteria_scene_add_cylinder` /
+  `wisteria_scene_add_capsule`（程序化生成，core `primitives/procedural`）
 
 ## 二进制符号清单生成
 

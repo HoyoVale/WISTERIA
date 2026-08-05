@@ -418,7 +418,7 @@ WISTERIA_API enum WisteriaStatus wisteria_physics_capabilities(
  * replaces the demo composition), load models (PMX via Saba, or OBJ/glTF via
  * assimp), instantiate entities with transforms, control visibility, add
  * lights, and drive rendering with wisteria_poll_and_render as usual.
- * Euler angles are in radians (engine convention). All handles are
+ * Euler angles are in degrees (engine Transform convention). All handles are
  * single-threaded per context, like the rest of the ABI.
  */
 
@@ -451,7 +451,7 @@ WISTERIA_API enum WisteriaStatus wisteria_scene_instantiate_model(
     WisteriaScene scene,
     WisteriaSceneModel model,
     const float position[3],
-    const float euler_radians[3],
+    const float euler_degrees[3],
     const float scale[3],
     WisteriaEntity* out_entity
 );
@@ -461,8 +461,24 @@ WISTERIA_API enum WisteriaStatus wisteria_entity_set_transform(
     WisteriaScene scene,
     WisteriaEntity entity,
     const float position[3],
-    const float euler_radians[3],
+    const float euler_degrees[3],
     const float scale[3]
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_get_transform(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    float out_position[3],
+    float out_euler_degrees[3],
+    float out_scale[3]
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_get_visible(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t* out_visible
 );
 
 WISTERIA_API enum WisteriaStatus wisteria_entity_set_visible(
@@ -514,6 +530,15 @@ WISTERIA_API enum WisteriaStatus wisteria_directional_light_set(
     float intensity
 );
 
+WISTERIA_API enum WisteriaStatus wisteria_directional_light_get(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    float out_direction[3],
+    float out_color[3],
+    float* out_intensity
+);
+
 WISTERIA_API enum WisteriaStatus wisteria_point_light_set(
     WisteriaContext context,
     WisteriaScene scene,
@@ -522,6 +547,16 @@ WISTERIA_API enum WisteriaStatus wisteria_point_light_set(
     const float color[3],
     float intensity,
     float range
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_point_light_get(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    float out_position[3],
+    float out_color[3],
+    float* out_intensity,
+    float* out_range
 );
 
 WISTERIA_API enum WisteriaStatus wisteria_scene_add_spot_light(
@@ -548,6 +583,19 @@ WISTERIA_API enum WisteriaStatus wisteria_spot_light_set(
     float range,
     float inner_cutoff_degrees,
     float outer_cutoff_degrees
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_spot_light_get(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    float out_position[3],
+    float out_direction[3],
+    float out_color[3],
+    float* out_intensity,
+    float* out_range,
+    float* out_inner_cutoff_degrees,
+    float* out_outer_cutoff_degrees
 );
 
 /* --- Entity morphs --------------------------------------------------------- */
@@ -600,6 +648,39 @@ WISTERIA_API enum WisteriaStatus wisteria_scene_add_ground_plane(
     WisteriaEntity* out_entity
 );
 
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_sphere(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float radius,
+    int32_t stacks,
+    int32_t slices,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_cylinder(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float radius,
+    float height,
+    int32_t segments,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_capsule(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float radius,
+    float height,
+    int32_t segments,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
 /* --- Render readback ------------------------------------------------------- */
 
 WISTERIA_API enum WisteriaStatus wisteria_window_framebuffer_size(
@@ -619,6 +700,13 @@ WISTERIA_API enum WisteriaStatus wisteria_window_read_pixels(
     WisteriaWindow window,
     unsigned char* rgba,
     size_t buffer_size
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_window_create_hidden(
+    WisteriaContext context,
+    int width,
+    int height,
+    WisteriaWindow* out_window
 );
 
 #ifdef __cplusplus

@@ -11,7 +11,8 @@ Window::Window(
     int width,
     int height,
     std::string title,
-    GLFWwindow* sharedContext
+    GLFWwindow* sharedContext,
+    bool visible
 )
     : size{width, height},
       title(std::move(title)),
@@ -20,6 +21,7 @@ Window::Window(
     this->camera = CameraHandle(this->scene, &this->scene->ActiveCamera());
     try
     {
+        glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE);
         this->window = glfwCreateWindow(
             this->size.width,
             this->size.height,

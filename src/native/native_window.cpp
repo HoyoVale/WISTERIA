@@ -82,6 +82,67 @@ enum WisteriaStatus wisteria_window_create(
     }
 }
 
+enum WisteriaStatus wisteria_window_create_hidden(
+    WisteriaContext context,
+    int width,
+    int height,
+    WisteriaWindow* out_window
+)
+{
+    if (out_window != nullptr)
+        *out_window = 0U;
+    if (width <= 0 || height <= 0 || out_window == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+
+    if (handle->application == nullptr)
+    {
+        try
+        {
+            handle->application = std::make_unique<Application>();
+        }
+        catch (const std::exception& error)
+        {
+            SetError(*handle, error.what());
+            return WISTERIA_ERROR_INITIALIZATION;
+        }
+        catch (...)
+        {
+            SetError(*handle, "GLFW initialization failed");
+            return WISTERIA_ERROR_INITIALIZATION;
+        }
+    }
+
+    try
+    {
+        WindowConfig config;
+        config.width = width;
+        config.height = height;
+        config.title = "WISTERIA headless render target";
+        config.shareOpenGlResources = true;
+        config.visible = false;
+        Window& window = handle->application->CreateWindow(config);
+        auto entry = std::make_unique<WindowEntry>();
+        entry->window = &window;
+        const WisteriaWindow windowHandle = handle->nextWindowHandle++;
+        handle->windows.emplace(windowHandle, std::move(entry));
+        *out_window = windowHandle;
+        return WISTERIA_OK;
+    }
+    catch (const std::exception& error)
+    {
+        SetError(*handle, error.what());
+        return WISTERIA_ERROR_INITIALIZATION;
+    }
+    catch (...)
+    {
+        SetError(*handle, "Unknown C++ exception while creating the window");
+        return WISTERIA_ERROR_INITIALIZATION;
+    }
+}
+
 enum WisteriaStatus wisteria_window_destroy(
     WisteriaContext context,
     WisteriaWindow window

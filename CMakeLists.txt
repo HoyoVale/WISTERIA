@@ -185,6 +185,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/mesh.cpp
     src/rendering/model.cpp
     src/rendering/primitives/cube.cpp
+    src/rendering/primitives/procedural.cpp
     src/rendering/render_part.cpp
     src/rendering/render_morphing.cpp
     src/rendering/render_passes.cpp

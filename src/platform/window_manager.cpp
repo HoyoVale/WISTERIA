@@ -347,7 +347,8 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
             config.width,
             config.height,
             config.title,
-            sharedContext
+            sharedContext,
+            config.visible
         ));
     }
     catch (...)
