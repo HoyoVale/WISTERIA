@@ -1,5 +1,8 @@
 #include "test_support.hpp"
 
+#include <cstdlib>
+#include <fstream>
+
 namespace
 {
 void TestAnimatedModelImporter()
@@ -1903,6 +1906,124 @@ void TestSabaMmdPhysicsLongRunWhenAvailable()
     );
 }
 
+void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
+{
+    // Phase 0/1 of the community physics adoption plan: a reproducible,
+    // physics-only baseline on a frozen fixture. No motion, fixed 120 Hz
+    // step, tight runaway bound; the trace export (WISTERIA_PHYSICS_TRACE)
+    // feeds the cross-implementation comparison once reference traces from
+    // babylon-mmd / libmmd / nanoem are available.
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    if (!std::filesystem::is_regular_file(modelPath))
+        return;
+
+    // Physics-only baseline: no VMD motion, so the measured displacement is
+    // driven purely by the rigid-body world settling under gravity.
+    SabaMmdRuntimeModel runtime(modelPath);
+    Require(
+        runtime.Initialize(),
+        "Saba compat baseline runtime failed to initialize"
+    );
+    SabaPhysicsSettings settings;
+    settings.fixedTimeStep = 1.0f / 120.0f;
+    settings.maxSubSteps = 10;
+    runtime.SetPhysicsSettings(settings);
+
+    std::ofstream trace;
+    const char* tracePath = std::getenv("WISTERIA_PHYSICS_TRACE");
+    if (tracePath != nullptr && tracePath[0] != '\0')
+    {
+        trace.open(tracePath);
+        Require(trace.is_open(), "Cannot open physics trace file");
+        trace << "frame,min_x,min_y,min_z,max_x,max_y,max_z,"
+              << "max_displacement\n";
+    }
+
+    constexpr int TotalFrames = 300;
+    constexpr int SampleInterval = 10;
+    float displacementAtFrame200 = 0.0f;
+    for (int frame = 0; frame < TotalFrames; ++frame)
+    {
+        runtime.Update(1.0f / 120.0f);
+        if ((frame + 1) % SampleInterval != 0)
+            continue;
+
+        const SabaMmdRuntimeModel::VertexDiagnostics diagnostics =
+            runtime.DiagnoseVertices();
+        Require(
+            diagnostics.finite,
+            "Compat baseline produced non-finite vertices"
+        );
+        Require(
+            diagnostics.maximumDisplacementFromBind < 5.0f,
+            "Compat baseline physics runaway"
+        );
+        if ((frame + 1) == 200)
+        {
+            displacementAtFrame200 =
+                diagnostics.maximumDisplacementFromBind;
+        }
+        if ((frame + 1) == TotalFrames)
+        {
+            Require(
+                std::abs(
+                    diagnostics.maximumDisplacementFromBind -
+                    displacementAtFrame200
+                ) < 0.01f,
+                "Compat baseline did not converge by the final sample"
+            );
+        }
+
+        const Pose& pose = runtime.GetPose();
+        for (std::size_t bone = 0U; bone < pose.BoneCount(); ++bone)
+        {
+            const glm::mat4& local = pose.LocalMatrix(
+                static_cast<BoneIndex>(bone)
+            );
+            const bool finite = std::isfinite(local[0][0]) &&
+                std::isfinite(local[0][1]) &&
+                std::isfinite(local[0][2]) &&
+                std::isfinite(local[0][3]) &&
+                std::isfinite(local[1][0]) &&
+                std::isfinite(local[1][1]) &&
+                std::isfinite(local[1][2]) &&
+                std::isfinite(local[1][3]) &&
+                std::isfinite(local[2][0]) &&
+                std::isfinite(local[2][1]) &&
+                std::isfinite(local[2][2]) &&
+                std::isfinite(local[2][3]) &&
+                std::isfinite(local[3][0]) &&
+                std::isfinite(local[3][1]) &&
+                std::isfinite(local[3][2]) &&
+                std::isfinite(local[3][3]);
+            Require(
+                finite,
+                "Compat baseline pose contains a non-finite bone matrix"
+            );
+        }
+
+        if (trace.is_open())
+        {
+            trace << (frame + 1) << ","
+                  << diagnostics.minimumPosition.x << ","
+                  << diagnostics.minimumPosition.y << ","
+                  << diagnostics.minimumPosition.z << ","
+                  << diagnostics.maximumPosition.x << ","
+                  << diagnostics.maximumPosition.y << ","
+                  << diagnostics.maximumPosition.z << ","
+                  << diagnostics.maximumDisplacementFromBind << "\n";
+        }
+    }
+}
+
 void TestSabaMotionCameraLightInterfaceWhenAvailable()
 {
     std::filesystem::path modelPath =
@@ -3420,6 +3541,10 @@ int main()
     failures += !RunTest(
         "Saba physics 720-frame long-run",
         TestSabaMmdPhysicsLongRunWhenAvailable
+    );
+    failures += !RunTest(
+        "Saba physics compat baseline",
+        TestSabaMmdPhysicsCompatBaselineWhenAvailable
     );
     failures += !RunTest(
         "Saba motion/camera/light interface",
