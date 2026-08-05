@@ -2866,6 +2866,55 @@ void TestNativeAbiSceneWhenAvailable()
             "ABI point light lifecycle failed"
         );
 
+        const float spotDirection[3] = {-0.4f, -1.0f, -0.5f};
+        WisteriaLight spotLight = 0U;
+        Require(
+            wisteria_scene_add_spot_light(
+                context,
+                scene,
+                lightPosition2,
+                spotDirection,
+                warmColor,
+                2.0f,
+                20.0f,
+                12.5f,
+                20.0f,
+                &spotLight
+            ) == WISTERIA_OK &&
+                wisteria_spot_light_set(
+                    context,
+                    scene,
+                    spotLight,
+                    lightPosition2,
+                    spotDirection,
+                    warmColor,
+                    2.5f,
+                    25.0f,
+                    10.0f,
+                    18.0f
+                ) == WISTERIA_OK &&
+                wisteria_light_destroy(context, scene, spotLight) ==
+                    WISTERIA_OK &&
+                wisteria_light_destroy(context, scene, spotLight) ==
+                    WISTERIA_ERROR_NOT_FOUND,
+            "ABI spot light lifecycle failed"
+        );
+        Require(
+            wisteria_scene_add_spot_light(
+                context,
+                scene,
+                lightPosition2,
+                spotDirection,
+                warmColor,
+                2.0f,
+                20.0f,
+                25.0f,
+                20.0f,
+                &spotLight
+            ) == WISTERIA_ERROR_INVALID_ARGUMENT,
+            "ABI spot light accepted invalid cutoffs"
+        );
+
         // Morph weights on a fixture with known morph names.
         WisteriaSceneModel morphModel = 0U;
         float weight = 0.0f;

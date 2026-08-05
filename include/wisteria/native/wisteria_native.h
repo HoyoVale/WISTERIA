@@ -524,6 +524,32 @@ WISTERIA_API enum WisteriaStatus wisteria_point_light_set(
     float range
 );
 
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_spot_light(
+    WisteriaContext context,
+    WisteriaScene scene,
+    const float position[3],
+    const float direction[3],
+    const float color[3],
+    float intensity,
+    float range,
+    float inner_cutoff_degrees,
+    float outer_cutoff_degrees,
+    WisteriaLight* out_light
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_spot_light_set(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    const float position[3],
+    const float direction[3],
+    const float color[3],
+    float intensity,
+    float range,
+    float inner_cutoff_degrees,
+    float outer_cutoff_degrees
+);
+
 /* --- Entity morphs --------------------------------------------------------- */
 
 WISTERIA_API enum WisteriaStatus wisteria_entity_set_morph_weight(

@@ -400,9 +400,13 @@ enum WisteriaStatus wisteria_light_destroy(
         entry->scene->RemoveDirectionalLight(
             *static_cast<DirectionalLight*>(stored.light)
         );
-    else
+    else if (stored.kind == 1)
         entry->scene->RemovePointLight(
             *static_cast<PointLight*>(stored.light)
+        );
+    else
+        entry->scene->RemoveSpotLight(
+            *static_cast<SpotLight*>(stored.light)
         );
     entry->lights.erase(iterator);
     return WISTERIA_OK;
@@ -478,6 +482,113 @@ enum WisteriaStatus wisteria_point_light_set(
     stored->SetColor(glm::vec3(color[0], color[1], color[2]));
     stored->SetIntensity(intensity);
     stored->SetRange(range);
+    return WISTERIA_OK;
+}
+
+namespace
+{
+bool ValidSpotCutoff(float inner, float outer)
+{
+    return std::isfinite(inner) && std::isfinite(outer) &&
+        inner >= 0.0f && outer > inner && outer <= 90.0f;
+}
+}
+
+enum WisteriaStatus wisteria_scene_add_spot_light(
+    WisteriaContext context,
+    WisteriaScene scene,
+    const float position[3],
+    const float direction[3],
+    const float color[3],
+    float intensity,
+    float range,
+    float inner_cutoff_degrees,
+    float outer_cutoff_degrees,
+    WisteriaLight* out_light
+)
+{
+    if (out_light != nullptr)
+        *out_light = 0U;
+    if (position == nullptr || direction == nullptr ||
+        color == nullptr || out_light == nullptr ||
+        !std::isfinite(intensity) || !std::isfinite(range) || range <= 0.0f ||
+        !ValidSpotCutoff(inner_cutoff_degrees, outer_cutoff_degrees))
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    SpotLight& light = entry->scene->CreateSpotLight(
+        SpotLightData{
+            .Position = glm::vec3(position[0], position[1], position[2]),
+            .Direction = glm::vec3(
+                direction[0],
+                direction[1],
+                direction[2]
+            ),
+            .Color = glm::vec3(color[0], color[1], color[2]),
+            .Intensity = intensity,
+            .Range = range,
+            .InnerCutoffDegrees = inner_cutoff_degrees,
+            .OuterCutoffDegrees = outer_cutoff_degrees
+        }
+    );
+    const WisteriaLight lightHandle = entry->nextLightHandle++;
+    entry->lights.emplace(
+        lightHandle,
+        SceneEntry::LightEntry{2, &light}
+    );
+    *out_light = lightHandle;
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_spot_light_set(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    const float position[3],
+    const float direction[3],
+    const float color[3],
+    float intensity,
+    float range,
+    float inner_cutoff_degrees,
+    float outer_cutoff_degrees
+)
+{
+    if (position == nullptr || direction == nullptr ||
+        color == nullptr ||
+        !std::isfinite(intensity) || !std::isfinite(range) || range <= 0.0f ||
+        !ValidSpotCutoff(inner_cutoff_degrees, outer_cutoff_degrees))
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->lights.find(light);
+    if (iterator == entry->lights.end() ||
+        iterator->second.kind != 2 || iterator->second.light == nullptr)
+    {
+        return InvalidHandle(*handle, "Spot light handle is invalid");
+    }
+    SpotLight* stored = static_cast<SpotLight*>(iterator->second.light);
+    stored->SetPosition(
+        glm::vec3(position[0], position[1], position[2])
+    );
+    stored->SetDirection(
+        glm::vec3(direction[0], direction[1], direction[2])
+    );
+    stored->SetColor(glm::vec3(color[0], color[1], color[2]));
+    stored->SetIntensity(intensity);
+    stored->SetRange(range);
+    stored->SetCutoff(inner_cutoff_degrees, outer_cutoff_degrees);
     return WISTERIA_OK;
 }
 

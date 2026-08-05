@@ -51,7 +51,8 @@
   `wisteria_entity_set_visible` / `wisteria_entity_destroy`
 - Morph：`wisteria_entity_set_morph_weight` / `wisteria_entity_get_morph_weight`
 - 灯光：`wisteria_scene_add_directional_light` / `wisteria_scene_add_point_light`
-  / `wisteria_directional_light_set` / `wisteria_point_light_set` /
+  / `wisteria_scene_add_spot_light` / `wisteria_directional_light_set` /
+  `wisteria_point_light_set` / `wisteria_spot_light_set` /
   `wisteria_light_destroy`
 - 环境：`wisteria_scene_set_environment`（天空盒开关 + 强度）
 - 图元：`wisteria_scene_add_cube` / `wisteria_scene_add_ground_plane`
