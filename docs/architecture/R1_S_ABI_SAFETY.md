@@ -33,6 +33,19 @@ filesystem 调用；超长路径会让 `filesystem_error` 穿出 `extern "C"`；
 - 90/94 个入口走 InvokeAbi；`wisteria_create_context`（全局创建，无
   Context 可查）保留自身 try/catch；3 个 leaf 不变。
 
+### R1.S Freeze Fix（2026-08-06，复审后）
+
+- **`InvokeAbi` catch 不再二次调用 `FindContext`**：`ContextLease` 提到
+  try 外解析，catch 只用已持有的 `context.get()` 记录错误——若原始异常
+  来自锁操作，catch 不会再次抛异常（noexcept 边界真正闭合）；
+- **矩阵安全门禁**：`--check` 现在不仅比较文档漂移，还拒绝任何
+  `UNGUARDED`、白名单外的 `RAW_TRY`、以及遗留 `GUARDED`（新 API 必须走
+  InvokeAbi）。实测新增假导出返回 exit 2；
+- **Python 门禁不可静默跳过**：`find_package(Python3 REQUIRED)`，无
+  Python 环境直接配置失败而非跳过检查；
+- **跨 Context 测试收紧**：要求精确 `WISTERIA_ERROR_NOT_FOUND`；新增
+  「Context 句柄冒充 Model 句柄 → NOT_FOUND」错误类型测试。
+
 当前矩阵（`script/gen_abi_safety_matrix.py --check` 自动校验，已接入
 CTest `wisteria.abi-safety-matrix`）：
 
