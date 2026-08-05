@@ -12,6 +12,7 @@
 # ---------- 构建产物（CMake / MSVC） ----------
 /build/
 /build-linux/
+/build-fullassets/
 /x64/
 /.vs/
 /out/

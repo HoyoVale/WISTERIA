@@ -1,0 +1,133 @@
+{
+  "manifestVersion": 1,
+  "comment": "Authority fixture list for WISTERIA tests. core entries must exist in every environment (missing => FAIL). fullAssets entries are required when WISTERIA_TEST_FULL_ASSETS=ON (missing => FAIL) and reported as NOT_CONFIGURED otherwise. Paths are relative to the repository root.",
+  "core": [
+    {
+      "id": "triangle-gltf",
+      "path": "tests/assets/models/embedded_triangle.gltf",
+      "usedBy": ["TestStaticModelImporter", "TestImportedResourceCreation", "TestImportResourceCollisionIsTransactional"]
+    },
+    {
+      "id": "box-glb",
+      "path": "tests/assets/models/Box.glb",
+      "usedBy": ["TestImporterRejectsMissingFile"]
+    },
+    {
+      "id": "converted-mmd-glb",
+      "path": "tests/assets/models/仪玄_glb/仪玄.glb",
+      "usedBy": ["TestConvertedMmdGlbWhenAvailable"]
+    },
+    {
+      "id": "converted-mmd-obj",
+      "path": "tests/assets/models/仪玄_obj/仪玄.obj",
+      "usedBy": ["TestConvertedMmdObjWhenAvailable"]
+    },
+    {
+      "id": "extended-morph-pmx",
+      "path": "tests/data/extended_morph.pmx",
+      "usedBy": ["TestExtendedPmxMorphImporter", "TestExtendedMmdMorphRuntime", "TestR1EngineOwnedMmdInstances"]
+    },
+    {
+      "id": "pmx-physics",
+      "path": "tests/data/pmx_physics.pmx",
+      "usedBy": ["TestPmxPhysicsImporter", "TestPmxPhysicsImporterValidation"]
+    },
+    {
+      "id": "pmx-physics-invalid-group",
+      "path": "tests/data/pmx_physics_invalid_group.pmx",
+      "usedBy": ["TestMmdPhysicsAssetValidation"]
+    },
+    {
+      "id": "pmx-physics-invalid-joint",
+      "path": "tests/data/pmx_physics_invalid_joint.pmx",
+      "usedBy": ["TestMmdPhysicsAssetValidation"]
+    },
+    {
+      "id": "pmx-physics-softbody",
+      "path": "tests/data/pmx_physics_softbody.pmx",
+      "usedBy": ["TestMmdPhysicsAssetValidation"]
+    },
+    {
+      "id": "pmx21-flip-impulse",
+      "path": "tests/data/pmx21_flip_impulse.pmx",
+      "usedBy": ["TestPmx21FlipImpulseMorphRuntime", "TestPmx21FlipImpulseImporter"]
+    },
+    {
+      "id": "animated-triangle-gltf",
+      "path": "tests/data/animated_triangle.gltf",
+      "usedBy": ["TestAnimatedModelImporter"]
+    },
+    {
+      "id": "pbr-quad-gltf",
+      "path": "tests/data/pbr_quad.gltf",
+      "usedBy": ["TestVmdImporter"]
+    }
+  ],
+  "fullAssets": [
+    {
+      "id": "production-mmd-directory",
+      "path": "assets/models/mmd",
+      "usedBy": ["TestSabaImporterAcrossModelsWhenAvailable", "TestR1ProjectMmdInstanceWhenAvailable"]
+    },
+    {
+      "id": "production-pmx-yeshiguang",
+      "path": "assets/models/mmd/叶瞬光_pmx/叶瞬光.pmx",
+      "usedBy": ["TestSabaMmdImporterWhenAvailable", "TestSabaSkinningWhenAvailable", "TestSabaMmdPhysicsLongRunWhenAvailable", "TestSabaMmdPhysicsCompatBaselineWhenAvailable", "TestSabaMotionCameraLightInterfaceWhenAvailable", "TestNativeAbiSabaWhenAvailable", "TestNativeAbiMmdControl", "TestNativeAbiSceneWhenAvailable", "TestDemoPmxPhysicsImportWhenAvailable"]
+    },
+    {
+      "id": "production-pmx-yixuan",
+      "path": "assets/models/mmd/仪玄_pmx/仪玄.pmx",
+      "usedBy": ["TestDirectPmxMaterialImportWhenAvailable"]
+    },
+    {
+      "id": "production-pmx-aimisi",
+      "path": "assets/models/mmd/爱弥斯_pmx/爱弥斯.pmx",
+      "usedBy": ["TestDirectPmxGroupMorphImportWhenAvailable"]
+    },
+    {
+      "id": "production-pmx-leimi",
+      "path": "assets/models/mmd/蕾米埃尔-白/蕾米埃尔-白.pmx",
+      "usedBy": ["TestSabaIkSwitchBridgeWhenAvailable"]
+    },
+    {
+      "id": "production-vmd-body",
+      "path": "assets/motions/皮卡皮卡皮卡丘+/身体动作.vmd",
+      "usedBy": ["TestSabaSkinningWhenAvailable", "TestSabaMmdPhysicsLongRunWhenAvailable", "TestSabaMotionCameraLightInterfaceWhenAvailable"]
+    },
+    {
+      "id": "production-vmd-camera-gu",
+      "path": "assets/motions/越南鼓卡点舞 镜头.vmd",
+      "usedBy": ["TestSabaMotionCameraLightInterfaceWhenAvailable"]
+    },
+    {
+      "id": "production-vmd-motion",
+      "path": "assets/motions/梦的翅膀/梦的翅膀motion.vmd",
+      "usedBy": ["TestNativeAbiSabaWhenAvailable", "TestNativeAbiMmdControl"]
+    },
+    {
+      "id": "production-vmd-camera",
+      "path": "assets/motions/梦的翅膀/梦的翅膀camera.vmd",
+      "usedBy": ["TestNativeAbiMmdControl"]
+    },
+    {
+      "id": "rigged-glb",
+      "path": "assets/models/glb/仪玄_glb/仪玄.glb",
+      "usedBy": ["TestRiggedGlbImportWhenAvailable"]
+    },
+    {
+      "id": "production-pmx-couqie",
+      "path": "assets/models/mmd/凑企鹅/凑企鹅.pmx",
+      "usedBy": ["TestVmdAssetWhenAvailable"]
+    },
+    {
+      "id": "production-pmx-suibian",
+      "path": "assets/models/mmd/随便观/随便观.pmx",
+      "usedBy": ["TestNativeAbiWindowWhenAvailable"]
+    },
+    {
+      "id": "production-vmd-penguin",
+      "path": "assets/models/mmd/凑企鹅/penguin_walking.vmd",
+      "usedBy": ["TestVmdAssetWhenAvailable"]
+    }
+  ]
+}

@@ -590,11 +590,14 @@ void TestVmdAssetWhenAvailable()
         ProjectAssetDirectory / "models" / "mmd" / u8"凑企鹅";
     const std::filesystem::path modelPath = directory / u8"凑企鹅.pmx";
     const std::filesystem::path motionPath = directory / "penguin_walking.vmd";
-    if (!std::filesystem::is_regular_file(modelPath) ||
-        !std::filesystem::is_regular_file(motionPath))
-    {
-        SkipTest("required PMX/VMD fixture is unavailable");
-    }
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-couqie"
+    );
+    RequireFullAsset(
+        motionPath,
+        "production-vmd-penguin"
+    );
 
     const ImportedModelData model = ModelImporter().Import(modelPath);
     Require(model.skeleton.has_value(), "VMD test PMX has no Skeleton");
@@ -1385,8 +1388,10 @@ void TestSabaMmdImporterWhenAvailable()
             "#U53f6#U77ac#U5149_pmx" /
             "#U53f6#U77ac#U5149.pmx";
     }
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
 
     SabaMmdImporter sabaImporter;
     ImportedModelData saba;
@@ -1507,11 +1512,14 @@ void TestSabaSkinningWhenAvailable()
     std::filesystem::path motionPath =
         ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
         u8"身体动作.vmd";
-    if (!std::filesystem::is_regular_file(modelPath) ||
-        !std::filesystem::is_regular_file(motionPath))
-    {
-        SkipTest("required PMX/VMD fixture is unavailable");
-    }
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
+    RequireFullAsset(
+        motionPath,
+        "production-vmd-body"
+    );
 
     SabaMmdImporter importer;
     ImportedModelData imported = importer.Import(modelPath);
@@ -1773,8 +1781,10 @@ void TestSabaImporterAcrossModelsWhenAvailable()
 {
     const std::filesystem::path mmdDirectory =
         ProjectAssetDirectory / "models" / "mmd";
-    if (!std::filesystem::is_directory(mmdDirectory))
-        SkipTest("project MMD model directory is unavailable");
+    RequireFullAssetDirectory(
+        mmdDirectory,
+        "production-mmd-directory"
+    );
 
     std::vector<std::filesystem::path> candidates;
     for (const std::filesystem::directory_entry& entry :
@@ -1896,11 +1906,14 @@ void TestSabaMmdPhysicsLongRunWhenAvailable()
     std::filesystem::path motionPath =
         ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
         u8"身体动作.vmd";
-    if (!std::filesystem::is_regular_file(modelPath) ||
-        !std::filesystem::is_regular_file(motionPath))
-    {
-        SkipTest("required PMX/VMD fixture is unavailable");
-    }
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
+    RequireFullAsset(
+        motionPath,
+        "production-vmd-body"
+    );
 
     SabaMmdRuntimeModel runtime(
         modelPath,
@@ -1969,8 +1982,10 @@ void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
             "#U53f6#U77ac#U5149_pmx" /
             "#U53f6#U77ac#U5149.pmx";
     }
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
 
     // Physics-only baseline: no VMD motion, so the measured displacement is
     // driven purely by the rigid-body world settling under gravity.
@@ -2109,11 +2124,14 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
         u8"身体动作.vmd";
     const std::filesystem::path cameraPath =
         ProjectAssetDirectory / "motions" / u8"越南鼓卡点舞 镜头.vmd";
-    if (!std::filesystem::is_regular_file(modelPath) ||
-        !std::filesystem::is_regular_file(motionPath))
-    {
-        SkipTest("required PMX/VMD fixture is unavailable");
-    }
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
+    RequireFullAsset(
+        motionPath,
+        "production-vmd-body"
+    );
 
     SabaMmdRuntimeModel runtime(modelPath, motionPath);
     Require(runtime.Initialize(), "Saba interface runtime failed to initialize");
@@ -2324,10 +2342,6 @@ void TestNativeAbiWindowWhenAvailable()
             "#U53f6#U77ac#U5149_pmx" /
             "#U53f6#U77ac#U5149.pmx";
     }
-    Require(
-        std::filesystem::is_regular_file(modelPath),
-        "ABI window test model is missing"
-    );
     const std::u8string modelPathU8 = modelPath.u8string();
     const std::string modelPathUtf8(
         reinterpret_cast<const char*>(modelPathU8.data()),
@@ -2349,10 +2363,17 @@ void TestNativeAbiWindowWhenAvailable()
         reinterpret_cast<const char*>(scenePathU8.data()),
         scenePathU8.size()
     );
-    Require(
-        std::filesystem::is_regular_file(motionPath) &&
-            std::filesystem::is_regular_file(scenePath),
-        "ABI window test motion/scene assets are missing"
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
+    RequireFullAsset(
+        motionPath,
+        "production-vmd-motion"
+    );
+    RequireFullAsset(
+        scenePath,
+        "production-pmx-suibian"
     );
 
     Require(
@@ -2493,11 +2514,14 @@ void TestNativeAbiSabaWhenAvailable()
     const std::filesystem::path motionPath =
         ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
         u8"梦的翅膀motion.vmd";
-    if (!std::filesystem::is_regular_file(modelPath) ||
-        !std::filesystem::is_regular_file(motionPath))
-    {
-        SkipTest("required PMX/VMD fixture is unavailable");
-    }
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
+    RequireFullAsset(
+        motionPath,
+        "production-vmd-motion"
+    );
 
     WisteriaContext context = 0U;
     Require(
@@ -2648,11 +2672,14 @@ void TestNativeAbiMmdControl()
     const std::filesystem::path cameraPath =
         ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
         u8"梦的翅膀camera.vmd";
-    if (!std::filesystem::is_regular_file(modelPath) ||
-        !std::filesystem::is_regular_file(cameraPath))
-    {
-        return;
-    }
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
+    RequireFullAsset(
+        cameraPath,
+        "production-vmd-camera"
+    );
 
     WisteriaContext context = 0U;
     Require(
@@ -2799,9 +2826,9 @@ void TestNativeAbiSceneWhenAvailable()
                 "#U53f6#U77ac#U5149_pmx" /
                 "#U53f6#U77ac#U5149.pmx";
         }
-        Require(
-            std::filesystem::is_regular_file(modelPath),
-            "ABI scene test model is missing"
+        RequireFullAsset(
+            modelPath,
+            "production-pmx-yeshiguang"
         );
         const std::u8string modelPathU8 = modelPath.u8string();
         const std::string modelPathUtf8(
@@ -3707,9 +3734,9 @@ void TestImportResourceCollisionIsTransactional()
 void TestConvertedMmdGlbWhenAvailable()
 {
     const std::filesystem::path modelPath =
-        TestAssetDirectory / "models" / u8"仪玄" / u8"仪玄.glb";
+        TestAssetDirectory / "models" / u8"仪玄_glb" / u8"仪玄.glb";
     if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+        SkipTest("converted MMD GLB fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Converted MMD mesh primitive count changed");
@@ -3761,8 +3788,10 @@ void TestConvertedMmdObjWhenAvailable()
 {
     const std::filesystem::path modelPath =
         TestAssetDirectory / "models" / u8"仪玄_obj" / u8"仪玄.obj";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    Require(
+        std::filesystem::is_regular_file(modelPath),
+        "converted MMD OBJ fixture is missing (core asset)"
+    );
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Converted OBJ mesh count changed");
@@ -3861,8 +3890,10 @@ void TestRiggedGlbImportWhenAvailable()
     const std::filesystem::path modelPath =
         ProjectAssetDirectory / "models" / "glb" /
         u8"仪玄_glb" / u8"仪玄.glb";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "rigged-glb"
+    );
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.skeleton.has_value(), "Rigged GLB lost its Skeleton");
@@ -3947,8 +3978,10 @@ void TestDemoPmxPhysicsImportWhenAvailable()
     const std::filesystem::path modelPath =
         ProjectAssetDirectory / "models" / "mmd" /
         u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yeshiguang"
+    );
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
@@ -3999,8 +4032,10 @@ void TestDirectPmxMaterialImportWhenAvailable()
     const std::filesystem::path modelPath =
         ProjectAssetDirectory / "models" / "mmd" /
         u8"仪玄_pmx" / u8"仪玄.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-yixuan"
+    );
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Direct PMX mesh count changed");
@@ -4167,8 +4202,10 @@ void TestDirectPmxGroupMorphImportWhenAvailable()
     const std::filesystem::path modelPath =
         ProjectAssetDirectory / "models" / "mmd" /
         u8"爱弥斯_pmx" / u8"爱弥斯.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-aimisi"
+    );
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     const auto group = std::find_if(
@@ -4222,8 +4259,10 @@ void TestSabaIkSwitchBridgeWhenAvailable()
     const std::filesystem::path modelPath =
         ProjectAssetDirectory / "models" / "mmd" /
         u8"蕾米埃尔-白" / u8"蕾米埃尔-白.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("required model fixture is unavailable");
+    RequireFullAsset(
+        modelPath,
+        "production-pmx-leimi"
+    );
 
     SabaMmdRuntimeModel runtime(modelPath, {}, SabaPhysicsSettings{});
     Require(runtime.Initialize(), "Saba model failed to initialize");
@@ -4349,10 +4388,16 @@ void TestR1EngineOwnedMmdInstances()
 
 void TestR1ProjectMmdInstanceWhenAvailable()
 {
+    RequireFullAssetDirectory(
+        ProjectAssetDirectory / "models" / "mmd",
+        "production-mmd-directory"
+    );
     const std::optional<std::filesystem::path> modelPath =
         FindProjectAssetByExtension(".pmx");
-    if (!modelPath.has_value())
-        SkipTest("no project PMX asset is available");
+    Require(
+        modelPath.has_value(),
+        "FULL_ASSETS project PMX scan found no model"
+    );
 
     ResourceManager resources;
     ModelAsset& model = resources.LoadModel("r1::project", *modelPath);
@@ -4412,8 +4457,10 @@ void TestR1ProjectMmdInstanceWhenAvailable()
 
     const std::optional<std::filesystem::path> motionPath =
         FindProjectAssetByExtension(".vmd");
-    if (!motionPath.has_value())
-        SkipTest("no project VMD asset is available");
+    Require(
+        motionPath.has_value(),
+        "FULL_ASSETS project VMD scan found no motion"
+    );
     Require(
         firstRuntime->LoadMotion(*motionPath) &&
         secondRuntime->LoadMotion(*motionPath),

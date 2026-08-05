@@ -17,6 +17,10 @@ option(WISTERIA_BUILD_SABA_VIEWER
     "Build Saba's standalone reference OpenGL viewer"
     OFF
 )
+option(WISTERIA_TEST_FULL_ASSETS
+    "Treat project MMD/VMD assets as required test fixtures (FAIL on missing)"
+    OFF
+)
 
 # GLFW 3.4 enables X11 and Wayland together by default. That makes a Linux
 # build depend on both complete development stacks even though WISTERIA only
@@ -362,6 +366,10 @@ if(BUILD_TESTING)
             WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
             WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
             WISTERIA_PROJECT_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            WISTERIA_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixtures.json"
+        )
+        target_include_directories(wisteria_${TIER}_tests PRIVATE
+            ${WISTERIA_SABA_ROOT}/external/json/include
         )
         if(MSVC)
             target_compile_options(wisteria_${TIER}_tests PRIVATE /utf-8)
@@ -373,6 +381,13 @@ if(BUILD_TESTING)
         target_compile_definitions(wisteria_integration_tests PRIVATE
             WISTERIA_TEST_NATIVE_ABI=1
         )
+    endif()
+    if(WISTERIA_TEST_FULL_ASSETS)
+        foreach(TIER unit runtime integration)
+            target_compile_definitions(wisteria_${TIER}_tests PRIVATE
+                WISTERIA_TEST_FULL_ASSETS=1
+            )
+        endforeach()
     endif()
 
     # Minimal render regression: creates a real GL context and verifies that
