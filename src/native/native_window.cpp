@@ -33,24 +33,23 @@ enum WisteriaStatus wisteria_window_create(
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
+    return InvokeAbi(context, [&](Context& ctx)
+    {
 
-    if (handle->application == nullptr)
+    if (ctx.application == nullptr)
     {
         try
         {
-            handle->application = std::make_unique<Application>();
+            ctx.application = std::make_unique<Application>();
         }
         catch (const std::exception& error)
         {
-            SetError(*handle, error.what());
+            TrySetError(&ctx, error.what());
             return WISTERIA_ERROR_INITIALIZATION;
         }
         catch (...)
         {
-            SetError(*handle, "GLFW initialization failed");
+            TrySetError(&ctx, "GLFW initialization failed");
             return WISTERIA_ERROR_INITIALIZATION;
         }
     }
@@ -62,24 +61,25 @@ enum WisteriaStatus wisteria_window_create(
         config.height = height;
         config.title = title;
         config.shareOpenGlResources = true;
-        Window& window = handle->application->CreateWindow(config);
+        Window& window = ctx.application->CreateWindow(config);
         auto entry = std::make_unique<WindowEntry>();
         entry->window = &window;
-        const WisteriaWindow windowHandle = handle->nextWindowHandle++;
-        handle->windows.emplace(windowHandle, std::move(entry));
+        const WisteriaWindow windowHandle = AllocateOpaqueHandle();
+        ctx.windows.emplace(windowHandle, std::move(entry));
         *out_window = windowHandle;
         return WISTERIA_OK;
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INITIALIZATION;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception while creating the window");
+        TrySetError(&ctx, "Unknown C++ exception while creating the window");
         return WISTERIA_ERROR_INITIALIZATION;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_window_create_hidden(
@@ -93,24 +93,23 @@ enum WisteriaStatus wisteria_window_create_hidden(
         *out_window = 0U;
     if (width <= 0 || height <= 0 || out_window == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
+    return InvokeAbi(context, [&](Context& ctx)
+    {
 
-    if (handle->application == nullptr)
+    if (ctx.application == nullptr)
     {
         try
         {
-            handle->application = std::make_unique<Application>();
+            ctx.application = std::make_unique<Application>();
         }
         catch (const std::exception& error)
         {
-            SetError(*handle, error.what());
+            TrySetError(&ctx, error.what());
             return WISTERIA_ERROR_INITIALIZATION;
         }
         catch (...)
         {
-            SetError(*handle, "GLFW initialization failed");
+            TrySetError(&ctx, "GLFW initialization failed");
             return WISTERIA_ERROR_INITIALIZATION;
         }
     }
@@ -123,24 +122,25 @@ enum WisteriaStatus wisteria_window_create_hidden(
         config.title = "WISTERIA headless render target";
         config.shareOpenGlResources = true;
         config.visible = false;
-        Window& window = handle->application->CreateWindow(config);
+        Window& window = ctx.application->CreateWindow(config);
         auto entry = std::make_unique<WindowEntry>();
         entry->window = &window;
-        const WisteriaWindow windowHandle = handle->nextWindowHandle++;
-        handle->windows.emplace(windowHandle, std::move(entry));
+        const WisteriaWindow windowHandle = AllocateOpaqueHandle();
+        ctx.windows.emplace(windowHandle, std::move(entry));
         *out_window = windowHandle;
         return WISTERIA_OK;
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INITIALIZATION;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception while creating the window");
+        TrySetError(&ctx, "Unknown C++ exception while creating the window");
         return WISTERIA_ERROR_INITIALIZATION;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_window_destroy(
@@ -148,34 +148,34 @@ enum WisteriaStatus wisteria_window_destroy(
     WisteriaWindow window
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
 
     try
     {
         // Scene handles bound to this window cannot outlive the Window* they
         // reference. Invalidate them before destroying the platform object.
-        for (auto iterator = handle->scenes.begin();
-             iterator != handle->scenes.end();)
+        for (auto iterator = ctx.scenes.begin();
+             iterator != ctx.scenes.end();)
         {
             if (iterator->second->windowHandle == window)
-                iterator = handle->scenes.erase(iterator);
+                iterator = ctx.scenes.erase(iterator);
             else
                 ++iterator;
         }
-        handle->application->DestroyWindow(*entry->window);
+        ctx.application->DestroyWindow(*entry->window);
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
-    handle->windows.erase(window);
+    ctx.windows.erase(window);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_load_demo(
@@ -193,15 +193,14 @@ enum WisteriaStatus wisteria_window_load_demo(
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     if (entry->demoLoaded)
     {
-        SetError(*handle, "Demo is already loaded for this window");
+        TrySetError(&ctx, "Demo is already loaded for this window");
         return WISTERIA_ERROR_ALREADY_EXISTS;
     }
 
@@ -218,11 +217,11 @@ enum WisteriaStatus wisteria_window_load_demo(
 
     try
     {
-        WindowManager& windowManager = handle->application->GetWindowManager();
+        WindowManager& windowManager = ctx.application->GetWindowManager();
         const SceneHandle scene = windowManager.CreateScene();
         SetupSabaMmdDemoScene(
             *scene,
-            handle->application->GetResources(),
+            ctx.application->GetResources(),
             *entry->window,
             false,
             modelPath,
@@ -241,14 +240,15 @@ enum WisteriaStatus wisteria_window_load_demo(
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception while loading the demo");
+        TrySetError(&ctx, "Unknown C++ exception while loading the demo");
         return WISTERIA_ERROR_INTERNAL;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_poll_and_render(
@@ -258,17 +258,16 @@ enum WisteriaStatus wisteria_poll_and_render(
 {
     if (!std::isfinite(delta_time) || delta_time < 0.0f)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    if (handle->application == nullptr)
+    return InvokeAbi(context, [&](Context& ctx)
     {
-        SetError(*handle, "Context has no desktop application");
+    if (ctx.application == nullptr)
+    {
+        TrySetError(&ctx, "Context has no desktop application");
         return WISTERIA_ERROR_INITIALIZATION;
     }
 
     bool hasLoadedWindow = false;
-    for (const auto& [windowHandle, entry] : handle->windows)
+    for (const auto& [windowHandle, entry] : ctx.windows)
     {
         (void)windowHandle;
         if (entry != nullptr && entry->window != nullptr && entry->demoLoaded)
@@ -279,25 +278,26 @@ enum WisteriaStatus wisteria_poll_and_render(
     }
     if (!hasLoadedWindow)
     {
-        SetError(*handle, "Context has no window with a loaded demo");
+        TrySetError(&ctx, "Context has no window with a loaded demo");
         return WISTERIA_ERROR_INITIALIZATION;
     }
 
     try
     {
-        handle->application->PollEventsAndRender(delta_time);
+        ctx.application->PollEventsAndRender(delta_time);
         return WISTERIA_OK;
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception during context render");
+        TrySetError(&ctx, "Unknown C++ exception during context render");
         return WISTERIA_ERROR_INTERNAL;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_window_poll_and_render(
@@ -306,18 +306,18 @@ enum WisteriaStatus wisteria_window_poll_and_render(
     float delta_time
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     if (!entry->demoLoaded)
     {
-        SetError(*handle, "Window demo is not loaded");
+        TrySetError(&ctx, "Window demo is not loaded");
         return WISTERIA_ERROR_INITIALIZATION;
     }
     return wisteria_poll_and_render(context, delta_time);
+    });
 }
 
 enum WisteriaStatus wisteria_window_should_close(
@@ -328,14 +328,14 @@ enum WisteriaStatus wisteria_window_should_close(
 {
     if (out_closed == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     *out_closed = entry->window->ShouldClose() ? 1 : 0;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_is_key_down(
@@ -347,17 +347,17 @@ enum WisteriaStatus wisteria_window_is_key_down(
 {
     if (out_down == nullptr || !ValidKey(key))
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const InputKey mapped = static_cast<InputKey>(
         static_cast<std::size_t>(key)
     );
     *out_down = entry->window->GetInput().IsKeyDown(mapped) ? 1 : 0;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_was_key_pressed(
@@ -369,17 +369,17 @@ enum WisteriaStatus wisteria_window_was_key_pressed(
 {
     if (out_pressed == nullptr || !ValidKey(key))
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const InputKey mapped = static_cast<InputKey>(
         static_cast<std::size_t>(key)
     );
     *out_pressed = entry->window->GetInput().WasKeyPressed(mapped) ? 1 : 0;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_was_key_released(
@@ -391,17 +391,17 @@ enum WisteriaStatus wisteria_window_was_key_released(
 {
     if (out_released == nullptr || !ValidKey(key))
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const InputKey mapped = static_cast<InputKey>(
         static_cast<std::size_t>(key)
     );
     *out_released = entry->window->GetInput().WasKeyReleased(mapped) ? 1 : 0;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_is_mouse_button_down(
@@ -413,18 +413,18 @@ enum WisteriaStatus wisteria_window_is_mouse_button_down(
 {
     if (out_down == nullptr || !ValidMouseButton(button))
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const InputMouseButton mapped = static_cast<InputMouseButton>(
         static_cast<std::size_t>(button)
     );
     *out_down =
         entry->window->GetInput().IsMouseButtonDown(mapped) ? 1 : 0;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_cursor_delta(
@@ -436,16 +436,16 @@ enum WisteriaStatus wisteria_window_cursor_delta(
 {
     if (out_x == nullptr || out_y == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const MouseDelta delta = entry->window->GetInput().CursorDelta();
     *out_x = static_cast<float>(delta.x);
     *out_y = static_cast<float>(delta.y);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_scroll_delta(
@@ -456,14 +456,14 @@ enum WisteriaStatus wisteria_window_scroll_delta(
 {
     if (out_y == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     *out_y = static_cast<float>(entry->window->GetInput().ScrollDeltaY());
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_set_cursor_captured(
@@ -472,14 +472,14 @@ enum WisteriaStatus wisteria_window_set_cursor_captured(
     int32_t captured
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     entry->window->GetInput().SetCursorCaptured(captured != 0);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_set_camera(
@@ -492,14 +492,13 @@ enum WisteriaStatus wisteria_window_set_camera(
 {
     if (position == nullptr || target == nullptr || up == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     Camera& camera = entry->window->GetCamera();
-    return GuardAbi(*handle, [&]
+    return GuardAbi(ctx, [&]
     {
         CameraParam replacement = camera.GetParam();
         replacement.Position = glm::vec3(
@@ -510,6 +509,7 @@ enum WisteriaStatus wisteria_window_set_camera(
         replacement.Target = glm::vec3(target[0], target[1], target[2]);
         replacement.Up = glm::vec3(up[0], up[1], up[2]);
         camera.SetParam(replacement);
+    });
     });
 }
 
@@ -523,12 +523,11 @@ enum WisteriaStatus wisteria_window_camera_pose(
 {
     if (out_position == nullptr || out_target == nullptr || out_up == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const glm::vec3& position = entry->window->GetCamera().Position();
     const glm::vec3& target = entry->window->GetCamera().Target();
     const glm::vec3& up = entry->window->GetCamera().Up();
@@ -542,6 +541,7 @@ enum WisteriaStatus wisteria_window_camera_pose(
     out_up[1] = up.y;
     out_up[2] = up.z;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_set_camera_speed(
@@ -552,19 +552,19 @@ enum WisteriaStatus wisteria_window_set_camera_speed(
 {
     if (!std::isfinite(move_speed) || move_speed <= 0.0f)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     FreeCameraControllerSettings settings;
     settings.moveSpeed = move_speed;
-    handle->application->GetWindowManager().SetFreeCameraControllerSettings(
+    ctx.application->GetWindowManager().SetFreeCameraControllerSettings(
         *entry->window,
         settings
     );
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_set_render_settings(
@@ -575,14 +575,13 @@ enum WisteriaStatus wisteria_window_set_render_settings(
 {
     if (settings == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
-    if (handle->application == nullptr)
-        return InvalidHandle(*handle, "Context has no application");
+        return InvalidHandle(ctx, "Window handle is invalid");
+    if (ctx.application == nullptr)
+        return InvalidHandle(ctx, "Context has no application");
 
     const bool validBias = settings->shadow_bias < 0.0f
         ? true
@@ -601,12 +600,12 @@ enum WisteriaStatus wisteria_window_set_render_settings(
          settings->ground_shadow_enabled != 0 &&
          settings->ground_shadow_enabled != 1))
     {
-        SetError(*handle, "Render settings contain invalid values");
+        TrySetError(&ctx, "Render settings contain invalid values");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
 
     Renderer::Config config =
-        handle->application->GetRenderer(*entry->window).GetConfig();
+        ctx.application->GetRenderer(*entry->window).GetConfig();
     if (settings->shadow_map_size != 0)
         config.shadowMapSize = settings->shadow_map_size;
     if (settings->shadow_pcf_radius != 0)
@@ -617,8 +616,9 @@ enum WisteriaStatus wisteria_window_set_render_settings(
         config.groundShadowEnabled = settings->ground_shadow_enabled != 0;
     if (settings->shadow_bias >= 0.0f)
         config.shadowBias = settings->shadow_bias;
-    handle->application->GetRenderer(*entry->window).SetConfig(config);
+    ctx.application->GetRenderer(*entry->window).SetConfig(config);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_framebuffer_size(
@@ -630,17 +630,17 @@ enum WisteriaStatus wisteria_window_framebuffer_size(
 {
     if (out_width == nullptr || out_height == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
+        return InvalidHandle(ctx, "Window handle is invalid");
     const SceneFramebuffer& framebuffer =
-        handle->application->GetFramebuffer(*entry->window);
+        ctx.application->GetFramebuffer(*entry->window);
     *out_width = framebuffer.Width();
     *out_height = framebuffer.Height();
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_window_read_pixels(
@@ -652,18 +652,17 @@ enum WisteriaStatus wisteria_window_read_pixels(
 {
     if (rgba == nullptr || buffer_size == 0U)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    WindowEntry* entry = FindWindow(*handle, window);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    WindowEntry* entry = FindWindow(ctx, window);
     if (entry == nullptr || entry->window == nullptr)
-        return InvalidHandle(*handle, "Window handle is invalid");
-    if (handle->application == nullptr)
-        return InvalidHandle(*handle, "Context has no application");
+        return InvalidHandle(ctx, "Window handle is invalid");
+    if (ctx.application == nullptr)
+        return InvalidHandle(ctx, "Context has no application");
 
     entry->window->MakeContextCurrent();
     const SceneFramebuffer& framebuffer =
-        handle->application->GetFramebuffer(*entry->window);
+        ctx.application->GetFramebuffer(*entry->window);
     if (framebuffer.Width() <= 0 || framebuffer.Height() <= 0)
         return WISTERIA_ERROR_INITIALIZATION;
     const std::size_t requiredBytes =
@@ -671,7 +670,7 @@ enum WisteriaStatus wisteria_window_read_pixels(
         static_cast<std::size_t>(framebuffer.Height()) * 4U;
     if (buffer_size < requiredBytes)
     {
-        SetError(*handle, "Readback buffer is too small");
+        TrySetError(&ctx, "Readback buffer is too small");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
 
@@ -701,6 +700,7 @@ enum WisteriaStatus wisteria_window_read_pixels(
     glReadBuffer(static_cast<GLenum>(previousReadBuffer));
     glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
     return WISTERIA_OK;
+    });
 }
 
 } /* extern "C" */

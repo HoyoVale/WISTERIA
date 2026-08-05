@@ -4,6 +4,8 @@
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/assets/saba_mmd_importer.hpp"
+#include "wisteria/mmd/mmd_camera_conversion.hpp"
+#include "wisteria/mmd/mmd_light_conversion.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #include "wisteria/scene/scene.hpp"
 #include "wisteria/platform/input.hpp"
@@ -65,15 +67,17 @@ std::string ToNarrowUtf8(const std::filesystem::path& path)
     );
 }
 
-void ConfigureCharacterLighting(Scene& scene)
+DirectionalLight& ConfigureCharacterLighting(Scene& scene)
 {
     // Main directional light also drives the CSM shadow map and the MMD
     // ground shadow projection.
-    scene.CreateDirectionalLight(DirectionalLightData{
+    DirectionalLight& keyLight = scene.CreateDirectionalLight(
+        DirectionalLightData{
         .Direction = {-0.35f, -0.75f, -0.45f},
         .Color = {1.0f, 0.96f, 0.92f},
         .Intensity = 0.75f
-    });
+        }
+    );
     scene.CreatePointLight(PointLightData{
         .Position = {5.0f, 13.0f, 9.0f},
         .Color = {1.0f, 0.88f, 0.78f},
@@ -90,6 +94,7 @@ void ConfigureCharacterLighting(Scene& scene)
     //     .Linear = 0.045f,
     //     .Quadratic = 0.008f
     // });
+    return keyLight;
 }
 
 namespace
@@ -176,6 +181,8 @@ public:
     SabaDemoBehaviour(
         SabaMmdRuntimeModel& runtime,
         Camera& camera,
+        DirectionalLight& light,
+        LightTrack lightTrack,
         Window& window,
         Input& input,
         bool sceneMode,
@@ -183,6 +190,8 @@ public:
     )
         : runtime(&runtime),
           camera(&camera),
+          light(&light),
+          lightTrack(std::move(lightTrack)),
           window(&window),
           input(&input),
           sceneMode(sceneMode),
@@ -231,10 +240,48 @@ public:
         // behaviours run. The demo only applies optional presentation tracks.
         if (this->cameraFollowEnabled && !this->runtime->IsMotionPaused())
         {
-            this->runtime->ApplyCameraMotion(
-                static_cast<float>(this->runtime->MotionFrame()),
-                *this->camera
-            );
+            const std::optional<CameraTrackSample> sample =
+                this->runtime->SampleCameraMotion(
+                    static_cast<float>(this->runtime->MotionFrame())
+                );
+            if (sample.has_value())
+            {
+                // Preserve host camera settings the sample does not carry
+                // (NearClip/FarClip and any other fields).
+                this->camera->SetParam(ToCameraParam(
+                    *sample,
+                    this->camera->GetParam()
+                ));
+            }
+        }
+
+        // Programmatic light track: rotates the key light direction around Y
+        // so the CSM/ground shadow direction visibly changes over time. The
+        // demo owns the track; the backend never writes the light directly.
+        {
+            LightKeyframe lightSample;
+            if (this->lightTrack.Sample(
+                    static_cast<float>(this->runtime->MotionFrame()),
+                    lightSample
+                ))
+            {
+                const DirectionalLightData fallback{
+                    .Direction = this->light->Direction(),
+                    .Color = this->light->Color(),
+                    .Intensity = this->light->Intensity()
+                };
+                const DirectionalLightData lightData = ToLightData(
+                    LightTrackSample{
+                        lightSample.time,
+                        lightSample.color,
+                        lightSample.position
+                    },
+                    fallback
+                );
+                this->light->SetDirection(lightData.Direction);
+                this->light->SetColor(lightData.Color);
+                this->light->SetIntensity(lightData.Intensity);
+            }
         }
 
         this->titleElapsed += deltaTime;
@@ -288,6 +335,8 @@ public:
 private:
     SabaMmdRuntimeModel* runtime = nullptr;
     Camera* camera = nullptr;
+    DirectionalLight* light = nullptr;
+    LightTrack lightTrack;
     Window* window = nullptr;
     Input* input = nullptr;
     bool sceneMode = false;
@@ -398,10 +447,6 @@ void SetupSabaMmdDemoScene(
         "saba::" + modelResourceName,
         modelPath
     );
-    ModelAsset& sceneModel = resources.LoadModel(
-        "saba::" + sceneResourceName,
-        scenePath
-    );
     Entity& entity = scene.InstantiateModel(
         model,
         Transform(
@@ -412,6 +457,10 @@ void SetupSabaMmdDemoScene(
     );
     if (sceneMode)
     {
+        ModelAsset& sceneModel = resources.LoadModel(
+            "saba::" + sceneResourceName,
+            scenePath
+        );
         scene.InstantiateModel(
             sceneModel,
             Transform(
@@ -425,19 +474,9 @@ void SetupSabaMmdDemoScene(
     else
     {
         // Character demo: stand the character on a visible ground plane so
-        // the MMD ground shadow has a surface to land on, and restore the
-        // distant 随便观 stage backdrop for the original
-        // stage + character + motion composition.
+        // the MMD ground shadow has a surface to land on. No stage backdrop:
+        // the composition is character + chessboard ground only.
         AddDemoGround(scene, resources);
-        scene.InstantiateModel(
-            sceneModel,
-            Transform(
-                glm::vec3(0.0f, 0.0f, 50.1f),
-                glm::vec3(0.0f),
-                glm::vec3(1.0f)
-            )
-        );
-        MarkModelAsGroundShadowReceiver(sceneModel);
     }
     if (motionPath.empty() && !sceneMode)
         motionPath = DemoDreamWingMotionPath();
@@ -497,16 +536,43 @@ void SetupSabaMmdDemoScene(
                   << ToNarrowUtf8(cameraPath) << std::endl;
     }
 
+    DirectionalLight& keyLight = ConfigureCharacterLighting(scene);
+
+    // Programmatic light track: rotates the key light direction around Y so
+    // the CSM/ground shadow direction changes over the motion. The demo owns
+    // the track; WISTERIA's application layer converts samples to host light
+    // data (ToLightData) — the backend never writes the light directly.
+    LightTrack demoLightTrack({
+        LightKeyframe{
+            0.0f,
+            {1.0f, 0.96f, 0.92f},
+            {0.9f, 1.0f, 1.1f},
+            {}
+        },
+        LightKeyframe{
+            300.0f,
+            {1.0f, 0.96f, 0.92f},
+            {-0.9f, 1.0f, -0.4f},
+            {}
+        },
+        LightKeyframe{
+            600.0f,
+            {1.0f, 0.96f, 0.92f},
+            {0.2f, 1.0f, -1.0f},
+            {}
+        }
+    });
+
     entity.AddBehaviour<SabaDemoBehaviour>(
         *runtime,
         scene.ActiveCamera(),
+        keyLight,
+        std::move(demoLightTrack),
         window,
         window.GetInput(),
         sceneMode,
         sceneMode ? 12.0f : 2.5f
     );
-
-    ConfigureCharacterLighting(scene);
     if (sceneMode)
     {
         const glm::vec3 center = (sceneMinimum + sceneMaximum) * 0.5f;

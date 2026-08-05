@@ -1,5 +1,6 @@
 #include "test_support.hpp"
 #include "test_fixtures.hpp"
+#include <Saba/Model/MMD/MMDCamera.h>
 
 #include <cctype>
 #include <cstdlib>
@@ -1607,7 +1608,41 @@ void TestSabaSkinningWhenAvailable()
                       << std::endl;
         }
     }
-    runtime.UploadDynamicVertices(mesh);
+    // R1.1E: dynamic geometry upload is a WISTERIA responsibility and flows
+    // exclusively through ModelInstance. Reproduce the unified upload here to
+    // verify the Saba vertex frame remains uploadable.
+    const ModelVertexFrame vertexFrame = runtime.VertexFrame();
+    Require(
+        !vertexFrame.positions.empty() &&
+        vertexFrame.positions.size() == vertexFrame.normals.size(),
+        "Saba runtime produced an inconsistent vertex frame"
+    );
+    const std::span<const std::uint32_t> sourceIndices =
+        mesh.SourceVertexIndices();
+    if (sourceIndices.empty())
+    {
+        mesh.UploadDynamicVertices(
+            vertexFrame.positions,
+            vertexFrame.normals
+        );
+    }
+    else
+    {
+        std::vector<glm::vec3> positions;
+        std::vector<glm::vec3> normals;
+        positions.reserve(sourceIndices.size());
+        normals.reserve(sourceIndices.size());
+        for (const std::uint32_t globalIndex : sourceIndices)
+        {
+            Require(
+                globalIndex < vertexFrame.positions.size(),
+                "Mesh source vertex index exceeds runtime vertex frame"
+            );
+            positions.push_back(vertexFrame.positions[globalIndex]);
+            normals.push_back(vertexFrame.normals[globalIndex]);
+        }
+        mesh.UploadDynamicVertices(positions, normals);
+    }
     Require(
         mesh.HasDynamicVertexSource(),
         "Saba runtime did not upload skinned vertices"
@@ -2084,7 +2119,13 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
         "LoadCameraMotion rejected a camera VMD"
     );
     Camera camera;
-    runtime.ApplyCameraMotion(10.0f, camera);
+    const std::optional<CameraTrackSample> cameraSample =
+        runtime.SampleCameraMotion(10.0f);
+    Require(
+        cameraSample.has_value(),
+        "SampleCameraMotion returned no sample for a loaded camera VMD"
+    );
+    camera.SetParam(ToCameraParam(*cameraSample, camera.GetParam()));
     const CameraParam& param = camera.GetParam();
     Require(
         std::isfinite(param.Position.x) &&
@@ -2103,7 +2144,14 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
     DirectionalLight light;
     if (runtime.LoadLightMotion(motionPath))
     {
-        runtime.ApplyLightMotion(0.0f, light);
+        const std::optional<LightTrackSample> sample =
+            runtime.SampleLightMotion(0.0f);
+        Require(
+            sample.has_value(),
+            "SampleLightMotion returned no sample for a loaded light track"
+        );
+        const DirectionalLightData emptyFallback{};
+        light = DirectionalLight(ToLightData(*sample, emptyFallback));
         Require(
             glm::length(light.Direction()) > 0.0f,
             "VMD light motion produced a zero direction"
@@ -2123,12 +2171,332 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
             {}
         }
     });
-    runtime.ApplyLightTrack(lightTrack, 15.0f, light);
+    LightKeyframe programmaticSample;
+    Require(
+        lightTrack.Sample(15.0f, programmaticSample),
+        "Programmatic LightTrack did not sample"
+    );
+    light = DirectionalLight(ToLightData(LightTrackSample{
+        15.0f,
+        programmaticSample.color,
+        programmaticSample.position
+    }, DirectionalLightData{}));
     Require(
         NearlyEqual(light.Color(), glm::vec3(0.5f, 0.5f, 0.625f)) &&
             glm::length(light.Direction()) > 0.0f,
         "LightTrack did not apply to the directional light"
     );
+
+    // R1.1 Fixup: applying a light sample must preserve the host light's
+    // Intensity (the old ApplyLightMotion only changed Color/Direction).
+    DirectionalLight preservedLight(DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = {1.0f, 0.96f, 0.92f},
+        .Intensity = 0.75f
+    });
+    const DirectionalLightData fallback{
+        .Direction = preservedLight.Direction(),
+        .Color = preservedLight.Color(),
+        .Intensity = preservedLight.Intensity()
+    };
+    preservedLight = DirectionalLight(ToLightData(
+        LightTrackSample{0.0f, glm::vec3(1.0f, 0.5f, 0.25f), glm::vec3(1.0f, 2.0f, 3.0f)},
+        fallback
+    ));
+    Require(
+        NearlyEqual(preservedLight.Intensity(), 0.75f),
+        "ToLightData changed the host light intensity"
+    );
+}
+
+// Builds a minimal VMD containing two light keyframes and loads it through
+// SabaMmdRuntimeModel::LoadLightMotion, verifying the real Saba light VMD
+// sampling path (not just the programmatic LightTrack path).
+void TestSabaLightVmdSampling()
+{
+    const auto writeLightVmd = [](const std::filesystem::path& path)
+    {
+        std::vector<std::uint8_t> bytes;
+        const auto appendValue = [&bytes]<typename T>(const T& value)
+        {
+            const std::size_t offset = bytes.size();
+            bytes.resize(offset + sizeof(T));
+            std::memcpy(bytes.data() + offset, &value, sizeof(T));
+        };
+        const auto appendFixed = [&bytes](
+            std::string_view value,
+            std::size_t size
+        )
+        {
+            const std::size_t begin = bytes.size();
+            bytes.resize(begin + size, 0U);
+            const std::size_t copySize = std::min(value.size(), size);
+            std::memcpy(bytes.data() + begin, value.data(), copySize);
+        };
+
+        appendFixed("Vocaloid Motion Data 0002", 30U);
+        appendFixed("testModel", 20U);
+        appendValue(std::uint32_t{0U});  // bone frames
+        appendValue(std::uint32_t{0U});  // morph frames
+        appendValue(std::uint32_t{0U});  // camera frames
+        appendValue(std::uint32_t{2U});  // light frames
+        const auto appendLightFrame = [&appendValue](
+            std::uint32_t frame,
+            const glm::vec3& color,
+            const glm::vec3& position
+        )
+        {
+            appendValue(frame);
+            appendValue(color.x);
+            appendValue(color.y);
+            appendValue(color.z);
+            appendValue(position.x);
+            appendValue(position.y);
+            appendValue(position.z);
+        };
+        appendLightFrame(
+            0U,
+            glm::vec3(1.0f, 0.9f, 0.8f),
+            glm::vec3(1.0f, 1.0f, 0.5f)
+        );
+        appendLightFrame(
+            30U,
+            glm::vec3(0.4f, 0.6f, 1.0f),
+            glm::vec3(-1.0f, 1.0f, -0.5f)
+        );
+        std::ofstream out(path, std::ios::binary);
+        Require(out.is_open(), "Cannot write light VMD fixture");
+        out.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size())
+        );
+        out.close();
+    };
+
+    const std::filesystem::path fixturePath =
+        std::filesystem::temp_directory_path() /
+        "wisteria_light_sampling_test.vmd";
+    writeLightVmd(fixturePath);
+
+    SabaMmdRuntimeModel runtime({});
+    Require(
+        runtime.LoadLightMotion(fixturePath),
+        "Saba rejected a light-bearing VMD"
+    );
+    const std::optional<LightTrackSample> first =
+        runtime.SampleLightMotion(0.0f);
+    const std::optional<LightTrackSample> second =
+        runtime.SampleLightMotion(30.0f);
+    Require(
+        first.has_value() && second.has_value(),
+        "Saba light VMD sampling returned no sample"
+    );
+    Require(
+        NearlyEqual(first->color, glm::vec3(1.0f, 0.9f, 0.8f)) &&
+            NearlyEqual(first->position, glm::vec3(1.0f, 1.0f, -0.5f)),
+        "Saba light VMD frame 0 sample is wrong"
+    );
+    Require(
+        NearlyEqual(second->color, glm::vec3(0.4f, 0.6f, 1.0f)) &&
+            NearlyEqual(second->position, glm::vec3(-1.0f, 1.0f, 0.5f)),
+        "Saba light VMD frame 30 sample is wrong"
+    );
+    // Interpolated midpoint must be between the two keyframes.
+    const std::optional<LightTrackSample> middle =
+        runtime.SampleLightMotion(15.0f);
+    Require(
+        middle.has_value() &&
+            middle->color.x > 0.4f && middle->color.x < 1.0f,
+        "Saba light VMD interpolation did not blend keyframes"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove(fixturePath, ignored);
+}
+
+// R1.1 Fixup: a VMD morph track writes weights through saba's internal
+// MMDMorph objects, bypassing SetMorphWeight. MorphRevision must still
+// advance during Update, and the persisted MorphSnapshot content must
+// actually change between frames (not just the counter).
+void TestMorphRevisionAdvancesOnVmdUpdate()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("morphRevision", modelPath);
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    Require(
+        entity.HasModelInstance(),
+        "Morph revision test entity has no ModelInstance"
+    );
+    ModelInstance& instance = entity.GetModelInstance();
+    auto* runtime = dynamic_cast<MmdRuntimeModel*>(
+        instance.TryGetRuntime()
+    );
+    Require(
+        runtime != nullptr,
+        "Morph revision test PMX did not resolve through Saba backend"
+    );
+    const std::uint64_t baseline = runtime->MorphRevision();
+
+    // Build a VMD with two morph keyframes (frame 0 weight 0.0, frame 10
+    // weight 1.0) and load it.
+    const std::filesystem::path vmdPath =
+        std::filesystem::temp_directory_path() /
+        "wisteria_morph_revision_test.vmd";
+    {
+        std::vector<std::uint8_t> bytes;
+        const auto appendValue = [&bytes]<typename T>(const T& value)
+        {
+            const std::size_t offset = bytes.size();
+            bytes.resize(offset + sizeof(T));
+            std::memcpy(bytes.data() + offset, &value, sizeof(T));
+        };
+        const auto appendFixed = [&bytes](
+            std::string_view value,
+            std::size_t size
+        )
+        {
+            const std::size_t begin = bytes.size();
+            bytes.resize(begin + size, 0U);
+            const std::size_t copySize = std::min(value.size(), size);
+            std::memcpy(bytes.data() + begin, value.data(), copySize);
+        };
+        appendFixed("Vocaloid Motion Data 0002", 30U);
+        appendFixed("testModel", 20U);
+        appendValue(std::uint32_t{0U});  // bone frames
+        appendValue(std::uint32_t{2U});  // morph frames
+        const auto appendMorphFrame = [&appendFixed, &appendValue](
+            std::string_view name,
+            std::uint32_t frame,
+            float weight
+        )
+        {
+            appendFixed(name, 15U);
+            appendValue(frame);
+            appendValue(weight);
+        };
+        appendMorphFrame("vertex", 0U, 0.0f);
+        appendMorphFrame("vertex", 10U, 1.0f);
+        appendValue(std::uint32_t{0U});  // camera frames
+        appendValue(std::uint32_t{0U});  // light frames
+        std::ofstream out(vmdPath, std::ios::binary);
+        Require(out.is_open(), "Cannot write morph revision VMD fixture");
+        out.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size())
+        );
+        out.close();
+    }
+
+    Require(
+        runtime->LoadMotion(vmdPath),
+        "Morph revision VMD failed to load"
+    );
+    // Non-looping: frame advances must not wrap back into the clip.
+    runtime->SetMotionLooping(false);
+    const std::uint64_t afterLoad = runtime->MorphRevision();
+    Require(
+        afterLoad > baseline,
+        "LoadMotion did not advance MorphRevision"
+    );
+
+    runtime->SetMotionFrame(0.0);
+    scene.Update(1.0f / 60.0f);
+    const std::uint64_t afterUpdate = runtime->MorphRevision();
+    Require(
+        afterUpdate > afterLoad,
+        "VMD Update did not advance MorphRevision (snapshot would freeze)"
+    );
+
+    // The snapshot content at frame 0 must reflect the VMD weight 0.0.
+    const ModelFrameSnapshot& frame0Snapshot =
+        instance.CaptureSnapshot(CaptureMask::Morphs);
+    float frame0Weight = -1.0f;
+    for (const MorphEntrySnapshot& entry :
+         frame0Snapshot.morphs.entries)
+    {
+        if (entry.name == "vertex")
+            frame0Weight = entry.rawWeight;
+    }
+    Require(
+        frame0Weight > -0.5f && frame0Weight < 0.5f,
+        "MorphSnapshot frame 0 weight did not reflect the VMD"
+    );
+
+    // Advance to frame 10 and capture again: the weight must change to 1.0.
+    runtime->SetMotionFrame(10.0);
+    scene.Update(1.0f / 60.0f);
+    const ModelFrameSnapshot& frame10Snapshot =
+        instance.CaptureSnapshot(CaptureMask::Morphs);
+    float frame10Weight = -1.0f;
+    for (const MorphEntrySnapshot& entry :
+         frame10Snapshot.morphs.entries)
+    {
+        if (entry.name == "vertex")
+            frame10Weight = entry.rawWeight;
+    }
+    Require(
+        frame10Weight > 0.5f,
+        "MorphSnapshot frame 10 weight did not advance with the VMD"
+    );
+    Require(
+        std::abs(frame10Weight - frame0Weight) > 0.5f,
+        "MorphSnapshot content did not change between VMD frames"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove(vmdPath, ignored);
+}
+
+// Golden regression: the WISTERIA MMD camera conversion must reproduce
+// saba::MMDLookAtCamera's look-at output for the same MMD camera inputs.
+void TestMmdCameraConversionMatchesSaba()
+{
+    const struct
+    {
+        glm::vec3 interest;
+        glm::vec3 rotationDegrees;
+        float distance;
+        float fovDegrees;
+    } cases[] = {
+        {glm::vec3(0.0f, 10.0f, 0.0f), glm::vec3(0.0f), 50.0f, 30.0f},
+        {glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.0f, -10.0f, 2.0f), 30.0f, 45.0f},
+        {glm::vec3(-3.0f, 5.0f, 7.0f), glm::vec3(-20.0f, 180.0f, 15.0f), 80.0f, 12.0f},
+        {glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f), -15.0f, 60.0f},
+        {glm::vec3(0.0f, 10.0f, 0.0f), glm::vec3(-89.0f, 45.0f, 0.0f), 25.0f, 90.0f}
+    };
+
+    for (const auto& testCase : cases)
+    {
+        saba::MMDCamera mmdCamera;
+        mmdCamera.m_interest = testCase.interest;
+        mmdCamera.m_rotate = glm::radians(testCase.rotationDegrees);
+        mmdCamera.m_distance = testCase.distance;
+        mmdCamera.m_fov = glm::radians(testCase.fovDegrees);
+        const saba::MMDLookAtCamera sabaLook(mmdCamera);
+
+        CameraTrackSample sample;
+        sample.interest = testCase.interest;
+        sample.rotation = testCase.rotationDegrees;
+        sample.distance = testCase.distance;
+        sample.viewAngle = testCase.fovDegrees;
+        const CameraParam ours = ToCameraParam(sample, CameraParam{});
+
+        Require(
+            NearlyEqual(ours.Position, sabaLook.m_eye) &&
+                NearlyEqual(ours.Target, sabaLook.m_center) &&
+                NearlyEqual(ours.Up, sabaLook.m_up),
+            "WISTERIA MMD camera conversion diverged from saba MMDLookAtCamera"
+        );
+        Require(
+            NearlyEqual(ours.VerticalFovDegrees, testCase.fovDegrees),
+            "WISTERIA MMD camera conversion changed FOV"
+        );
+    }
 }
 
 #if defined(WISTERIA_TEST_NATIVE_ABI)
@@ -2184,6 +2552,307 @@ void TestNativeAbiLifecycle()
     Require(
         wisteria_destroy_context(context) == WISTERIA_OK,
         "wisteria_destroy_context failed"
+    );
+}
+
+// R1.S2: handle boundary semantics. Opaque, globally-unique handles mean a
+// stale handle, a double destroy and a cross-context handle must all be
+// rejected without crashing or touching another object.
+void TestNativeAbiHandleBoundaries()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
+    const std::u8string modelPathU8 = modelPath.u8string();
+    const std::string modelPathUtf8(
+        reinterpret_cast<const char*>(modelPathU8.data()),
+        modelPathU8.size()
+    );
+
+    WisteriaContext firstContext = 0U;
+    WisteriaContext secondContext = 0U;
+    Require(
+        wisteria_create_context(&firstContext) == WISTERIA_OK &&
+            wisteria_create_context(&secondContext) == WISTERIA_OK,
+        "ABI handle boundary context creation failed"
+    );
+
+    // Create a real model in each context. With globally-unique opaque
+    // handles the two model handles must differ.
+    WisteriaModel firstModel = 0U;
+    WisteriaModel secondModel = 0U;
+    Require(
+        wisteria_load_model(
+            firstContext,
+            modelPathUtf8.c_str(),
+            &firstModel
+        ) == WISTERIA_OK &&
+            firstModel != 0U,
+        "ABI first model load failed"
+    );
+    Require(
+        wisteria_load_model(
+            secondContext,
+            modelPathUtf8.c_str(),
+            &secondModel
+        ) == WISTERIA_OK &&
+            secondModel != 0U,
+        "ABI second model load failed"
+    );
+    {
+        // Cross-context: the first context's handle must not be accepted by
+        // the second context (opaque handles are globally unique).
+        const WisteriaStatus crossStatus = wisteria_update(
+            secondContext,
+            firstModel,
+            1.0f / 60.0f
+        );
+        Require(
+            crossStatus == WISTERIA_ERROR_NOT_FOUND,
+            "Cross-context model handle did not report NOT_FOUND"
+        );
+    }
+
+    // A context handle must never be accepted as a model handle.
+    Require(
+        wisteria_update(
+            firstContext,
+            firstContext,
+            1.0f / 60.0f
+        ) == WISTERIA_ERROR_NOT_FOUND,
+        "Context handle was accepted as a model handle"
+    );
+
+    // The two handles must be distinct (globally unique allocation).
+    Require(
+        firstModel != secondModel,
+        "Opaque handle allocator reused a value across contexts"
+    );
+
+    // Destroy the first context, then destroy it again: the second call must
+    // be NOT_FOUND (double destroy is safe).
+    Require(
+        wisteria_destroy_context(firstContext) == WISTERIA_OK,
+        "ABI first context destroy failed"
+    );
+    Require(
+        wisteria_destroy_context(firstContext) == WISTERIA_ERROR_NOT_FOUND,
+        "ABI double context destroy was accepted"
+    );
+    Require(
+        wisteria_destroy_context(secondContext) == WISTERIA_OK,
+        "ABI second context destroy failed"
+    );
+
+    // Context recreated after destroy must not reuse the destroyed context's
+    // handle value, and the stale model handle must not hit the new context.
+    WisteriaContext recreatedContext = 0U;
+    Require(
+        wisteria_create_context(&recreatedContext) == WISTERIA_OK,
+        "ABI recreated context creation failed"
+    );
+    Require(
+        recreatedContext != firstContext &&
+            recreatedContext != secondContext,
+        "Opaque context handle was reused after destroy"
+    );
+    WisteriaModel recreatedModel = 0U;
+    Require(
+        wisteria_load_model(
+            recreatedContext,
+            modelPathUtf8.c_str(),
+            &recreatedModel
+        ) == WISTERIA_OK,
+        "ABI recreated context model load failed"
+    );
+    Require(
+        recreatedModel != firstModel && recreatedModel != secondModel,
+        "Opaque model handle was reused after context destroy"
+    );
+    Require(
+        wisteria_update(
+            recreatedContext,
+            firstModel,
+            1.0f / 60.0f
+        ) == WISTERIA_ERROR_NOT_FOUND,
+        "Stale model handle hit a recreated context"
+    );
+    Require(
+        wisteria_destroy_context(recreatedContext) == WISTERIA_OK,
+        "ABI recreated context destroy failed"
+    );
+
+    // Destroying a context invalidates its child handles: any later use of a
+    // handle that belonged to it is NOT_FOUND, never a crash.
+    WisteriaContext temporaryContext = 0U;
+    Require(
+        wisteria_create_context(&temporaryContext) == WISTERIA_OK,
+        "ABI temporary context creation failed"
+    );
+    WisteriaWindow temporaryWindow = 0U;
+    const WisteriaStatus windowStatus = wisteria_window_create(
+        temporaryContext,
+        160,
+        120,
+        "WISTERIA handle boundary",
+        &temporaryWindow
+    );
+    if (windowStatus == WISTERIA_OK)
+    {
+        Require(
+            wisteria_window_should_close(
+                temporaryContext,
+                temporaryWindow,
+                nullptr
+            ) == WISTERIA_ERROR_INVALID_ARGUMENT,
+            "ABI null out handle was accepted"
+        );
+        int32_t closed = -1;
+        Require(
+            wisteria_window_should_close(
+                temporaryContext,
+                temporaryWindow,
+                &closed
+            ) == WISTERIA_OK,
+            "ABI valid window query failed"
+        );
+        Require(
+            wisteria_destroy_context(temporaryContext) == WISTERIA_OK,
+            "ABI context with a live window failed to destroy"
+        );
+        Require(
+            wisteria_window_should_close(
+                temporaryContext,
+                temporaryWindow,
+                &closed
+            ) == WISTERIA_ERROR_NOT_FOUND,
+            "ABI child handle survived its context destroy"
+        );
+    }
+    else
+    {
+        // No display backend available; the context itself must still be
+        // destroyable and its handle must not survive.
+        Require(
+            wisteria_destroy_context(temporaryContext) == WISTERIA_OK,
+            "ABI context without display failed to destroy"
+        );
+    }
+}
+
+// R1.S3: parent-first destroy cascade. Destroying a Window must invalidate
+// every Scene bound to it (they reference the destroyed Window*), and a
+// Scene handle must not survive its Window.
+void TestNativeAbiWindowSceneCascade()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI cascade context creation failed"
+    );
+
+    WisteriaWindow window = 0U;
+    const WisteriaStatus createStatus = wisteria_window_create(
+        context,
+        320,
+        240,
+        "WISTERIA cascade test",
+        &window
+    );
+    if (createStatus != WISTERIA_OK)
+    {
+        wisteria_destroy_context(context);
+        SkipTest("window backend is unavailable in this environment");
+    }
+
+    WisteriaScene scene = 0U;
+    Require(
+        wisteria_scene_create(context, window, &scene) == WISTERIA_OK &&
+            scene != 0U,
+        "ABI cascade scene create failed"
+    );
+
+    // Destroy the window first: the bound scene references the Window* and
+    // must be invalidated as part of the cascade.
+    Require(
+        wisteria_window_destroy(context, window) == WISTERIA_OK,
+        "ABI cascade window destroy failed"
+    );
+    Require(
+        wisteria_scene_destroy(context, scene) == WISTERIA_ERROR_NOT_FOUND,
+        "ABI scene handle survived its window destroy"
+    );
+
+    // Recreating a window must allocate a fresh handle, never reuse the
+    // destroyed one; the old scene handle stays invalid.
+    WisteriaWindow secondWindow = 0U;
+    if (wisteria_window_create(
+            context,
+            160,
+            120,
+            "WISTERIA cascade second",
+            &secondWindow
+        ) == WISTERIA_OK)
+    {
+        Require(
+            secondWindow != window,
+            "ABI window handle was reused after destroy"
+        );
+        wisteria_window_destroy(context, secondWindow);
+    }
+
+    Require(
+        wisteria_destroy_context(context) == WISTERIA_OK,
+        "ABI cascade context destroy failed"
+    );
+}
+
+// R1.S1 fix: a pathological filesystem input (overlong path) must never let a
+// C++ exception cross the extern "C" boundary. The call must return a status
+// and leave the out handle untouched.
+void TestNativeAbiExceptionBoundary()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI exception boundary context creation failed"
+    );
+
+    // Overlong path: PathFromUtf8 and filesystem calls may throw; InvokeAbi
+    // must convert that into a status code instead of propagating.
+    std::string overlongPath(20000U, 'a');
+    overlongPath += ".pmx";
+    WisteriaModel model = 0U;
+    const WisteriaStatus status = wisteria_load_model(
+        context,
+        overlongPath.c_str(),
+        &model
+    );
+    Require(
+        status != WISTERIA_OK,
+        "Overlong path was accepted as a valid model"
+    );
+    Require(
+        model == 0U,
+        "Overlong path load wrote an out handle"
+    );
+
+    // Null and empty paths remain INVALID_ARGUMENT (parameter validation is
+    // outside InvokeAbi but still inside the extern "C" boundary).
+    Require(
+        wisteria_load_model(context, nullptr, &model) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "Null model path was accepted"
+    );
+    Require(
+        wisteria_load_model(context, "", &model) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "Empty model path was accepted"
+    );
+
+    Require(
+        wisteria_destroy_context(context) == WISTERIA_OK,
+        "ABI exception boundary context destroy failed"
     );
 }
 
@@ -4148,6 +4817,35 @@ void TestR1EngineOwnedMmdInstances()
         secondRuntime->BackendName() == "saba-mmd",
         "PMX instance did not resolve through the registered Saba backend"
     );
+    // R1.1F: capability advertisement must reflect the real Saba surface.
+    const ModelRuntimeCapabilities firstCapabilities =
+        firstRuntime->Capabilities();
+    const ModelPhysicsRuntimeInfo firstPhysicsInfo =
+        firstRuntime->PhysicsInfo();
+    Require(
+        firstCapabilities.physics.supportsFixedTimeStep &&
+        firstCapabilities.physics.supportsMaxSubSteps &&
+        firstCapabilities.physics.supportsGravityOverride &&
+        firstCapabilities.physics.supportsEnabledSwitch &&
+        firstCapabilities.physics.supportsReset,
+        "Saba backend did not advertise its real physics knobs"
+    );
+    Require(
+        !firstCapabilities.physics.supportsSolverTuning &&
+        !firstCapabilities.physics.supportsCcd &&
+        !firstCapabilities.physics.supportsSnapshot,
+        "Saba backend over-advertised unexposed physics capabilities"
+    );
+    Require(
+        firstPhysicsInfo.available &&
+        firstPhysicsInfo.ownsSimulationStep,
+        "Saba physics availability misreported"
+    );
+    Require(
+        NearlyEqual(firstPhysicsInfo.fixedTimeStep, 1.0f / 120.0f) &&
+        firstPhysicsInfo.maxSubSteps > 0,
+        "Saba physics settings not reflected in PhysicsInfo"
+    );
     Require(
         firstInstance.InstanceMeshCount() > 0U &&
         firstInstance.InstanceMeshCount() == secondInstance.InstanceMeshCount(),
@@ -4191,6 +4889,81 @@ void TestR1EngineOwnedMmdInstances()
         !firstFrame.positions.empty() && !secondFrame.positions.empty() &&
         firstFrame.positions.data() != secondFrame.positions.data(),
         "Two PMX instances unexpectedly share one mutable vertex frame"
+    );
+
+    // R1.1D: WISTERIA-owned frame state. CaptureSnapshot must produce
+    // independent per-instance snapshots and must not mutate the shared
+    // ModelAsset or the runtime's transient view.
+    const ModelFrameSnapshot& firstSnapshot =
+        first.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    const ModelFrameSnapshot& secondSnapshot =
+        second.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(
+        firstSnapshot.pose.captured && secondSnapshot.pose.captured &&
+        firstSnapshot.geometry.captured && secondSnapshot.geometry.captured,
+        "CaptureSnapshot did not capture requested channels"
+    );
+    Require(
+        firstSnapshot.geometry.positions.size() > 0U &&
+        firstSnapshot.geometry.positions.size() ==
+            secondSnapshot.geometry.positions.size(),
+        "Captured geometry is empty or inconsistent across instances"
+    );
+    Require(
+        firstSnapshot.geometry.positions.data() !=
+            secondSnapshot.geometry.positions.data(),
+        "Two instances unexpectedly share one captured geometry buffer"
+    );
+    Require(
+        firstSnapshot.pose.localTransforms.size() ==
+            first.GetPose().BoneCount() &&
+        secondSnapshot.pose.localTransforms.size() ==
+            second.GetPose().BoneCount(),
+        "PoseSnapshot bone matrix count mismatched the runtime pose"
+    );
+    Require(
+        firstSnapshot.metadata.updateSerial >= 1U &&
+            firstSnapshot.metadata.valid,
+        "Frame metadata did not advance after update"
+    );
+
+    // R1.1 Fixup: snapshotRevision is a monotonic ModelInstance sequence and
+    // must advance when any channel changes, even if another channel's
+    // revision counter is numerically larger.
+    const std::uint64_t initialStateRevision =
+        firstSnapshot.metadata.snapshotRevision;
+    firstRuntime->SetMorphWeight("vertex", 0.25f);
+    scene.Update(0.0f);
+    const ModelFrameSnapshot& refreshed =
+        first.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(
+        refreshed.metadata.snapshotRevision > initialStateRevision,
+        "snapshotRevision did not advance after a morph change"
+    );
+
+    // Reset invalidates the transient view and the snapshot validity.
+    first.GetModelInstance().Reset();
+    Require(
+        !first.GetModelInstance().LastSnapshot().metadata.valid,
+        "Reset left the snapshot marked valid"
+    );
+    Require(
+        first.GetModelInstance().LastFrameView().geometry.positions.empty(),
+        "Reset left a stale transient view"
+    );
+    // R1.1 Final Fix: after Reset, CaptureSnapshot must NOT revalidate the
+    // snapshot from stale updateSerial history.
+    first.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(
+        !first.GetModelInstance().LastSnapshot().metadata.valid,
+        "CaptureSnapshot revalidated state before an Update after Reset"
+    );
+    // A subsequent Update restores validity.
+    scene.Update(0.0f);
+    first.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(
+        first.GetModelInstance().LastSnapshot().metadata.valid,
+        "CaptureSnapshot stayed invalid after a fresh Update"
     );
 
     Require(scene.RemoveEntity(first), "Failed to destroy the first instance");
@@ -4393,10 +5166,34 @@ int main()
         "Saba motion/camera/light interface",
         TestSabaMotionCameraLightInterfaceWhenAvailable
     );
+    failures += !RunTest(
+        "Saba light VMD sampling",
+        TestSabaLightVmdSampling
+    );
+    failures += !RunTest(
+        "Morph revision advances on VMD update",
+        TestMorphRevisionAdvancesOnVmdUpdate
+    );
+    failures += !RunTest(
+        "MMD camera conversion golden regression",
+        TestMmdCameraConversionMatchesSaba
+    );
     #if defined(WISTERIA_TEST_NATIVE_ABI)
     failures += !RunTest(
         "Native ABI lifecycle",
         TestNativeAbiLifecycle
+    );
+    failures += !RunTest(
+        "Native ABI handle boundaries",
+        TestNativeAbiHandleBoundaries
+    );
+    failures += !RunTest(
+        "Native ABI window/scene cascade",
+        TestNativeAbiWindowSceneCascade
+    );
+    failures += !RunTest(
+        "Native ABI exception boundary",
+        TestNativeAbiExceptionBoundary
     );
     failures += !RunTest(
         "Native ABI Saba runtime",

@@ -2,6 +2,7 @@
 
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/runtime/runtime_model_base.hpp"
+#include "wisteria/runtime/frame_snapshot.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -43,10 +44,30 @@ public:
     void Reset();
     void UploadDynamicVertices(Mesh& mesh);
 
+    // Latest zero-copy transient view (valid until the next Update).
+    const ModelFrameView& LastFrameView() const noexcept;
+
+    // Captures the requested channels into the WISTERIA-owned persistent
+    // snapshot. Only the requested channels are copied; geometry is never
+    // copied implicitly. Returns the stable snapshot reference.
+    const ModelFrameSnapshot& CaptureSnapshot(
+        CaptureMask mask = CaptureMask::All
+    );
+
+    const ModelFrameSnapshot& LastSnapshot() const noexcept;
+
 private:
+    bool CapturePose();
+    bool CaptureMorphs();
+    bool CaptureGeometry();
+
     const ModelAsset* asset = nullptr;
     std::unique_ptr<IModelRuntimeDriver> runtime;
     std::vector<std::unique_ptr<Mesh>> instanceMeshes;
     std::unordered_map<const Mesh*, Mesh*> meshMap;
+    ModelFrameView lastView;
+    ModelFrameSnapshot snapshot;
+    std::uint64_t updateSerial = 0U;
+    bool frameValid = false;
 };
 }  // namespace wisteria

@@ -15,6 +15,7 @@
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/runtime/runtime_model_base.hpp"
+#include "wisteria/runtime/frame_snapshot.hpp"
 #include "wisteria/runtime/mmd_runtime_model.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
@@ -28,6 +29,8 @@
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/scene/scene.hpp"
 #include "wisteria/mmd/vmd_importer.hpp"
+#include "wisteria/mmd/mmd_light_conversion.hpp"
+#include "wisteria/mmd/mmd_camera_conversion.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <array>

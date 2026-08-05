@@ -52,20 +52,23 @@ def find_definition(function: str, sources: dict[str, str]):
         body = text[start:index]
         guarded = "GuardAbi" in body
         raw_try = bool(re.search(r"\btry\s*\{", body))
-        return name, guarded, raw_try
-    return None, False, False
+        return name, guarded, raw_try, body
+    return None, False, False, ""
 
 
 def classify(function: str, sources: dict[str, str]) -> tuple[str, str, str]:
-    """Returns (file, status, note). Status is one of GUARDED / RAW_TRY /
-    PROVEN_NO_THROW_LEAF / UNGUARDED."""
+    """Returns (file, status, note). Status is one of INVOKE_ABI / GUARDED /
+    RAW_TRY / PROVEN_NO_THROW_LEAF / UNGUARDED."""
     leaf_functions = {
         "wisteria_status_name",
         "wisteria_version_major",
         "wisteria_version_minor",
     }
-    file, guarded, raw_try = find_definition(function, sources)
-    if guarded:
+    file, guarded, raw_try, body = find_definition(function, sources)
+    # Check for the unified outer wrapper in this function's body only.
+    if body and "InvokeAbi" in body:
+        status = "INVOKE_ABI"
+    elif guarded:
         status = "GUARDED"
     elif raw_try:
         status = "RAW_TRY"
@@ -87,6 +90,8 @@ def render(rows: list[tuple[str, str, str]]) -> str:
     lines.append("")
     lines.append("## 状态说明")
     lines.append("")
+    lines.append("- `INVOKE_ABI`：整个入口（含 Context 查找、句柄校验、路径/文件"
+                 "操作）均位于 `InvokeAbi` 统一异常边界内；")
     lines.append("- `GUARDED`：函数体包含 `GuardAbi(context, [&]{ ... })`；")
     lines.append("- `RAW_TRY`：有裸 `try/catch`，未统一走 `GuardAbi`；")
     lines.append("- `PROVEN_NO_THROW_LEAF`：无状态查询/常量 leaf，可证明不抛；")
@@ -98,15 +103,17 @@ def render(rows: list[tuple[str, str, str]]) -> str:
         by_file.setdefault(file, []).append((function, status))
 
     total = len(rows)
+    invoke = sum(1 for _, _, s in rows if s == "INVOKE_ABI")
     guarded = sum(1 for _, _, s in rows if s == "GUARDED")
     raw = sum(1 for _, _, s in rows if s == "RAW_TRY")
     leaf = sum(1 for _, _, s in rows if s == "PROVEN_NO_THROW_LEAF")
-    uncovered = total - guarded - raw - leaf
+    uncovered = total - invoke - guarded - raw - leaf
     lines.append("## 汇总")
     lines.append("")
     lines.append("| 状态 | 数量 |")
     lines.append("| ---- | ---- |")
     lines.append(f"| 总计 | {total} |")
+    lines.append(f"| INVOKE_ABI | {invoke} |")
     lines.append(f"| GUARDED | {guarded} |")
     lines.append(f"| RAW_TRY | {raw} |")
     lines.append(f"| PROVEN_NO_THROW_LEAF | {leaf} |")
@@ -157,6 +164,30 @@ def main() -> int:
     rendered += "\n"
 
     if args.check:
+        # Safety gate, not just a drift check: the matrix must not contain
+        # unguarded exports, and RAW_TRY/GUARDED are only allowed for the
+        # documented exceptions (the global context creator and the three
+        # proven leaves). New C API must go through InvokeAbi.
+        allowed_raw_try = {"wisteria_create_context"}
+        unsafe = []
+        for function, file, status in rows:
+            if status == "UNGUARDED":
+                unsafe.append(f"UNGUARDED {function} ({file})")
+            elif status == "RAW_TRY" and function not in allowed_raw_try:
+                unsafe.append(f"RAW_TRY outside whitelist: {function} ({file})")
+            elif status == "GUARDED":
+                unsafe.append(
+                    f"GUARDED should migrate to InvokeAbi: {function} ({file})"
+                )
+        if unsafe:
+            for message in unsafe:
+                print(message, file=sys.stderr)
+            print(
+                "ABI safety gate failed: all exports must use InvokeAbi "
+                "unless explicitly whitelisted",
+                file=sys.stderr,
+            )
+            return 2
         current = MATRIX.read_text(encoding="utf-8")
         if current != rendered:
             print(

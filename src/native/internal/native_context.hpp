@@ -7,8 +7,10 @@
 #include <filesystem>
 #include <exception>
 #include <stdexcept>
+#include <atomic>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace wisteria
@@ -38,10 +40,8 @@ struct SceneEntry
     std::shared_ptr<Scene> scene;
     WisteriaWindow windowHandle = 0U;
     std::unordered_map<WisteriaSceneModel, ModelAsset*> models;
-    WisteriaSceneModel nextModelHandle = 1U;
     std::unordered_map<WisteriaEntity, Entity*> entities;
     std::unordered_map<WisteriaEntity, WisteriaMotion> entityMotions;
-    WisteriaEntity nextEntityHandle = 1U;
     // Solid-color PBR materials cached per RGB key for set_part_color.
     std::unordered_map<std::uint32_t, Material*> solidMaterials;
     struct LightEntry
@@ -50,7 +50,6 @@ struct SceneEntry
         void* light = nullptr;
     };
     std::unordered_map<WisteriaLight, LightEntry> lights;
-    WisteriaLight nextLightHandle = 1U;
 };
 
 struct Context
@@ -62,14 +61,12 @@ struct Context
     Context& operator=(const Context&) = delete;
 
     std::unordered_map<WisteriaModel, std::unique_ptr<ModelEntry>> models;
-    WisteriaModel nextModelHandle = 1U;
-    WisteriaMotion nextMotionHandle = 1U;
     std::unique_ptr<Application> application;
     std::unordered_map<WisteriaWindow, std::unique_ptr<WindowEntry>> windows;
-    WisteriaWindow nextWindowHandle = 1U;
     std::unordered_map<WisteriaScene, std::unique_ptr<SceneEntry>> scenes;
-    WisteriaScene nextSceneHandle = 1U;
-    std::string lastError;
+    // Fixed-capacity error slot so recording a failure can never allocate
+    // and throw inside an exception handler (noexcept ABI boundary).
+    char lastError[512] = {};
 };
 
 using ContextLease = std::shared_ptr<Context>;
@@ -77,6 +74,12 @@ using ContextLease = std::shared_ptr<Context>;
 WisteriaContext RegisterContext();
 ContextLease FindContext(WisteriaContext handle);
 bool UnregisterContext(WisteriaContext handle);
+
+// Global, process-wide, monotonic opaque handle allocator shared by every
+// handle family (Context/Model/Motion/Window/Scene/SceneModel/Entity/Light).
+// Never reuses a value, so a handle cannot collide across contexts, across
+// scenes, across handle types, or with a destroyed object recreated later.
+std::uint64_t AllocateOpaqueHandle() noexcept;
 
 ModelEntry* FindModel(Context& context, WisteriaModel handle);
 WindowEntry* FindWindow(Context& context, WisteriaWindow handle);
@@ -86,8 +89,14 @@ MmdRuntimeModel* FindEntityMmdRuntime(
     SceneEntry& scene,
     WisteriaEntity handle
 );
-void SetError(Context& context, std::string message);
+// Never throws: truncates into the fixed error slot. Safe to call from an
+// exception handler.
+void TrySetError(Context* context, std::string_view message) noexcept;
 enum WisteriaStatus InvalidHandle(Context& context, const char* message);
+
+// Compatibility wrapper for functions that still use the older inner-guard
+// style. New code should use InvokeAbi; this template remains so existing
+// bodies compile until they migrate.
 template<typename Function>
 enum WisteriaStatus GuardAbi(Context& context, Function&& function) noexcept
 {
@@ -98,27 +107,75 @@ enum WisteriaStatus GuardAbi(Context& context, Function&& function) noexcept
     }
     catch (const std::invalid_argument& error)
     {
-        SetError(context, error.what());
+        TrySetError(&context, error.what());
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     catch (const std::out_of_range& error)
     {
-        SetError(context, error.what());
+        TrySetError(&context, error.what());
         return WISTERIA_ERROR_NOT_FOUND;
     }
     catch (const std::exception& error)
     {
-        SetError(context, error.what());
+        TrySetError(&context, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
     catch (...)
     {
-        SetError(context, "Unknown C++ exception across native boundary");
+        TrySetError(&context, "Unknown C++ exception across native boundary");
         return WISTERIA_ERROR_INTERNAL;
     }
 }
+
+// The single outermost ABI wrapper. Finds the context, then runs the body
+// with the full entry (context lookup, path conversion, filesystem calls,
+// handle validation, core work) inside one exception boundary. Expected
+// status codes are returned directly by the body; unexpected C++ exceptions
+// are mapped here and never cross extern "C".
+template<typename Function>
+enum WisteriaStatus InvokeAbi(
+    WisteriaContext contextHandle,
+    Function&& function
+) noexcept
+{
+    // Resolve the lease outside the try block so the catch handlers can
+    // record the error without re-running FindContext (whose mutex lock can
+    // itself throw; re-throwing inside noexcept would terminate the process).
+    ContextLease context;
+    try
+    {
+        context = FindContext(contextHandle);
+        if (context == nullptr)
+            return WISTERIA_ERROR_NOT_FOUND;
+        return function(*context);
+    }
+    catch (const std::invalid_argument& error)
+    {
+        TrySetError(context.get(), error.what());
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    catch (const std::out_of_range& error)
+    {
+        TrySetError(context.get(), error.what());
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    catch (const std::exception& error)
+    {
+        TrySetError(context.get(), error.what());
+        return WISTERIA_ERROR_INTERNAL;
+    }
+    catch (...)
+    {
+        TrySetError(
+            context.get(),
+            "Unknown C++ exception across native boundary"
+        );
+        return WISTERIA_ERROR_INTERNAL;
+    }
+}
+
 bool CopyErrorMessage(
-    const std::string& message,
+    std::string_view message,
     char* buffer,
     size_t bufferSize
 );

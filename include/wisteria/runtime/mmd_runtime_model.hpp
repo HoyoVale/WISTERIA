@@ -2,18 +2,16 @@
 
 #include "wisteria/runtime/runtime_model_base.hpp"
 #include "wisteria/animation/bone.hpp"
+#include "wisteria/animation/morph.hpp"
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <glm/vec3.hpp>
 
 namespace wisteria
 {
-class Camera;
-class CameraTrack;
-class DirectionalLight;
-class LightTrack;
 class PhysicsInstance;
 
 struct MmdPhysicsRuntimeSettings
@@ -22,6 +20,34 @@ struct MmdPhysicsRuntimeSettings
     int maxSubSteps = 10;
     glm::vec3 gravity{0.0f, -98.0f, 0.0f};
     bool enabled = true;
+};
+
+// Neutral MMD light sample (Scene-level track output). Uses the WISTERIA
+// MMD coordinate convention: color is clamped to [0,1]; position already
+// applies the z-axis flip from the raw VMD data. Availability is expressed
+// by the outer std::optional, not by an in-struct flag.
+struct LightTrackSample
+{
+    float frame = 0.0f;
+    glm::vec3 color{1.0f};
+    glm::vec3 position{0.5f, 1.0f, 0.5f};
+};
+
+// Neutral MMD camera sample (Scene-level track output). Uses the WISTERIA
+// MMD coordinate convention: rotation and viewAngle are in degrees, interest
+// and distance follow MMD semantics. perspective is retained for query and
+// export; the current WISTERIA Camera application layer only supports
+// perspective projection, so orthographic MMD cameras are marked unsupported.
+struct CameraTrackSample
+{
+    float frame = 0.0f;
+    glm::vec3 interest{0.0f};
+    glm::vec3 rotation{0.0f};
+    float distance = 0.0f;
+    float viewAngle = 0.0f;
+    // nullopt when the backend cannot authoritatively report the projection
+    // mode (Saba's VMDCameraAnimation drops the VMD perspective flag).
+    std::optional<bool> perspective;
 };
 
 enum class MmdSkinningKind : std::uint8_t
@@ -62,25 +88,20 @@ public:
     virtual double MotionMaxFrame() const noexcept = 0;
 
     // --- Camera animation (thin adapter over Saba VMDCameraAnimation) ---
-    // LoadCameraMotion reads camera frames from a VMD file; ApplyCameraMotion
-    // evaluates them at a MMD frame time. ApplyCameraTrack remains for
-    // programmatic tracks built by the caller.
+    // LoadCameraMotion parses VMD camera frames; SampleCameraMotion returns a
+    // neutral sample. WISTERIA's application layer converts the sample into
+    // host camera objects (see wisteria/mmd/mmd_camera_conversion.hpp).
     virtual bool LoadCameraMotion(const std::filesystem::path& vmdPath) = 0;
-    virtual void ApplyCameraMotion(float frame, Camera& camera) = 0;
-    virtual void ApplyCameraTrack(
-        const CameraTrack& track,
-        float time,
-        Camera& camera
-    ) = 0;
+    virtual std::optional<CameraTrackSample>
+        SampleCameraMotion(float frame) const = 0;
 
     // --- Light animation (thin adapter over VMD light frames) ---
+    // LoadLightMotion parses VMD light frames; SampleLightMotion returns a
+    // neutral sample. WISTERIA's application layer converts the sample into
+    // host light objects (see wisteria/mmd/mmd_light_conversion.hpp).
     virtual bool LoadLightMotion(const std::filesystem::path& vmdPath) = 0;
-    virtual void ApplyLightMotion(float frame, DirectionalLight& light) = 0;
-    virtual void ApplyLightTrack(
-        const LightTrack& track,
-        float time,
-        DirectionalLight& light
-    ) = 0;
+    virtual std::optional<LightTrackSample>
+        SampleLightMotion(float frame) const = 0;
 
     // Skinning strategy used by this implementation.
     virtual MmdSkinningKind SkinningKind() const noexcept = 0;

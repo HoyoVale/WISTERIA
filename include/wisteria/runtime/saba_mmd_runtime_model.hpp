@@ -8,12 +8,14 @@
 
 namespace wisteria
 {
+class ModelAsset;
+
 using SabaPhysicsSettings = MmdPhysicsRuntimeSettings;
 
 // Saba-backed MMD runtime: uses saba::PMXModel for animation, IK, morph and
-// CPU skinning (BDEF/SDEF/QDEF), then uploads skinned vertices into our Mesh.
-// Saba owns its per-model Bullet world (OwnsSimulationStep); the Scene skips
-// the shared fixed-step lifecycle for this runtime.
+// CPU skinning (BDEF/SDEF/QDEF), producing deformed vertex data consumed by
+// WISTERIA. Saba owns its per-model Bullet world (OwnsSimulationStep); the
+// Scene skips the shared fixed-step lifecycle for this runtime.
 class SabaMmdRuntimeModel final : public MmdRuntimeModel
 {
 public:
@@ -26,6 +28,11 @@ public:
 
     SabaMmdRuntimeModel(const SabaMmdRuntimeModel&) = delete;
     SabaMmdRuntimeModel& operator=(const SabaMmdRuntimeModel&) = delete;
+
+    // Associates the WISTERIA ModelAsset so morph descriptors can resolve
+    // PMX morph kinds (Saba's MMDMorph does not carry kind information).
+    // Must be called before Initialize().
+    void SetAsset(const ModelAsset* asset) noexcept;
 
     // Overrides physics settings. Calling before Initialize() applies them at
     // startup; calling after Initialize() reapplies them to the live world.
@@ -67,19 +74,25 @@ public:
     double MotionMaxFrame() const noexcept override;
 
     bool LoadCameraMotion(const std::filesystem::path& vmdPath) override;
-    void ApplyCameraMotion(float frame, Camera& camera) override;
-    void ApplyCameraTrack(
-        const CameraTrack& track,
-        float time,
-        Camera& camera
-    ) override;
+    std::optional<CameraTrackSample>
+        SampleCameraMotion(float frame) const override;
     bool LoadLightMotion(const std::filesystem::path& vmdPath) override;
-    void ApplyLightMotion(float frame, DirectionalLight& light) override;
-    void ApplyLightTrack(
-        const LightTrack& track,
-        float time,
-        DirectionalLight& light
-    ) override;
+    std::optional<LightTrackSample>
+        SampleLightMotion(float frame) const override;
+
+    std::size_t MorphCount() const noexcept override;
+    bool DescribeMorph(
+        std::size_t index,
+        MorphDescriptor& output
+    ) const override;
+    bool ReadMorphState(
+        std::size_t index,
+        MorphRuntimeState& output
+    ) const override;
+    std::uint64_t MorphRevision() const noexcept override;
+
+    ModelRuntimeCapabilities Capabilities() const override;
+    ModelPhysicsRuntimeInfo PhysicsInfo() const override;
 
     MmdSkinningKind SkinningKind() const noexcept override;
     PhysicsInstance* GetMmdPhysics() noexcept override;

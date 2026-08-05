@@ -1142,12 +1142,36 @@ public:
         return false;
     }
 
-    void ApplyCameraMotion(float, Camera&) override
+    std::optional<CameraTrackSample>
+        SampleCameraMotion(float) const override
     {
+        return std::nullopt;
     }
 
-    void ApplyCameraTrack(const CameraTrack&, float, Camera&) override
+    std::size_t MorphCount() const noexcept override
     {
+        return 0U;
+    }
+
+    bool DescribeMorph(
+        std::size_t,
+        MorphDescriptor&
+    ) const override
+    {
+        return false;
+    }
+
+    bool ReadMorphState(
+        std::size_t,
+        MorphRuntimeState&
+    ) const override
+    {
+        return false;
+    }
+
+    std::uint64_t MorphRevision() const noexcept override
+    {
+        return 0U;
     }
 
     bool LoadLightMotion(const std::filesystem::path&) override
@@ -1155,12 +1179,10 @@ public:
         return false;
     }
 
-    void ApplyLightMotion(float, DirectionalLight&) override
+    std::optional<LightTrackSample>
+        SampleLightMotion(float) const override
     {
-    }
-
-    void ApplyLightTrack(const LightTrack&, float, DirectionalLight&) override
-    {
+        return std::nullopt;
     }
 
     void SetMmdPhysicsSettings(

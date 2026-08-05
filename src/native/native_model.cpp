@@ -23,19 +23,18 @@ enum WisteriaStatus wisteria_load_model(
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
+    return InvokeAbi(context, [&](Context& ctx)
+    {
 
     const std::filesystem::path path = PathFromUtf8(model_path);
     if (path.empty())
     {
-        SetError(*handle, "Model path is not valid UTF-8");
+        TrySetError(&ctx, "Model path is not valid UTF-8");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     if (!std::filesystem::is_regular_file(path))
     {
-        SetError(*handle, "Model file does not exist: " +
+        TrySetError(&ctx, "Model file does not exist: " +
             std::string(model_path));
         return WISTERIA_ERROR_IO;
     }
@@ -46,27 +45,28 @@ enum WisteriaStatus wisteria_load_model(
             std::make_unique<SabaMmdRuntimeModel>(path);
         if (!runtime->Initialize())
         {
-            SetError(*handle, "Saba runtime failed to initialize: " +
+            TrySetError(&ctx, "Saba runtime failed to initialize: " +
                 std::string(model_path));
             return WISTERIA_ERROR_INITIALIZATION;
         }
         auto entry = std::make_unique<ModelEntry>();
         entry->runtime = std::move(runtime);
-        const WisteriaModel modelHandle = handle->nextModelHandle++;
-        handle->models.emplace(modelHandle, std::move(entry));
+        const WisteriaModel modelHandle = AllocateOpaqueHandle();
+        ctx.models.emplace(modelHandle, std::move(entry));
         *out_model = modelHandle;
         return WISTERIA_OK;
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception while loading the model");
+        TrySetError(&ctx, "Unknown C++ exception while loading the model");
         return WISTERIA_ERROR_INTERNAL;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_unload_model(
@@ -74,14 +74,14 @@ enum WisteriaStatus wisteria_unload_model(
     WisteriaModel model
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    const auto iterator = handle->models.find(model);
-    if (iterator == handle->models.end())
-        return InvalidHandle(*handle, "Model handle is invalid");
-    handle->models.erase(iterator);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    const auto iterator = ctx.models.find(model);
+    if (iterator == ctx.models.end())
+        return InvalidHandle(ctx, "Model handle is invalid");
+    ctx.models.erase(iterator);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_load_motion(
@@ -98,22 +98,21 @@ enum WisteriaStatus wisteria_load_motion(
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
 
     const std::filesystem::path path = PathFromUtf8(vmd_path);
     if (path.empty())
     {
-        SetError(*handle, "Motion path is not valid UTF-8");
+        TrySetError(&ctx, "Motion path is not valid UTF-8");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     if (!std::filesystem::is_regular_file(path))
     {
-        SetError(*handle, "Motion file does not exist: " +
+        TrySetError(&ctx, "Motion file does not exist: " +
             std::string(vmd_path));
         return WISTERIA_ERROR_IO;
     }
@@ -122,11 +121,11 @@ enum WisteriaStatus wisteria_load_motion(
     {
         if (!entry->runtime->LoadMotion(path))
         {
-            SetError(*handle, "Failed to load motion: " +
+            TrySetError(&ctx, "Failed to load motion: " +
                 std::string(vmd_path));
             return WISTERIA_ERROR_PARSE;
         }
-        const WisteriaMotion motionHandle = handle->nextMotionHandle++;
+        const WisteriaMotion motionHandle = AllocateOpaqueHandle();
         entry->currentMotion = motionHandle;
         entry->hasMotion = true;
         *out_motion = motionHandle;
@@ -134,14 +133,15 @@ enum WisteriaStatus wisteria_load_motion(
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception while loading the motion");
+        TrySetError(&ctx, "Unknown C++ exception while loading the motion");
         return WISTERIA_ERROR_INTERNAL;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_unload_motion(
@@ -150,18 +150,18 @@ enum WisteriaStatus wisteria_unload_motion(
     WisteriaMotion motion
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     if (!entry->hasMotion || entry->currentMotion != motion)
-        return InvalidHandle(*handle, "Motion handle is invalid");
+        return InvalidHandle(ctx, "Motion handle is invalid");
     entry->runtime->ClearMotion();
     entry->hasMotion = false;
     entry->currentMotion = 0U;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_play_motion(
@@ -170,17 +170,17 @@ enum WisteriaStatus wisteria_play_motion(
     WisteriaMotion motion
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     if (!entry->hasMotion || entry->currentMotion != motion)
-        return InvalidHandle(*handle, "Motion handle is invalid");
+        return InvalidHandle(ctx, "Motion handle is invalid");
     entry->runtime->RestartMotion(true);
     entry->runtime->ResumeMotion();
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_pause_motion(
@@ -188,14 +188,14 @@ enum WisteriaStatus wisteria_pause_motion(
     WisteriaModel model
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     entry->runtime->PauseMotion();
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_resume_motion(
@@ -203,14 +203,14 @@ enum WisteriaStatus wisteria_resume_motion(
     WisteriaModel model
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     entry->runtime->ResumeMotion();
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_set_motion_looping(
@@ -219,14 +219,14 @@ enum WisteriaStatus wisteria_set_motion_looping(
     int32_t looping
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     entry->runtime->SetMotionLooping(looping != 0);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_set_motion_frame(
@@ -235,19 +235,19 @@ enum WisteriaStatus wisteria_set_motion_frame(
     double frame
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     if (!std::isfinite(frame) || frame < 0.0)
     {
-        SetError(*handle, "Motion frame must be finite and non-negative");
+        TrySetError(&ctx, "Motion frame must be finite and non-negative");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     entry->runtime->SetMotionFrame(frame);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_motion_frame(
@@ -258,14 +258,14 @@ enum WisteriaStatus wisteria_motion_frame(
 {
     if (out_frame == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     *out_frame = entry->runtime->MotionFrame();
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_motion_max_frame(
@@ -276,14 +276,14 @@ enum WisteriaStatus wisteria_motion_max_frame(
 {
     if (out_max_frame == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     *out_max_frame = entry->runtime->MotionMaxFrame();
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_update(
@@ -292,15 +292,14 @@ enum WisteriaStatus wisteria_update(
     float delta_time
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     if (!std::isfinite(delta_time) || delta_time < 0.0f)
     {
-        SetError(*handle, "Delta time must be finite and non-negative");
+        TrySetError(&ctx, "Delta time must be finite and non-negative");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     try
@@ -310,14 +309,15 @@ enum WisteriaStatus wisteria_update(
     }
     catch (const std::exception& error)
     {
-        SetError(*handle, error.what());
+        TrySetError(&ctx, error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
     catch (...)
     {
-        SetError(*handle, "Unknown C++ exception during update");
+        TrySetError(&ctx, "Unknown C++ exception during update");
         return WISTERIA_ERROR_INTERNAL;
     }
+    });
 }
 
 enum WisteriaStatus wisteria_set_physics_settings(
@@ -330,18 +330,17 @@ enum WisteriaStatus wisteria_set_physics_settings(
     float gravity_z
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     if (!std::isfinite(fixed_time_step) || fixed_time_step <= 0.0f ||
         max_sub_steps <= 0 ||
         !std::isfinite(gravity_x) || !std::isfinite(gravity_y) ||
         !std::isfinite(gravity_z))
     {
-        SetError(*handle, "Physics settings contain invalid values");
+        TrySetError(&ctx, "Physics settings contain invalid values");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     MmdPhysicsRuntimeSettings settings;
@@ -350,6 +349,7 @@ enum WisteriaStatus wisteria_set_physics_settings(
     settings.gravity = glm::vec3(gravity_x, gravity_y, gravity_z);
     entry->runtime->SetMmdPhysicsSettings(settings);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_vertex_bounds(
@@ -360,17 +360,16 @@ enum WisteriaStatus wisteria_vertex_bounds(
 {
     if (out_bounds == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
 
     const ModelVertexFrame frame = entry->runtime->VertexFrame();
     if (frame.positions.empty())
     {
-        SetError(*handle, "Model runtime has no vertex frame");
+        TrySetError(&ctx, "Model runtime has no vertex frame");
         return WISTERIA_ERROR_NOT_FOUND;
     }
     glm::vec3 minimum = frame.positions.front();
@@ -393,6 +392,7 @@ enum WisteriaStatus wisteria_vertex_bounds(
     out_bounds->maximumDisplacementFromBind = 0.0f;
     out_bounds->vertexCount = static_cast<uint64_t>(frame.positions.size());
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_set_mmd_ik_enabled(
@@ -402,17 +402,17 @@ enum WisteriaStatus wisteria_set_mmd_ik_enabled(
     int32_t enabled
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     entry->runtime->SetMmdIkEnabled(
         static_cast<wisteria::BoneIndex>(bone_index),
         enabled != 0
     );
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_find_bone_index(
@@ -427,21 +427,21 @@ enum WisteriaStatus wisteria_find_bone_index(
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     const wisteria::BoneIndex found =
         entry->runtime->FindBoneIndex(bone_name);
     if (found == wisteria::InvalidBoneIndex)
     {
-        SetError(*handle, "Bone not found: " + std::string(bone_name));
+        TrySetError(&ctx, "Bone not found: " + std::string(bone_name));
         return WISTERIA_ERROR_NOT_FOUND;
     }
     *out_bone_index = static_cast<uint32_t>(found);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_load_camera_motion(
@@ -452,32 +452,32 @@ enum WisteriaStatus wisteria_load_camera_motion(
 {
     if (vmd_path == nullptr || vmd_path[0] == '\0')
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
 
     const std::filesystem::path path = PathFromUtf8(vmd_path);
     if (path.empty())
     {
-        SetError(*handle, "Camera motion path is not valid UTF-8");
+        TrySetError(&ctx, "Camera motion path is not valid UTF-8");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     if (!std::filesystem::is_regular_file(path))
     {
-        SetError(*handle, "Camera motion file does not exist: " +
+        TrySetError(&ctx, "Camera motion file does not exist: " +
             std::string(vmd_path));
         return WISTERIA_ERROR_IO;
     }
     if (!entry->runtime->LoadCameraMotion(path))
     {
-        SetError(*handle, "Failed to load camera motion: " +
+        TrySetError(&ctx, "Failed to load camera motion: " +
             std::string(vmd_path));
         return WISTERIA_ERROR_PARSE;
     }
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_physics_capabilities(
@@ -488,12 +488,11 @@ enum WisteriaStatus wisteria_physics_capabilities(
 {
     if (out_capabilities == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     // saba's real physics surface: fixed step, gravity and the activation
     // switch. Semantic collision filtering remains saba-internal.
     *out_capabilities =
@@ -501,6 +500,7 @@ enum WisteriaStatus wisteria_physics_capabilities(
         WISTERIA_PHYSICS_CAP_GRAVITY |
         WISTERIA_PHYSICS_CAP_ENABLED;
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_set_physics_preset(
@@ -511,12 +511,11 @@ enum WisteriaStatus wisteria_set_physics_preset(
 {
     if (preset == nullptr)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     const bool finiteGravity =
         std::isfinite(preset->gravity[0]) &&
         std::isfinite(preset->gravity[1]) &&
@@ -527,7 +526,7 @@ enum WisteriaStatus wisteria_set_physics_preset(
         !finiteGravity ||
         (preset->physics_enabled != 0 && preset->physics_enabled != 1))
     {
-        SetError(*handle, "Physics preset contains invalid values");
+        TrySetError(&ctx, "Physics preset contains invalid values");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
     MmdPhysicsRuntimeSettings settings;
@@ -541,6 +540,7 @@ enum WisteriaStatus wisteria_set_physics_preset(
     settings.enabled = preset->physics_enabled != 0;
     entry->runtime->SetMmdPhysicsSettings(settings);
     return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_physics_reset(
@@ -548,14 +548,14 @@ enum WisteriaStatus wisteria_physics_reset(
     WisteriaModel model
 )
 {
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
-        return WISTERIA_ERROR_NOT_FOUND;
-    ModelEntry* entry = FindModel(*handle, model);
+    return InvokeAbi(context, [&](Context& ctx)
+    {
+    ModelEntry* entry = FindModel(ctx, model);
     if (entry == nullptr)
-        return InvalidHandle(*handle, "Model handle is invalid");
+        return InvalidHandle(ctx, "Model handle is invalid");
     entry->runtime->ResetMmdPhysics();
     return WISTERIA_OK;
+    });
 }
 
 /* --- Window (M4) --------------------------------------------------------- */

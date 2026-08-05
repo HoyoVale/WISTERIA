@@ -2,6 +2,7 @@
 
 #include "wisteria/animation/animation.hpp"
 #include "wisteria/animation/pose.hpp"
+#include "wisteria/assets/model_asset.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/light.hpp"
@@ -116,6 +117,8 @@ struct SabaMmdRuntimeModel::Impl
     std::unique_ptr<Skeleton> skeleton;
     std::unique_ptr<Pose> pose;
     std::uint64_t vertexRevision = 0U;
+    std::uint64_t morphRevision = 0U;
+    const ModelAsset* asset = nullptr;
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
 
     Impl(
@@ -144,6 +147,11 @@ SabaMmdRuntimeModel::SabaMmdRuntimeModel(
 }
 
 SabaMmdRuntimeModel::~SabaMmdRuntimeModel() = default;
+
+void SabaMmdRuntimeModel::SetAsset(const ModelAsset* asset) noexcept
+{
+    this->impl->asset = asset;
+}
 
 void SabaMmdRuntimeModel::SetPhysicsSettings(
     const SabaPhysicsSettings& settings
@@ -321,6 +329,10 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
         );
     }
     this->impl->model->UpdateMorphAnimation();
+    // VMD evaluation writes morph weights directly into saba's MMDMorph
+    // objects, bypassing WISTERIA's SetMorphWeight(). The morph revision must
+    // advance every evaluation so persisted MorphSnapshots never freeze.
+    ++this->impl->morphRevision;
     this->ApplyMmdIkOverrides();
     this->impl->model->UpdateNodeAnimation(false);
     if (this->impl->physicsSettings.enabled)
@@ -364,6 +376,7 @@ bool SabaMmdRuntimeModel::LoadMotion(
     this->impl->vmdLoaded = true;
     this->impl->vmdFrame = 0.0;
     this->impl->motionPaused = false;
+    ++this->impl->morphRevision;
     return true;
 }
 
@@ -374,6 +387,7 @@ void SabaMmdRuntimeModel::ClearMotion()
     this->impl->vmdLoaded = false;
     this->impl->vmdFrame = 0.0;
     this->impl->motionPaused = false;
+    ++this->impl->morphRevision;
 }
 
 bool SabaMmdRuntimeModel::HasMotion() const noexcept
@@ -411,6 +425,7 @@ void SabaMmdRuntimeModel::RestartMotion(bool resetPhysics)
     this->impl->vmdFrame = 0.0;
     if (resetPhysics && this->impl->model != nullptr)
         this->impl->model->ResetPhysics();
+    ++this->impl->morphRevision;
 }
 
 double SabaMmdRuntimeModel::MotionFrame() const noexcept
@@ -421,6 +436,7 @@ double SabaMmdRuntimeModel::MotionFrame() const noexcept
 void SabaMmdRuntimeModel::SetMotionFrame(double frame)
 {
     this->impl->vmdFrame = std::max(0.0, frame);
+    ++this->impl->morphRevision;
 }
 
 double SabaMmdRuntimeModel::MotionMaxFrame() const noexcept
@@ -498,6 +514,33 @@ std::string_view SabaMmdRuntimeModel::BackendName() const noexcept
     return "saba-mmd";
 }
 
+ModelRuntimeCapabilities SabaMmdRuntimeModel::Capabilities() const
+{
+    ModelRuntimeCapabilities capabilities;
+    capabilities.physics.supportsFixedTimeStep = true;
+    capabilities.physics.supportsMaxSubSteps = true;
+    capabilities.physics.supportsGravityOverride = true;
+    capabilities.physics.supportsEnabledSwitch = true;
+    capabilities.physics.supportsReset = true;
+    // Advanced Bullet tuning is not yet exposed through the WISTERIA
+    // runtime contract; all remaining flags stay false until R1.2.
+    return capabilities;
+}
+
+ModelPhysicsRuntimeInfo SabaMmdRuntimeModel::PhysicsInfo() const
+{
+    ModelPhysicsRuntimeInfo info;
+    info.available = this->impl->model != nullptr &&
+        this->impl->model->GetPhysicsManager() != nullptr;
+    info.ownsSimulationStep = this->TryGetPhysicsInstance() != nullptr &&
+        this->TryGetPhysicsInstance()->OwnsSimulationStep();
+    info.enabled = this->impl->physicsSettings.enabled;
+    info.fixedTimeStep = this->impl->physicsSettings.fixedTimeStep;
+    info.maxSubSteps = this->impl->physicsSettings.maxSubSteps;
+    info.gravity = this->impl->physicsSettings.gravity;
+    return info;
+}
+
 bool SabaMmdRuntimeModel::SetMorphWeight(
     std::string_view name,
     float weight
@@ -512,6 +555,7 @@ bool SabaMmdRuntimeModel::SetMorphWeight(
     if (morph == nullptr)
         return false;
     morph->SetWeight(weight);
+    ++this->impl->morphRevision;
     return true;
 }
 
@@ -528,6 +572,71 @@ std::optional<float> SabaMmdRuntimeModel::MorphWeight(
     return morph != nullptr
         ? std::optional<float>(morph->GetWeight())
         : std::nullopt;
+}
+
+std::size_t SabaMmdRuntimeModel::MorphCount() const noexcept
+{
+    if (this->impl->model == nullptr)
+        return 0U;
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    return manager != nullptr ? manager->GetMorphCount() : 0U;
+}
+
+bool SabaMmdRuntimeModel::DescribeMorph(
+    std::size_t index,
+    MorphDescriptor& output
+) const
+{
+    if (this->impl->model == nullptr)
+        return false;
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    if (manager == nullptr || index >= manager->GetMorphCount())
+        return false;
+    saba::MMDMorph* morph = manager->GetMorph(index);
+    if (morph == nullptr)
+        return false;
+    output.name = morph->GetName();
+    output.kind = MorphKind::Vertex;
+
+    // Saba's MMDMorph does not expose PMX morph kinds; resolve the kind from
+    // the WISTERIA ModelAsset morph definitions by name when available.
+    if (this->impl->asset != nullptr &&
+        this->impl->asset->HasMorphs())
+    {
+        const MorphSet& morphSet = this->impl->asset->GetMorphSet();
+        const std::optional<MorphIndex> morphIndex =
+            morphSet.FindMorph(output.name);
+        if (morphIndex.has_value())
+        {
+            output.kind = morphSet.DefinitionAt(*morphIndex).kind;
+        }
+    }
+    return true;
+}
+
+bool SabaMmdRuntimeModel::ReadMorphState(
+    std::size_t index,
+    MorphRuntimeState& output
+) const
+{
+    if (this->impl->model == nullptr)
+        return false;
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    if (manager == nullptr || index >= manager->GetMorphCount())
+        return false;
+    saba::MMDMorph* morph = manager->GetMorph(index);
+    if (morph == nullptr)
+        return false;
+    output.rawWeight = morph->GetWeight();
+    // Saba does not expose an authoritative evaluated weight separately;
+    // leave effectiveWeight unset rather than synthesizing it.
+    output.effectiveWeight.reset();
+    return true;
+}
+
+std::uint64_t SabaMmdRuntimeModel::MorphRevision() const noexcept
+{
+    return this->impl->morphRevision;
 }
 
 void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex bone, bool enabled)
@@ -603,43 +712,22 @@ bool SabaMmdRuntimeModel::LoadCameraMotion(
     return true;
 }
 
-void SabaMmdRuntimeModel::ApplyCameraMotion(float frame, Camera& camera)
+std::optional<CameraTrackSample>
+SabaMmdRuntimeModel::SampleCameraMotion(float frame) const
 {
     if (this->impl->cameraAnimation == nullptr)
-        return;
+        return std::nullopt;
     this->impl->cameraAnimation->Evaluate(frame);
     const saba::MMDCamera& mmdCamera =
         this->impl->cameraAnimation->GetCamera();
-    const saba::MMDLookAtCamera look(mmdCamera);
-    CameraParam param;
-    param.Position = look.m_eye;
-    param.Target = look.m_center;
-    param.Up = look.m_up;
-    param.VerticalFovDegrees = glm::degrees(mmdCamera.m_fov);
-    camera.SetParam(param);
-}
-
-void SabaMmdRuntimeModel::ApplyCameraTrack(
-    const CameraTrack& track,
-    float time,
-    Camera& camera
-)
-{
-    CameraKeyframe sample;
-    if (!track.Sample(time, sample))
-        return;
-    saba::MMDCamera mmdCamera;
-    mmdCamera.m_interest = sample.interest;
-    mmdCamera.m_rotate = glm::radians(sample.rotation);
-    mmdCamera.m_distance = sample.distance;
-    mmdCamera.m_fov = glm::radians(sample.viewAngle);
-    const saba::MMDLookAtCamera look(mmdCamera);
-    CameraParam param;
-    param.Position = look.m_eye;
-    param.Target = look.m_center;
-    param.Up = look.m_up;
-    param.VerticalFovDegrees = sample.viewAngle;
-    camera.SetParam(param);
+    return CameraTrackSample{
+        frame,
+        mmdCamera.m_interest,
+        glm::degrees(mmdCamera.m_rotate),
+        mmdCamera.m_distance,
+        glm::degrees(mmdCamera.m_fov),
+        std::nullopt
+    };
 }
 
 bool SabaMmdRuntimeModel::LoadLightMotion(
@@ -675,34 +763,19 @@ bool SabaMmdRuntimeModel::LoadLightMotion(
     return true;
 }
 
-void SabaMmdRuntimeModel::ApplyLightMotion(
-    float frame,
-    DirectionalLight& light
-)
+std::optional<LightTrackSample>
+SabaMmdRuntimeModel::SampleLightMotion(float frame) const
 {
-    if (this->impl->lightTrack.has_value())
-        this->ApplyLightTrack(*this->impl->lightTrack, frame, light);
-}
-
-void SabaMmdRuntimeModel::ApplyLightTrack(
-    const LightTrack& track,
-    float time,
-    DirectionalLight& light
-)
-{
+    if (!this->impl->lightTrack.has_value())
+        return std::nullopt;
     LightKeyframe sample;
-    if (!track.Sample(time, sample))
-        return;
-    light.SetColor(glm::clamp(
-        sample.color,
-        glm::vec3(0.0f),
-        glm::vec3(1.0f)
-    ));
-    const float positionLength = glm::length(sample.position);
-    const glm::vec3 direction = positionLength > 0.000001f
-        ? -sample.position / positionLength
-        : glm::vec3(0.0f, -1.0f, 0.0f);
-    light.SetDirection(direction);
+    if (!this->impl->lightTrack->Sample(frame, sample))
+        return std::nullopt;
+    return LightTrackSample{
+        frame,
+        glm::clamp(sample.color, glm::vec3(0.0f), glm::vec3(1.0f)),
+        sample.position
+    };
 }
 
 MmdSkinningKind SabaMmdRuntimeModel::SkinningKind() const noexcept

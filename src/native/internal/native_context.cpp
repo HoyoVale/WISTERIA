@@ -16,17 +16,22 @@ namespace
 {
 std::unordered_map<WisteriaContext, ContextLease> gContexts;
 std::mutex gContextMutex;
-WisteriaContext gNextContextHandle = 1U;
+std::atomic<std::uint64_t> gNextOpaqueHandle{1U};
 }
 
 Context::Context() = default;
 Context::~Context() = default;
 
+std::uint64_t AllocateOpaqueHandle() noexcept
+{
+    return gNextOpaqueHandle.fetch_add(1U, std::memory_order_relaxed);
+}
+
 WisteriaContext RegisterContext()
 {
     auto context = std::make_shared<Context>();
+    const WisteriaContext handle = AllocateOpaqueHandle();
     std::lock_guard<std::mutex> lock(gContextMutex);
-    const WisteriaContext handle = gNextContextHandle++;
     gContexts.emplace(handle, std::move(context));
     return handle;
 }
@@ -80,19 +85,26 @@ MmdRuntimeModel* FindEntityMmdRuntime(
     return instance != nullptr ? instance->TryGetMmdRuntime() : nullptr;
 }
 
-void SetError(Context& context, std::string message)
+void TrySetError(Context* context, std::string_view message) noexcept
 {
-    context.lastError = std::move(message);
+    if (context == nullptr)
+        return;
+    const std::size_t copyLength = std::min(
+        message.size(),
+        sizeof(context->lastError) - 1U
+    );
+    std::memcpy(context->lastError, message.data(), copyLength);
+    context->lastError[copyLength] = '\0';
 }
 
 enum WisteriaStatus InvalidHandle(Context& context, const char* message)
 {
-    SetError(context, message);
+    TrySetError(&context, message);
     return WISTERIA_ERROR_NOT_FOUND;
 }
 
 bool CopyErrorMessage(
-    const std::string& message,
+    std::string_view message,
     char* buffer,
     size_t bufferSize
 )
@@ -100,7 +112,8 @@ bool CopyErrorMessage(
     if (buffer == nullptr || bufferSize == 0U)
         return false;
     const size_t copyLength = std::min(message.size(), bufferSize - 1U);
-    std::memcpy(buffer, message.data(), copyLength);
+    if (copyLength > 0U && message.data() != nullptr)
+        std::memcpy(buffer, message.data(), copyLength);
     buffer[copyLength] = '\0';
     return true;
 }

@@ -37,6 +37,7 @@ public:
         auto runtime = std::make_unique<SabaMmdRuntimeModel>(
             source->sourcePath
         );
+        runtime->SetAsset(&asset);
         if (!runtime->Initialize())
         {
             throw std::runtime_error(

@@ -1,6 +1,8 @@
 #include "wisteria/native/wisteria_native.h"
 #include "internal/native_context.hpp"
 
+#include <stdexcept>
+
 using namespace wisteria::native;
 using namespace wisteria;
 
@@ -42,6 +44,12 @@ enum WisteriaStatus wisteria_create_context(WisteriaContext* out_context)
         *out_context = RegisterContext();
         return WISTERIA_OK;
     }
+    catch (const std::exception& error)
+    {
+        *out_context = 0U;
+        (void)error;
+        return WISTERIA_ERROR_INTERNAL;
+    }
     catch (...)
     {
         *out_context = 0U;
@@ -51,9 +59,12 @@ enum WisteriaStatus wisteria_create_context(WisteriaContext* out_context)
 
 enum WisteriaStatus wisteria_destroy_context(WisteriaContext context)
 {
-    return UnregisterContext(context)
-        ? WISTERIA_OK
-        : WISTERIA_ERROR_NOT_FOUND;
+    return InvokeAbi(context, [&](Context&)
+    {
+        if (!UnregisterContext(context))
+            return WISTERIA_ERROR_NOT_FOUND;
+        return WISTERIA_OK;
+    });
 }
 
 enum WisteriaStatus wisteria_last_error_message(
@@ -64,13 +75,10 @@ enum WisteriaStatus wisteria_last_error_message(
 {
     if (buffer == nullptr || buffer_size == 0U)
         return WISTERIA_ERROR_INVALID_ARGUMENT;
-    const ContextLease handle = FindContext(context);
-    if (handle == nullptr)
+    return InvokeAbi(context, [&](Context& ctx)
     {
-        buffer[0] = '\0';
-        return WISTERIA_ERROR_NOT_FOUND;
-    }
-    CopyErrorMessage(handle->lastError, buffer, buffer_size);
-    return WISTERIA_OK;
+        CopyErrorMessage(ctx.lastError, buffer, buffer_size);
+        return WISTERIA_OK;
+    });
 }
 } /* extern "C" */

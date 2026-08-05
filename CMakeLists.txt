@@ -238,6 +238,8 @@ set(WISTERIA_PHYSICS_SOURCES
 
 set(WISTERIA_MMD_SOURCES
     src/mmd/mmd_pose_solver.cpp
+    src/mmd/mmd_camera_conversion.cpp
+    src/mmd/mmd_light_conversion.cpp
     src/mmd/vmd_importer.cpp
     src/mmd/physics/mmd_physics_asset.cpp
 )
@@ -389,6 +391,16 @@ if(BUILD_TESTING)
             )
         endforeach()
     endif()
+
+    # ABI safety gate: required, so a machine without Python cannot silently
+    # skip the check and let an unguarded export through CI.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(
+        NAME wisteria.abi-safety-matrix
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/script/gen_abi_safety_matrix.py
+            --check
+    )
 
     # Minimal render regression: creates a real GL context and verifies that
     # the engine SceneFramebuffer clears and reads back two consecutive
