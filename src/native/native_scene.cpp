@@ -2,6 +2,9 @@
 #include "internal/native_context.hpp"
 
 #include "wisteria/platform/application.hpp"
+#include "wisteria/rendering/material.hpp"
+#include "wisteria/rendering/mesh.hpp"
+#include "wisteria/rendering/primitives/cube.hpp"
 #include "wisteria/scene/scene.hpp"
 
 #include <cmath>
@@ -373,5 +376,382 @@ enum WisteriaStatus wisteria_scene_add_point_light(
     );
     *out_light = lightHandle;
     return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_light_destroy(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->lights.find(light);
+    if (iterator == entry->lights.end())
+        return InvalidHandle(*handle, "Light handle is invalid");
+    const SceneEntry::LightEntry& stored = iterator->second;
+    if (stored.light == nullptr)
+        return InvalidHandle(*handle, "Light handle is invalid");
+    if (stored.kind == 0)
+        entry->scene->RemoveDirectionalLight(
+            *static_cast<DirectionalLight*>(stored.light)
+        );
+    else
+        entry->scene->RemovePointLight(
+            *static_cast<PointLight*>(stored.light)
+        );
+    entry->lights.erase(iterator);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_directional_light_set(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    const float direction[3],
+    const float color[3],
+    float intensity
+)
+{
+    if (direction == nullptr || color == nullptr ||
+        !std::isfinite(intensity))
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->lights.find(light);
+    if (iterator == entry->lights.end() ||
+        iterator->second.kind != 0 || iterator->second.light == nullptr)
+    {
+        return InvalidHandle(*handle, "Directional light handle is invalid");
+    }
+    DirectionalLight* stored =
+        static_cast<DirectionalLight*>(iterator->second.light);
+    stored->SetDirection(
+        glm::vec3(direction[0], direction[1], direction[2])
+    );
+    stored->SetColor(glm::vec3(color[0], color[1], color[2]));
+    stored->SetIntensity(intensity);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_point_light_set(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    const float position[3],
+    const float color[3],
+    float intensity,
+    float range
+)
+{
+    if (position == nullptr || color == nullptr ||
+        !std::isfinite(intensity) || !std::isfinite(range) || range <= 0.0f)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->lights.find(light);
+    if (iterator == entry->lights.end() ||
+        iterator->second.kind != 1 || iterator->second.light == nullptr)
+    {
+        return InvalidHandle(*handle, "Point light handle is invalid");
+    }
+    PointLight* stored = static_cast<PointLight*>(iterator->second.light);
+    stored->SetPosition(
+        glm::vec3(position[0], position[1], position[2])
+    );
+    stored->SetColor(glm::vec3(color[0], color[1], color[2]));
+    stored->SetIntensity(intensity);
+    stored->SetRange(range);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_set_morph_weight(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* morph_name,
+    float weight
+)
+{
+    if (morph_name == nullptr || morph_name[0] == '\0' ||
+        !std::isfinite(weight))
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->entities.find(entity);
+    if (iterator == entry->entities.end())
+        return InvalidHandle(*handle, "Entity handle is invalid");
+    MorphState* morphState = iterator->second->TryGetMorphState();
+    if (morphState == nullptr)
+    {
+        SetError(*handle, "Entity has no morph state");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    const std::optional<MorphIndex> morphIndex =
+        morphState->GetMorphSet().FindMorph(morph_name);
+    if (!morphIndex.has_value())
+    {
+        SetError(*handle, "Morph not found: " + std::string(morph_name));
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    morphState->SetWeight(*morphIndex, weight);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_get_morph_weight(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* morph_name,
+    float* out_weight
+)
+{
+    if (morph_name == nullptr || morph_name[0] == '\0' ||
+        out_weight == nullptr)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->entities.find(entity);
+    if (iterator == entry->entities.end())
+        return InvalidHandle(*handle, "Entity handle is invalid");
+    MorphState* morphState = iterator->second->TryGetMorphState();
+    if (morphState == nullptr)
+    {
+        SetError(*handle, "Entity has no morph state");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    const std::optional<MorphIndex> morphIndex =
+        morphState->GetMorphSet().FindMorph(morph_name);
+    if (!morphIndex.has_value())
+    {
+        SetError(*handle, "Morph not found: " + std::string(morph_name));
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    *out_weight = morphState->Weight(*morphIndex);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_scene_set_environment(
+    WisteriaContext context,
+    WisteriaScene scene,
+    int32_t skybox_enabled,
+    float intensity
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    EnvironmentMap* environment = entry->scene->Environment();
+    if (environment == nullptr)
+    {
+        environment = &handle->application->GetResources().CreateEnvironment(
+            "scene:" + std::to_string(scene) + ":environment",
+            EnvironmentMapData::ProceduralSky()
+        );
+        entry->scene->SetEnvironment(environment);
+    }
+    environment->SetDrawSkybox(skybox_enabled != 0);
+    if (intensity >= 0.0f)
+        environment->SetIntensity(intensity);
+    return WISTERIA_OK;
+}
+
+namespace
+{
+DefaultModelData BuildGroundPlaneData(float size)
+{
+    constexpr std::size_t GroundStride = 15U;  // pos3 color3 uv2 normal3 tangent4
+    const float half = size * 0.5f;
+    DefaultModelData data;
+    data.layout = {
+        {"position", 3, FLOAT},
+        {"color", 3, FLOAT},
+        {"texCoord", 2, FLOAT},
+        {"normal", 3, FLOAT},
+        {"tangent", 4, FLOAT, false, false, 4U}
+    };
+    const float positions[4][2] = {
+        {-half, -half},
+        {half, -half},
+        {half, half},
+        {-half, half}
+    };
+    const float uvs[4][2] = {
+        {0.0f, 0.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+    for (int index = 0; index < 4; ++index)
+    {
+        const float vertex[GroundStride] = {
+            positions[index][0], 0.0f, positions[index][1],
+            0.75f, 0.75f, 0.75f,
+            uvs[index][0], uvs[index][1],
+            0.0f, 1.0f, 0.0f,
+            1.0f, 0.0f, 0.0f, 1.0f
+        };
+        for (std::size_t component = 0U; component < GroundStride; ++component)
+            data.vertices.push_back(vertex[component]);
+    }
+    // Front face points +Y (see the ground winding regression).
+    data.indices = {0U, 2U, 1U, 0U, 3U, 2U};
+    return data;
+}
+}
+
+enum WisteriaStatus wisteria_scene_add_cube(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float size,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+)
+{
+    if (out_entity != nullptr)
+        *out_entity = 0U;
+    if (color == nullptr || position == nullptr || out_entity == nullptr ||
+        !std::isfinite(size) || size <= 0.0f)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    try
+    {
+        ResourceManager& resources = handle->application->GetResources();
+        const std::string stem = "scene:" + std::to_string(scene) +
+            ":cube:" + std::to_string(entry->nextEntityHandle);
+        Mesh& mesh = resources.CreateMesh(stem + ":mesh", cubeData);
+        MaterialData materialData;
+        materialData.textureSources.clear();
+        materialData.baseColorFactor = glm::vec4(
+            color[0],
+            color[1],
+            color[2],
+            1.0f
+        );
+        materialData.castSelfShadow = true;
+        materialData.receiveSelfShadow = true;
+        materialData.groundShadow = true;
+        Material& material = resources.CreateMaterial(
+            stem + ":material",
+            materialData
+        );
+        Entity& entity = entry->scene->CreateEntity(
+            mesh,
+            material,
+            Transform(
+                glm::vec3(position[0], position[1], position[2]),
+                glm::vec3(0.0f),
+                glm::vec3(size)
+            )
+        );
+        const WisteriaEntity entityHandle = entry->nextEntityHandle++;
+        entry->entities.emplace(entityHandle, &entity);
+        *out_entity = entityHandle;
+        return WISTERIA_OK;
+    }
+    catch (const std::exception& error)
+    {
+        SetError(*handle, error.what());
+        return WISTERIA_ERROR_INTERNAL;
+    }
+}
+
+enum WisteriaStatus wisteria_scene_add_ground_plane(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float size,
+    const float position[3],
+    WisteriaEntity* out_entity
+)
+{
+    if (out_entity != nullptr)
+        *out_entity = 0U;
+    if (position == nullptr || out_entity == nullptr ||
+        !std::isfinite(size) || size <= 0.0f)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    try
+    {
+        ResourceManager& resources = handle->application->GetResources();
+        const std::string stem = "scene:" + std::to_string(scene) +
+            ":ground:" + std::to_string(entry->nextEntityHandle);
+        Mesh& mesh = resources.CreateMesh(
+            stem + ":mesh",
+            BuildGroundPlaneData(size)
+        );
+        MaterialData materialData;
+        materialData.textureSources.clear();
+        materialData.baseColorFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
+        materialData.groundPlane = true;
+        materialData.receivesGroundShadow = true;
+        Material& material = resources.CreateMaterial(
+            stem + ":material",
+            materialData
+        );
+        Entity& entity = entry->scene->CreateEntity(
+            mesh,
+            material,
+            Transform(
+                glm::vec3(position[0], position[1], position[2]),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f)
+            )
+        );
+        const WisteriaEntity entityHandle = entry->nextEntityHandle++;
+        entry->entities.emplace(entityHandle, &entity);
+        *out_entity = entityHandle;
+        return WISTERIA_OK;
+    }
+    catch (const std::exception& error)
+    {
+        SetError(*handle, error.what());
+        return WISTERIA_ERROR_INTERNAL;
+    }
 }
 }

@@ -542,4 +542,86 @@ enum WisteriaStatus wisteria_window_set_render_settings(
     return WISTERIA_OK;
 }
 
+enum WisteriaStatus wisteria_window_framebuffer_size(
+    WisteriaContext context,
+    WisteriaWindow window,
+    int32_t* out_width,
+    int32_t* out_height
+)
+{
+    if (out_width == nullptr || out_height == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    WindowEntry* entry = FindWindow(*handle, window);
+    if (entry == nullptr || entry->window == nullptr)
+        return InvalidHandle(*handle, "Window handle is invalid");
+    const SceneFramebuffer& framebuffer =
+        handle->application->GetFramebuffer(*entry->window);
+    *out_width = framebuffer.Width();
+    *out_height = framebuffer.Height();
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_window_read_pixels(
+    WisteriaContext context,
+    WisteriaWindow window,
+    unsigned char* rgba,
+    size_t buffer_size
+)
+{
+    if (rgba == nullptr || buffer_size == 0U)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    WindowEntry* entry = FindWindow(*handle, window);
+    if (entry == nullptr || entry->window == nullptr)
+        return InvalidHandle(*handle, "Window handle is invalid");
+    if (handle->application == nullptr)
+        return InvalidHandle(*handle, "Context has no application");
+
+    entry->window->MakeContextCurrent();
+    const SceneFramebuffer& framebuffer =
+        handle->application->GetFramebuffer(*entry->window);
+    if (framebuffer.Width() <= 0 || framebuffer.Height() <= 0)
+        return WISTERIA_ERROR_INITIALIZATION;
+    const std::size_t requiredBytes =
+        static_cast<std::size_t>(framebuffer.Width()) *
+        static_cast<std::size_t>(framebuffer.Height()) * 4U;
+    if (buffer_size < requiredBytes)
+    {
+        SetError(*handle, "Readback buffer is too small");
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+
+    GLint previousReadFramebuffer = 0;
+    GLint previousReadBuffer = GL_BACK;
+    GLint previousPackAlignment = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+    glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.Id());
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(
+        0,
+        0,
+        framebuffer.Width(),
+        framebuffer.Height(),
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        rgba
+    );
+    glBindFramebuffer(
+        GL_READ_FRAMEBUFFER,
+        static_cast<GLuint>(previousReadFramebuffer)
+    );
+    glReadBuffer(static_cast<GLenum>(previousReadBuffer));
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
+    return WISTERIA_OK;
+}
+
 } /* extern "C" */

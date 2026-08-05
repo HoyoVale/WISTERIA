@@ -2714,6 +2714,10 @@ void TestNativeAbiSceneWhenAvailable()
             reinterpret_cast<const char*>(modelPathU8.data()),
             modelPathU8.size()
         );
+        const std::string morphModelPath =
+            std::filesystem::path(WISTERIA_TEST_DATA_DIR)
+                .append("extended_morph.pmx")
+                .string();
 
         WisteriaScene scene = 0U;
         Require(
@@ -2794,6 +2798,7 @@ void TestNativeAbiSceneWhenAvailable()
             "ABI scene directional light failed"
         );
         const float lightPosition[3] = {5.0f, 13.0f, 9.0f};
+        WisteriaLight extraLight = 0U;
         Require(
             wisteria_scene_add_point_light(
                 context,
@@ -2802,7 +2807,7 @@ void TestNativeAbiSceneWhenAvailable()
                 color,
                 1.0f,
                 35.0f,
-                &light
+                &extraLight
             ) == WISTERIA_OK,
             "ABI scene point light failed"
         );
@@ -2814,9 +2819,136 @@ void TestNativeAbiSceneWhenAvailable()
                 color,
                 1.0f,
                 -1.0f,
-                &light
+                &extraLight
             ) == WISTERIA_ERROR_INVALID_ARGUMENT,
             "ABI scene accepted a negative light range"
+        );
+
+        // Light update + destroy.
+        const float newDirection[3] = {-0.2f, -1.0f, -0.3f};
+        const float warmColor[3] = {1.0f, 0.9f, 0.8f};
+        Require(
+            wisteria_directional_light_set(
+                context,
+                scene,
+                light,
+                newDirection,
+                warmColor,
+                0.8f
+            ) == WISTERIA_OK,
+            "ABI directional light update failed"
+        );
+        const float lightPosition2[3] = {0.0f, 5.0f, 0.0f};
+        WisteriaLight pointLight = 0U;
+        Require(
+            wisteria_scene_add_point_light(
+                context,
+                scene,
+                lightPosition2,
+                warmColor,
+                1.0f,
+                20.0f,
+                &pointLight
+            ) == WISTERIA_OK &&
+                wisteria_point_light_set(
+                    context,
+                    scene,
+                    pointLight,
+                    lightPosition2,
+                    warmColor,
+                    1.2f,
+                    25.0f
+                ) == WISTERIA_OK &&
+                wisteria_light_destroy(context, scene, pointLight) ==
+                    WISTERIA_OK &&
+                wisteria_light_destroy(context, scene, pointLight) ==
+                    WISTERIA_ERROR_NOT_FOUND,
+            "ABI point light lifecycle failed"
+        );
+
+        // Morph weights on a fixture with known morph names.
+        WisteriaSceneModel morphModel = 0U;
+        float weight = 0.0f;
+        Require(
+            wisteria_scene_load_model(
+                context,
+                scene,
+                morphModelPath.c_str(),
+                &morphModel
+            ) == WISTERIA_OK,
+            "ABI scene morph model load failed"
+        );
+        WisteriaEntity morphEntity = 0U;
+        Require(
+            wisteria_scene_instantiate_model(
+                context,
+                scene,
+                morphModel,
+                position,
+                euler,
+                scale,
+                &morphEntity
+            ) == WISTERIA_OK,
+            "ABI scene morph entity instantiate failed"
+        );
+        Require(
+            wisteria_entity_set_morph_weight(
+                context,
+                scene,
+                morphEntity,
+                "vertex",
+                0.5f
+            ) == WISTERIA_OK &&
+                wisteria_entity_get_morph_weight(
+                    context,
+                    scene,
+                    morphEntity,
+                    "vertex",
+                    &weight
+                ) == WISTERIA_OK &&
+                NearlyEqual(weight, 0.5f),
+            "ABI entity morph weight failed"
+        );
+        Require(
+            wisteria_entity_set_morph_weight(
+                context,
+                scene,
+                morphEntity,
+                "no_such_morph",
+                0.5f
+            ) == WISTERIA_ERROR_NOT_FOUND,
+            "ABI entity accepted an unknown morph"
+        );
+
+        // Environment + primitives.
+        Require(
+            wisteria_scene_set_environment(context, scene, 1, -1.0f) ==
+                WISTERIA_OK,
+            "ABI scene environment failed"
+        );
+        const float cubeColor[3] = {0.9f, 0.3f, 0.2f};
+        const float cubePosition[3] = {0.0f, 1.0f, 0.0f};
+        WisteriaEntity cube = 0U;
+        WisteriaEntity ground = 0U;
+        Require(
+            wisteria_scene_add_cube(
+                context,
+                scene,
+                1.0f,
+                cubeColor,
+                cubePosition,
+                &cube
+            ) == WISTERIA_OK &&
+                wisteria_scene_add_ground_plane(
+                    context,
+                    scene,
+                    40.0f,
+                    position,
+                    &ground
+                ) == WISTERIA_OK &&
+                cube != 0U &&
+                ground != 0U,
+            "ABI scene primitives failed"
         );
 
         for (int frame = 0; frame < 20; ++frame)
@@ -2839,6 +2971,44 @@ void TestNativeAbiSceneWhenAvailable()
             }
             Require(renderStatus == WISTERIA_OK, "ABI scene render failed");
         }
+
+        // Render readback.
+        int32_t frameWidth = 0;
+        int32_t frameHeight = 0;
+        Require(
+            wisteria_window_framebuffer_size(
+                context,
+                window,
+                &frameWidth,
+                &frameHeight
+            ) == WISTERIA_OK &&
+                frameWidth > 0 &&
+                frameHeight > 0,
+            "ABI framebuffer size query failed"
+        );
+        std::vector<unsigned char> pixels(
+            static_cast<std::size_t>(frameWidth) *
+            static_cast<std::size_t>(frameHeight) * 4U
+        );
+        Require(
+            wisteria_window_read_pixels(
+                context,
+                window,
+                pixels.data(),
+                pixels.size()
+            ) == WISTERIA_OK,
+            "ABI readback failed"
+        );
+        bool hasContent = false;
+        for (const unsigned char value : pixels)
+        {
+            if (value != 0U)
+            {
+                hasContent = true;
+                break;
+            }
+        }
+        Require(hasContent, "ABI readback returned an all-zero frame");
 
         Require(
             wisteria_entity_destroy(context, scene, entity) == WISTERIA_OK &&

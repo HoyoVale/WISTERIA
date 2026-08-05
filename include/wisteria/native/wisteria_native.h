@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #define WISTERIA_NATIVE_VERSION_MAJOR 0
-#define WISTERIA_NATIVE_VERSION_MINOR 5
+#define WISTERIA_NATIVE_VERSION_MINOR 6
 
 #if defined(_WIN32)
 #  if defined(WISTERIA_NATIVE_BUILD)
@@ -495,6 +495,104 @@ WISTERIA_API enum WisteriaStatus wisteria_scene_add_point_light(
     float intensity,
     float range,
     WisteriaLight* out_light
+);
+
+/* --- Light control --------------------------------------------------------- */
+
+WISTERIA_API enum WisteriaStatus wisteria_light_destroy(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_directional_light_set(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    const float direction[3],
+    const float color[3],
+    float intensity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_point_light_set(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaLight light,
+    const float position[3],
+    const float color[3],
+    float intensity,
+    float range
+);
+
+/* --- Entity morphs --------------------------------------------------------- */
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_morph_weight(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* morph_name,
+    float weight
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_get_morph_weight(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* morph_name,
+    float* out_weight
+);
+
+/* --- Scene environment ----------------------------------------------------- */
+
+/*
+ * Enables/disables the procedural skybox and optionally sets its intensity
+ * (pass intensity < 0 to keep the current value).
+ */
+WISTERIA_API enum WisteriaStatus wisteria_scene_set_environment(
+    WisteriaContext context,
+    WisteriaScene scene,
+    int32_t skybox_enabled,
+    float intensity
+);
+
+/* --- Scene primitives ------------------------------------------------------ */
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_cube(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float size,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_ground_plane(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float size,
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
+/* --- Render readback ------------------------------------------------------- */
+
+WISTERIA_API enum WisteriaStatus wisteria_window_framebuffer_size(
+    WisteriaContext context,
+    WisteriaWindow window,
+    int32_t* out_width,
+    int32_t* out_height
+);
+
+/*
+ * Copies the last rendered scene framebuffer into rgba (RGBA8, row-major,
+ * bottom-up, width*height*4 bytes). buffer_size must be at least
+ * width*height*4; use wisteria_window_framebuffer_size to size it.
+ */
+WISTERIA_API enum WisteriaStatus wisteria_window_read_pixels(
+    WisteriaContext context,
+    WisteriaWindow window,
+    unsigned char* rgba,
+    size_t buffer_size
 );
 
 #ifdef __cplusplus
