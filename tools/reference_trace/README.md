@@ -49,15 +49,28 @@ node bundle_trace.cjs "<model.pmx>" "<out.csv>" 300 10
 
 ## 第一次对照结果（叶瞬光，physics-only，120Hz，300 帧）
 
+叶瞬光.pmx 刚体构成：**495 个**（38 FollowBone / 74 Physics /
+383 PhysicsWithBone），质量 0.01–218.31，模型以 mode 2 为主。
+
 | 实现 | frame 10 | frame 300 | 收敛 |
 |---|---|---|---|
 | WISTERIA（saba） | 0.052 | 0.068 | 30 帧内收敛 |
-| babylon-mmd | 0.79 | 8.08 | 300 帧仍在缓慢增长 |
+| babylon-mmd | 0.79 | 8.08 | 水平收缩（x/z ±10.5→±6.8），未收敛 |
 
-**发现**：同一资产、同一配置下，saba 的物理几乎静止（位移 0.068），而
-babylon-mmd 的裙摆/头发持续下落（位移 8.08）。这是社区差异矩阵的第一个
-真实分歧，下一步需要：确认是刚体分类/kinematic 驱动差异，还是固定步/重力
-处理差异，再决定 WISTERIA 侧是否补“物理模式”语义。
+**调查结论（已排除的假设）**：
+
+- 不是“无 VMD 运行时漂移”：关掉物理（`buildPhysics:false`）后 babylon 位移
+  ≈ 0.000002，运行时静止正确；
+- 不是地面缺失：babylon-mmd 物理世界确实没有 MMD 地面（saba 有 y=0 静态
+  平面），harness 已补地面但 min_y 稳定在 0.049、曲线不变——模型不是下落，
+  是 **mode-2 刚体水平向内收拢**；
+- 不是刚体分类差异：双方读同一个 PMX mode 字段。
+
+**真正分歧**：在 **mode 2（PhysicsWithBone）** 处理上——saba 的
+`DynamicAndBoneMergeMotionState` 让刚体与骨骼互相拉回，模型几乎静止；
+babylon-mmd 的 mode-2 刚体 300 帧内向内塌缩。哪个更接近 MMD 官方行为需要
+第三参考或逐刚体轨迹对照。下一步：给 saba 侧加逐刚体状态导出（引擎目前
+不暴露刚体状态），对比同一刚体的 0~300 帧轨迹。
 
 ## 产出目标（已达成）
 

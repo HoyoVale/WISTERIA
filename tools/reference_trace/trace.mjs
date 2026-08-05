@@ -2,6 +2,8 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import "@babylonjs/core/Physics/physicsEngineComponent.js";
+import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
+import { PhysicsImpostor } from "@babylonjs/core/Physics/v1/physicsImpostor.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import Ammo from "ammojs-typed";
 
@@ -24,6 +26,20 @@ async function main() {
   physicsPlugin.setMaxSteps(120);
   physicsPlugin.setFixedTimeStep(1 / 120);
   scene.enablePhysics(new Vector3(0, -98.0, 0), physicsPlugin);
+
+  // MMD always has a floor at y=0 (saba adds a static plane); babylon-mmd
+  // does not, so without this the dynamic bodies fall forever.
+  const ground = MeshBuilder.CreateGround(
+    "mmdGround",
+    { width: 200, height: 200 },
+    scene
+  );
+  ground.physicsImpostor = new PhysicsImpostor(
+    ground,
+    PhysicsImpostor.BoxImpostor,
+    { mass: 0, friction: 0.5, restitution: 0 },
+    scene
+  );
 
   const { PmxLoader, RegisterPmxLoader } = await import(
     "babylon-mmd/esm/Loader/pmxLoader.pure.js"
@@ -73,6 +89,42 @@ async function main() {
   const result = await plugin.importMeshAsync("", scene, state, "");
   const meshes = result.meshes.filter((m) => m.geometry);
 
+  // Rigid body inventory: mode distribution + mass stats (PMX fields).
+  {
+    const rigidBodies = state.arrayBuffer
+      ? null
+      : null;
+    const parsedObject = await plugin._parseFileAsync(state.arrayBuffer);
+    console.log("rigid body count:", parsedObject.rigidBodies?.length);
+    const modes = [0, 0, 0];
+    let dynamicMassMin = Infinity;
+    let dynamicMassMax = -Infinity;
+    let dynamicCount = 0;
+    for (const rb of parsedObject.rigidBodies) {
+      if (rb.physicsMode === undefined && rb.mode === undefined) {
+        console.log("sample rigid body keys:", Object.keys(rb));
+        break;
+      }
+      const mode = rb.physicsMode ?? rb.mode;
+      modes[mode] = (modes[mode] ?? 0) + 1;
+      if (mode === 1 || mode === 2) {
+        dynamicCount++;
+        dynamicMassMin = Math.min(dynamicMassMin, rb.mass);
+        dynamicMassMax = Math.max(dynamicMassMax, rb.mass);
+      }
+    }
+    console.log(
+      "rigid body modes (0=follow,1=physics,2=physics+merge):",
+      modes.join("/"),
+      "dynamic count:",
+      dynamicCount,
+      "dynamic mass range:",
+      dynamicMassMin.toFixed(2),
+      "-",
+      dynamicMassMax.toFixed(2)
+    );
+  }
+
   // Bind-pose reference (read before any stepping).
   const bind = meshes.map(
     (mesh) => mesh.geometry.getVertexBuffers().position.getData()
@@ -117,7 +169,7 @@ async function main() {
   const model = runtime.createMmdModelFromSkeleton(
     withMeta,
     withMeta.metadata.skeleton,
-    { buildPhysics: true }
+    { buildPhysics: process.env.NO_PHYSICS ? false : true }
   );
 
   const physicsEngine = scene.getPhysicsEngine();
@@ -185,45 +237,6 @@ async function main() {
     }
     return maxD;
   };
-
-  // Diagnostics: matrix convention at the bind pose (no physics step).
-  model.beforePhysics(0);
-  model.afterPhysics();
-  const debugMatrices = model.worldTransformMatrices;
-  const debugBind = bind[0];
-  const debugIndices = skinBones[0].indices;
-  const debugWeights = skinBones[0].weights;
-  const debugSkinned = skinMesh(0, debugMatrices);
-  console.log(
-    "frame0 v0 bind:",
-    debugBind[0].toFixed(3),
-    debugBind[1].toFixed(3),
-    debugBind[2].toFixed(3)
-  );
-  console.log(
-    "frame0 v0 skin:",
-    debugSkinned[0].toFixed(3),
-    debugSkinned[1].toFixed(3),
-    debugSkinned[2].toFixed(3)
-  );
-  console.log(
-    "v0 bones/weights:",
-    debugIndices[0],
-    debugIndices[1],
-    debugIndices[2],
-    debugIndices[3],
-    "/",
-    debugWeights[0].toFixed(2),
-    debugWeights[1].toFixed(2),
-    debugWeights[2].toFixed(2),
-    debugWeights[3].toFixed(2)
-  );
-  const m0 = debugMatrices.slice(0, 16);
-  console.log("bone0 matrix:", m0.map((v) => v.toFixed(3)).join(" "));
-  const m10 = debugMatrices.slice(10 * 16, 10 * 16 + 16);
-  const m177 = debugMatrices.slice(177 * 16, 177 * 16 + 16);
-  console.log("bone10 matrix:", m10.map((v) => v.toFixed(3)).join(" "));
-  console.log("bone177 matrix:", m177.map((v) => v.toFixed(3)).join(" "));
 
   let csv = "frame,min_x,min_y,min_z,max_x,max_y,max_z,max_displacement\n";
   for (let frame = 0; frame < totalFrames; ++frame) {
