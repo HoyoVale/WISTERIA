@@ -33,6 +33,11 @@ bool RemoveOwnedObject(
 }
 }
 
+Scene::Scene()
+{
+    RegisterDefaultModelBackends(this->modelBackends);
+}
+
 Scene& Scene::operator=(Scene&& other) noexcept
 {
     if (this == &other)
@@ -42,6 +47,7 @@ Scene& Scene::operator=(Scene&& other) noexcept
     // world is replaced. The incoming PhysicsWorld is heap-owned so moving a
     // Scene preserves the address stored by every incoming instance.
     this->Clear();
+    this->modelBackends = std::move(other.modelBackends);
     this->activeCamera = std::move(other.activeCamera);
     this->physicsWorld = std::move(other.physicsWorld);
     this->entities = std::move(other.entities);
@@ -377,21 +383,36 @@ Entity& Scene::InstantiateModel(
 )
 {
     Entity& entity = this->CreateEntity(transform);
-    if (model.HasMorphs())
-        entity.SetMorphSet(model.GetMorphSet());
-    if (model.HasSkeleton())
+    auto instance = std::make_unique<ModelInstance>(
+        model,
+        this->modelBackends.CreateRuntime(model)
+    );
+    ModelInstance& instanceReference = *instance;
+    const bool backendDriven = instanceReference.HasRuntime();
+    entity.SetModelInstance(std::move(instance));
+
+    // Static/generic imported models continue to use WISTERIA's Animator and
+    // GPU morph path. Backend-driven models own their evaluation state and
+    // expose its results through the ModelInstance contract instead.
+    if (!backendDriven)
     {
-        entity.SetSkeleton(model.GetSkeleton());
-        if (model.AnimationClipCount() > 0)
-            entity.GetAnimator().Play(model.AnimationClipAt(0));
+        if (model.HasMorphs())
+            entity.SetMorphSet(model.GetMorphSet());
+        if (model.HasSkeleton())
+        {
+            entity.SetSkeleton(model.GetSkeleton());
+            if (model.AnimationClipCount() > 0)
+                entity.GetAnimator().Play(model.AnimationClipAt(0));
+        }
     }
+
     for (const RenderPart& part : model.Parts())
     {
         entity.AddRenderPart(
-            part.GetMesh(),
+            instanceReference.ResolveMesh(part.GetMesh()),
             part.GetMaterial(),
             part.LocalTransform(),
-            part.MorphMaterialIndex()
+            backendDriven ? std::nullopt : part.MorphMaterialIndex()
         );
     }
     return entity;

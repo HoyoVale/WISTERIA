@@ -1,9 +1,10 @@
 /*
- * WISTERIA native C ABI (design draft v0.1)
+ * WISTERIA native C ABI v0.7
  *
- * Stable, platform-neutral facade for frontend/FFI integration. The first
- * milestone wraps the headless Saba runtime (model/motion/physics/frame
- * stepping); rendering and app-level commands land in a later layer.
+ * Stable, platform-neutral facade for frontend/FFI integration. Scene-owned
+ * WisteriaEntity handles are the primary runtime surface: WISTERIA owns model
+ * instances, rendering, animation/physics scheduling and destruction, while
+ * format-specific backends such as Saba MMD remain implementation details.
  *
  * Threading contract: a WisteriaContext is single-threaded. All functions
  * taking the same context must be called from one thread at a time. Callers
@@ -20,7 +21,7 @@ extern "C" {
 #endif
 
 #define WISTERIA_NATIVE_VERSION_MAJOR 0
-#define WISTERIA_NATIVE_VERSION_MINOR 6
+#define WISTERIA_NATIVE_VERSION_MINOR 7
 
 #if defined(_WIN32)
 #  if defined(WISTERIA_NATIVE_BUILD)
@@ -121,7 +122,14 @@ WISTERIA_API enum WisteriaStatus wisteria_last_error_message(
     size_t buffer_size
 );
 
-/* --- Model lifecycle -------------------------------------------------- */
+/* --- Legacy headless MMD model lifecycle ----------------------------- */
+
+/*
+ * Compatibility surface retained for existing callers. New renderable
+ * integrations should use scene_load_model + scene_instantiate_model and the
+ * entity runtime functions below so one WisteriaEntity owns the complete
+ * animation, physics, rendering and export lifecycle.
+ */
 
 WISTERIA_API enum WisteriaStatus wisteria_load_model(
     WisteriaContext context,
@@ -530,6 +538,141 @@ WISTERIA_API enum WisteriaStatus wisteria_entity_destroy(
     WisteriaContext context,
     WisteriaScene scene,
     WisteriaEntity entity
+);
+
+/* --- Engine-owned model runtime (v0.7) ------------------------------- */
+
+/*
+ * These functions operate on the same WisteriaEntity that Scene renders.
+ * The underlying backend (currently Saba MMD) is an implementation detail;
+ * Scene owns update, rendering, physics participation and destruction.
+ */
+WISTERIA_API enum WisteriaStatus wisteria_entity_runtime_backend(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    char* buffer,
+    size_t buffer_size
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_load_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* motion_path,
+    WisteriaMotion* out_motion
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_unload_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    WisteriaMotion motion
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_restart_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t reset_physics
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_pause_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_resume_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_motion_looping(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t looping
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_motion_frame(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    double frame
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_motion_frame(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    double* out_frame
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_motion_max_frame(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    double* out_max_frame
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_mmd_ik_enabled(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* bone_name,
+    int32_t enabled
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_physics_settings(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    float fixed_time_step,
+    int32_t max_sub_steps,
+    float gravity_x,
+    float gravity_y,
+    float gravity_z,
+    int32_t enabled
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_physics_reset(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_vertex_bounds(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    struct WisteriaVertexBounds* out_bounds
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_bone_count(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    uint64_t* out_count
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_bone_name(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    uint64_t bone_index,
+    char* buffer,
+    size_t buffer_size
+);
+
+/* Column-major 4x4 matrix, matching OpenGL/GLM storage order. */
+WISTERIA_API enum WisteriaStatus wisteria_entity_bone_local_matrix(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    uint64_t bone_index,
+    float out_matrix_16[16]
 );
 
 WISTERIA_API enum WisteriaStatus wisteria_scene_add_directional_light(

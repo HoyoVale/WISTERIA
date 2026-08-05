@@ -8,15 +8,7 @@
 
 namespace wisteria
 {
-struct SabaPhysicsSettings
-{
-    float fixedTimeStep = 1.0f / 120.0f;
-    int maxSubSteps = 10;
-    glm::vec3 gravity{0.0f, -98.0f, 0.0f};
-    // saba exposes rigid-body activation per body; false keeps the bodies
-    // inactive so the mesh follows the animation pose only.
-    bool physicsEnabled = true;
-};
+using SabaPhysicsSettings = MmdPhysicsRuntimeSettings;
 
 // Saba-backed MMD runtime: uses saba::PMXModel for animation, IK, morph and
 // CPU skinning (BDEF/SDEF/QDEF), then uploads skinned vertices into our Mesh.
@@ -38,14 +30,25 @@ public:
     // Overrides physics settings. Calling before Initialize() applies them at
     // startup; calling after Initialize() reapplies them to the live world.
     void SetPhysicsSettings(const SabaPhysicsSettings& settings);
+    void SetMmdPhysicsSettings(
+        const MmdPhysicsRuntimeSettings& settings
+    ) override;
+    void ResetMmdPhysics() override;
 
     bool Initialize() override;
     void Update(float deltaTime) override;
     void Reset() override;
     Pose& GetPose() override;
+    const Pose& GetPose() const override;
     bool NeedsDynamicVertexUpload() const noexcept override;
-    void UploadDynamicVertices(Mesh& mesh) override;
+    ModelVertexFrame VertexFrame() const noexcept override;
     PhysicsInstance* TryGetPhysicsInstance() noexcept override;
+    const PhysicsInstance* TryGetPhysicsInstance() const noexcept override;
+    std::string_view BackendName() const noexcept override;
+    bool SetMorphWeight(std::string_view name, float weight) override;
+    std::optional<float> MorphWeight(
+        std::string_view name
+    ) const override;
 
     void SetMmdIkEnabled(BoneIndex bone, bool enabled) override;
     BoneIndex FindBoneIndex(const std::string& name) const override;
@@ -103,10 +106,11 @@ public:
     ProfileSnapshot Profile() const;
 
 private:
-    // Applies saba's per-body activation to match physicsEnabled (called at
+    // Applies saba's per-body activation to match enabled (called at
     // Initialize and on SetPhysicsSettings).
     void ApplyPhysicsActivation();
     void ApplyMmdIkOverrides() noexcept;
+    void SyncPoseFromSaba();
 
     struct Impl;
     std::unique_ptr<Impl> impl;

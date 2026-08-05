@@ -62,6 +62,24 @@ SceneEntry* FindScene(Context& context, WisteriaScene handle)
     return iterator == context.scenes.end() ? nullptr : iterator->second.get();
 }
 
+Entity* FindEntity(SceneEntry& scene, WisteriaEntity handle)
+{
+    const auto iterator = scene.entities.find(handle);
+    return iterator == scene.entities.end() ? nullptr : iterator->second;
+}
+
+MmdRuntimeModel* FindEntityMmdRuntime(
+    SceneEntry& scene,
+    WisteriaEntity handle
+)
+{
+    Entity* entity = FindEntity(scene, handle);
+    if (entity == nullptr)
+        return nullptr;
+    ModelInstance* instance = entity->TryGetModelInstance();
+    return instance != nullptr ? instance->TryGetMmdRuntime() : nullptr;
+}
+
 void SetError(Context& context, std::string message)
 {
     context.lastError = std::move(message);

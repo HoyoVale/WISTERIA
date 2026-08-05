@@ -5,17 +5,19 @@
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/light.hpp"
-#include "wisteria/rendering/mesh.hpp"
 
 #include <btBulletDynamicsCommon.h>
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/MMDPhysics.h>
+#include <Saba/Model/MMD/MMDMorph.h>
 #include <Saba/Model/MMD/PMXModel.h>
 #include <Saba/Model/MMD/VMDAnimation.h>
 #include <Saba/Model/MMD/VMDCameraAnimation.h>
 #include <Saba/Model/MMD/VMDFile.h>
 
 #include <cstddef>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <cmath>
 #include <chrono>
 #include <optional>
@@ -110,8 +112,10 @@ struct SabaMmdRuntimeModel::Impl
     std::unique_ptr<SabaOwnedPhysicsInstance> ownedPhysics;
 
     std::vector<Bone> bones;
-    Skeleton skeleton;
-    Pose pose;
+    std::vector<std::string> sabaBoneNames;
+    std::unique_ptr<Skeleton> skeleton;
+    std::unique_ptr<Pose> pose;
+    std::uint64_t vertexRevision = 0U;
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
 
     Impl(
@@ -121,18 +125,8 @@ struct SabaMmdRuntimeModel::Impl
     )
         : modelPath(std::move(modelPath_)),
           vmdPath(std::move(vmdPath_)),
-          physicsSettings(physicsSettings_),
-          skeleton(BuildSingleBoneSkeleton()),
-          pose(skeleton)
+          physicsSettings(physicsSettings_)
     {
-    }
-
-    static Skeleton BuildSingleBoneSkeleton()
-    {
-        Bone root;
-        root.name = "root";
-        std::vector<Bone> single{std::move(root)};
-        return Skeleton(std::move(single));
     }
 };
 
@@ -173,6 +167,19 @@ void SabaMmdRuntimeModel::SetPhysicsSettings(
     }
 }
 
+void SabaMmdRuntimeModel::SetMmdPhysicsSettings(
+    const MmdPhysicsRuntimeSettings& settings
+)
+{
+    this->SetPhysicsSettings(settings);
+}
+
+void SabaMmdRuntimeModel::ResetMmdPhysics()
+{
+    if (this->impl->model != nullptr)
+        this->impl->model->ResetPhysics();
+}
+
 void SabaMmdRuntimeModel::ApplyPhysicsActivation()
 {
     if (this->impl->model == nullptr)
@@ -180,7 +187,7 @@ void SabaMmdRuntimeModel::ApplyPhysicsActivation()
     saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
     if (manager == nullptr)
         return;
-    const bool enabled = this->impl->physicsSettings.physicsEnabled;
+    const bool enabled = this->impl->physicsSettings.enabled;
     for (auto& rigidBody : *manager->GetRigidBodys())
         rigidBody->SetActivation(enabled);
 }
@@ -200,26 +207,61 @@ bool SabaMmdRuntimeModel::Initialize()
         this->impl->model.reset();
         return false;
     }
-    // Expose the model's node list as the engine BoneIndex space so
-    // SetMmdIkEnabled / FindBoneIndex can address saba bones by name.
-    this->impl->mmdIkOverrides.clear();
-    this->impl->bones.clear();
-    if (saba::MMDNodeManager* nodes = this->impl->model->GetNodeManager())
-    {
-        this->impl->bones.reserve(nodes->GetNodeCount());
-        for (std::size_t index = 0U; index < nodes->GetNodeCount(); ++index)
-        {
-            saba::MMDNode* node = nodes->GetMMDNode(index);
-            Bone bone;
-            if (node != nullptr)
-                bone.name = node->GetName();
-            this->impl->bones.push_back(std::move(bone));
-        }
-    }
     // Saba's viewer calls InitializeAnimation right after loading the model;
     // it resets node animation state and rebuilds the physics reset pose.
     // Skipping it leaves physics and VMD evaluation on inconsistent baselines.
     this->impl->model->InitializeAnimation();
+
+    // Materialize Saba's node hierarchy as WISTERIA-owned immutable Skeleton
+    // plus a per-instance Pose. Saba remains the evaluator, but Scene/export
+    // code now observes the authoritative result through engine types.
+    this->impl->mmdIkOverrides.clear();
+    this->impl->bones.clear();
+    this->impl->sabaBoneNames.clear();
+    if (saba::MMDNodeManager* nodes = this->impl->model->GetNodeManager())
+    {
+        const std::size_t count = nodes->GetNodeCount();
+        this->impl->bones.reserve(count);
+        this->impl->sabaBoneNames.reserve(count);
+        std::unordered_map<std::string, std::size_t> usedNames;
+        for (std::size_t index = 0U; index < count; ++index)
+        {
+            saba::MMDNode* node = nodes->GetMMDNode(index);
+            Bone bone;
+            std::string originalName = node != nullptr ? node->GetName() : "";
+            this->impl->sabaBoneNames.push_back(originalName);
+            std::string engineName = originalName.empty()
+                ? "bone_" + std::to_string(index)
+                : originalName;
+            const std::size_t occurrence = usedNames[engineName]++;
+            if (occurrence > 0U)
+                engineName += "#" + std::to_string(index);
+            bone.name = std::move(engineName);
+            if (node != nullptr)
+            {
+                if (saba::MMDNode* parent = node->GetParent())
+                    bone.parentIndex = static_cast<BoneIndex>(parent->GetIndex());
+                bone.bindLocalMatrix =
+                    glm::translate(glm::mat4(1.0f), node->GetInitialTranslate()) *
+                    glm::mat4_cast(node->GetInitialRotate()) *
+                    glm::scale(glm::mat4(1.0f), node->GetInitialScale());
+                bone.inverseBindMatrix = node->GetInverseInitTransform();
+                bone.sourceOrder = static_cast<std::uint32_t>(index);
+            }
+            this->impl->bones.push_back(std::move(bone));
+        }
+    }
+    if (this->impl->bones.empty())
+    {
+        Bone root;
+        root.name = "root";
+        this->impl->bones.push_back(std::move(root));
+        this->impl->sabaBoneNames.emplace_back("root");
+    }
+    this->impl->skeleton = std::make_unique<Skeleton>(this->impl->bones);
+    this->impl->pose = std::make_unique<Pose>(*this->impl->skeleton);
+    this->SyncPoseFromSaba();
+
     if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
     {
         const float fps = 1.0f / this->impl->physicsSettings.fixedTimeStep;
@@ -281,11 +323,13 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
     this->impl->model->UpdateMorphAnimation();
     this->ApplyMmdIkOverrides();
     this->impl->model->UpdateNodeAnimation(false);
-    if (this->impl->physicsSettings.physicsEnabled)
+    if (this->impl->physicsSettings.enabled)
         this->impl->model->UpdatePhysicsAnimation(deltaTime);
     this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->EndAnimation();
     this->impl->model->Update();
+    this->SyncPoseFromSaba();
+    ++this->impl->vertexRevision;
     const auto updateEnd = std::chrono::steady_clock::now();
     this->impl->updateMilliseconds += std::chrono::duration<double, std::milli>(
         updateEnd - updateStart
@@ -388,7 +432,16 @@ double SabaMmdRuntimeModel::MotionMaxFrame() const noexcept
 
 Pose& SabaMmdRuntimeModel::GetPose()
 {
-    return this->impl->pose;
+    if (this->impl->pose == nullptr)
+        throw std::logic_error("Saba runtime has no initialized pose");
+    return *this->impl->pose;
+}
+
+const Pose& SabaMmdRuntimeModel::GetPose() const
+{
+    if (this->impl->pose == nullptr)
+        throw std::logic_error("Saba runtime has no initialized pose");
+    return *this->impl->pose;
 }
 
 bool SabaMmdRuntimeModel::NeedsDynamicVertexUpload() const noexcept
@@ -396,45 +449,22 @@ bool SabaMmdRuntimeModel::NeedsDynamicVertexUpload() const noexcept
     return true;
 }
 
-void SabaMmdRuntimeModel::UploadDynamicVertices(Mesh& mesh)
+ModelVertexFrame SabaMmdRuntimeModel::VertexFrame() const noexcept
 {
     if (this->impl->model == nullptr)
-        return;
-    const auto uploadStart = std::chrono::steady_clock::now();
-    const std::size_t vertexCount = this->impl->model->GetVertexCount();
-    const glm::vec3* updatePositions =
-        this->impl->model->GetUpdatePositions();
-    const glm::vec3* updateNormals =
-        this->impl->model->GetUpdateNormals();
-    const std::span<const std::uint32_t> sourceIndices =
-        mesh.SourceVertexIndices();
-    if (sourceIndices.empty())
-    {
-        mesh.UploadDynamicVertices(
-            std::span<const glm::vec3>(updatePositions, vertexCount),
-            std::span<const glm::vec3>(updateNormals, vertexCount)
-        );
-    }
-    else
-    {
-        std::vector<glm::vec3> positions;
-        std::vector<glm::vec3> normals;
-        positions.reserve(sourceIndices.size());
-        normals.reserve(sourceIndices.size());
-        for (const std::uint32_t globalIndex : sourceIndices)
-        {
-            if (globalIndex < vertexCount)
-            {
-                positions.push_back(updatePositions[globalIndex]);
-                normals.push_back(updateNormals[globalIndex]);
-            }
-        }
-        mesh.UploadDynamicVertices(positions, normals);
-    }
-    const auto uploadEnd = std::chrono::steady_clock::now();
-    this->impl->uploadMilliseconds += std::chrono::duration<double, std::milli>(
-        uploadEnd - uploadStart
-    ).count();
+        return {};
+    const std::size_t count = this->impl->model->GetVertexCount();
+    return ModelVertexFrame{
+        std::span<const glm::vec3>(
+            this->impl->model->GetUpdatePositions(),
+            count
+        ),
+        std::span<const glm::vec3>(
+            this->impl->model->GetUpdateNormals(),
+            count
+        ),
+        this->impl->vertexRevision
+    };
 }
 
 SabaMmdRuntimeModel::ProfileSnapshot SabaMmdRuntimeModel::Profile() const
@@ -458,6 +488,48 @@ PhysicsInstance* SabaMmdRuntimeModel::TryGetPhysicsInstance() noexcept
     return this->impl->ownedPhysics.get();
 }
 
+const PhysicsInstance* SabaMmdRuntimeModel::TryGetPhysicsInstance() const noexcept
+{
+    return this->impl->ownedPhysics.get();
+}
+
+std::string_view SabaMmdRuntimeModel::BackendName() const noexcept
+{
+    return "saba-mmd";
+}
+
+bool SabaMmdRuntimeModel::SetMorphWeight(
+    std::string_view name,
+    float weight
+)
+{
+    if (this->impl->model == nullptr || !std::isfinite(weight))
+        return false;
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    if (manager == nullptr)
+        return false;
+    saba::MMDMorph* morph = manager->GetMorph(std::string(name));
+    if (morph == nullptr)
+        return false;
+    morph->SetWeight(weight);
+    return true;
+}
+
+std::optional<float> SabaMmdRuntimeModel::MorphWeight(
+    std::string_view name
+) const
+{
+    if (this->impl->model == nullptr)
+        return std::nullopt;
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    if (manager == nullptr)
+        return std::nullopt;
+    saba::MMDMorph* morph = manager->GetMorph(std::string(name));
+    return morph != nullptr
+        ? std::optional<float>(morph->GetWeight())
+        : std::nullopt;
+}
+
 void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex bone, bool enabled)
 {
     if (!IsValidBoneIndex(bone, this->impl->bones))
@@ -465,7 +537,7 @@ void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex bone, bool enabled)
     this->impl->mmdIkOverrides[bone] = enabled;
     ApplyIkEnable(
         this->impl->model,
-        this->impl->bones[bone].name,
+        this->impl->sabaBoneNames[bone],
         enabled
     );
 }
@@ -474,7 +546,7 @@ BoneIndex SabaMmdRuntimeModel::FindBoneIndex(const std::string& name) const
 {
     for (std::size_t index = 0U; index < this->impl->bones.size(); ++index)
     {
-        if (this->impl->bones[index].name == name)
+        if (this->impl->sabaBoneNames[index] == name)
             return static_cast<BoneIndex>(index);
     }
     return InvalidBoneIndex;
@@ -488,10 +560,29 @@ void SabaMmdRuntimeModel::ApplyMmdIkOverrides() noexcept
             continue;
         ApplyIkEnable(
             this->impl->model,
-            this->impl->bones[bone].name,
+            this->impl->sabaBoneNames[bone],
             enabled
         );
     }
+}
+
+void SabaMmdRuntimeModel::SyncPoseFromSaba()
+{
+    if (this->impl->model == nullptr || this->impl->pose == nullptr)
+        return;
+    saba::MMDNodeManager* nodes = this->impl->model->GetNodeManager();
+    if (nodes == nullptr || nodes->GetNodeCount() != this->impl->pose->BoneCount())
+        return;
+    std::vector<glm::mat4> localMatrices;
+    localMatrices.reserve(nodes->GetNodeCount());
+    for (std::size_t index = 0U; index < nodes->GetNodeCount(); ++index)
+    {
+        saba::MMDNode* node = nodes->GetMMDNode(index);
+        localMatrices.push_back(
+            node != nullptr ? node->GetLocalTransform() : glm::mat4(1.0f)
+        );
+    }
+    this->impl->pose->SetLocalMatrices(localMatrices);
 }
 
 bool SabaMmdRuntimeModel::LoadCameraMotion(

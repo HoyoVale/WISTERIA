@@ -1,37 +1,67 @@
 #pragma once
 
+#include <cstdint>
+#include <span>
+#include <optional>
+#include <string_view>
+#include <glm/vec3.hpp>
+
 namespace wisteria
 {
 class Pose;
 class Mesh;
 class PhysicsInstance;
 
-// Format-agnostic runtime abstraction. Every model format (MMD, glTF, ...)
-// implements this interface so Entity/Scene never depend on format details.
-class RuntimeModelBase
+// Format-neutral, read-only view of one runtime's deformed geometry. The
+// backend owns the arrays; WISTERIA decides when and where they are uploaded.
+struct ModelVertexFrame
+{
+    std::span<const glm::vec3> positions;
+    std::span<const glm::vec3> normals;
+    std::uint64_t revision = 0U;
+};
+
+// Engine-facing contract for any model runtime. Scene/Entity/Renderer depend
+// on this interface rather than on Saba, glTF, VRM, or another backend.
+class IModelRuntimeDriver
 {
 public:
-    virtual ~RuntimeModelBase() = default;
+    virtual ~IModelRuntimeDriver() = default;
 
-    // Builds runtime state (clips, physics, skinning) from imported assets.
     virtual bool Initialize() = 0;
-
-    // Advances one frame: animation sampling + IK/append + physics + skinning.
     virtual void Update(float deltaTime) = 0;
-
     virtual void Reset() = 0;
-
-    // Current bone pose consumed by the renderer for skinning matrices.
     virtual Pose& GetPose() = 0;
-
-    // True when skinning happens outside the GPU palette (e.g. Saba CPU
-    // BDEF/SDEF/QDEF) and UploadDynamicVertices must run every frame.
+    virtual const Pose& GetPose() const = 0;
     virtual bool NeedsDynamicVertexUpload() const noexcept = 0;
-
-    // Writes skinned positions/normals into the mesh.
-    virtual void UploadDynamicVertices(Mesh& mesh) = 0;
-
-    // Optional physics adapter. Scene drives it through PhysicsInstance.
+    virtual ModelVertexFrame VertexFrame() const noexcept = 0;
     virtual PhysicsInstance* TryGetPhysicsInstance() noexcept = 0;
+    virtual const PhysicsInstance* TryGetPhysicsInstance() const noexcept = 0;
+    virtual std::string_view BackendName() const noexcept = 0;
+
+    // Optional common capabilities. Backends that do not support named
+    // morphs return false/nullopt without leaking format-specific types.
+    virtual bool SetMorphWeight(std::string_view name, float weight)
+    {
+        (void)name;
+        (void)weight;
+        return false;
+    }
+    virtual std::optional<float> MorphWeight(
+        std::string_view name
+    ) const
+    {
+        (void)name;
+        return std::nullopt;
+    }
+};
+
+// Compatibility base kept for existing callers. The default Mesh upload is a
+// WISTERIA-owned adapter over ModelVertexFrame; concrete backends no longer
+// need to know about render resources.
+class RuntimeModelBase : public IModelRuntimeDriver
+{
+public:
+    void UploadDynamicVertices(Mesh& mesh);
 };
 }  // namespace wisteria

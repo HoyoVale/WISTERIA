@@ -157,6 +157,16 @@ enum WisteriaStatus wisteria_window_destroy(
 
     try
     {
+        // Scene handles bound to this window cannot outlive the Window* they
+        // reference. Invalidate them before destroying the platform object.
+        for (auto iterator = handle->scenes.begin();
+             iterator != handle->scenes.end();)
+        {
+            if (iterator->second->windowHandle == window)
+                iterator = handle->scenes.erase(iterator);
+            else
+                ++iterator;
+        }
         handle->application->DestroyWindow(*entry->window);
     }
     catch (const std::exception& error)
@@ -489,10 +499,18 @@ enum WisteriaStatus wisteria_window_set_camera(
     if (entry == nullptr || entry->window == nullptr)
         return InvalidHandle(*handle, "Window handle is invalid");
     Camera& camera = entry->window->GetCamera();
-    camera.SetPosition(glm::vec3(position[0], position[1], position[2]));
-    camera.SetTarget(glm::vec3(target[0], target[1], target[2]));
-    camera.SetUp(glm::vec3(up[0], up[1], up[2]));
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        CameraParam replacement = camera.GetParam();
+        replacement.Position = glm::vec3(
+            position[0],
+            position[1],
+            position[2]
+        );
+        replacement.Target = glm::vec3(target[0], target[1], target[2]);
+        replacement.Up = glm::vec3(up[0], up[1], up[2]);
+        camera.SetParam(replacement);
+    });
 }
 
 enum WisteriaStatus wisteria_window_camera_pose(

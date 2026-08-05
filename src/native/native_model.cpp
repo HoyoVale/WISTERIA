@@ -1,5 +1,6 @@
 #include "wisteria/native/wisteria_native.h"
 #include "internal/native_context.hpp"
+#include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -41,7 +42,8 @@ enum WisteriaStatus wisteria_load_model(
 
     try
     {
-        auto runtime = std::make_unique<SabaMmdRuntimeModel>(path);
+        std::unique_ptr<MmdRuntimeModel> runtime =
+            std::make_unique<SabaMmdRuntimeModel>(path);
         if (!runtime->Initialize())
         {
             SetError(*handle, "Saba runtime failed to initialize: " +
@@ -342,11 +344,11 @@ enum WisteriaStatus wisteria_set_physics_settings(
         SetError(*handle, "Physics settings contain invalid values");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    SabaPhysicsSettings settings;
+    MmdPhysicsRuntimeSettings settings;
     settings.fixedTimeStep = fixed_time_step;
     settings.maxSubSteps = max_sub_steps;
     settings.gravity = glm::vec3(gravity_x, gravity_y, gravity_z);
-    entry->runtime->SetPhysicsSettings(settings);
+    entry->runtime->SetMmdPhysicsSettings(settings);
     return WISTERIA_OK;
 }
 
@@ -365,18 +367,31 @@ enum WisteriaStatus wisteria_vertex_bounds(
     if (entry == nullptr)
         return InvalidHandle(*handle, "Model handle is invalid");
 
-    const SabaMmdRuntimeModel::VertexDiagnostics diagnostics =
-        entry->runtime->DiagnoseVertices();
-    out_bounds->finite = diagnostics.finite ? 1 : 0;
-    out_bounds->minimum[0] = diagnostics.minimumPosition.x;
-    out_bounds->minimum[1] = diagnostics.minimumPosition.y;
-    out_bounds->minimum[2] = diagnostics.minimumPosition.z;
-    out_bounds->maximum[0] = diagnostics.maximumPosition.x;
-    out_bounds->maximum[1] = diagnostics.maximumPosition.y;
-    out_bounds->maximum[2] = diagnostics.maximumPosition.z;
-    out_bounds->maximumDisplacementFromBind =
-        diagnostics.maximumDisplacementFromBind;
-    out_bounds->vertexCount = diagnostics.vertexCount;
+    const ModelVertexFrame frame = entry->runtime->VertexFrame();
+    if (frame.positions.empty())
+    {
+        SetError(*handle, "Model runtime has no vertex frame");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    glm::vec3 minimum = frame.positions.front();
+    glm::vec3 maximum = frame.positions.front();
+    bool finite = true;
+    for (const glm::vec3& position : frame.positions)
+    {
+        finite = finite && std::isfinite(position.x) &&
+            std::isfinite(position.y) && std::isfinite(position.z);
+        minimum = glm::min(minimum, position);
+        maximum = glm::max(maximum, position);
+    }
+    out_bounds->finite = finite ? 1 : 0;
+    out_bounds->minimum[0] = minimum.x;
+    out_bounds->minimum[1] = minimum.y;
+    out_bounds->minimum[2] = minimum.z;
+    out_bounds->maximum[0] = maximum.x;
+    out_bounds->maximum[1] = maximum.y;
+    out_bounds->maximum[2] = maximum.z;
+    out_bounds->maximumDisplacementFromBind = 0.0f;
+    out_bounds->vertexCount = static_cast<uint64_t>(frame.positions.size());
     return WISTERIA_OK;
 }
 
@@ -515,7 +530,7 @@ enum WisteriaStatus wisteria_set_physics_preset(
         SetError(*handle, "Physics preset contains invalid values");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
     }
-    SabaPhysicsSettings settings;
+    MmdPhysicsRuntimeSettings settings;
     settings.fixedTimeStep = preset->fixed_time_step;
     settings.maxSubSteps = preset->max_sub_steps;
     settings.gravity = glm::vec3(
@@ -523,8 +538,8 @@ enum WisteriaStatus wisteria_set_physics_preset(
         preset->gravity[1],
         preset->gravity[2]
     );
-    settings.physicsEnabled = preset->physics_enabled != 0;
-    entry->runtime->SetPhysicsSettings(settings);
+    settings.enabled = preset->physics_enabled != 0;
+    entry->runtime->SetMmdPhysicsSettings(settings);
     return WISTERIA_OK;
 }
 
@@ -539,7 +554,7 @@ enum WisteriaStatus wisteria_physics_reset(
     ModelEntry* entry = FindModel(*handle, model);
     if (entry == nullptr)
         return InvalidHandle(*handle, "Model handle is invalid");
-    entry->runtime->Reset();
+    entry->runtime->ResetMmdPhysics();
     return WISTERIA_OK;
 }
 

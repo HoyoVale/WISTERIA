@@ -48,6 +48,8 @@ public:
     std::size_t RequiredBoneCount() const noexcept;
     std::size_t VertexCount() const noexcept;
 
+    std::unique_ptr<Mesh> CloneForInstance() const;
+
     // CPU-skinning bridge (Saba BDEF/SDEF/QDEF): uploads skinned
     // positions/normals every frame without rebuilding the whole VBO.
     void UploadDynamicVertices(

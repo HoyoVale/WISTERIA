@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <glm/vec3.hpp>
 
 namespace wisteria
 {
@@ -14,6 +15,14 @@ class CameraTrack;
 class DirectionalLight;
 class LightTrack;
 class PhysicsInstance;
+
+struct MmdPhysicsRuntimeSettings
+{
+    float fixedTimeStep = 1.0f / 120.0f;
+    int maxSubSteps = 10;
+    glm::vec3 gravity{0.0f, -98.0f, 0.0f};
+    bool enabled = true;
+};
 
 enum class MmdSkinningKind : std::uint8_t
 {
@@ -77,6 +86,10 @@ public:
     virtual MmdSkinningKind SkinningKind() const noexcept = 0;
 
     // MMD physics adapter (Saba or WISTERIA compat).
+    virtual void SetMmdPhysicsSettings(
+        const MmdPhysicsRuntimeSettings& settings
+    ) = 0;
+    virtual void ResetMmdPhysics() = 0;
     virtual PhysicsInstance* GetMmdPhysics() noexcept = 0;
 };
 }  // namespace wisteria

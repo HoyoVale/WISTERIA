@@ -44,8 +44,9 @@ enum WisteriaStatus wisteria_scene_create(
         windowEntry->demoLoaded = true;
         auto entry = std::make_unique<SceneEntry>();
         entry->scene = std::move(scene);
-        entry->window = windowEntry->window;
+        entry->windowHandle = window;
         const WisteriaScene sceneHandle = handle->nextSceneHandle++;
+        windowEntry->boundScene = sceneHandle;
         handle->scenes.emplace(sceneHandle, std::move(entry));
         *out_scene = sceneHandle;
         return WISTERIA_OK;
@@ -76,12 +77,17 @@ enum WisteriaStatus wisteria_scene_destroy(
 
     try
     {
-        // Release the window's reference by binding a fresh empty scene so
-        // the old scene (and its entities/lights) is destroyed immediately.
-        Window* window = iterator->second->window;
-        auto replacement = handle->application->CreateScene();
-        if (window != nullptr)
-            handle->application->BindScene(*window, replacement);
+        const WisteriaWindow windowHandle = iterator->second->windowHandle;
+        WindowEntry* windowEntry = FindWindow(*handle, windowHandle);
+        // Only detach when this scene is still the one bound to the window.
+        // Destroying an older scene must not replace a newer bound scene.
+        if (windowEntry != nullptr && windowEntry->window != nullptr &&
+            windowEntry->boundScene == scene)
+        {
+            auto replacement = handle->application->CreateScene();
+            handle->application->BindScene(*windowEntry->window, replacement);
+            windowEntry->boundScene = 0U;
+        }
     }
     catch (const std::exception& error)
     {
@@ -177,14 +183,14 @@ enum WisteriaStatus wisteria_scene_instantiate_model(
     WisteriaScene scene,
     WisteriaSceneModel model,
     const float position[3],
-    const float euler_radians[3],
+    const float euler_degrees[3],
     const float scale[3],
     WisteriaEntity* out_entity
 )
 {
     if (out_entity != nullptr)
         *out_entity = 0U;
-    if (position == nullptr || euler_radians == nullptr ||
+    if (position == nullptr || euler_degrees == nullptr ||
         scale == nullptr || out_entity == nullptr)
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
@@ -204,9 +210,9 @@ enum WisteriaStatus wisteria_scene_instantiate_model(
         const Transform transform(
             glm::vec3(position[0], position[1], position[2]),
             glm::vec3(
-                euler_radians[0],
-                euler_radians[1],
-                euler_radians[2]
+                euler_degrees[0],
+                euler_degrees[1],
+                euler_degrees[2]
             ),
             glm::vec3(scale[0], scale[1], scale[2])
         );
@@ -231,11 +237,11 @@ enum WisteriaStatus wisteria_entity_set_transform(
     WisteriaScene scene,
     WisteriaEntity entity,
     const float position[3],
-    const float euler_radians[3],
+    const float euler_degrees[3],
     const float scale[3]
 )
 {
-    if (position == nullptr || euler_radians == nullptr ||
+    if (position == nullptr || euler_degrees == nullptr ||
         scale == nullptr)
     {
         return WISTERIA_ERROR_INVALID_ARGUMENT;
@@ -249,16 +255,18 @@ enum WisteriaStatus wisteria_entity_set_transform(
     const auto iterator = entry->entities.find(entity);
     if (iterator == entry->entities.end())
         return InvalidHandle(*handle, "Entity handle is invalid");
-    iterator->second->GetTransform() = Transform(
-        glm::vec3(position[0], position[1], position[2]),
-        glm::vec3(
-            euler_radians[0],
-            euler_radians[1],
-            euler_radians[2]
-        ),
-        glm::vec3(scale[0], scale[1], scale[2])
-    );
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        iterator->second->GetTransform() = Transform(
+            glm::vec3(position[0], position[1], position[2]),
+            glm::vec3(
+                euler_degrees[0],
+                euler_degrees[1],
+                euler_degrees[2]
+            ),
+            glm::vec3(scale[0], scale[1], scale[2])
+        );
+    });
 }
 
 enum WisteriaStatus wisteria_entity_get_transform(
@@ -358,7 +366,487 @@ enum WisteriaStatus wisteria_entity_destroy(
     if (iterator == entry->entities.end())
         return InvalidHandle(*handle, "Entity handle is invalid");
     entry->scene->RemoveEntity(*iterator->second);
+    entry->entityMotions.erase(entity);
     entry->entities.erase(iterator);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_runtime_backend(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    char* buffer,
+    size_t buffer_size
+)
+{
+    if (buffer == nullptr || buffer_size == 0U)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    Entity* stored = FindEntity(*entry, entity);
+    if (stored == nullptr)
+        return InvalidHandle(*handle, "Entity handle is invalid");
+    ModelInstance* instance = stored->TryGetModelInstance();
+    if (instance == nullptr || instance->TryGetRuntime() == nullptr)
+    {
+        SetError(*handle, "Entity has no model runtime backend");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    CopyErrorMessage(
+        std::string(instance->TryGetRuntime()->BackendName()),
+        buffer,
+        buffer_size
+    );
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_load_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* motion_path,
+    WisteriaMotion* out_motion
+)
+{
+    if (out_motion != nullptr)
+        *out_motion = 0U;
+    if (motion_path == nullptr || motion_path[0] == '\0' ||
+        out_motion == nullptr)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+    {
+        SetError(*handle, "Entity is not driven by an MMD runtime");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    const std::filesystem::path path = PathFromUtf8(motion_path);
+    if (path.empty() || !std::filesystem::is_regular_file(path))
+    {
+        SetError(*handle, "Motion file does not exist");
+        return WISTERIA_ERROR_IO;
+    }
+    return GuardAbi(*handle, [&]
+    {
+        if (!runtime->LoadMotion(path))
+            throw std::runtime_error("MMD backend failed to load motion");
+        const WisteriaMotion motion = handle->nextMotionHandle++;
+        entry->entityMotions[entity] = motion;
+        *out_motion = motion;
+    });
+}
+
+enum WisteriaStatus wisteria_entity_unload_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    WisteriaMotion motion
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    const auto iterator = entry->entityMotions.find(entity);
+    if (iterator == entry->entityMotions.end() || iterator->second != motion)
+        return InvalidHandle(*handle, "Entity motion handle is invalid");
+    return GuardAbi(*handle, [&]
+    {
+        runtime->ClearMotion();
+        entry->entityMotions.erase(iterator);
+    });
+}
+
+enum WisteriaStatus wisteria_entity_restart_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t reset_physics
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&]
+    {
+        runtime->RestartMotion(reset_physics != 0);
+        runtime->ResumeMotion();
+        runtime->Update(0.0f);
+    });
+}
+
+enum WisteriaStatus wisteria_entity_pause_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&] { runtime->PauseMotion(); });
+}
+
+enum WisteriaStatus wisteria_entity_resume_motion(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&] { runtime->ResumeMotion(); });
+}
+
+enum WisteriaStatus wisteria_entity_set_motion_looping(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t looping
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&]
+    {
+        runtime->SetMotionLooping(looping != 0);
+    });
+}
+
+enum WisteriaStatus wisteria_entity_set_motion_frame(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    double frame
+)
+{
+    if (!std::isfinite(frame) || frame < 0.0)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&]
+    {
+        runtime->SetMotionFrame(frame);
+        // Make the requested frame observable immediately through pose and
+        // vertex export without requiring an extra frontend-only update call.
+        runtime->Update(0.0f);
+    });
+}
+
+enum WisteriaStatus wisteria_entity_motion_frame(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    double* out_frame
+)
+{
+    if (out_frame == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    *out_frame = runtime->MotionFrame();
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_motion_max_frame(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    double* out_max_frame
+)
+{
+    if (out_max_frame == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    *out_max_frame = runtime->MotionMaxFrame();
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_set_mmd_ik_enabled(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const char* bone_name,
+    int32_t enabled
+)
+{
+    if (bone_name == nullptr || bone_name[0] == '\0')
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    const BoneIndex bone = runtime->FindBoneIndex(bone_name);
+    if (bone == InvalidBoneIndex)
+    {
+        SetError(*handle, "MMD bone was not found");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    return GuardAbi(*handle, [&]
+    {
+        runtime->SetMmdIkEnabled(bone, enabled != 0);
+    });
+}
+
+enum WisteriaStatus wisteria_entity_set_physics_settings(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    float fixed_time_step,
+    int32_t max_sub_steps,
+    float gravity_x,
+    float gravity_y,
+    float gravity_z,
+    int32_t enabled
+)
+{
+    if (!std::isfinite(fixed_time_step) || fixed_time_step <= 0.0f ||
+        max_sub_steps <= 0 || !std::isfinite(gravity_x) ||
+        !std::isfinite(gravity_y) || !std::isfinite(gravity_z))
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&]
+    {
+        MmdPhysicsRuntimeSettings settings;
+        settings.fixedTimeStep = fixed_time_step;
+        settings.maxSubSteps = max_sub_steps;
+        settings.gravity = glm::vec3(gravity_x, gravity_y, gravity_z);
+        settings.enabled = enabled != 0;
+        runtime->SetMmdPhysicsSettings(settings);
+    });
+}
+
+enum WisteriaStatus wisteria_entity_physics_reset(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    MmdRuntimeModel* runtime = FindEntityMmdRuntime(*entry, entity);
+    if (runtime == nullptr)
+        return InvalidHandle(*handle, "Entity MMD runtime is invalid");
+    return GuardAbi(*handle, [&] { runtime->ResetMmdPhysics(); });
+}
+
+enum WisteriaStatus wisteria_entity_vertex_bounds(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    struct WisteriaVertexBounds* out_bounds
+)
+{
+    if (out_bounds == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    Entity* stored = FindEntity(*entry, entity);
+    if (stored == nullptr)
+        return InvalidHandle(*handle, "Entity handle is invalid");
+    ModelInstance* instance = stored->TryGetModelInstance();
+    if (instance == nullptr || instance->TryGetRuntime() == nullptr)
+        return InvalidHandle(*handle, "Entity runtime is invalid");
+    const ModelVertexFrame frame =
+        instance->TryGetRuntime()->VertexFrame();
+    if (frame.positions.empty())
+    {
+        SetError(*handle, "Entity runtime has no vertex frame");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    glm::vec3 minimum = frame.positions.front();
+    glm::vec3 maximum = frame.positions.front();
+    bool finite = true;
+    for (const glm::vec3& position : frame.positions)
+    {
+        finite = finite && std::isfinite(position.x) &&
+            std::isfinite(position.y) && std::isfinite(position.z);
+        minimum = glm::min(minimum, position);
+        maximum = glm::max(maximum, position);
+    }
+    out_bounds->finite = finite ? 1 : 0;
+    out_bounds->minimum[0] = minimum.x;
+    out_bounds->minimum[1] = minimum.y;
+    out_bounds->minimum[2] = minimum.z;
+    out_bounds->maximum[0] = maximum.x;
+    out_bounds->maximum[1] = maximum.y;
+    out_bounds->maximum[2] = maximum.z;
+    out_bounds->maximumDisplacementFromBind = 0.0f;
+    out_bounds->vertexCount =
+        static_cast<uint64_t>(frame.positions.size());
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_bone_count(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    uint64_t* out_count
+)
+{
+    if (out_count == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    Entity* stored = FindEntity(*entry, entity);
+    if (stored == nullptr || !stored->HasPose())
+        return InvalidHandle(*handle, "Entity pose is invalid");
+    *out_count = static_cast<uint64_t>(stored->GetPose().BoneCount());
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_bone_name(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    uint64_t bone_index,
+    char* buffer,
+    size_t buffer_size
+)
+{
+    if (buffer == nullptr || buffer_size == 0U)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    Entity* stored = FindEntity(*entry, entity);
+    if (stored == nullptr || !stored->HasPose())
+        return InvalidHandle(*handle, "Entity pose is invalid");
+    const Pose& pose = stored->GetPose();
+    if (bone_index >= pose.BoneCount())
+        return InvalidHandle(*handle, "Bone index is invalid");
+    CopyErrorMessage(
+        pose.GetSkeleton().BoneAt(static_cast<BoneIndex>(bone_index)).name,
+        buffer,
+        buffer_size
+    );
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_entity_bone_local_matrix(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    uint64_t bone_index,
+    float out_matrix_16[16]
+)
+{
+    if (out_matrix_16 == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    Entity* stored = FindEntity(*entry, entity);
+    if (stored == nullptr || !stored->HasPose())
+        return InvalidHandle(*handle, "Entity pose is invalid");
+    const Pose& pose = stored->GetPose();
+    if (bone_index >= pose.BoneCount())
+        return InvalidHandle(*handle, "Bone index is invalid");
+    const glm::mat4& matrix = pose.LocalMatrix(
+        static_cast<BoneIndex>(bone_index)
+    );
+    for (glm::length_t column = 0; column < 4; ++column)
+    {
+        for (glm::length_t row = 0; row < 4; ++row)
+            out_matrix_16[column * 4 + row] = matrix[column][row];
+    }
     return WISTERIA_OK;
 }
 
@@ -384,20 +872,26 @@ enum WisteriaStatus wisteria_scene_add_directional_light(
     SceneEntry* entry = FindScene(*handle, scene);
     if (entry == nullptr)
         return InvalidHandle(*handle, "Scene handle is invalid");
-    DirectionalLight& light = entry->scene->CreateDirectionalLight(
-        DirectionalLightData{
-            .Direction = glm::vec3(direction[0], direction[1], direction[2]),
-            .Color = glm::vec3(color[0], color[1], color[2]),
-            .Intensity = intensity
-        }
-    );
-    const WisteriaLight lightHandle = entry->nextLightHandle++;
-    entry->lights.emplace(
-        lightHandle,
-        SceneEntry::LightEntry{0, &light}
-    );
-    *out_light = lightHandle;
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        DirectionalLight& light = entry->scene->CreateDirectionalLight(
+            DirectionalLightData{
+                .Direction = glm::vec3(
+                    direction[0],
+                    direction[1],
+                    direction[2]
+                ),
+                .Color = glm::vec3(color[0], color[1], color[2]),
+                .Intensity = intensity
+            }
+        );
+        const WisteriaLight lightHandle = entry->nextLightHandle++;
+        entry->lights.emplace(
+            lightHandle,
+            SceneEntry::LightEntry{0, &light}
+        );
+        *out_light = lightHandle;
+    });
 }
 
 enum WisteriaStatus wisteria_scene_add_point_light(
@@ -423,21 +917,23 @@ enum WisteriaStatus wisteria_scene_add_point_light(
     SceneEntry* entry = FindScene(*handle, scene);
     if (entry == nullptr)
         return InvalidHandle(*handle, "Scene handle is invalid");
-    PointLight& light = entry->scene->CreatePointLight(
-        PointLightData{
-            .Position = glm::vec3(position[0], position[1], position[2]),
-            .Color = glm::vec3(color[0], color[1], color[2]),
-            .Intensity = intensity,
-            .Range = range
-        }
-    );
-    const WisteriaLight lightHandle = entry->nextLightHandle++;
-    entry->lights.emplace(
-        lightHandle,
-        SceneEntry::LightEntry{1, &light}
-    );
-    *out_light = lightHandle;
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        PointLight& light = entry->scene->CreatePointLight(
+            PointLightData{
+                .Position = glm::vec3(position[0], position[1], position[2]),
+                .Color = glm::vec3(color[0], color[1], color[2]),
+                .Intensity = intensity,
+                .Range = range
+            }
+        );
+        const WisteriaLight lightHandle = entry->nextLightHandle++;
+        entry->lights.emplace(
+            lightHandle,
+            SceneEntry::LightEntry{1, &light}
+        );
+        *out_light = lightHandle;
+    });
 }
 
 enum WisteriaStatus wisteria_light_destroy(
@@ -502,12 +998,19 @@ enum WisteriaStatus wisteria_directional_light_set(
     }
     DirectionalLight* stored =
         static_cast<DirectionalLight*>(iterator->second.light);
-    stored->SetDirection(
-        glm::vec3(direction[0], direction[1], direction[2])
-    );
-    stored->SetColor(glm::vec3(color[0], color[1], color[2]));
-    stored->SetIntensity(intensity);
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        const DirectionalLightData replacement{
+            .Direction = glm::vec3(
+                direction[0],
+                direction[1],
+                direction[2]
+            ),
+            .Color = glm::vec3(color[0], color[1], color[2]),
+            .Intensity = intensity
+        };
+        *stored = DirectionalLight(replacement);
+    });
 }
 
 enum WisteriaStatus wisteria_directional_light_get(
@@ -578,13 +1081,19 @@ enum WisteriaStatus wisteria_point_light_set(
         return InvalidHandle(*handle, "Point light handle is invalid");
     }
     PointLight* stored = static_cast<PointLight*>(iterator->second.light);
-    stored->SetPosition(
-        glm::vec3(position[0], position[1], position[2])
-    );
-    stored->SetColor(glm::vec3(color[0], color[1], color[2]));
-    stored->SetIntensity(intensity);
-    stored->SetRange(range);
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        PointLightData replacement;
+        replacement.Position = glm::vec3(
+            position[0],
+            position[1],
+            position[2]
+        );
+        replacement.Color = glm::vec3(color[0], color[1], color[2]);
+        replacement.Intensity = intensity;
+        replacement.Range = range;
+        *stored = PointLight(replacement);
+    });
 }
 
 enum WisteriaStatus wisteria_point_light_get(
@@ -666,28 +1175,30 @@ enum WisteriaStatus wisteria_scene_add_spot_light(
     SceneEntry* entry = FindScene(*handle, scene);
     if (entry == nullptr)
         return InvalidHandle(*handle, "Scene handle is invalid");
-    SpotLight& light = entry->scene->CreateSpotLight(
-        SpotLightData{
-            .Position = glm::vec3(position[0], position[1], position[2]),
-            .Direction = glm::vec3(
-                direction[0],
-                direction[1],
-                direction[2]
-            ),
-            .Color = glm::vec3(color[0], color[1], color[2]),
-            .Intensity = intensity,
-            .Range = range,
-            .InnerCutoffDegrees = inner_cutoff_degrees,
-            .OuterCutoffDegrees = outer_cutoff_degrees
-        }
-    );
-    const WisteriaLight lightHandle = entry->nextLightHandle++;
-    entry->lights.emplace(
-        lightHandle,
-        SceneEntry::LightEntry{2, &light}
-    );
-    *out_light = lightHandle;
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        SpotLight& light = entry->scene->CreateSpotLight(
+            SpotLightData{
+                .Position = glm::vec3(position[0], position[1], position[2]),
+                .Direction = glm::vec3(
+                    direction[0],
+                    direction[1],
+                    direction[2]
+                ),
+                .Color = glm::vec3(color[0], color[1], color[2]),
+                .Intensity = intensity,
+                .Range = range,
+                .InnerCutoffDegrees = inner_cutoff_degrees,
+                .OuterCutoffDegrees = outer_cutoff_degrees
+            }
+        );
+        const WisteriaLight lightHandle = entry->nextLightHandle++;
+        entry->lights.emplace(
+            lightHandle,
+            SceneEntry::LightEntry{2, &light}
+        );
+        *out_light = lightHandle;
+    });
 }
 
 enum WisteriaStatus wisteria_spot_light_set(
@@ -723,17 +1234,26 @@ enum WisteriaStatus wisteria_spot_light_set(
         return InvalidHandle(*handle, "Spot light handle is invalid");
     }
     SpotLight* stored = static_cast<SpotLight*>(iterator->second.light);
-    stored->SetPosition(
-        glm::vec3(position[0], position[1], position[2])
-    );
-    stored->SetDirection(
-        glm::vec3(direction[0], direction[1], direction[2])
-    );
-    stored->SetColor(glm::vec3(color[0], color[1], color[2]));
-    stored->SetIntensity(intensity);
-    stored->SetRange(range);
-    stored->SetCutoff(inner_cutoff_degrees, outer_cutoff_degrees);
-    return WISTERIA_OK;
+    return GuardAbi(*handle, [&]
+    {
+        SpotLightData replacement;
+        replacement.Position = glm::vec3(
+            position[0],
+            position[1],
+            position[2]
+        );
+        replacement.Direction = glm::vec3(
+            direction[0],
+            direction[1],
+            direction[2]
+        );
+        replacement.Color = glm::vec3(color[0], color[1], color[2]);
+        replacement.Intensity = intensity;
+        replacement.Range = range;
+        replacement.InnerCutoffDegrees = inner_cutoff_degrees;
+        replacement.OuterCutoffDegrees = outer_cutoff_degrees;
+        *stored = SpotLight(replacement);
+    });
 }
 
 enum WisteriaStatus wisteria_spot_light_get(
@@ -811,10 +1331,19 @@ enum WisteriaStatus wisteria_entity_set_morph_weight(
     const auto iterator = entry->entities.find(entity);
     if (iterator == entry->entities.end())
         return InvalidHandle(*handle, "Entity handle is invalid");
+    if (ModelInstance* instance =
+        iterator->second->TryGetModelInstance())
+    {
+        if (IModelRuntimeDriver* runtime = instance->TryGetRuntime())
+        {
+            if (runtime->SetMorphWeight(morph_name, weight))
+                return WISTERIA_OK;
+        }
+    }
     MorphState* morphState = iterator->second->TryGetMorphState();
     if (morphState == nullptr)
     {
-        SetError(*handle, "Entity has no morph state");
+        SetError(*handle, "Entity runtime has no named morph");
         return WISTERIA_ERROR_NOT_FOUND;
     }
     const std::optional<MorphIndex> morphIndex =
@@ -850,10 +1379,24 @@ enum WisteriaStatus wisteria_entity_get_morph_weight(
     const auto iterator = entry->entities.find(entity);
     if (iterator == entry->entities.end())
         return InvalidHandle(*handle, "Entity handle is invalid");
+    if (const ModelInstance* instance =
+        iterator->second->TryGetModelInstance())
+    {
+        if (const IModelRuntimeDriver* runtime = instance->TryGetRuntime())
+        {
+            const std::optional<float> value =
+                runtime->MorphWeight(morph_name);
+            if (value.has_value())
+            {
+                *out_weight = *value;
+                return WISTERIA_OK;
+            }
+        }
+    }
     MorphState* morphState = iterator->second->TryGetMorphState();
     if (morphState == nullptr)
     {
-        SetError(*handle, "Entity has no morph state");
+        SetError(*handle, "Entity runtime has no named morph");
         return WISTERIA_ERROR_NOT_FOUND;
     }
     const std::optional<MorphIndex> morphIndex =

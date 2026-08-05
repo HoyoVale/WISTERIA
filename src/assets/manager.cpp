@@ -1,6 +1,9 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/assets/importer.hpp"
+#include "wisteria/assets/saba_mmd_importer.hpp"
+#include <algorithm>
+#include <cctype>
 #include <optional>
 #include <utility>
 
@@ -18,6 +21,21 @@ std::filesystem::path NormalizeResourcePath(
     return std::filesystem::weakly_canonical(
         std::filesystem::absolute(filePath)
     );
+}
+
+std::string LowerExtension(const std::filesystem::path& filePath)
+{
+    std::string extension = filePath.extension().string();
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char value)
+        {
+            return static_cast<char>(std::tolower(value));
+        }
+    );
+    return extension;
 }
 }
 
@@ -349,7 +367,13 @@ ModelAsset& ResourceManager::LoadModel(
     if (this->models.contains(name))
         throw std::invalid_argument("Model resource already exists: " + name);
 
-    ImportedModelData imported = ModelImporter().Import(normalizedModelPath);
+    const std::string extension = LowerExtension(normalizedModelPath);
+    const ModelBackendKind backendKind = extension == ".pmx"
+        ? ModelBackendKind::SabaMmd
+        : ModelBackendKind::Static;
+    ImportedModelData imported = backendKind == ModelBackendKind::SabaMmd
+        ? SabaMmdImporter().Import(normalizedModelPath)
+        : ModelImporter().Import(normalizedModelPath);
 
     std::vector<std::string> textureNames;
     std::vector<std::string> materialNames;
@@ -591,6 +615,10 @@ ModelAsset& ResourceManager::LoadModel(
     }
 
     auto model = std::make_unique<ModelAsset>(name);
+    model->SetSourceDescriptor(ModelSourceDescriptor{
+        normalizedModelPath,
+        backendKind
+    });
     if (imported.skeleton.has_value())
         model->SetSkeleton(std::move(*imported.skeleton));
     if (imported.mmdPhysics.has_value())

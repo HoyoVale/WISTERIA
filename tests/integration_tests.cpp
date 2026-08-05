@@ -1,10 +1,57 @@
 #include "test_support.hpp"
 
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 
 namespace
 {
+std::optional<std::filesystem::path> FindProjectAssetByExtension(
+    std::string extension
+)
+{
+    if (!std::filesystem::is_directory(ProjectAssetDirectory))
+        return std::nullopt;
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); }
+    );
+    std::vector<std::filesystem::path> matches;
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator iterator(
+             ProjectAssetDirectory,
+             std::filesystem::directory_options::skip_permission_denied,
+             error
+         ), end;
+         iterator != end;
+         iterator.increment(error))
+    {
+        if (error)
+        {
+            error.clear();
+            continue;
+        }
+        if (!iterator->is_regular_file(error))
+            continue;
+        std::string candidate = iterator->path().extension().string();
+        std::transform(
+            candidate.begin(),
+            candidate.end(),
+            candidate.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); }
+        );
+        if (candidate == extension)
+            matches.push_back(iterator->path());
+    }
+    if (matches.empty())
+        return std::nullopt;
+    std::sort(matches.begin(), matches.end());
+    return matches.front();
+}
+
 void TestAnimatedModelImporter()
 {
     const std::filesystem::path modelPath =
@@ -546,7 +593,7 @@ void TestVmdAssetWhenAvailable()
     if (!std::filesystem::is_regular_file(modelPath) ||
         !std::filesystem::is_regular_file(motionPath))
     {
-        return;
+        SkipTest("required PMX/VMD fixture is unavailable");
     }
 
     const ImportedModelData model = ModelImporter().Import(modelPath);
@@ -1339,7 +1386,7 @@ void TestSabaMmdImporterWhenAvailable()
             "#U53f6#U77ac#U5149.pmx";
     }
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     SabaMmdImporter sabaImporter;
     ImportedModelData saba;
@@ -1463,7 +1510,7 @@ void TestSabaSkinningWhenAvailable()
     if (!std::filesystem::is_regular_file(modelPath) ||
         !std::filesystem::is_regular_file(motionPath))
     {
-        return;
+        SkipTest("required PMX/VMD fixture is unavailable");
     }
 
     SabaMmdImporter importer;
@@ -1727,7 +1774,7 @@ void TestSabaImporterAcrossModelsWhenAvailable()
     const std::filesystem::path mmdDirectory =
         ProjectAssetDirectory / "models" / "mmd";
     if (!std::filesystem::is_directory(mmdDirectory))
-        return;
+        SkipTest("project MMD model directory is unavailable");
 
     std::vector<std::filesystem::path> candidates;
     for (const std::filesystem::directory_entry& entry :
@@ -1852,7 +1899,7 @@ void TestSabaMmdPhysicsLongRunWhenAvailable()
     if (!std::filesystem::is_regular_file(modelPath) ||
         !std::filesystem::is_regular_file(motionPath))
     {
-        return;
+        SkipTest("required PMX/VMD fixture is unavailable");
     }
 
     SabaMmdRuntimeModel runtime(
@@ -1923,7 +1970,7 @@ void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
             "#U53f6#U77ac#U5149.pmx";
     }
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     // Physics-only baseline: no VMD motion, so the measured displacement is
     // driven purely by the rigid-body world settling under gravity.
@@ -2028,7 +2075,7 @@ void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
     SabaPhysicsSettings disabledSettings;
     disabledSettings.fixedTimeStep = 1.0f / 120.0f;
     disabledSettings.maxSubSteps = 10;
-    disabledSettings.physicsEnabled = false;
+    disabledSettings.enabled = false;
     SabaMmdRuntimeModel disabledRuntime(modelPath);
     Require(
         disabledRuntime.Initialize(),
@@ -2065,7 +2112,7 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
     if (!std::filesystem::is_regular_file(modelPath) ||
         !std::filesystem::is_regular_file(motionPath))
     {
-        return;
+        SkipTest("required PMX/VMD fixture is unavailable");
     }
 
     SabaMmdRuntimeModel runtime(modelPath, motionPath);
@@ -2256,7 +2303,7 @@ void TestNativeAbiWindowWhenAvailable()
         // No display available (e.g. headless CI): the window layer cannot
         // run, so skip the rest of this test.
         wisteria_destroy_context(context);
-        return;
+        SkipTest("window backend is unavailable in this environment");
     }
 
     // The renderer resolves shaders/assets relative to the current working
@@ -2449,7 +2496,7 @@ void TestNativeAbiSabaWhenAvailable()
     if (!std::filesystem::is_regular_file(modelPath) ||
         !std::filesystem::is_regular_file(motionPath))
     {
-        return;
+        SkipTest("required PMX/VMD fixture is unavailable");
     }
 
     WisteriaContext context = 0U;
@@ -2732,7 +2779,7 @@ void TestNativeAbiSceneWhenAvailable()
         ) != WISTERIA_OK)
     {
         wisteria_destroy_context(context);
-        return;
+        SkipTest("window backend is unavailable in this environment");
     }
 
     const std::filesystem::path previousWorkingDirectory =
@@ -3295,7 +3342,7 @@ void TestNativeAbiHeadlessRenderWhenAvailable()
         ) != WISTERIA_OK)
     {
         wisteria_destroy_context(context);
-        return;
+        SkipTest("window backend is unavailable in this environment");
     }
 
     const std::filesystem::path previousWorkingDirectory =
@@ -3662,7 +3709,7 @@ void TestConvertedMmdGlbWhenAvailable()
     const std::filesystem::path modelPath =
         TestAssetDirectory / "models" / u8"仪玄" / u8"仪玄.glb";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Converted MMD mesh primitive count changed");
@@ -3715,7 +3762,7 @@ void TestConvertedMmdObjWhenAvailable()
     const std::filesystem::path modelPath =
         TestAssetDirectory / "models" / u8"仪玄_obj" / u8"仪玄.obj";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Converted OBJ mesh count changed");
@@ -3815,7 +3862,7 @@ void TestRiggedGlbImportWhenAvailable()
         ProjectAssetDirectory / "models" / "glb" /
         u8"仪玄_glb" / u8"仪玄.glb";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.skeleton.has_value(), "Rigged GLB lost its Skeleton");
@@ -3901,7 +3948,7 @@ void TestDemoPmxPhysicsImportWhenAvailable()
         ProjectAssetDirectory / "models" / "mmd" /
         u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
@@ -3953,7 +4000,7 @@ void TestDirectPmxMaterialImportWhenAvailable()
         ProjectAssetDirectory / "models" / "mmd" /
         u8"仪玄_pmx" / u8"仪玄.pmx";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Direct PMX mesh count changed");
@@ -4070,10 +4117,34 @@ void TestDirectPmxMaterialImportWhenAvailable()
     Scene morphScene;
     Entity& morphInstance = morphScene.InstantiateModel(model);
     Require(
-        morphInstance.HasMorphState() &&
-        morphInstance.GetMorphState().MorphCount() ==
-            model.GetMorphSet().MorphCount(),
-        "Scene did not create per-instance PMX MorphState"
+        morphInstance.HasModelInstance(),
+        "Scene did not create a ModelInstance for backend-driven PMX"
+    );
+    ModelInstance& modelInstance = morphInstance.GetModelInstance();
+    IModelRuntimeDriver* runtime = modelInstance.TryGetRuntime();
+    Require(
+        runtime != nullptr && runtime->BackendName() == "saba-mmd",
+        "Backend-driven PMX did not resolve through the Saba MMD runtime"
+    );
+    Require(
+        modelInstance.InstanceMeshCount() > 0U,
+        "Backend-driven PMX did not allocate instance-local meshes"
+    );
+
+    // Backend-driven morph control is exercised through the runtime, not an
+    // Entity-side MorphState (which no longer exists for Saba-driven PMX).
+    bool namedMorphAccepted = false;
+    for (const MorphDefinition& morph : imported.morphs)
+    {
+        if (runtime->SetMorphWeight(morph.name, 0.5f))
+        {
+            namedMorphAccepted = true;
+            break;
+        }
+    }
+    Require(
+        namedMorphAccepted,
+        "Backend-driven PMX runtime did not accept named morph controls"
     );
     for (std::size_t index = 0; index < resources.MaterialCount(); ++index)
     {
@@ -4097,7 +4168,7 @@ void TestDirectPmxGroupMorphImportWhenAvailable()
         ProjectAssetDirectory / "models" / "mmd" /
         u8"爱弥斯_pmx" / u8"爱弥斯.pmx";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     const auto group = std::find_if(
@@ -4152,7 +4223,7 @@ void TestSabaIkSwitchBridgeWhenAvailable()
         ProjectAssetDirectory / "models" / "mmd" /
         u8"蕾米埃尔-白" / u8"蕾米埃尔-白.pmx";
     if (!std::filesystem::is_regular_file(modelPath))
-        return;
+        SkipTest("required model fixture is unavailable");
 
     SabaMmdRuntimeModel runtime(modelPath, {}, SabaPhysicsSettings{});
     Require(runtime.Initialize(), "Saba model failed to initialize");
@@ -4183,6 +4254,181 @@ void TestSabaIkSwitchBridgeWhenAvailable()
     Require(
         diagnostics.finite && diagnostics.vertexCount > 0U,
         "Saba IK switch bridge produced non-finite vertices"
+    );
+}
+
+void TestR1EngineOwnedMmdInstances()
+{
+    const std::filesystem::path modelPath =
+        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+        "extended_morph.pmx";
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("r1::extended", modelPath);
+    Require(
+        model.BackendKind() == ModelBackendKind::SabaMmd,
+        "PMX asset was not assigned to the Saba MMD backend"
+    );
+
+    Scene scene;
+    Entity& first = scene.InstantiateModel(model);
+    Entity& second = scene.InstantiateModel(model);
+    Require(
+        first.HasModelInstance() && second.HasModelInstance(),
+        "Scene did not create WISTERIA-owned model instances"
+    );
+
+    ModelInstance& firstInstance = first.GetModelInstance();
+    ModelInstance& secondInstance = second.GetModelInstance();
+    IModelRuntimeDriver* firstRuntime = firstInstance.TryGetRuntime();
+    IModelRuntimeDriver* secondRuntime = secondInstance.TryGetRuntime();
+    Require(
+        firstRuntime != nullptr && secondRuntime != nullptr &&
+        firstRuntime != secondRuntime,
+        "Two entities unexpectedly share one mutable runtime driver"
+    );
+    Require(
+        firstRuntime->BackendName() == "saba-mmd" &&
+        secondRuntime->BackendName() == "saba-mmd",
+        "PMX instance did not resolve through the registered Saba backend"
+    );
+    Require(
+        firstInstance.InstanceMeshCount() > 0U &&
+        firstInstance.InstanceMeshCount() == secondInstance.InstanceMeshCount(),
+        "Dynamic PMX instances did not allocate instance-local meshes"
+    );
+    Require(
+        first.RenderPartCount() == model.PartCount() &&
+        second.RenderPartCount() == model.PartCount(),
+        "Runtime-backed entities lost model render parts"
+    );
+    Require(
+        &first.RenderParts()[0].GetMesh() != &model.Parts()[0].GetMesh() &&
+        &second.RenderParts()[0].GetMesh() != &model.Parts()[0].GetMesh() &&
+        &first.RenderParts()[0].GetMesh() != &second.RenderParts()[0].GetMesh(),
+        "Mutable runtime geometry leaked back into a shared ModelAsset mesh"
+    );
+    Require(
+        first.GetPose().BoneCount() > 0U &&
+        second.GetPose().BoneCount() == first.GetPose().BoneCount(),
+        "Saba runtime did not publish a stable PMX pose through WISTERIA"
+    );
+
+    Require(
+        firstRuntime->SetMorphWeight("vertex", 1.0f) &&
+        secondRuntime->SetMorphWeight("vertex", 0.0f),
+        "Runtime backend did not accept independent named morph controls"
+    );
+    scene.Update(0.0f);
+    const std::optional<float> firstWeight =
+        firstRuntime->MorphWeight("vertex");
+    const std::optional<float> secondWeight =
+        secondRuntime->MorphWeight("vertex");
+    Require(
+        firstWeight.has_value() && secondWeight.has_value() &&
+        NearlyEqual(*firstWeight, 1.0f) && NearlyEqual(*secondWeight, 0.0f),
+        "One PMX instance overwrote another instance's morph state"
+    );
+    const ModelVertexFrame firstFrame = firstRuntime->VertexFrame();
+    const ModelVertexFrame secondFrame = secondRuntime->VertexFrame();
+    Require(
+        !firstFrame.positions.empty() && !secondFrame.positions.empty() &&
+        firstFrame.positions.data() != secondFrame.positions.data(),
+        "Two PMX instances unexpectedly share one mutable vertex frame"
+    );
+
+    Require(scene.RemoveEntity(first), "Failed to destroy the first instance");
+    Require(scene.EntityCount() == 1U, "Scene retained a destroyed instance");
+    scene.Update(0.0f);
+    Require(
+        second.GetModelInstance().TryGetRuntime() == secondRuntime &&
+        secondRuntime->VertexFrame().revision >= secondFrame.revision,
+        "Destroying one instance invalidated the surviving instance"
+    );
+}
+
+void TestR1ProjectMmdInstanceWhenAvailable()
+{
+    const std::optional<std::filesystem::path> modelPath =
+        FindProjectAssetByExtension(".pmx");
+    if (!modelPath.has_value())
+        SkipTest("no project PMX asset is available");
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("r1::project", *modelPath);
+    Scene scene;
+    Entity& first = scene.InstantiateModel(model);
+    Entity& second = scene.InstantiateModel(model);
+    Require(
+        first.HasModelInstance() && second.HasModelInstance(),
+        "Project PMX has no WISTERIA ModelInstance"
+    );
+    auto* firstRuntime = dynamic_cast<MmdRuntimeModel*>(
+        first.GetModelInstance().TryGetRuntime()
+    );
+    auto* secondRuntime = dynamic_cast<MmdRuntimeModel*>(
+        second.GetModelInstance().TryGetRuntime()
+    );
+    Require(
+        firstRuntime != nullptr && secondRuntime != nullptr &&
+        firstRuntime != secondRuntime,
+        "Project PMX instances did not receive independent MMD runtimes"
+    );
+    scene.Update(0.0f);
+    Require(
+        first.GetPose().BoneCount() > 1U &&
+        second.GetPose().BoneCount() == first.GetPose().BoneCount(),
+        "Project PMX still exposes a placeholder or unstable pose"
+    );
+    for (BoneIndex bone = 0U; bone < first.GetPose().BoneCount(); ++bone)
+    {
+        const glm::mat4& matrix = first.GetPose().LocalMatrix(bone);
+        for (glm::length_t column = 0; column < 4; ++column)
+        {
+            for (glm::length_t row = 0; row < 4; ++row)
+            {
+                Require(
+                    std::isfinite(matrix[column][row]),
+                    "Project PMX published a non-finite WISTERIA pose"
+                );
+            }
+        }
+    }
+    const ModelVertexFrame firstFrame = firstRuntime->VertexFrame();
+    const ModelVertexFrame secondFrame = secondRuntime->VertexFrame();
+    Require(
+        !firstFrame.positions.empty() &&
+        firstFrame.positions.size() == firstFrame.normals.size() &&
+        firstFrame.positions.data() != secondFrame.positions.data(),
+        "Project PMX runtime did not publish independent render geometry"
+    );
+    Require(
+        firstRuntime->TryGetPhysicsInstance() != nullptr &&
+        secondRuntime->TryGetPhysicsInstance() != nullptr &&
+        firstRuntime->TryGetPhysicsInstance() !=
+            secondRuntime->TryGetPhysicsInstance(),
+        "Project PMX instances unexpectedly share one physics owner"
+    );
+
+    const std::optional<std::filesystem::path> motionPath =
+        FindProjectAssetByExtension(".vmd");
+    if (!motionPath.has_value())
+        SkipTest("no project VMD asset is available");
+    Require(
+        firstRuntime->LoadMotion(*motionPath) &&
+        secondRuntime->LoadMotion(*motionPath),
+        "Project VMD could not be attached through the runtime interface"
+    );
+    const double maximumFrame = firstRuntime->MotionMaxFrame();
+    Require(maximumFrame > 0.0, "Project VMD has no animation frames");
+    firstRuntime->SetMotionFrame(0.0);
+    secondRuntime->SetMotionFrame(std::min(10.0, maximumFrame));
+    firstRuntime->Update(0.0f);
+    secondRuntime->Update(0.0f);
+    Require(
+        NearlyEqual(static_cast<float>(firstRuntime->MotionFrame()), 0.0f) &&
+        secondRuntime->MotionFrame() > firstRuntime->MotionFrame(),
+        "Two project PMX instances did not preserve independent timelines"
     );
 }
 
@@ -4343,6 +4589,14 @@ int main()
     failures += !RunTest(
         "Saba VMD IK switch bridge",
         TestSabaIkSwitchBridgeWhenAvailable
+    );
+    failures += !RunTest(
+        "R1 engine-owned MMD instances",
+        TestR1EngineOwnedMmdInstances
+    );
+    failures += !RunTest(
+        "R1 project MMD instance",
+        TestR1ProjectMmdInstanceWhenAvailable
     );
     failures += !RunTest(
         "Saba importer morph targets",

@@ -26,6 +26,8 @@ Entity::Entity(
 Entity::~Entity()
 {
     this->ClearBehaviours();
+    this->ClearRenderParts();
+    this->modelInstance.reset();
     this->physicsInstance.reset();
 }
 
@@ -143,33 +145,87 @@ void Entity::SetVisible(bool visible) noexcept
     this->visible = visible;
 }
 
+bool Entity::HasModelInstance() const noexcept
+{
+    return this->modelInstance != nullptr;
+}
+
+ModelInstance* Entity::TryGetModelInstance() noexcept
+{
+    return this->modelInstance.get();
+}
+
+const ModelInstance* Entity::TryGetModelInstance() const noexcept
+{
+    return this->modelInstance.get();
+}
+
+ModelInstance& Entity::GetModelInstance()
+{
+    if (this->modelInstance == nullptr)
+        throw std::logic_error("Entity has no model instance");
+    return *this->modelInstance;
+}
+
+const ModelInstance& Entity::GetModelInstance() const
+{
+    if (this->modelInstance == nullptr)
+        throw std::logic_error("Entity has no model instance");
+    return *this->modelInstance;
+}
+
+void Entity::SetModelInstance(std::unique_ptr<ModelInstance> instance)
+{
+    if (instance == nullptr)
+        throw std::invalid_argument("Entity model instance must not be null");
+    if (this->modelInstance != nullptr)
+        throw std::logic_error("Entity model instance is already set");
+    this->modelInstance = std::move(instance);
+}
+
 bool Entity::HasPose() const noexcept
 {
-    return this->pose != nullptr;
+    return this->TryGetPose() != nullptr;
 }
 
 Pose* Entity::TryGetPose() noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+            return &runtime->GetPose();
+    }
     return this->pose.get();
 }
 
 const Pose* Entity::TryGetPose() const noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        const IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+            return &runtime->GetPose();
+    }
     return this->pose.get();
 }
 
 Pose& Entity::GetPose()
 {
-    if (this->pose == nullptr)
+    Pose* result = this->TryGetPose();
+    if (result == nullptr)
         throw std::logic_error("Entity has no skeleton pose");
-    return *this->pose;
+    return *result;
 }
 
 const Pose& Entity::GetPose() const
 {
-    if (this->pose == nullptr)
+    const Pose* result = this->TryGetPose();
+    if (result == nullptr)
         throw std::logic_error("Entity has no skeleton pose");
-    return *this->pose;
+    return *result;
 }
 
 void Entity::SetSkeleton(const Skeleton& skeleton)
@@ -254,52 +310,78 @@ void Entity::SetMorphSet(const MorphSet& morphSet)
 
 bool Entity::HasPhysicsInstance() const noexcept
 {
-    return this->physicsInstance != nullptr;
+    return this->TryGetPhysicsInstance() != nullptr;
 }
 
 PhysicsInstance* Entity::TryGetPhysicsInstance() noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+        {
+            if (PhysicsInstance* physics = runtime->TryGetPhysicsInstance())
+                return physics;
+        }
+    }
     return this->physicsInstance.get();
 }
 
 const PhysicsInstance* Entity::TryGetPhysicsInstance() const noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        const IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+        {
+            if (const PhysicsInstance* physics =
+                runtime->TryGetPhysicsInstance())
+            {
+                return physics;
+            }
+        }
+    }
     return this->physicsInstance.get();
 }
 
 PhysicsInstance& Entity::GetPhysicsInstance()
 {
-    if (this->physicsInstance == nullptr)
+    PhysicsInstance* result = this->TryGetPhysicsInstance();
+    if (result == nullptr)
         throw std::logic_error("Entity has no physics instance");
-    return *this->physicsInstance;
+    return *result;
 }
 
 const PhysicsInstance& Entity::GetPhysicsInstance() const
 {
-    if (this->physicsInstance == nullptr)
+    const PhysicsInstance* result = this->TryGetPhysicsInstance();
+    if (result == nullptr)
         throw std::logic_error("Entity has no physics instance");
-    return *this->physicsInstance;
+    return *result;
 }
 
 void Entity::SetPhysicsInstance(std::unique_ptr<PhysicsInstance> instance)
 {
     if (instance == nullptr)
         throw std::invalid_argument("Entity physics instance must not be null");
-    if (this->physicsInstance != nullptr)
+    if (this->HasPhysicsInstance())
         throw std::logic_error("Entity physics instance is already set");
     this->physicsInstance = std::move(instance);
 }
 
 void Entity::PrePhysicsUpdate(float deltaTime)
 {
-    if (this->physicsInstance == nullptr)
+    PhysicsInstance* physics = this->TryGetPhysicsInstance();
+    if (physics == nullptr)
         return;
     if (this->physicsResetPending)
     {
-        this->physicsInstance->ResetSimulation();
+        physics->ResetSimulation();
         this->physicsResetPending = false;
     }
-    this->physicsInstance->PrepareSimulation(deltaTime);
+    physics->PrepareSimulation(deltaTime);
 }
 
 void Entity::PreparePhysicsSubstep(
@@ -307,25 +389,20 @@ void Entity::PreparePhysicsSubstep(
     float fixedTimeStep
 )
 {
-    if (this->physicsInstance != nullptr)
-    {
-        this->physicsInstance->PrepareSimulationSubstep(
-            alpha,
-            fixedTimeStep
-        );
-    }
+    if (PhysicsInstance* physics = this->TryGetPhysicsInstance())
+        physics->PrepareSimulationSubstep(alpha, fixedTimeStep);
 }
 
 void Entity::ObservePhysicsSubstep(float fixedTimeStep)
 {
-    if (this->physicsInstance != nullptr)
-        this->physicsInstance->ObserveSimulationSubstep(fixedTimeStep);
+    if (PhysicsInstance* physics = this->TryGetPhysicsInstance())
+        physics->ObserveSimulationSubstep(fixedTimeStep);
 }
 
 void Entity::PostPhysicsUpdate()
 {
-    if (this->physicsInstance != nullptr)
-        this->physicsInstance->FinishSimulation();
+    if (PhysicsInstance* physics = this->TryGetPhysicsInstance())
+        physics->FinishSimulation();
 }
 
 void Entity::SolveAfterPhysicsPose()
@@ -336,9 +413,9 @@ void Entity::SolveAfterPhysicsPose()
 
 void Entity::ResetPhysicsToCurrentPose()
 {
-    if (this->physicsInstance != nullptr)
+    if (PhysicsInstance* physics = this->TryGetPhysicsInstance())
     {
-        this->physicsInstance->ResetSimulation();
+        physics->ResetSimulation();
         this->physicsResetPending = false;
     }
 }
@@ -347,8 +424,8 @@ void Entity::AppendPhysicsDebugLines(
     std::vector<PhysicsDebugLine>& lines
 )
 {
-    if (this->physicsInstance != nullptr)
-        this->physicsInstance->AppendDebugLines(lines);
+    if (const PhysicsInstance* physics = this->TryGetPhysicsInstance())
+        physics->AppendDebugLines(lines);
 }
 
 bool Entity::RemoveBehaviour(Behaviour& behaviour)
@@ -410,7 +487,12 @@ void Entity::Update(float deltaTime)
 {
     if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
         throw std::invalid_argument("Entity delta time must be finite and non-negative");
-    if (this->animator != nullptr)
+    if (this->modelInstance != nullptr &&
+        this->modelInstance->HasRuntime())
+    {
+        this->modelInstance->Update(deltaTime);
+    }
+    else if (this->animator != nullptr)
     {
         this->animator->Update(deltaTime);
         const std::uint64_t discontinuity =
@@ -418,7 +500,7 @@ void Entity::Update(float deltaTime)
         if (discontinuity != this->observedAnimatorDiscontinuityRevision)
         {
             this->observedAnimatorDiscontinuityRevision = discontinuity;
-            this->physicsResetPending = this->physicsInstance != nullptr;
+            this->physicsResetPending = this->HasPhysicsInstance();
         }
         const RootMotionDelta rootMotion =
             this->animator->ConsumeRootMotion();

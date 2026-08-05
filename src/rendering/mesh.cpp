@@ -337,6 +337,17 @@ std::size_t Mesh::VertexCount() const noexcept
     return this->vertexCount;
 }
 
+std::unique_ptr<Mesh> Mesh::CloneForInstance() const
+{
+    return std::make_unique<Mesh>(
+        this->data,
+        this->requiredBoneCount,
+        this->morphTargets,
+        this->sourceVertexIndices,
+        this->device
+    );
+}
+
 std::vector<float> Mesh::RebuildInterleavedVertices(
     const std::vector<float>& sourceVertices,
     std::span<const Layout> layout,

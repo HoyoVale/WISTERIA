@@ -162,6 +162,9 @@ set(WISTERIA_CORE_SOURCES
 )
 
 set(WISTERIA_RUNTIME_SOURCES
+    src/runtime/runtime_model_base.cpp
+    src/runtime/model_backend.cpp
+    src/runtime/model_instance.cpp
     src/runtime/saba_mmd_runtime_model.cpp
 )
 

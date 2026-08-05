@@ -52,6 +52,28 @@ const std::filesystem::path TestAssetDirectory = WISTERIA_TEST_ASSET_DIR;
 
 const std::filesystem::path ProjectAssetDirectory = WISTERIA_PROJECT_ASSET_DIR;
 
+class TestSkipped final : public std::exception
+{
+public:
+    explicit TestSkipped(std::string reason)
+        : reason(std::move(reason))
+    {
+    }
+
+    const char* what() const noexcept override
+    {
+        return this->reason.c_str();
+    }
+
+private:
+    std::string reason;
+};
+
+[[noreturn]] void SkipTest(std::string reason)
+{
+    throw TestSkipped(std::move(reason));
+}
+
 void Require(bool condition, const std::string& message)
 {
     if (!condition)
@@ -176,6 +198,11 @@ bool RunTest(const char* name, Function&& function)
     {
         function();
         std::cout << "[PASS] " << name << '\n';
+        return true;
+    }
+    catch (const TestSkipped& skipped)
+    {
+        std::cout << "[SKIP] " << name << ": " << skipped.what() << '\n';
         return true;
     }
     catch (const std::exception& error)

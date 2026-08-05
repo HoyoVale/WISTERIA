@@ -6,6 +6,7 @@
 #include "wisteria/rendering/render_part.hpp"
 #include "wisteria/animation/skeleton.hpp"
 #include <cstddef>
+#include <filesystem>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -17,6 +18,18 @@
 // Shared, scene-independent description of an imported or procedural model.
 namespace wisteria
 {
+enum class ModelBackendKind : std::uint8_t
+{
+    Static = 0,
+    SabaMmd = 1
+};
+
+struct ModelSourceDescriptor
+{
+    std::filesystem::path sourcePath;
+    ModelBackendKind backend = ModelBackendKind::Static;
+};
+
 class ModelAsset
 {
 public:
@@ -29,6 +42,12 @@ public:
     ModelAsset& operator=(ModelAsset&&) = delete;
 
     const std::string& Name() const noexcept;
+
+    void SetSourceDescriptor(ModelSourceDescriptor descriptor);
+    bool HasSourceDescriptor() const noexcept;
+    const ModelSourceDescriptor* TryGetSourceDescriptor() const noexcept;
+    const ModelSourceDescriptor& GetSourceDescriptor() const;
+    ModelBackendKind BackendKind() const noexcept;
     std::size_t PartCount() const noexcept;
     std::span<const RenderPart> Parts() const noexcept;
 
@@ -62,6 +81,7 @@ public:
 
 private:
     std::string name;
+    std::optional<ModelSourceDescriptor> sourceDescriptor;
     std::vector<RenderPart> parts;
     std::optional<Skeleton> skeleton;
     std::optional<MorphSet> morphSet;

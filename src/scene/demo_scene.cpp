@@ -174,16 +174,14 @@ class SabaDemoBehaviour final : public Behaviour
 {
 public:
     SabaDemoBehaviour(
-        std::shared_ptr<SabaMmdRuntimeModel> runtime,
-        std::vector<Mesh*> meshes,
+        SabaMmdRuntimeModel& runtime,
         Camera& camera,
         Window& window,
         Input& input,
         bool sceneMode,
         float cameraSpeed
     )
-        : runtime(std::move(runtime)),
-          meshes(std::move(meshes)),
+        : runtime(&runtime),
           camera(&camera),
           window(&window),
           input(&input),
@@ -229,7 +227,8 @@ public:
             this->titleDirty = true;
         }
 
-        this->runtime->Update(deltaTime);
+        // Scene already advanced the engine-owned ModelInstance before
+        // behaviours run. The demo only applies optional presentation tracks.
         if (this->cameraFollowEnabled && !this->runtime->IsMotionPaused())
         {
             this->runtime->ApplyCameraMotion(
@@ -287,8 +286,7 @@ public:
     }
 
 private:
-    std::shared_ptr<SabaMmdRuntimeModel> runtime;
-    std::vector<Mesh*> meshes;
+    SabaMmdRuntimeModel* runtime = nullptr;
     Camera* camera = nullptr;
     Window* window = nullptr;
     Input* input = nullptr;
@@ -299,57 +297,6 @@ private:
     bool titleDirty = true;
     std::size_t diagnosticCounter = 0U;
 };
-
-ModelAsset& CreateSabaMeshModel(
-    ResourceManager& resources,
-    const std::string& name,
-    const std::filesystem::path& modelPath,
-    glm::vec3* outMinimum = nullptr,
-    glm::vec3* outMaximum = nullptr
-)
-{
-    SabaMmdImporter importer;
-    ImportedModelData imported = importer.Import(modelPath);
-    if (outMinimum != nullptr && outMaximum != nullptr)
-    {
-        glm::vec3 minimum(std::numeric_limits<float>::max());
-        glm::vec3 maximum(-std::numeric_limits<float>::max());
-        for (const ImportedMeshData& mesh : imported.meshes)
-        {
-            std::size_t stride = 0U;
-            std::size_t positionOffset = 0U;
-            for (const Layout& attribute : mesh.data.layout)
-            {
-                if (attribute.name == "position")
-                    positionOffset = stride;
-                stride += attribute.size;
-            }
-            if (stride == 0U ||
-                mesh.data.vertices.size() % stride != 0U)
-            {
-                continue;
-            }
-            for (std::size_t vertex = 0U;
-                 vertex < mesh.data.vertices.size();
-                 vertex += stride)
-            {
-                const glm::vec3 position(
-                    mesh.data.vertices[vertex + positionOffset],
-                    mesh.data.vertices[vertex + positionOffset + 1U],
-                    mesh.data.vertices[vertex + positionOffset + 2U]
-                );
-                minimum = glm::min(minimum, position);
-                maximum = glm::max(maximum, position);
-            }
-        }
-        if (minimum.x <= maximum.x)
-        {
-            *outMinimum = minimum;
-            *outMaximum = maximum;
-        }
-    }
-    return resources.CreateModel(name, std::move(imported));
-}
 }
 
 void SetupGroundShadowLabScene(Scene& scene, ResourceManager& resources)
@@ -445,21 +392,15 @@ void SetupSabaMmdDemoScene(
         reinterpret_cast<const char*>(sceneFileName.data()),
         sceneFileName.size()
     );
-    glm::vec3 sceneMinimum{0.0f};
-    glm::vec3 sceneMaximum{0.0f};
-    ModelAsset& model = CreateSabaMeshModel(
-        resources,
+    glm::vec3 sceneMinimum{-20.0f, 0.0f, -20.0f};
+    glm::vec3 sceneMaximum{20.0f, 40.0f, 20.0f};
+    ModelAsset& model = resources.LoadModel(
         "saba::" + modelResourceName,
-        modelPath,
-        sceneMode ? &sceneMinimum : nullptr,
-        sceneMode ? &sceneMaximum : nullptr
+        modelPath
     );
-    ModelAsset& sceneModel = CreateSabaMeshModel(
-        resources,
+    ModelAsset& sceneModel = resources.LoadModel(
         "saba::" + sceneResourceName,
-        scenePath,
-        sceneMode ? &sceneMinimum : nullptr,
-        sceneMode ? &sceneMaximum : nullptr
+        scenePath
     );
     Entity& entity = scene.InstantiateModel(
         model,
@@ -524,17 +465,17 @@ void SetupSabaMmdDemoScene(
         if (steps > 0)
             physicsSettings.maxSubSteps = steps;
     }
-    auto runtime = std::make_shared<SabaMmdRuntimeModel>(
-        modelPath,
-        motionPath,
-        physicsSettings
+    ModelInstance* modelInstance = entity.TryGetModelInstance();
+    if (modelInstance == nullptr)
+        throw std::runtime_error("Demo entity has no ModelInstance");
+    auto* runtime = dynamic_cast<SabaMmdRuntimeModel*>(
+        modelInstance->TryGetRuntime()
     );
-    if (!runtime->Initialize())
-    {
-        throw std::runtime_error(
-            "Saba demo runtime failed to initialize"
-        );
-    }
+    if (runtime == nullptr)
+        throw std::runtime_error("Demo PMX did not select Saba MMD backend");
+    runtime->SetPhysicsSettings(physicsSettings);
+    if (!motionPath.empty() && !runtime->LoadMotion(motionPath))
+        throw std::runtime_error("Saba demo motion failed to load");
     runtime->SetMotionLooping(true);
 
     bool cameraLoaded = false;
@@ -556,25 +497,8 @@ void SetupSabaMmdDemoScene(
                   << ToNarrowUtf8(cameraPath) << std::endl;
     }
 
-    std::vector<Mesh*> sabaMeshes;
-    sabaMeshes.reserve(model.Parts().size());
-    for (const RenderPart& part : model.Parts())
-    {
-        sabaMeshes.push_back(&part.GetMesh());
-        Mesh& mesh = part.GetMesh();
-        if (std::getenv("WISTERIA_SABA_NO_UPDATE") == nullptr)
-        {
-            mesh.SetDynamicVertexProvider(
-                [runtime](Mesh& target)
-                {
-                    runtime->UploadDynamicVertices(target);
-                }
-            );
-        }
-    }
     entity.AddBehaviour<SabaDemoBehaviour>(
-        runtime,
-        std::move(sabaMeshes),
+        *runtime,
         scene.ActiveCamera(),
         window,
         window.GetInput(),

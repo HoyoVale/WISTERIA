@@ -18,6 +18,42 @@ const std::string& ModelAsset::Name() const noexcept
     return this->name;
 }
 
+void ModelAsset::SetSourceDescriptor(ModelSourceDescriptor descriptor)
+{
+    if (descriptor.sourcePath.empty())
+        throw std::invalid_argument("ModelAsset source path must not be empty");
+    if (this->sourceDescriptor.has_value())
+        throw std::logic_error("ModelAsset source descriptor is already set");
+    descriptor.sourcePath = std::filesystem::weakly_canonical(
+        std::filesystem::absolute(descriptor.sourcePath)
+    );
+    this->sourceDescriptor.emplace(std::move(descriptor));
+}
+
+bool ModelAsset::HasSourceDescriptor() const noexcept
+{
+    return this->sourceDescriptor.has_value();
+}
+
+const ModelSourceDescriptor* ModelAsset::TryGetSourceDescriptor() const noexcept
+{
+    return this->sourceDescriptor.has_value() ? &*this->sourceDescriptor : nullptr;
+}
+
+const ModelSourceDescriptor& ModelAsset::GetSourceDescriptor() const
+{
+    if (!this->sourceDescriptor.has_value())
+        throw std::logic_error("ModelAsset has no source descriptor");
+    return *this->sourceDescriptor;
+}
+
+ModelBackendKind ModelAsset::BackendKind() const noexcept
+{
+    return this->sourceDescriptor.has_value()
+        ? this->sourceDescriptor->backend
+        : ModelBackendKind::Static;
+}
+
 std::size_t ModelAsset::PartCount() const noexcept
 {
     return this->parts.size();

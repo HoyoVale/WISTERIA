@@ -5,6 +5,7 @@
 #include "wisteria/rendering/light.hpp"
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/physics/physics_world.hpp"
+#include "wisteria/runtime/model_backend.hpp"
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -18,7 +19,7 @@ class EnvironmentMap;
 class Scene
 {
 public:
-    Scene() = default;
+    Scene();
     ~Scene() = default;
 
     Scene(const Scene&) = delete;
@@ -89,6 +90,7 @@ public:
     const std::vector<std::unique_ptr<SpotLight>>& SpotLights() const noexcept;
 
 private:
+    ModelBackendRegistry modelBackends;
     Camera activeCamera;
     std::unique_ptr<PhysicsWorld> physicsWorld =
         std::make_unique<PhysicsWorld>();

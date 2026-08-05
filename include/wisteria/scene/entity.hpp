@@ -8,6 +8,7 @@
 #include "wisteria/rendering/render_part.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/core/transform.hpp"
+#include "wisteria/runtime/model_instance.hpp"
 #include <concepts>
 #include <cstddef>
 #include <memory>
@@ -62,6 +63,13 @@ public:
 
     bool IsVisible() const noexcept;
     void SetVisible(bool visible) noexcept;
+
+    bool HasModelInstance() const noexcept;
+    ModelInstance* TryGetModelInstance() noexcept;
+    const ModelInstance* TryGetModelInstance() const noexcept;
+    ModelInstance& GetModelInstance();
+    const ModelInstance& GetModelInstance() const;
+    void SetModelInstance(std::unique_ptr<ModelInstance> instance);
 
     bool HasPose() const noexcept;
     Pose* TryGetPose() noexcept;
@@ -151,6 +159,7 @@ private:
     std::unique_ptr<MorphState> morphState;
     std::unique_ptr<Animator> animator;
     std::unique_ptr<PhysicsInstance> physicsInstance;
+    std::unique_ptr<ModelInstance> modelInstance;
     std::vector<RenderPart> renderParts;
     std::vector<std::unique_ptr<Behaviour>> behaviours;
     std::vector<Behaviour*> pendingBehaviourRemovals;

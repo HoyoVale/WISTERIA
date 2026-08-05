@@ -1044,18 +1044,34 @@ public:
         return this->pose;
     }
 
+    const Pose& GetPose() const override
+    {
+        return this->pose;
+    }
+
     bool NeedsDynamicVertexUpload() const noexcept override
     {
         return false;
     }
 
-    void UploadDynamicVertices(Mesh&) override
+    ModelVertexFrame VertexFrame() const noexcept override
     {
+        return {};
     }
 
     PhysicsInstance* TryGetPhysicsInstance() noexcept override
     {
         return nullptr;
+    }
+
+    const PhysicsInstance* TryGetPhysicsInstance() const noexcept override
+    {
+        return nullptr;
+    }
+
+    std::string_view BackendName() const noexcept override
+    {
+        return "test";
     }
 
     void SetMmdIkEnabled(BoneIndex, bool) override
@@ -1144,6 +1160,16 @@ public:
     }
 
     void ApplyLightTrack(const LightTrack&, float, DirectionalLight&) override
+    {
+    }
+
+    void SetMmdPhysicsSettings(
+        const MmdPhysicsRuntimeSettings&
+    ) override
+    {
+    }
+
+    void ResetMmdPhysics() override
     {
     }
 
