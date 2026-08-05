@@ -168,6 +168,62 @@ void SabaMmdRuntimeModel::SetPhysicsSettings(
                 gravity.y,
                 gravity.z
             ));
+            this->ApplyBodyProfile();
+        }
+    }
+}
+
+void SabaMmdRuntimeModel::ApplyBodyProfile()
+{
+    if (this->impl->model == nullptr)
+        return;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr)
+        return;
+    const float dampingScale = this->impl->physicsSettings.dampingScale;
+    const bool enableCcd = this->impl->physicsSettings.enableCcd;
+    for (auto& rigidBody : *manager->GetRigidBodys())
+    {
+        btRigidBody* body = rigidBody->GetRigidBody();
+        if (body == nullptr || body->getInvMass() <= 0.0f)
+            continue;
+        if (dampingScale != 1.0f)
+        {
+            body->setDamping(
+                body->getLinearDamping() * dampingScale,
+                body->getAngularDamping() * dampingScale
+            );
+        }
+        if (enableCcd)
+        {
+            body->setCcdMotionThreshold(0.5f);
+            body->setCcdSweptSphereRadius(0.05f);
+        }
+    }
+}
+
+void SabaMmdRuntimeModel::RunRecovery()
+{
+    if (this->impl->model == nullptr)
+        return;
+    saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics();
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (physics == nullptr || manager == nullptr)
+        return;
+    const float threshold = this->impl->physicsSettings.recoveryThreshold;
+    if (threshold <= 0.0f)
+        return;
+    const float thresholdSquared = threshold * threshold;
+    for (auto& rigidBody : *manager->GetRigidBodys())
+    {
+        btRigidBody* body = rigidBody->GetRigidBody();
+        if (body == nullptr || body->getInvMass() <= 0.0f)
+            continue;
+        const btVector3& velocity = body->getLinearVelocity();
+        if (velocity.length2() > thresholdSquared)
+        {
+            rigidBody->ResetTransform();
+            rigidBody->Reset(physics);
         }
     }
 }
@@ -218,6 +274,7 @@ bool SabaMmdRuntimeModel::Initialize()
             gravity.y,
             gravity.z
         ));
+        this->ApplyBodyProfile();
     }
     this->impl->ownedPhysics =
         std::make_unique<SabaOwnedPhysicsInstance>();
@@ -267,7 +324,10 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
     this->impl->model->UpdateMorphAnimation();
     this->ApplyMmdIkOverrides();
     this->impl->model->UpdateNodeAnimation(false);
-    this->impl->model->UpdatePhysicsAnimation(deltaTime);
+    if (this->impl->physicsSettings.physicsMode != 2)
+        this->impl->model->UpdatePhysicsAnimation(deltaTime);
+    if (this->impl->physicsSettings.physicsMode == 1)
+        this->RunRecovery();
     this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->EndAnimation();
     this->impl->model->Update();

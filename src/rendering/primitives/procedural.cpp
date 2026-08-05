@@ -282,4 +282,167 @@ DefaultModelData BuildCapsuleMeshData(
     }
     return data;
 }
+
+DefaultModelData BuildConeMeshData(
+    float radius,
+    float height,
+    int segments
+)
+{
+    if (!std::isfinite(radius) || radius <= 0.0f ||
+        !std::isfinite(height) || height <= 0.0f || segments < 3)
+    {
+        throw std::invalid_argument(
+            "Cone requires radius > 0, height > 0, segments >= 3"
+        );
+    }
+    DefaultModelData data;
+    ConfigureLayout(data);
+    const float half = height * 0.5f;
+    const float pi2 = 2.0f * 3.14159265358979f;
+    const float sideNormalY = radius / std::sqrt(
+        radius * radius + height * height
+    );
+    const float sideNormalRadial = height / std::sqrt(
+        radius * radius + height * height
+    );
+
+    // Apex.
+    const std::uint32_t apex = static_cast<std::uint32_t>(
+        data.vertices.size() / PrimitiveStride
+    );
+    AppendVertex(
+        data,
+        glm::vec3(0.0f, half, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec2(0.5f, 1.0f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    const std::uint32_t ringStart = static_cast<std::uint32_t>(
+        data.vertices.size() / PrimitiveStride
+    );
+    for (int segment = 0; segment <= segments; ++segment)
+    {
+        const float angle = static_cast<float>(segment) /
+            static_cast<float>(segments) * pi2;
+        const glm::vec3 position(
+            std::sin(angle) * radius,
+            -half,
+            std::cos(angle) * radius
+        );
+        const glm::vec3 normal(
+            std::sin(angle) * sideNormalRadial,
+            sideNormalY,
+            std::cos(angle) * sideNormalRadial
+        );
+        const glm::vec2 uv(
+            static_cast<float>(segment) / static_cast<float>(segments),
+            0.0f
+        );
+        const glm::vec3 tangent(std::cos(angle), 0.0f, -std::sin(angle));
+        AppendVertex(data, position, normal, uv, tangent);
+    }
+    for (int segment = 0; segment < segments; ++segment)
+    {
+        const std::uint32_t base = ringStart +
+            static_cast<std::uint32_t>(segment);
+        AppendTriangle(data, apex, base + 1U, base);
+    }
+
+    // Base disk, facing downward.
+    const std::uint32_t center = static_cast<std::uint32_t>(
+        data.vertices.size() / PrimitiveStride
+    );
+    AppendVertex(
+        data,
+        glm::vec3(0.0f, -half, 0.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec2(0.5f, 0.5f),
+        glm::vec3(1.0f, 0.0f, 0.0f)
+    );
+    for (int segment = 0; segment <= segments; ++segment)
+    {
+        const float angle = static_cast<float>(segment) /
+            static_cast<float>(segments) * pi2;
+        const glm::vec2 uv(
+            0.5f + 0.5f * std::sin(angle),
+            0.5f + 0.5f * std::cos(angle)
+        );
+        AppendVertex(
+            data,
+            glm::vec3(std::sin(angle) * radius, -half, std::cos(angle) * radius),
+            glm::vec3(0.0f, -1.0f, 0.0f),
+            uv,
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        );
+    }
+    for (int segment = 0; segment < segments; ++segment)
+    {
+        const std::uint32_t base = center + 1U +
+            static_cast<std::uint32_t>(segment);
+        AppendTriangle(data, center, base, base + 1U);
+    }
+    return data;
+}
+
+DefaultModelData BuildTorusMeshData(
+    float majorRadius,
+    float minorRadius,
+    int majorSegments,
+    int minorSegments
+)
+{
+    if (!std::isfinite(majorRadius) || majorRadius <= 0.0f ||
+        !std::isfinite(minorRadius) || minorRadius <= 0.0f ||
+        majorSegments < 3 || minorSegments < 3)
+    {
+        throw std::invalid_argument(
+            "Torus requires radii > 0 and segments >= 3"
+        );
+    }
+    DefaultModelData data;
+    ConfigureLayout(data);
+    const float pi2 = 2.0f * 3.14159265358979f;
+    for (int major = 0; major <= majorSegments; ++major)
+    {
+        const float u = static_cast<float>(major) /
+            static_cast<float>(majorSegments) * pi2;
+        const float cosU = std::cos(u);
+        const float sinU = std::sin(u);
+        for (int minor = 0; minor <= minorSegments; ++minor)
+        {
+            const float v = static_cast<float>(minor) /
+                static_cast<float>(minorSegments) * pi2;
+            const float cosV = std::cos(v);
+            const float sinV = std::sin(v);
+            const glm::vec3 normal(cosV * cosU, sinV, cosV * sinU);
+            const glm::vec3 position(
+                (majorRadius + minorRadius * cosV) * cosU,
+                minorRadius * sinV,
+                (majorRadius + minorRadius * cosV) * sinU
+            );
+            const glm::vec2 uv(
+                static_cast<float>(major) / static_cast<float>(majorSegments),
+                static_cast<float>(minor) / static_cast<float>(minorSegments)
+            );
+            const glm::vec3 tangent(-sinU, 0.0f, cosU);
+            AppendVertex(data, position, normal, uv, tangent);
+        }
+    }
+    for (int major = 0; major < majorSegments; ++major)
+    {
+        for (int minor = 0; minor < minorSegments; ++minor)
+        {
+            const std::uint32_t a = static_cast<std::uint32_t>(
+                major * (minorSegments + 1) + minor
+            );
+            const std::uint32_t b = a + 1U;
+            const std::uint32_t c = a + static_cast<std::uint32_t>(minorSegments) + 1U;
+            const std::uint32_t d = c + 1U;
+            AppendTriangle(data, a, c, b);
+            AppendTriangle(data, b, c, d);
+        }
+    }
+    return data;
+}
 }  // namespace wisteria

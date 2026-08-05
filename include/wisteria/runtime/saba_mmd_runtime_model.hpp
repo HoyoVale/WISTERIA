@@ -13,6 +13,19 @@ struct SabaPhysicsSettings
     float fixedTimeStep = 1.0f / 120.0f;
     int maxSubSteps = 10;
     glm::vec3 gravity{0.0f, -98.0f, 0.0f};
+
+    // WISTERIA preset knobs (own semantics, independent of the community
+    // matrix):
+    //   physicsMode 0 = standard MMD order (saba default),
+    //   1 = recovery: dynamic bodies that drift more than recoveryThreshold
+    //       world units from their linked bone are snapped back,
+    //   2 = physics disabled: bones stay at the animation pose.
+    int physicsMode = 0;
+    float recoveryThreshold = 50.0f;
+    // Multiplies every rigid body's PMX linear/angular damping.
+    float dampingScale = 1.0f;
+    // Enables Bullet CCD on dynamic bodies.
+    bool enableCcd = false;
 };
 
 // Saba-backed MMD runtime: uses saba::PMXModel for animation, IK, morph and
@@ -100,6 +113,12 @@ public:
     ProfileSnapshot Profile() const;
 
 private:
+    // Applies dampingScale and CCD to every dynamic rigid body (called at
+    // Initialize and on SetPhysicsSettings).
+    void ApplyBodyProfile();
+    // Physics mode 1 recovery: snap dynamic bodies whose linear speed
+    // exceeds recoveryThreshold back to their linked bone.
+    void RunRecovery();
     void ApplyMmdIkOverrides() noexcept;
 
     struct Impl;

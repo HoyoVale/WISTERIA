@@ -25,7 +25,9 @@
 - 动作：`load_motion / unload_motion / play / pause / resume /
   set_motion_looping / set_motion_frame / motion_frame / motion_max_frame`
 - 步进：`wisteria_update`
-- 物理：`wisteria_set_physics_settings` / `wisteria_physics_capabilities`
+- 物理：`wisteria_set_physics_settings` / `wisteria_set_physics_preset` /
+  `wisteria_physics_capabilities`（自研预设：mode 0 标准 / 1 恢复 / 2 关闭，
+  阻尼缩放，CCD）
 - MMD 控制：`wisteria_set_mmd_ik_enabled` / `wisteria_find_bone_index` /
   `wisteria_load_camera_motion`
 - 诊断：`wisteria_vertex_bounds`
@@ -52,7 +54,8 @@
   assimp）/ `wisteria_scene_unload_model`
 - 实体：`wisteria_scene_instantiate_model` / `wisteria_entity_set_transform` /
   `wisteria_entity_get_transform` / `wisteria_entity_set_visible` /
-  `wisteria_entity_get_visible` / `wisteria_entity_destroy`
+  `wisteria_entity_get_visible` / `wisteria_entity_set_part_color` /
+  `wisteria_entity_destroy`
 - Morph：`wisteria_entity_set_morph_weight` / `wisteria_entity_get_morph_weight`
 - 灯光：`wisteria_scene_add_directional_light` / `wisteria_scene_add_point_light`
   / `wisteria_scene_add_spot_light` / `wisteria_directional_light_set` /
@@ -62,7 +65,8 @@
 - 环境：`wisteria_scene_set_environment`（天空盒开关 + 强度）
 - 图元：`wisteria_scene_add_cube` / `wisteria_scene_add_ground_plane` /
   `wisteria_scene_add_sphere` / `wisteria_scene_add_cylinder` /
-  `wisteria_scene_add_capsule`（程序化生成，core `primitives/procedural`）
+  `wisteria_scene_add_capsule` / `wisteria_scene_add_cone` /
+  `wisteria_scene_add_torus`（程序化生成，core `primitives/procedural`）
 
 ## 二进制符号清单生成
 

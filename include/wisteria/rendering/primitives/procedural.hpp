@@ -25,4 +25,17 @@ DefaultModelData BuildCapsuleMeshData(
     float height,
     int segments
 );
+
+DefaultModelData BuildConeMeshData(
+    float radius,
+    float height,
+    int segments
+);
+
+DefaultModelData BuildTorusMeshData(
+    float majorRadius,
+    float minorRadius,
+    int majorSegments,
+    int minorSegments
+);
 }  // namespace wisteria

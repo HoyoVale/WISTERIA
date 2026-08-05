@@ -1213,4 +1213,146 @@ enum WisteriaStatus wisteria_scene_add_capsule(
         out_entity
     );
 }
+
+enum WisteriaStatus wisteria_scene_add_cone(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float radius,
+    float height,
+    int32_t segments,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+)
+{
+    if (out_entity != nullptr)
+        *out_entity = 0U;
+    if (color == nullptr || position == nullptr || out_entity == nullptr ||
+        !std::isfinite(radius) || radius <= 0.0f ||
+        !std::isfinite(height) || height <= 0.0f || segments < 3)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    return AddPrimitiveEntity(
+        context,
+        scene,
+        BuildConeMeshData(radius, height, segments),
+        "cone",
+        color,
+        position,
+        out_entity
+    );
+}
+
+enum WisteriaStatus wisteria_scene_add_torus(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float major_radius,
+    float minor_radius,
+    int32_t major_segments,
+    int32_t minor_segments,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+)
+{
+    if (out_entity != nullptr)
+        *out_entity = 0U;
+    if (color == nullptr || position == nullptr || out_entity == nullptr ||
+        !std::isfinite(major_radius) || major_radius <= 0.0f ||
+        !std::isfinite(minor_radius) || minor_radius <= 0.0f ||
+        major_segments < 3 || minor_segments < 3)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    return AddPrimitiveEntity(
+        context,
+        scene,
+        BuildTorusMeshData(
+            major_radius,
+            minor_radius,
+            major_segments,
+            minor_segments
+        ),
+        "torus",
+        color,
+        position,
+        out_entity
+    );
+}
+
+enum WisteriaStatus wisteria_entity_set_part_color(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t part_index,
+    const float color[3]
+)
+{
+    if (color == nullptr || part_index < 0)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    SceneEntry* entry = FindScene(*handle, scene);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Scene handle is invalid");
+    const auto iterator = entry->entities.find(entity);
+    if (iterator == entry->entities.end())
+        return InvalidHandle(*handle, "Entity handle is invalid");
+
+    const std::span<RenderPart> parts = iterator->second->RenderParts();
+    if (static_cast<std::size_t>(part_index) >= parts.size())
+    {
+        SetError(*handle, "Entity part index is out of range");
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+
+    const std::uint8_t red = static_cast<std::uint8_t>(
+        glm::clamp(color[0], 0.0f, 1.0f) * 255.0f
+    );
+    const std::uint8_t green = static_cast<std::uint8_t>(
+        glm::clamp(color[1], 0.0f, 1.0f) * 255.0f
+    );
+    const std::uint8_t blue = static_cast<std::uint8_t>(
+        glm::clamp(color[2], 0.0f, 1.0f) * 255.0f
+    );
+    const std::uint32_t colorKey =
+        (static_cast<std::uint32_t>(red) << 16U) |
+        (static_cast<std::uint32_t>(green) << 8U) |
+        static_cast<std::uint32_t>(blue);
+    const auto cachedMaterial = entry->solidMaterials.find(colorKey);
+    if (cachedMaterial != entry->solidMaterials.end())
+    {
+        parts[static_cast<std::size_t>(part_index)].SetMaterial(
+            *cachedMaterial->second
+        );
+        return WISTERIA_OK;
+    }
+
+    try
+    {
+        MaterialData materialData;
+        materialData.textureSources.clear();
+        materialData.baseColorFactor = glm::vec4(
+            glm::clamp(color[0], 0.0f, 1.0f),
+            glm::clamp(color[1], 0.0f, 1.0f),
+            glm::clamp(color[2], 0.0f, 1.0f),
+            1.0f
+        );
+        Material& material = handle->application->GetResources().CreateMaterial(
+            "scene:" + std::to_string(scene) + ":color:" +
+                std::to_string(colorKey),
+            materialData
+        );
+        parts[static_cast<std::size_t>(part_index)].SetMaterial(material);
+        entry->solidMaterials.emplace(colorKey, &material);
+        return WISTERIA_OK;
+    }
+    catch (const std::exception& error)
+    {
+        SetError(*handle, error.what());
+        return WISTERIA_ERROR_INTERNAL;
+    }
+}
 }

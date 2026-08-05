@@ -2022,6 +2022,28 @@ void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
                   << diagnostics.maximumDisplacementFromBind << "\n";
         }
     }
+
+    // Physics-disabled preset (mode 2): the mesh must stay at the pose with
+    // no rigid-body contribution.
+    SabaPhysicsSettings disabledSettings;
+    disabledSettings.fixedTimeStep = 1.0f / 120.0f;
+    disabledSettings.maxSubSteps = 10;
+    disabledSettings.physicsMode = 2;
+    SabaMmdRuntimeModel disabledRuntime(modelPath);
+    Require(
+        disabledRuntime.Initialize(),
+        "Saba disabled-physics runtime failed to initialize"
+    );
+    disabledRuntime.SetPhysicsSettings(disabledSettings);
+    for (int frame = 0; frame < 60; ++frame)
+        disabledRuntime.Update(1.0f / 120.0f);
+    const SabaMmdRuntimeModel::VertexDiagnostics disabledDiagnostics =
+        disabledRuntime.DiagnoseVertices();
+    Require(
+        disabledDiagnostics.finite &&
+            disabledDiagnostics.maximumDisplacementFromBind < 1.0f,
+        "Physics-disabled preset moved the mesh"
+    );
 }
 
 void TestSabaMotionCameraLightInterfaceWhenAvailable()
@@ -2610,8 +2632,39 @@ void TestNativeAbiMmdControl()
         wisteria_physics_capabilities(context, model, &capabilities) ==
                 WISTERIA_OK &&
             (capabilities & WISTERIA_PHYSICS_CAP_FIXED_STEP) != 0U &&
-            (capabilities & WISTERIA_PHYSICS_CAP_GRAVITY) != 0U,
+            (capabilities & WISTERIA_PHYSICS_CAP_GRAVITY) != 0U &&
+            (capabilities & WISTERIA_PHYSICS_CAP_MODE) != 0U &&
+            (capabilities & WISTERIA_PHYSICS_CAP_DAMPING) != 0U &&
+            (capabilities & WISTERIA_PHYSICS_CAP_CCD) != 0U,
         "ABI physics capabilities did not advertise engine-backed knobs"
+    );
+
+    struct WisteriaPhysicsPreset preset = {};
+    preset.fixed_time_step = 1.0f / 120.0f;
+    preset.max_sub_steps = 10;
+    preset.gravity[0] = 0.0f;
+    preset.gravity[1] = -98.0f;
+    preset.gravity[2] = 0.0f;
+    preset.physics_mode = 1;
+    preset.recovery_threshold = 50.0f;
+    preset.damping_scale = 0.5f;
+    preset.enable_ccd = 1;
+    Require(
+        wisteria_set_physics_preset(context, model, &preset) == WISTERIA_OK,
+        "ABI physics preset failed"
+    );
+    preset.physics_mode = 3;
+    Require(
+        wisteria_set_physics_preset(context, model, &preset) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "ABI physics preset accepted an invalid mode"
+    );
+    preset.physics_mode = 2;
+    preset.damping_scale = -1.0f;
+    Require(
+        wisteria_set_physics_preset(context, model, &preset) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "ABI physics preset accepted a negative damping scale"
     );
 
     uint32_t boneIndex = 0U;
@@ -3046,6 +3099,8 @@ void TestNativeAbiSceneWhenAvailable()
         WisteriaEntity sphere = 0U;
         WisteriaEntity cylinder = 0U;
         WisteriaEntity capsule = 0U;
+        WisteriaEntity cone = 0U;
+        WisteriaEntity torus = 0U;
         Require(
             wisteria_scene_add_cube(
                 context,
@@ -3092,12 +3147,57 @@ void TestNativeAbiSceneWhenAvailable()
                     cubePosition,
                     &capsule
                 ) == WISTERIA_OK &&
+                wisteria_scene_add_cone(
+                    context,
+                    scene,
+                    0.4f,
+                    1.0f,
+                    12,
+                    cubeColor,
+                    cubePosition,
+                    &cone
+                ) == WISTERIA_OK &&
+                wisteria_scene_add_torus(
+                    context,
+                    scene,
+                    0.5f,
+                    0.2f,
+                    16,
+                    8,
+                    cubeColor,
+                    cubePosition,
+                    &torus
+                ) == WISTERIA_OK &&
                 cube != 0U &&
                 ground != 0U &&
                 sphere != 0U &&
                 cylinder != 0U &&
-                capsule != 0U,
+                capsule != 0U &&
+                cone != 0U &&
+                torus != 0U,
             "ABI scene primitives failed"
+        );
+
+        const float blue[3] = {0.1f, 0.3f, 0.9f};
+        Require(
+            wisteria_entity_set_part_color(
+                context,
+                scene,
+                cube,
+                0,
+                blue
+            ) == WISTERIA_OK,
+            "ABI entity part color failed"
+        );
+        Require(
+            wisteria_entity_set_part_color(
+                context,
+                scene,
+                cube,
+                99,
+                blue
+            ) == WISTERIA_ERROR_NOT_FOUND,
+            "ABI entity part color accepted an out-of-range index"
         );
 
         for (int frame = 0; frame < 20; ++frame)

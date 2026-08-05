@@ -38,6 +38,8 @@ struct SceneEntry
     WisteriaSceneModel nextModelHandle = 1U;
     std::unordered_map<WisteriaEntity, Entity*> entities;
     WisteriaEntity nextEntityHandle = 1U;
+    // Solid-color PBR materials cached per RGB key for set_part_color.
+    std::unordered_map<std::uint32_t, Material*> solidMaterials;
     struct LightEntry
     {
         int kind = 0;  // 0 = directional, 1 = point

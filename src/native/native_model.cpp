@@ -479,12 +479,63 @@ enum WisteriaStatus wisteria_physics_capabilities(
     ModelEntry* entry = FindModel(*handle, model);
     if (entry == nullptr)
         return InvalidHandle(*handle, "Model handle is invalid");
-    // Only engine-backed knobs are advertised. Mode/damping/CCD/semantic
-    // filters are reserved until the community compatibility matrix (#5)
-    // defines their semantics on the Saba runtime.
+    // Only engine-backed knobs are advertised. Mode/damping/CCD are WISTERIA
+    // preset semantics; semantic collision filtering remains saba-internal.
     *out_capabilities =
         WISTERIA_PHYSICS_CAP_FIXED_STEP |
-        WISTERIA_PHYSICS_CAP_GRAVITY;
+        WISTERIA_PHYSICS_CAP_GRAVITY |
+        WISTERIA_PHYSICS_CAP_MODE |
+        WISTERIA_PHYSICS_CAP_DAMPING |
+        WISTERIA_PHYSICS_CAP_CCD;
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_set_physics_preset(
+    WisteriaContext context,
+    WisteriaModel model,
+    const struct WisteriaPhysicsPreset* preset
+)
+{
+    if (preset == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    ModelEntry* entry = FindModel(*handle, model);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Model handle is invalid");
+    const bool finiteGravity =
+        std::isfinite(preset->gravity[0]) &&
+        std::isfinite(preset->gravity[1]) &&
+        std::isfinite(preset->gravity[2]);
+    if (!std::isfinite(preset->fixed_time_step) ||
+        preset->fixed_time_step <= 0.0f ||
+        preset->max_sub_steps <= 0 ||
+        !finiteGravity ||
+        (preset->physics_mode != 0 && preset->physics_mode != 1 &&
+         preset->physics_mode != 2) ||
+        !std::isfinite(preset->recovery_threshold) ||
+        preset->recovery_threshold < 0.0f ||
+        !std::isfinite(preset->damping_scale) ||
+        preset->damping_scale < 0.0f ||
+        (preset->enable_ccd != 0 && preset->enable_ccd != 1))
+    {
+        SetError(*handle, "Physics preset contains invalid values");
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    SabaPhysicsSettings settings;
+    settings.fixedTimeStep = preset->fixed_time_step;
+    settings.maxSubSteps = preset->max_sub_steps;
+    settings.gravity = glm::vec3(
+        preset->gravity[0],
+        preset->gravity[1],
+        preset->gravity[2]
+    );
+    settings.physicsMode = preset->physics_mode;
+    settings.recoveryThreshold = preset->recovery_threshold;
+    settings.dampingScale = preset->damping_scale;
+    settings.enableCcd = preset->enable_ccd != 0;
+    entry->runtime->SetPhysicsSettings(settings);
     return WISTERIA_OK;
 }
 

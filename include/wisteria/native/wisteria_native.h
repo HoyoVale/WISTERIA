@@ -404,11 +404,42 @@ WISTERIA_API enum WisteriaStatus wisteria_load_camera_motion(
  */
 #define WISTERIA_PHYSICS_CAP_FIXED_STEP (1u << 0)
 #define WISTERIA_PHYSICS_CAP_GRAVITY    (1u << 1)
+#define WISTERIA_PHYSICS_CAP_MODE       (1u << 2)
+#define WISTERIA_PHYSICS_CAP_DAMPING    (1u << 3)
+#define WISTERIA_PHYSICS_CAP_CCD        (1u << 4)
 
 WISTERIA_API enum WisteriaStatus wisteria_physics_capabilities(
     WisteriaContext context,
     WisteriaModel model,
     uint32_t* out_capabilities
+);
+
+/*
+ * WISTERIA physics preset (own semantics, independent of the community
+ * matrix). All fields are required and validated:
+ *   physics_mode       0 = standard MMD order, 1 = recovery (dynamic bodies
+ *                      faster than recovery_threshold units/s snap back to
+ *                      their bone), 2 = physics disabled
+ *   recovery_threshold linear speed limit in world units/s (mode 1)
+ *   damping_scale      multiplies every rigid body's PMX damping
+ *   enable_ccd         Bullet CCD on dynamic bodies
+ */
+struct WisteriaPhysicsPreset
+{
+    float fixed_time_step;
+    int32_t max_sub_steps;
+    float gravity[3];
+    int32_t physics_mode;
+    float recovery_threshold;
+    float damping_scale;
+    int32_t enable_ccd;
+    int32_t reserved[4];
+};
+
+WISTERIA_API enum WisteriaStatus wisteria_set_physics_preset(
+    WisteriaContext context,
+    WisteriaModel model,
+    const struct WisteriaPhysicsPreset* preset
 );
 
 /* --- Self-built scenes ---------------------------------------------------- */
@@ -479,6 +510,19 @@ WISTERIA_API enum WisteriaStatus wisteria_entity_get_visible(
     WisteriaScene scene,
     WisteriaEntity entity,
     int32_t* out_visible
+);
+
+/*
+ * Replaces the material of one render part of an entity with a solid-color
+ * PBR material (cached per color). part_index selects which mesh part to
+ * swap; use it to re-skin primitives or imported models at runtime.
+ */
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_part_color(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t part_index,
+    const float color[3]
 );
 
 WISTERIA_API enum WisteriaStatus wisteria_entity_set_visible(
@@ -676,6 +720,29 @@ WISTERIA_API enum WisteriaStatus wisteria_scene_add_capsule(
     float radius,
     float height,
     int32_t segments,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_cone(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float radius,
+    float height,
+    int32_t segments,
+    const float color[3],
+    const float position[3],
+    WisteriaEntity* out_entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_torus(
+    WisteriaContext context,
+    WisteriaScene scene,
+    float major_radius,
+    float minor_radius,
+    int32_t major_segments,
+    int32_t minor_segments,
     const float color[3],
     const float position[3],
     WisteriaEntity* out_entity
