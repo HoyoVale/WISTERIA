@@ -479,14 +479,12 @@ enum WisteriaStatus wisteria_physics_capabilities(
     ModelEntry* entry = FindModel(*handle, model);
     if (entry == nullptr)
         return InvalidHandle(*handle, "Model handle is invalid");
-    // Only engine-backed knobs are advertised. Mode/damping/CCD are WISTERIA
-    // preset semantics; semantic collision filtering remains saba-internal.
+    // saba's real physics surface: fixed step, gravity and the activation
+    // switch. Semantic collision filtering remains saba-internal.
     *out_capabilities =
         WISTERIA_PHYSICS_CAP_FIXED_STEP |
         WISTERIA_PHYSICS_CAP_GRAVITY |
-        WISTERIA_PHYSICS_CAP_MODE |
-        WISTERIA_PHYSICS_CAP_DAMPING |
-        WISTERIA_PHYSICS_CAP_CCD;
+        WISTERIA_PHYSICS_CAP_ENABLED;
     return WISTERIA_OK;
 }
 
@@ -512,13 +510,7 @@ enum WisteriaStatus wisteria_set_physics_preset(
         preset->fixed_time_step <= 0.0f ||
         preset->max_sub_steps <= 0 ||
         !finiteGravity ||
-        (preset->physics_mode != 0 && preset->physics_mode != 1 &&
-         preset->physics_mode != 2) ||
-        !std::isfinite(preset->recovery_threshold) ||
-        preset->recovery_threshold < 0.0f ||
-        !std::isfinite(preset->damping_scale) ||
-        preset->damping_scale < 0.0f ||
-        (preset->enable_ccd != 0 && preset->enable_ccd != 1))
+        (preset->physics_enabled != 0 && preset->physics_enabled != 1))
     {
         SetError(*handle, "Physics preset contains invalid values");
         return WISTERIA_ERROR_INVALID_ARGUMENT;
@@ -531,11 +523,23 @@ enum WisteriaStatus wisteria_set_physics_preset(
         preset->gravity[1],
         preset->gravity[2]
     );
-    settings.physicsMode = preset->physics_mode;
-    settings.recoveryThreshold = preset->recovery_threshold;
-    settings.dampingScale = preset->damping_scale;
-    settings.enableCcd = preset->enable_ccd != 0;
+    settings.physicsEnabled = preset->physics_enabled != 0;
     entry->runtime->SetPhysicsSettings(settings);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_physics_reset(
+    WisteriaContext context,
+    WisteriaModel model
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    ModelEntry* entry = FindModel(*handle, model);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Model handle is invalid");
+    entry->runtime->Reset();
     return WISTERIA_OK;
 }
 

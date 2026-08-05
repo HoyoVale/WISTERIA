@@ -2023,12 +2023,12 @@ void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
         }
     }
 
-    // Physics-disabled preset (mode 2): the mesh must stay at the pose with
-    // no rigid-body contribution.
+    // Physics-disabled preset: saba's activation switch keeps the bodies
+    // inactive, so the mesh must stay at the animation pose.
     SabaPhysicsSettings disabledSettings;
     disabledSettings.fixedTimeStep = 1.0f / 120.0f;
     disabledSettings.maxSubSteps = 10;
-    disabledSettings.physicsMode = 2;
+    disabledSettings.physicsEnabled = false;
     SabaMmdRuntimeModel disabledRuntime(modelPath);
     Require(
         disabledRuntime.Initialize(),
@@ -2633,9 +2633,7 @@ void TestNativeAbiMmdControl()
                 WISTERIA_OK &&
             (capabilities & WISTERIA_PHYSICS_CAP_FIXED_STEP) != 0U &&
             (capabilities & WISTERIA_PHYSICS_CAP_GRAVITY) != 0U &&
-            (capabilities & WISTERIA_PHYSICS_CAP_MODE) != 0U &&
-            (capabilities & WISTERIA_PHYSICS_CAP_DAMPING) != 0U &&
-            (capabilities & WISTERIA_PHYSICS_CAP_CCD) != 0U,
+            (capabilities & WISTERIA_PHYSICS_CAP_ENABLED) != 0U,
         "ABI physics capabilities did not advertise engine-backed knobs"
     );
 
@@ -2645,26 +2643,22 @@ void TestNativeAbiMmdControl()
     preset.gravity[0] = 0.0f;
     preset.gravity[1] = -98.0f;
     preset.gravity[2] = 0.0f;
-    preset.physics_mode = 1;
-    preset.recovery_threshold = 50.0f;
-    preset.damping_scale = 0.5f;
-    preset.enable_ccd = 1;
+    preset.physics_enabled = 1;
     Require(
         wisteria_set_physics_preset(context, model, &preset) == WISTERIA_OK,
         "ABI physics preset failed"
     );
-    preset.physics_mode = 3;
+    preset.physics_enabled = 2;
     Require(
         wisteria_set_physics_preset(context, model, &preset) ==
             WISTERIA_ERROR_INVALID_ARGUMENT,
-        "ABI physics preset accepted an invalid mode"
+        "ABI physics preset accepted an invalid enabled value"
     );
-    preset.physics_mode = 2;
-    preset.damping_scale = -1.0f;
+    preset.physics_enabled = 0;
     Require(
-        wisteria_set_physics_preset(context, model, &preset) ==
-            WISTERIA_ERROR_INVALID_ARGUMENT,
-        "ABI physics preset accepted a negative damping scale"
+        wisteria_set_physics_preset(context, model, &preset) == WISTERIA_OK &&
+            wisteria_physics_reset(context, model) == WISTERIA_OK,
+        "ABI physics disable or reset failed"
     );
 
     uint32_t boneIndex = 0U;

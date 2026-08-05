@@ -404,9 +404,7 @@ WISTERIA_API enum WisteriaStatus wisteria_load_camera_motion(
  */
 #define WISTERIA_PHYSICS_CAP_FIXED_STEP (1u << 0)
 #define WISTERIA_PHYSICS_CAP_GRAVITY    (1u << 1)
-#define WISTERIA_PHYSICS_CAP_MODE       (1u << 2)
-#define WISTERIA_PHYSICS_CAP_DAMPING    (1u << 3)
-#define WISTERIA_PHYSICS_CAP_CCD        (1u << 4)
+#define WISTERIA_PHYSICS_CAP_ENABLED    (1u << 2)
 
 WISTERIA_API enum WisteriaStatus wisteria_physics_capabilities(
     WisteriaContext context,
@@ -415,31 +413,27 @@ WISTERIA_API enum WisteriaStatus wisteria_physics_capabilities(
 );
 
 /*
- * WISTERIA physics preset (own semantics, independent of the community
- * matrix). All fields are required and validated:
- *   physics_mode       0 = standard MMD order, 1 = recovery (dynamic bodies
- *                      faster than recovery_threshold units/s snap back to
- *                      their bone), 2 = physics disabled
- *   recovery_threshold linear speed limit in world units/s (mode 1)
- *   damping_scale      multiplies every rigid body's PMX damping
- *   enable_ccd         Bullet CCD on dynamic bodies
+ * saba's real physics surface: fixed step, max substeps, gravity and the
+ * per-model activation switch. All fields are required and validated.
  */
 struct WisteriaPhysicsPreset
 {
     float fixed_time_step;
     int32_t max_sub_steps;
     float gravity[3];
-    int32_t physics_mode;
-    float recovery_threshold;
-    float damping_scale;
-    int32_t enable_ccd;
-    int32_t reserved[4];
+    int32_t physics_enabled;
+    int32_t reserved[8];
 };
 
 WISTERIA_API enum WisteriaStatus wisteria_set_physics_preset(
     WisteriaContext context,
     WisteriaModel model,
     const struct WisteriaPhysicsPreset* preset
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_physics_reset(
+    WisteriaContext context,
+    WisteriaModel model
 );
 
 /* --- Self-built scenes ---------------------------------------------------- */

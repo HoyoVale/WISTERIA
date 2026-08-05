@@ -26,8 +26,8 @@
   set_motion_looping / set_motion_frame / motion_frame / motion_max_frame`
 - 步进：`wisteria_update`
 - 物理：`wisteria_set_physics_settings` / `wisteria_set_physics_preset` /
-  `wisteria_physics_capabilities`（自研预设：mode 0 标准 / 1 恢复 / 2 关闭，
-  阻尼缩放，CCD）
+  `wisteria_physics_reset` / `wisteria_physics_capabilities`（saba 真实面：
+  固定步、子步、重力、刚体启停）
 - MMD 控制：`wisteria_set_mmd_ik_enabled` / `wisteria_find_bone_index` /
   `wisteria_load_camera_motion`
 - 诊断：`wisteria_vertex_bounds`
