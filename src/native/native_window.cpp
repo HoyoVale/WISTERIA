@@ -5,6 +5,7 @@
 #include "wisteria/platform/input.hpp"
 #include "wisteria/platform/window.hpp"
 #include "wisteria/rendering/camera.hpp"
+#include "wisteria/rendering/renderer.hpp"
 #include "wisteria/scene/demo_scene.hpp"
 #include "wisteria/scene/scene.hpp"
 
@@ -484,6 +485,60 @@ enum WisteriaStatus wisteria_window_set_camera_speed(
         *entry->window,
         settings
     );
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_window_set_render_settings(
+    WisteriaContext context,
+    WisteriaWindow window,
+    const struct WisteriaRenderSettings* settings
+)
+{
+    if (settings == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    WindowEntry* entry = FindWindow(*handle, window);
+    if (entry == nullptr || entry->window == nullptr)
+        return InvalidHandle(*handle, "Window handle is invalid");
+    if (handle->application == nullptr)
+        return InvalidHandle(*handle, "Context has no application");
+
+    const bool validBias = settings->shadow_bias < 0.0f
+        ? true
+        : std::isfinite(settings->shadow_bias);
+    if (!validBias ||
+        (settings->shadow_map_size != 0 &&
+         (settings->shadow_map_size < 256 ||
+          settings->shadow_map_size > 4096)) ||
+        (settings->shadow_pcf_radius != 0 &&
+         (settings->shadow_pcf_radius < 1 ||
+          settings->shadow_pcf_radius > 3)) ||
+        (settings->shadows_enabled != -1 &&
+         settings->shadows_enabled != 0 &&
+         settings->shadows_enabled != 1) ||
+        (settings->ground_shadow_enabled != -1 &&
+         settings->ground_shadow_enabled != 0 &&
+         settings->ground_shadow_enabled != 1))
+    {
+        SetError(*handle, "Render settings contain invalid values");
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+
+    Renderer::Config config =
+        handle->application->GetRenderer(*entry->window).GetConfig();
+    if (settings->shadow_map_size != 0)
+        config.shadowMapSize = settings->shadow_map_size;
+    if (settings->shadow_pcf_radius != 0)
+        config.shadowPcfRadius = settings->shadow_pcf_radius;
+    if (settings->shadows_enabled != -1)
+        config.shadowsEnabled = settings->shadows_enabled != 0;
+    if (settings->ground_shadow_enabled != -1)
+        config.groundShadowEnabled = settings->ground_shadow_enabled != 0;
+    if (settings->shadow_bias >= 0.0f)
+        config.shadowBias = settings->shadow_bias;
+    handle->application->GetRenderer(*entry->window).SetConfig(config);
     return WISTERIA_OK;
 }
 

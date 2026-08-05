@@ -37,8 +37,22 @@ struct FxaaSettings
 class Renderer
 {
 public:
+    struct Config
+    {
+        int shadowMapSize = 2048;
+        int shadowPcfRadius = 1;
+        bool shadowsEnabled = true;
+        bool groundShadowEnabled = true;
+        // MMD CSM depth bias (R1-08): exposed so frontends can tune
+        // shadow acne vs peter-panning per scene.
+        float shadowBias = 0.003f;
+    };
+
     explicit Renderer(GraphicsDevice* device = nullptr);
     ~Renderer();
+
+    void SetConfig(const Config& config) noexcept;
+    const Config& GetConfig() const noexcept;
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
@@ -157,6 +171,7 @@ private:
 
 private:
     GraphicsDevice* device = nullptr;
+    Config config;
     Framebuffer oitFramebuffer;
     GLuint oitAccumulationTexture = 0;
     GLuint oitRevealageTexture = 0;
@@ -176,6 +191,7 @@ private:
     // runtime knob WISTERIA_SHADOW_MAP_SIZE overrides this at startup.
     int shadowMapSize = 2048;
     int shadowPcfRadius = 1;
+    float shadowBias = 0.003f;
     bool independentBlendSupported = false;
     std::size_t maximumSkinningMatrices = 0;
     const Pose* uploadedPose = nullptr;

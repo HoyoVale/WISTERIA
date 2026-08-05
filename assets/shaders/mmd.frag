@@ -76,6 +76,7 @@ uniform int shadowEnabled;
 uniform int receiveShadow;
 uniform vec2 shadowMapSize;
 uniform int shadowPcfRadius;
+uniform float shadowBias;
 uniform float shadowSplitPositions[5];
 
 layout(location = 0) out vec4 outputColor;
@@ -152,7 +153,7 @@ float ShadowFactor()
     if (currentDepth > 1.0)
         return 1.0;
 
-    float bias = 0.003;
+    float bias = shadowBias;
     float visibility = 0.0;
     int radius = clamp(shadowPcfRadius, 1, 3);
     int tapCount = 0;

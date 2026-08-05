@@ -380,6 +380,114 @@ enum WisteriaStatus wisteria_vertex_bounds(
     return WISTERIA_OK;
 }
 
+enum WisteriaStatus wisteria_set_mmd_ik_enabled(
+    WisteriaContext context,
+    WisteriaModel model,
+    uint32_t bone_index,
+    int32_t enabled
+)
+{
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    ModelEntry* entry = FindModel(*handle, model);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Model handle is invalid");
+    entry->runtime->SetMmdIkEnabled(
+        static_cast<wisteria::BoneIndex>(bone_index),
+        enabled != 0
+    );
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_find_bone_index(
+    WisteriaContext context,
+    WisteriaModel model,
+    const char* bone_name,
+    uint32_t* out_bone_index
+)
+{
+    if (bone_name == nullptr || bone_name[0] == '\0' ||
+        out_bone_index == nullptr)
+    {
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    ModelEntry* entry = FindModel(*handle, model);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Model handle is invalid");
+    const wisteria::BoneIndex found =
+        entry->runtime->FindBoneIndex(bone_name);
+    if (found == wisteria::InvalidBoneIndex)
+    {
+        SetError(*handle, "Bone not found: " + std::string(bone_name));
+        return WISTERIA_ERROR_NOT_FOUND;
+    }
+    *out_bone_index = static_cast<uint32_t>(found);
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_load_camera_motion(
+    WisteriaContext context,
+    WisteriaModel model,
+    const char* vmd_path
+)
+{
+    if (vmd_path == nullptr || vmd_path[0] == '\0')
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    ModelEntry* entry = FindModel(*handle, model);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Model handle is invalid");
+
+    const std::filesystem::path path = PathFromUtf8(vmd_path);
+    if (path.empty())
+    {
+        SetError(*handle, "Camera motion path is not valid UTF-8");
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    }
+    if (!std::filesystem::is_regular_file(path))
+    {
+        SetError(*handle, "Camera motion file does not exist: " +
+            std::string(vmd_path));
+        return WISTERIA_ERROR_IO;
+    }
+    if (!entry->runtime->LoadCameraMotion(path))
+    {
+        SetError(*handle, "Failed to load camera motion: " +
+            std::string(vmd_path));
+        return WISTERIA_ERROR_PARSE;
+    }
+    return WISTERIA_OK;
+}
+
+enum WisteriaStatus wisteria_physics_capabilities(
+    WisteriaContext context,
+    WisteriaModel model,
+    uint32_t* out_capabilities
+)
+{
+    if (out_capabilities == nullptr)
+        return WISTERIA_ERROR_INVALID_ARGUMENT;
+    const ContextLease handle = FindContext(context);
+    if (handle == nullptr)
+        return WISTERIA_ERROR_NOT_FOUND;
+    ModelEntry* entry = FindModel(*handle, model);
+    if (entry == nullptr)
+        return InvalidHandle(*handle, "Model handle is invalid");
+    // Only engine-backed knobs are advertised. Mode/damping/CCD/semantic
+    // filters are reserved until the community compatibility matrix (#5)
+    // defines their semantics on the Saba runtime.
+    *out_capabilities =
+        WISTERIA_PHYSICS_CAP_FIXED_STEP |
+        WISTERIA_PHYSICS_CAP_GRAVITY;
+    return WISTERIA_OK;
+}
+
 /* --- Window (M4) --------------------------------------------------------- */
 
 } /* extern "C" */

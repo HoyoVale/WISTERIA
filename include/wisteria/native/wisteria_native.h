@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #define WISTERIA_NATIVE_VERSION_MAJOR 0
-#define WISTERIA_NATIVE_VERSION_MINOR 3
+#define WISTERIA_NATIVE_VERSION_MINOR 4
 
 #if defined(_WIN32)
 #  if defined(WISTERIA_NATIVE_BUILD)
@@ -338,6 +338,73 @@ WISTERIA_API enum WisteriaStatus wisteria_window_set_camera_speed(
     WisteriaContext context,
     WisteriaWindow window,
     float move_speed
+);
+
+/* --- Window render settings --------------------------------------------- */
+
+/*
+ * Per-window renderer configuration. Field semantics follow the "0 / -1
+ * keeps the current value" convention so frontends can update one knob
+ * without re-sending the whole state:
+ *   shadow_map_size      0 or 256..4096
+ *   shadow_pcf_radius    0 or 1..3
+ *   shadows_enabled      -1 keep, 0 off, 1 on
+ *   ground_shadow_enabled -1 keep, 0 off, 1 on
+ *   shadow_bias          <0 keep, otherwise >= 0 (MMD CSM depth bias)
+ */
+struct WisteriaRenderSettings
+{
+    int32_t shadow_map_size;
+    int32_t shadow_pcf_radius;
+    int32_t shadows_enabled;
+    int32_t ground_shadow_enabled;
+    float shadow_bias;
+    int32_t reserved[4];
+};
+
+WISTERIA_API enum WisteriaStatus wisteria_window_set_render_settings(
+    WisteriaContext context,
+    WisteriaWindow window,
+    const struct WisteriaRenderSettings* settings
+);
+
+/* --- MMD control --------------------------------------------------------- */
+
+WISTERIA_API enum WisteriaStatus wisteria_set_mmd_ik_enabled(
+    WisteriaContext context,
+    WisteriaModel model,
+    uint32_t bone_index,
+    int32_t enabled
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_find_bone_index(
+    WisteriaContext context,
+    WisteriaModel model,
+    const char* bone_name,
+    uint32_t* out_bone_index
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_load_camera_motion(
+    WisteriaContext context,
+    WisteriaModel model,
+    const char* vmd_path
+);
+
+/* --- Physics capability query -------------------------------------------- */
+
+/*
+ * Reports which physics preset knobs the engine actually implements on the
+ * current runtime. Only advertised capabilities may be passed to the
+ * physics settings API; mode/damping/CCD/semantic-filter bits are reserved
+ * until the community compatibility matrix (#5) defines their semantics.
+ */
+#define WISTERIA_PHYSICS_CAP_FIXED_STEP (1u << 0)
+#define WISTERIA_PHYSICS_CAP_GRAVITY    (1u << 1)
+
+WISTERIA_API enum WisteriaStatus wisteria_physics_capabilities(
+    WisteriaContext context,
+    WisteriaModel model,
+    uint32_t* out_capabilities
 );
 
 #ifdef __cplusplus

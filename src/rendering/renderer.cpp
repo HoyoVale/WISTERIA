@@ -43,6 +43,16 @@ Renderer::Renderer(GraphicsDevice* device)
 {
 }
 
+void Renderer::SetConfig(const Config& nextConfig) noexcept
+{
+    this->config = nextConfig;
+}
+
+const Renderer::Config& Renderer::GetConfig() const noexcept
+{
+    return this->config;
+}
+
 Renderer::~Renderer()
 {
     this->Release();
@@ -118,20 +128,23 @@ void Renderer::Render(
     // Cascaded shadow mapping: four light-space depth slices fitted to the
     // camera frustum, rendered into a depth texture array. MMD toon
     // materials select the cascade by camera-space depth in the main pass.
+    this->shadowMapSize = this->config.shadowMapSize;
     if (const char* sizeValue = std::getenv("WISTERIA_SHADOW_MAP_SIZE"))
     {
         const int parsed = std::atoi(sizeValue);
         if (parsed >= 256 && parsed <= 4096)
             this->shadowMapSize = parsed;
     }
+    this->shadowPcfRadius = this->config.shadowPcfRadius;
     if (const char* radiusValue = std::getenv("WISTERIA_SHADOW_PCF_RADIUS"))
     {
         const int parsed = std::atoi(radiusValue);
         if (parsed >= 1 && parsed <= 3)
             this->shadowPcfRadius = parsed;
     }
+    this->shadowBias = this->config.shadowBias;
     this->shadowStateEnabled = false;
-    const bool shadowsEnabled =
+    const bool shadowsEnabled = this->config.shadowsEnabled &&
         !EnvironmentFlagEnabled("WISTERIA_DISABLE_SHADOWS");
     if (shadowsEnabled &&
         !scene.DirectionalLights().empty() &&
@@ -297,6 +310,7 @@ void Renderer::Render(
     // characters drawn afterwards win the depth test and hide the shadow
     // where they occlude it.
     if (shadowsEnabled && !scene.DirectionalLights().empty() &&
+        this->config.groundShadowEnabled &&
         !EnvironmentFlagEnabled("WISTERIA_DISABLE_GROUND_SHADOW"))
     {
         this->RenderGroundShadowPass(

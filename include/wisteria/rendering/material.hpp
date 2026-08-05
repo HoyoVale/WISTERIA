@@ -109,6 +109,7 @@ struct ShaderInterface
     std::string receiveShadow = "receiveShadow";
     std::string shadowMapSize = "shadowMapSize";
     std::string shadowPcfRadius = "shadowPcfRadius";
+    std::string shadowBias = "shadowBias";
 
     std::string pointLights = "pointLights";
     std::string pointLightCount = "pointLightCount";

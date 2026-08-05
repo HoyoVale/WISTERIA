@@ -250,6 +250,10 @@ void Renderer::DrawPart(
             shaderInterface.shadowPcfRadius,
             this->shadowPcfRadius
         );
+        program.Uniform1f(
+            shaderInterface.shadowBias,
+            this->shadowBias
+        );
     }
 
     vertexArray.Bind();

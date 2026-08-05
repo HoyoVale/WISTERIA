@@ -2216,6 +2216,38 @@ void TestNativeAbiWindowWhenAvailable()
         "ABI window camera speed failed"
     );
 
+    struct WisteriaRenderSettings renderSettings = {};
+    renderSettings.shadow_map_size = 2048;
+    renderSettings.shadow_pcf_radius = 2;
+    renderSettings.shadows_enabled = 1;
+    renderSettings.ground_shadow_enabled = 1;
+    renderSettings.shadow_bias = 0.003f;
+    Require(
+        wisteria_window_set_render_settings(
+            context,
+            window,
+            &renderSettings
+        ) == WISTERIA_OK,
+        "ABI window render settings failed"
+    );
+    renderSettings.shadow_map_size = 64;
+    Require(
+        wisteria_window_set_render_settings(
+            context,
+            window,
+            &renderSettings
+        ) == WISTERIA_ERROR_INVALID_ARGUMENT,
+        "ABI window accepted an invalid shadow map size"
+    );
+    Require(
+        wisteria_window_set_render_settings(
+            context,
+            window,
+            nullptr
+        ) == WISTERIA_ERROR_INVALID_ARGUMENT,
+        "ABI window accepted null render settings"
+    );
+
     int32_t keyDown = 0;
     Require(
         wisteria_window_is_key_down(
@@ -2409,6 +2441,109 @@ void TestNativeAbiSabaWhenAvailable()
         wisteria_unload_model(context, model) == WISTERIA_OK &&
             wisteria_destroy_context(context) == WISTERIA_OK,
         "ABI model/context teardown failed"
+    );
+}
+
+void TestNativeAbiMmdControl()
+{
+    std::filesystem::path modelPath =
+        ProjectAssetDirectory / "models" / "mmd" /
+        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+    if (!std::filesystem::is_regular_file(modelPath))
+    {
+        modelPath = ProjectAssetDirectory / "models" / "mmd" /
+            "#U53f6#U77ac#U5149_pmx" /
+            "#U53f6#U77ac#U5149.pmx";
+    }
+    const std::filesystem::path cameraPath =
+        ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
+        u8"梦的翅膀camera.vmd";
+    if (!std::filesystem::is_regular_file(modelPath) ||
+        !std::filesystem::is_regular_file(cameraPath))
+    {
+        return;
+    }
+
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI MMD control context creation failed"
+    );
+    const std::u8string modelPathU8 = modelPath.u8string();
+    const std::string modelPathUtf8(
+        reinterpret_cast<const char*>(modelPathU8.data()),
+        modelPathU8.size()
+    );
+    WisteriaModel model = 0U;
+    Require(
+        wisteria_load_model(
+            context,
+            modelPathUtf8.c_str(),
+            &model
+        ) == WISTERIA_OK,
+        "ABI MMD control model load failed"
+    );
+
+    uint32_t capabilities = 0U;
+    Require(
+        wisteria_physics_capabilities(context, model, &capabilities) ==
+                WISTERIA_OK &&
+            (capabilities & WISTERIA_PHYSICS_CAP_FIXED_STEP) != 0U &&
+            (capabilities & WISTERIA_PHYSICS_CAP_GRAVITY) != 0U,
+        "ABI physics capabilities did not advertise engine-backed knobs"
+    );
+
+    uint32_t boneIndex = 0U;
+    Require(
+        wisteria_find_bone_index(context, model, nullptr, &boneIndex) ==
+            WISTERIA_ERROR_INVALID_ARGUMENT,
+        "ABI bone lookup accepted a null name"
+    );
+    Require(
+        wisteria_find_bone_index(
+            context,
+            model,
+            "no_such_bone_for_abi_test",
+            &boneIndex
+        ) == WISTERIA_ERROR_NOT_FOUND,
+        "ABI bone lookup accepted an unknown bone"
+    );
+    Require(
+        wisteria_set_mmd_ik_enabled(context, model, 0U, 1) == WISTERIA_OK,
+        "ABI IK switch failed"
+    );
+    Require(
+        wisteria_set_mmd_ik_enabled(context, 1234U, 0U, 1) ==
+            WISTERIA_ERROR_NOT_FOUND,
+        "ABI IK switch accepted an invalid model"
+    );
+
+    const std::u8string cameraPathU8 = cameraPath.u8string();
+    const std::string cameraPathUtf8(
+        reinterpret_cast<const char*>(cameraPathU8.data()),
+        cameraPathU8.size()
+    );
+    Require(
+        wisteria_load_camera_motion(
+            context,
+            model,
+            cameraPathUtf8.c_str()
+        ) == WISTERIA_OK,
+        "ABI camera motion load failed"
+    );
+    Require(
+        wisteria_load_camera_motion(
+            context,
+            model,
+            "no/such/camera.vmd"
+        ) == WISTERIA_ERROR_IO,
+        "ABI camera motion accepted a missing file"
+    );
+
+    Require(
+        wisteria_unload_model(context, model) == WISTERIA_OK &&
+            wisteria_destroy_context(context) == WISTERIA_OK,
+        "ABI MMD control teardown failed"
     );
 }
 
@@ -3302,6 +3437,10 @@ int main()
     failures += !RunTest(
         "Native ABI window",
         TestNativeAbiWindowWhenAvailable
+    );
+    failures += !RunTest(
+        "Native ABI MMD control",
+        TestNativeAbiMmdControl
     );
     #endif
     failures += !RunTest("Static model importer", TestStaticModelImporter);
