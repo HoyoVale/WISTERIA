@@ -11,7 +11,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(WISTERIA_BUILD_NATIVE
     "Build the experimental native C ABI shared library (wisteria_native)"
-    OFF
+    ON
 )
 option(WISTERIA_BUILD_SABA_VIEWER
     "Build Saba's standalone reference OpenGL viewer"
@@ -380,6 +380,7 @@ if(BUILD_TESTING)
     )
     target_compile_definitions(wisteria_render_tests PRIVATE
         GLFW_INCLUDE_NONE
+        WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
     )
     if(MSVC)
         target_compile_options(wisteria_render_tests PRIVATE /utf-8)

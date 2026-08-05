@@ -376,9 +376,39 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
 void WindowManager::DestroyWindow(Window& window)
 {
     this->RequireOwnerThread();
-    this->Find(window);
-    if (window.GetGLFWwindow() != nullptr)
-        glfwSetWindowShouldClose(window.GetGLFWwindow(), GLFW_TRUE);
+    if (this->running)
+    {
+        // Inside the frame loop, destruction is committed at the next frame
+        // boundary by DestroyClosedWindows so GL state stays consistent.
+        if (window.GetGLFWwindow() != nullptr)
+            glfwSetWindowShouldClose(window.GetGLFWwindow(), GLFW_TRUE);
+        return;
+    }
+
+    // Outside the frame loop (native C ABI path) destroy synchronously so
+    // the frontend's window handle maps to a real teardown. The last window
+    // of the share group stays alive: Application::Shutdown releases shared
+    // GPU resources first and destroys it afterwards, matching the R0
+    // context-lifetime contract.
+    const auto iterator = std::find_if(
+        this->windows.begin(),
+        this->windows.end(),
+        [&window](const std::unique_ptr<ManagedWindow>& managed)
+        {
+            return managed->window.get() == &window;
+        }
+    );
+    if (iterator == this->windows.end())
+        throw std::invalid_argument("Window is not managed by this WindowManager");
+    if (this->windows.size() == 1U)
+    {
+        if (window.GetGLFWwindow() != nullptr)
+            glfwSetWindowShouldClose(window.GetGLFWwindow(), GLFW_TRUE);
+        return;
+    }
+
+    (*iterator)->window->MakeContextCurrent();
+    this->windows.erase(iterator);
 }
 
 std::shared_ptr<Scene> WindowManager::CreateScene()

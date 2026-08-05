@@ -183,6 +183,12 @@ struct MaterialData{
 using MaterialTextureBindings =
     std::unordered_map<std::string, std::shared_ptr<Texture>>;
 
+// Texture unit contract: Material::Bind assigns units starting at 0 in
+// unordered-map iteration order. The renderer reserves units 8..15 for
+// environment IBL, GPU skinning, post-processing, OIT and shadow maps, so
+// materials must not bind more than 8 textures (MMD uses at most 3: base,
+// sphere and toon). Custom shaders with more samplers must extend this
+// contract explicitly.
 class Material{
 public:
     explicit Material(

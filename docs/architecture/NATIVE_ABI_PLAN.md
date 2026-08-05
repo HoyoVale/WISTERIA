@@ -1,8 +1,10 @@
 # Native C ABI 门面计划（方案 C）
 
-> **状态：冻结的历史方案。** WISTERIA(17) 之后，C ABI 作为显式 opt-in
-> 实验层维护，不再默认构建，也不继续扩张接口。当前结构决策与后续拆分以
-> `STRUCTURE_STABILIZATION_R0.md` 为准。本文保留用于追溯早期设计动机。
+> **状态：已解除冻结（2026-08，R1 收口后）。** C 门户全面导出经审查通过，
+> `WISTERIA_BUILD_NATIVE` 默认开启，双平台产出 `wisteria_native`
+> （Windows DLL / Linux .so）。扩张遵循 R1 审查约定：每个新导出函数必须有
+> 引擎级用例 + 回归测试；v0.x 仍不承诺 ABI 稳定，导出符号清单单独维护。
+> 冻结期的结构决策仍以 `STRUCTURE_STABILIZATION_R0.md` 为准。
 
 ## 目标
 

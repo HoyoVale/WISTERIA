@@ -626,6 +626,71 @@ int main()
                 "[RENDER FBO] mesh lifetime cache rebuilt\n"
             );
         }
+
+        // Imported PBR model renders end-to-end (R1-07): a glTF quad with a
+        // baseColorFactor material must draw through the assimp -> PBR ->
+        // basicTex chain, not just the programmatic ground/cube path.
+        {
+            GraphicsDevice device;
+            ResourceManager resources;
+            resources.BindGraphicsDevice(device);
+            const std::filesystem::path modelPath =
+                std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+                "pbr_quad.gltf";
+            Require(
+                std::filesystem::is_regular_file(modelPath),
+                "pbr_quad.gltf fixture is missing"
+            );
+            ModelAsset& model = resources.LoadModel(
+                "test::pbrQuad",
+                modelPath
+            );
+            Scene scene;
+            scene.CreateDirectionalLight(DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = {1.0f, 0.96f, 0.92f},
+                .Intensity = 1.0f
+            });
+            scene.InstantiateModel(model);
+            Camera camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            const glm::mat4 projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+            sceneFramebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
+            Renderer renderer;
+            renderer.Render(
+                scene,
+                camera,
+                projection,
+                sceneFramebuffer
+            );
+            Require(
+                glGetError() == GL_NO_ERROR,
+                "GL error during imported PBR render"
+            );
+            unsigned char pixel[4] = {0U, 0U, 0U, 0U};
+            ReadPixel(sceneFramebuffer.Id(), GL_COLOR_ATTACHMENT0, pixel);
+            const bool orangeQuadVisible =
+                pixel[0] > 100U &&
+                pixel[0] > pixel[1] &&
+                pixel[0] > pixel[2];
+            Require(
+                orangeQuadVisible,
+                "imported PBR quad did not render with its base color"
+            );
+            std::printf(
+                "[RENDER FBO] imported-pbr pixel=%u,%u,%u,%u\n",
+                pixel[0], pixel[1], pixel[2], pixel[3]
+            );
+        }
     }
     catch (const std::exception& error)
     {

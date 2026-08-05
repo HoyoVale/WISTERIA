@@ -6,6 +6,12 @@ The MMD path is feature-complete enough to freeze expansion temporarily. The
 next milestone is not another rendering feature or a larger C ABI. It is a
 boundary-stabilization pass.
 
+> 更新（2026-08，R1 收口后）：边界稳定化已完成并通过全栈审查。C 门户
+> （`wisteria_native`）从冻结状态解除，进入全面导出阶段：`WISTERIA_BUILD_NATIVE`
+> 默认开启，导出面按 FULL_STACK_AUDIT_R1.md 的优先级推进（物理预设 →
+> 渲染配置 → MMD 控制）。新导出函数仍需引擎级用例 + 回归测试，v0.x 不承诺
+> ABI 稳定。
+
 The native facade remains available as an explicit opt-in experiment, but v0.x is not a stable
 SDK. Fresh builds leave `WISTERIA_BUILD_NATIVE=OFF` unless a binding test explicitly enables it. New exported functions require an engine-level use case and a regression
 test. Frontends must not dictate core ownership or frame scheduling.
