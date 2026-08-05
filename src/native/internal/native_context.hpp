@@ -2,6 +2,7 @@
 
 #include "wisteria/native/wisteria_native.h"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
+#include "wisteria/scene/scene.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -29,6 +30,23 @@ struct WindowEntry
     bool demoLoaded = false;
 };
 
+struct SceneEntry
+{
+    std::shared_ptr<Scene> scene;
+    Window* window = nullptr;
+    std::unordered_map<WisteriaSceneModel, ModelAsset*> models;
+    WisteriaSceneModel nextModelHandle = 1U;
+    std::unordered_map<WisteriaEntity, Entity*> entities;
+    WisteriaEntity nextEntityHandle = 1U;
+    struct LightEntry
+    {
+        int kind = 0;  // 0 = directional, 1 = point
+        void* light = nullptr;
+    };
+    std::unordered_map<WisteriaLight, LightEntry> lights;
+    WisteriaLight nextLightHandle = 1U;
+};
+
 struct Context
 {
     Context();
@@ -43,6 +61,8 @@ struct Context
     std::unique_ptr<Application> application;
     std::unordered_map<WisteriaWindow, std::unique_ptr<WindowEntry>> windows;
     WisteriaWindow nextWindowHandle = 1U;
+    std::unordered_map<WisteriaScene, std::unique_ptr<SceneEntry>> scenes;
+    WisteriaScene nextSceneHandle = 1U;
     std::string lastError;
 };
 
@@ -54,6 +74,7 @@ bool UnregisterContext(WisteriaContext handle);
 
 ModelEntry* FindModel(Context& context, WisteriaModel handle);
 WindowEntry* FindWindow(Context& context, WisteriaWindow handle);
+SceneEntry* FindScene(Context& context, WisteriaScene handle);
 void SetError(Context& context, std::string message);
 enum WisteriaStatus InvalidHandle(Context& context, const char* message);
 bool CopyErrorMessage(

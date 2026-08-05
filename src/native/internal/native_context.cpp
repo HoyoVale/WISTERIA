@@ -56,6 +56,12 @@ WindowEntry* FindWindow(Context& context, WisteriaWindow handle)
     return iterator == context.windows.end() ? nullptr : iterator->second.get();
 }
 
+SceneEntry* FindScene(Context& context, WisteriaScene handle)
+{
+    const auto iterator = context.scenes.find(handle);
+    return iterator == context.scenes.end() ? nullptr : iterator->second.get();
+}
+
 void SetError(Context& context, std::string message)
 {
     context.lastError = std::move(message);

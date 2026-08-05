@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #define WISTERIA_NATIVE_VERSION_MAJOR 0
-#define WISTERIA_NATIVE_VERSION_MINOR 4
+#define WISTERIA_NATIVE_VERSION_MINOR 5
 
 #if defined(_WIN32)
 #  if defined(WISTERIA_NATIVE_BUILD)
@@ -38,6 +38,10 @@ typedef uint64_t WisteriaContext;
 typedef uint64_t WisteriaModel;
 typedef uint64_t WisteriaMotion;
 typedef uint64_t WisteriaWindow;
+typedef uint64_t WisteriaScene;
+typedef uint64_t WisteriaSceneModel;
+typedef uint64_t WisteriaEntity;
+typedef uint64_t WisteriaLight;
 
 enum WisteriaStatus
 {
@@ -405,6 +409,92 @@ WISTERIA_API enum WisteriaStatus wisteria_physics_capabilities(
     WisteriaContext context,
     WisteriaModel model,
     uint32_t* out_capabilities
+);
+
+/* --- Self-built scenes ---------------------------------------------------- */
+
+/*
+ * Frontend-controlled scene: create an empty scene bound to a window (this
+ * replaces the demo composition), load models (PMX via Saba, or OBJ/glTF via
+ * assimp), instantiate entities with transforms, control visibility, add
+ * lights, and drive rendering with wisteria_poll_and_render as usual.
+ * Euler angles are in radians (engine convention). All handles are
+ * single-threaded per context, like the rest of the ABI.
+ */
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_create(
+    WisteriaContext context,
+    WisteriaWindow window,
+    WisteriaScene* out_scene
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_destroy(
+    WisteriaContext context,
+    WisteriaScene scene
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_load_model(
+    WisteriaContext context,
+    WisteriaScene scene,
+    const char* model_path,
+    WisteriaSceneModel* out_model
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_unload_model(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaSceneModel model
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_instantiate_model(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaSceneModel model,
+    const float position[3],
+    const float euler_radians[3],
+    const float scale[3],
+    WisteriaEntity* out_entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_transform(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    const float position[3],
+    const float euler_radians[3],
+    const float scale[3]
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_set_visible(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity,
+    int32_t visible
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_entity_destroy(
+    WisteriaContext context,
+    WisteriaScene scene,
+    WisteriaEntity entity
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_directional_light(
+    WisteriaContext context,
+    WisteriaScene scene,
+    const float direction[3],
+    const float color[3],
+    float intensity,
+    WisteriaLight* out_light
+);
+
+WISTERIA_API enum WisteriaStatus wisteria_scene_add_point_light(
+    WisteriaContext context,
+    WisteriaScene scene,
+    const float position[3],
+    const float color[3],
+    float intensity,
+    float range,
+    WisteriaLight* out_light
 );
 
 #ifdef __cplusplus

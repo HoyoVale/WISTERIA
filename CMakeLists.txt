@@ -318,6 +318,7 @@ if(WISTERIA_BUILD_NATIVE)
         src/native/internal/native_context.cpp
         src/native/native_common.cpp
         src/native/native_model.cpp
+        src/native/native_scene.cpp
         src/native/native_window.cpp
         src/native/windows_path.cpp
     )

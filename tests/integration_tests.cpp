@@ -2668,6 +2668,204 @@ void TestNativeAbiMmdControl()
     );
 }
 
+void TestNativeAbiSceneWhenAvailable()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "ABI scene context creation failed"
+    );
+    WisteriaWindow window = 0U;
+    if (wisteria_window_create(
+            context,
+            320,
+            240,
+            "WISTERIA ABI scene test",
+            &window
+        ) != WISTERIA_OK)
+    {
+        wisteria_destroy_context(context);
+        return;
+    }
+
+    const std::filesystem::path previousWorkingDirectory =
+        std::filesystem::current_path();
+    try
+    {
+        const std::filesystem::path projectRoot =
+            std::filesystem::path(WISTERIA_PROJECT_ASSET_DIR).parent_path();
+        std::filesystem::current_path(projectRoot);
+
+        std::filesystem::path modelPath =
+            ProjectAssetDirectory / "models" / "mmd" /
+            u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
+        if (!std::filesystem::is_regular_file(modelPath))
+        {
+            modelPath = ProjectAssetDirectory / "models" / "mmd" /
+                "#U53f6#U77ac#U5149_pmx" /
+                "#U53f6#U77ac#U5149.pmx";
+        }
+        Require(
+            std::filesystem::is_regular_file(modelPath),
+            "ABI scene test model is missing"
+        );
+        const std::u8string modelPathU8 = modelPath.u8string();
+        const std::string modelPathUtf8(
+            reinterpret_cast<const char*>(modelPathU8.data()),
+            modelPathU8.size()
+        );
+
+        WisteriaScene scene = 0U;
+        Require(
+            wisteria_scene_create(context, window, &scene) == WISTERIA_OK &&
+                scene != 0U,
+            "ABI scene create failed"
+        );
+        Require(
+            wisteria_scene_load_model(
+                context,
+                scene,
+                modelPathUtf8.c_str(),
+                nullptr
+            ) == WISTERIA_ERROR_INVALID_ARGUMENT,
+            "ABI scene accepted a null model out-handle"
+        );
+        WisteriaSceneModel model = 0U;
+        Require(
+            wisteria_scene_load_model(
+                context,
+                scene,
+                modelPathUtf8.c_str(),
+                &model
+            ) == WISTERIA_OK &&
+                model != 0U,
+            "ABI scene model load failed"
+        );
+
+        const float position[3] = {0.0f, 0.0f, 0.0f};
+        const float euler[3] = {0.0f, 0.0f, 0.0f};
+        const float scale[3] = {1.0f, 1.0f, 1.0f};
+        WisteriaEntity entity = 0U;
+        Require(
+            wisteria_scene_instantiate_model(
+                context,
+                scene,
+                model,
+                position,
+                euler,
+                scale,
+                &entity
+            ) == WISTERIA_OK &&
+                entity != 0U,
+            "ABI scene instantiate failed"
+        );
+        Require(
+            wisteria_entity_set_transform(
+                context,
+                scene,
+                entity,
+                position,
+                euler,
+                scale
+            ) == WISTERIA_OK,
+            "ABI entity transform failed"
+        );
+        Require(
+            wisteria_entity_set_visible(context, scene, entity, 1) ==
+                    WISTERIA_OK &&
+                wisteria_entity_set_visible(context, scene, entity, 0) ==
+                    WISTERIA_OK,
+            "ABI entity visibility failed"
+        );
+
+        const float direction[3] = {-0.35f, -0.75f, -0.45f};
+        const float color[3] = {1.0f, 0.96f, 0.92f};
+        WisteriaLight light = 0U;
+        Require(
+            wisteria_scene_add_directional_light(
+                context,
+                scene,
+                direction,
+                color,
+                1.0f,
+                &light
+            ) == WISTERIA_OK &&
+                light != 0U,
+            "ABI scene directional light failed"
+        );
+        const float lightPosition[3] = {5.0f, 13.0f, 9.0f};
+        Require(
+            wisteria_scene_add_point_light(
+                context,
+                scene,
+                lightPosition,
+                color,
+                1.0f,
+                35.0f,
+                &light
+            ) == WISTERIA_OK,
+            "ABI scene point light failed"
+        );
+        Require(
+            wisteria_scene_add_point_light(
+                context,
+                scene,
+                lightPosition,
+                color,
+                1.0f,
+                -1.0f,
+                &light
+            ) == WISTERIA_ERROR_INVALID_ARGUMENT,
+            "ABI scene accepted a negative light range"
+        );
+
+        for (int frame = 0; frame < 20; ++frame)
+        {
+            const WisteriaStatus renderStatus =
+                wisteria_poll_and_render(context, 1.0f / 60.0f);
+            if (renderStatus != WISTERIA_OK)
+            {
+                char errorBuffer[512] = {};
+                wisteria_last_error_message(
+                    context,
+                    errorBuffer,
+                    sizeof(errorBuffer)
+                );
+                std::fprintf(
+                    stderr,
+                    "ABI scene render failed with: %s\n",
+                    errorBuffer
+                );
+            }
+            Require(renderStatus == WISTERIA_OK, "ABI scene render failed");
+        }
+
+        Require(
+            wisteria_entity_destroy(context, scene, entity) == WISTERIA_OK &&
+                wisteria_entity_destroy(context, scene, entity) ==
+                    WISTERIA_ERROR_NOT_FOUND,
+            "ABI entity destroy did not invalidate the handle"
+        );
+        Require(
+            wisteria_scene_destroy(context, scene) == WISTERIA_OK &&
+                wisteria_scene_destroy(context, scene) ==
+                    WISTERIA_ERROR_NOT_FOUND,
+            "ABI scene destroy did not invalidate the handle"
+        );
+    }
+    catch (...)
+    {
+        std::filesystem::current_path(previousWorkingDirectory);
+        throw;
+    }
+    std::filesystem::current_path(previousWorkingDirectory);
+    Require(
+        wisteria_window_destroy(context, window) == WISTERIA_OK &&
+            wisteria_destroy_context(context) == WISTERIA_OK,
+        "ABI scene teardown failed"
+    );
+}
+
 #endif
 
 void TestStaticModelImporter()
@@ -3566,6 +3764,10 @@ int main()
     failures += !RunTest(
         "Native ABI MMD control",
         TestNativeAbiMmdControl
+    );
+    failures += !RunTest(
+        "Native ABI scene",
+        TestNativeAbiSceneWhenAvailable
     );
     #endif
     failures += !RunTest("Static model importer", TestStaticModelImporter);
