@@ -1,4 +1,5 @@
 #include "test_support.hpp"
+#include "test_fixtures.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -7,56 +8,12 @@
 
 namespace
 {
-std::optional<std::filesystem::path> FindProjectAssetByExtension(
-    std::string extension
-)
-{
-    if (!std::filesystem::is_directory(ProjectAssetDirectory))
-        return std::nullopt;
-    std::transform(
-        extension.begin(),
-        extension.end(),
-        extension.begin(),
-        [](unsigned char value) { return static_cast<char>(std::tolower(value)); }
-    );
-    std::vector<std::filesystem::path> matches;
-    std::error_code error;
-    for (std::filesystem::recursive_directory_iterator iterator(
-             ProjectAssetDirectory,
-             std::filesystem::directory_options::skip_permission_denied,
-             error
-         ), end;
-         iterator != end;
-         iterator.increment(error))
-    {
-        if (error)
-        {
-            error.clear();
-            continue;
-        }
-        if (!iterator->is_regular_file(error))
-            continue;
-        std::string candidate = iterator->path().extension().string();
-        std::transform(
-            candidate.begin(),
-            candidate.end(),
-            candidate.begin(),
-            [](unsigned char value) { return static_cast<char>(std::tolower(value)); }
-        );
-        if (candidate == extension)
-            matches.push_back(iterator->path());
-    }
-    if (matches.empty())
-        return std::nullopt;
-    std::sort(matches.begin(), matches.end());
-    return matches.front();
-}
 
 void TestAnimatedModelImporter()
 {
     const std::filesystem::path modelPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
-        "animated_triangle.gltf";
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.skeleton.has_value(), "Animated glTF lost its Skeleton");
     Require(imported.animations.size() == 1, "Animated glTF lost its clip");
@@ -99,8 +56,8 @@ void TestAnimatedModelImporter()
 void TestExtendedPmxMorphImporter()
 {
     const std::filesystem::path modelPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
-        "extended_morph.pmx";
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
         imported.skeleton.has_value() &&
@@ -586,18 +543,13 @@ void TestVmdImporter()
 
 void TestVmdAssetWhenAvailable()
 {
-    const std::filesystem::path directory =
-        ProjectAssetDirectory / "models" / "mmd" / u8"凑企鹅";
-    const std::filesystem::path modelPath = directory / u8"凑企鹅.pmx";
-    const std::filesystem::path motionPath = directory / "penguin_walking.vmd";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-couqie"
-    );
-    RequireFullAsset(
-        motionPath,
-        "production-vmd-penguin"
-    );
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-couqie");
+    const std::filesystem::path motionPath =
+        FixturePath("production-vmd-penguin");
+    RequireFullAsset("production-pmx-couqie");
+    RequireFullAsset("production-vmd-penguin");
 
     const ImportedModelData model = ModelImporter().Import(modelPath);
     Require(model.skeleton.has_value(), "VMD test PMX has no Skeleton");
@@ -882,8 +834,8 @@ void TestPmx21FlipImpulseMorphRuntime()
 void TestPmx21FlipImpulseImporter()
 {
     const std::filesystem::path modelPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
-        "pmx21_flip_impulse.pmx";
+        FixturePath("pmx21-flip-impulse");
+    RequireCoreAsset("pmx21-flip-impulse");
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
         imported.mmdPhysics.has_value() &&
@@ -956,7 +908,8 @@ void TestPmx21FlipImpulseImporter()
 void TestPmxPhysicsImporter()
 {
     const std::filesystem::path modelPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) / "pmx_physics.pmx";
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
         imported.skeleton.has_value() && imported.mmdPhysics.has_value(),
@@ -1070,12 +1023,10 @@ void TestPmxPhysicsImporter()
 
 void TestPmxPhysicsImporterValidation()
 {
-    const auto rejected = [](const char* fileName)
+    const auto rejected = [](const std::filesystem::path& path)
     {
         try
         {
-            const std::filesystem::path path =
-                std::filesystem::path(WISTERIA_TEST_DATA_DIR) / fileName;
             (void)ModelImporter().Import(path);
             return false;
         }
@@ -1086,15 +1037,15 @@ void TestPmxPhysicsImporterValidation()
     };
 
     Require(
-        rejected("pmx_physics_invalid_group.pmx"),
+        rejected(FixturePath("pmx-physics-invalid-group")),
         "PMX importer accepted collision group 16"
     );
     Require(
-        rejected("pmx_physics_invalid_joint.pmx"),
+        rejected(FixturePath("pmx-physics-invalid-joint")),
         "PMX importer accepted an out-of-range joint rigid body"
     );
     Require(
-        rejected("pmx_physics_softbody.pmx"),
+        rejected(FixturePath("pmx-physics-softbody")),
         "PMX importer silently accepted unsupported Soft Body data"
     );
 }
@@ -1379,19 +1330,10 @@ void TestExtendedMmdMorphRuntime()
 
 void TestSabaMmdImporterWhenAvailable()
 {
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    RequireFullAsset("production-pmx-yeshiguang");
 
     SabaMmdImporter sabaImporter;
     ImportedModelData saba;
@@ -1484,42 +1426,26 @@ void TestSabaMmdImporterWhenAvailable()
     );
 
     const std::filesystem::path smallPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
-        "pmx_physics.pmx";
-    if (std::filesystem::is_regular_file(smallPath))
-    {
-        ImportedModelData small = sabaImporter.Import(smallPath);
-        Require(
-            small.mmdPhysics.has_value() &&
-                small.mmdPhysics->RigidBodyCount() == 3U &&
-                small.mmdPhysics->JointCount() == 6U,
-            "Saba importer mismatched the PMX Physics 1 fixture"
-        );
-    }
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    ImportedModelData small = sabaImporter.Import(smallPath);
+    Require(
+        small.mmdPhysics.has_value() &&
+            small.mmdPhysics->RigidBodyCount() == 3U &&
+            small.mmdPhysics->JointCount() == 6U,
+        "Saba importer mismatched the PMX Physics 1 fixture"
+    );
 }
 
 void TestSabaSkinningWhenAvailable()
 {
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
-    std::filesystem::path motionPath =
-        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
-        u8"身体动作.vmd";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
-    RequireFullAsset(
-        motionPath,
-        "production-vmd-body"
-    );
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    const std::filesystem::path motionPath =
+        FixturePath("production-vmd-body");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
 
     SabaMmdImporter importer;
     ImportedModelData imported = importer.Import(modelPath);
@@ -1779,12 +1705,10 @@ void TestSabaSkinningWhenAvailable()
 
 void TestSabaImporterAcrossModelsWhenAvailable()
 {
+    RequireFullAssetsTier();
     const std::filesystem::path mmdDirectory =
-        ProjectAssetDirectory / "models" / "mmd";
-    RequireFullAssetDirectory(
-        mmdDirectory,
-        "production-mmd-directory"
-    );
+        FixturePath("production-mmd-directory");
+    RequireFullAssetDirectory("production-mmd-directory");
 
     std::vector<std::filesystem::path> candidates;
     for (const std::filesystem::directory_entry& entry :
@@ -1894,26 +1818,13 @@ void TestSabaImporterAcrossModelsWhenAvailable()
 
 void TestSabaMmdPhysicsLongRunWhenAvailable()
 {
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
-    std::filesystem::path motionPath =
-        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
-        u8"身体动作.vmd";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
-    RequireFullAsset(
-        motionPath,
-        "production-vmd-body"
-    );
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    const std::filesystem::path motionPath =
+        FixturePath("production-vmd-body");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
 
     SabaMmdRuntimeModel runtime(
         modelPath,
@@ -1968,24 +1879,15 @@ void TestSabaMmdPhysicsLongRunWhenAvailable()
 
 void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
 {
+    RequireFullAssetsTier();
     // Phase 0/1 of the community physics adoption plan: a reproducible,
     // physics-only baseline on a frozen fixture. No motion, fixed 120 Hz
     // step, tight runaway bound; the trace export (WISTERIA_PHYSICS_TRACE)
     // feeds the cross-implementation comparison once reference traces from
     // babylon-mmd / libmmd / nanoem are available.
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    RequireFullAsset("production-pmx-yeshiguang");
 
     // Physics-only baseline: no VMD motion, so the measured displacement is
     // driven purely by the rigid-body world settling under gravity.
@@ -2110,28 +2012,16 @@ void TestSabaMmdPhysicsCompatBaselineWhenAvailable()
 
 void TestSabaMotionCameraLightInterfaceWhenAvailable()
 {
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
     const std::filesystem::path motionPath =
-        ProjectAssetDirectory / "motions" / u8"皮卡皮卡皮卡丘+" /
-        u8"身体动作.vmd";
+        FixturePath("production-vmd-body");
     const std::filesystem::path cameraPath =
-        ProjectAssetDirectory / "motions" / u8"越南鼓卡点舞 镜头.vmd";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
-    RequireFullAsset(
-        motionPath,
-        "production-vmd-body"
-    );
+        FixturePath("production-vmd-camera-gu");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
+    RequireFullAsset("production-vmd-camera-gu");
 
     SabaMmdRuntimeModel runtime(modelPath, motionPath);
     Require(runtime.Initialize(), "Saba interface runtime failed to initialize");
@@ -2188,28 +2078,25 @@ void TestSabaMotionCameraLightInterfaceWhenAvailable()
         "LoadMotion did not replace the current motion"
     );
 
-    // Camera interface: real camera VMD when available.
-    if (std::filesystem::is_regular_file(cameraPath))
-    {
-        Require(
-            runtime.LoadCameraMotion(cameraPath),
-            "LoadCameraMotion rejected a camera VMD"
-        );
-        Camera camera;
-        runtime.ApplyCameraMotion(10.0f, camera);
-        const CameraParam& param = camera.GetParam();
-        Require(
-            std::isfinite(param.Position.x) &&
-                std::isfinite(param.Position.y) &&
-                std::isfinite(param.Position.z) &&
-                std::isfinite(param.Target.x) &&
-                std::isfinite(param.Target.y) &&
-                std::isfinite(param.Target.z) &&
-                param.VerticalFovDegrees > 0.0f &&
-                param.VerticalFovDegrees < 180.0f,
-            "VMD camera produced non-finite or invalid CameraParam"
-        );
-    }
+    // Camera interface: the camera VMD is a required FULL_ASSETS fixture.
+    Require(
+        runtime.LoadCameraMotion(cameraPath),
+        "LoadCameraMotion rejected a camera VMD"
+    );
+    Camera camera;
+    runtime.ApplyCameraMotion(10.0f, camera);
+    const CameraParam& param = camera.GetParam();
+    Require(
+        std::isfinite(param.Position.x) &&
+            std::isfinite(param.Position.y) &&
+            std::isfinite(param.Position.z) &&
+            std::isfinite(param.Target.x) &&
+            std::isfinite(param.Target.y) &&
+            std::isfinite(param.Target.z) &&
+            param.VerticalFovDegrees > 0.0f &&
+            param.VerticalFovDegrees < 180.0f,
+        "VMD camera produced non-finite or invalid CameraParam"
+    );
 
     // Light interface: VMDs may not carry light frames; both outcomes must be
     // safe, and the programmatic LightTrack path must always apply.
@@ -2302,6 +2189,7 @@ void TestNativeAbiLifecycle()
 
 void TestNativeAbiWindowWhenAvailable()
 {
+    RequireFullAssetsTier();
     WisteriaContext context = 0U;
     Require(
         wisteria_create_context(&context) == WISTERIA_OK,
@@ -2333,48 +2221,30 @@ void TestNativeAbiWindowWhenAvailable()
     {
         std::filesystem::current_path(ProjectAssetDirectory.parent_path());
 
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
     const std::u8string modelPathU8 = modelPath.u8string();
     const std::string modelPathUtf8(
         reinterpret_cast<const char*>(modelPathU8.data()),
         modelPathU8.size()
     );
     const std::filesystem::path motionPath =
-        ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
-        u8"梦的翅膀motion.vmd";
+        FixturePath("production-vmd-motion");
     const std::u8string motionPathU8 = motionPath.u8string();
     const std::string motionPathUtf8(
         reinterpret_cast<const char*>(motionPathU8.data()),
         motionPathU8.size()
     );
     const std::filesystem::path scenePath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"随便观" / u8"随便观.pmx";
+        FixturePath("production-pmx-suibian");
     const std::u8string scenePathU8 = scenePath.u8string();
     const std::string scenePathUtf8(
         reinterpret_cast<const char*>(scenePathU8.data()),
         scenePathU8.size()
     );
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
-    RequireFullAsset(
-        motionPath,
-        "production-vmd-motion"
-    );
-    RequireFullAsset(
-        scenePath,
-        "production-pmx-suibian"
-    );
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-motion");
+    RequireFullAsset("production-pmx-suibian");
 
     Require(
         wisteria_window_load_demo(
@@ -2502,26 +2372,13 @@ void TestNativeAbiWindowWhenAvailable()
 
 void TestNativeAbiSabaWhenAvailable()
 {
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
     const std::filesystem::path motionPath =
-        ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
-        u8"梦的翅膀motion.vmd";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
-    RequireFullAsset(
-        motionPath,
-        "production-vmd-motion"
-    );
+        FixturePath("production-vmd-motion");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-motion");
 
     WisteriaContext context = 0U;
     Require(
@@ -2660,26 +2517,13 @@ void TestNativeAbiSabaWhenAvailable()
 
 void TestNativeAbiMmdControl()
 {
-    std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    if (!std::filesystem::is_regular_file(modelPath))
-    {
-        modelPath = ProjectAssetDirectory / "models" / "mmd" /
-            "#U53f6#U77ac#U5149_pmx" /
-            "#U53f6#U77ac#U5149.pmx";
-    }
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
     const std::filesystem::path cameraPath =
-        ProjectAssetDirectory / "motions" / u8"梦的翅膀" /
-        u8"梦的翅膀camera.vmd";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
-    RequireFullAsset(
-        cameraPath,
-        "production-vmd-camera"
-    );
+        FixturePath("production-vmd-camera");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-camera");
 
     WisteriaContext context = 0U;
     Require(
@@ -2791,6 +2635,7 @@ void TestNativeAbiMmdControl()
 
 void TestNativeAbiSceneWhenAvailable()
 {
+    RequireFullAssetsTier();
     WisteriaContext context = 0U;
     Require(
         wisteria_create_context(&context) == WISTERIA_OK,
@@ -2817,28 +2662,16 @@ void TestNativeAbiSceneWhenAvailable()
             std::filesystem::path(WISTERIA_PROJECT_ASSET_DIR).parent_path();
         std::filesystem::current_path(projectRoot);
 
-        std::filesystem::path modelPath =
-            ProjectAssetDirectory / "models" / "mmd" /
-            u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-        if (!std::filesystem::is_regular_file(modelPath))
-        {
-            modelPath = ProjectAssetDirectory / "models" / "mmd" /
-                "#U53f6#U77ac#U5149_pmx" /
-                "#U53f6#U77ac#U5149.pmx";
-        }
-        RequireFullAsset(
-            modelPath,
-            "production-pmx-yeshiguang"
-        );
+        const std::filesystem::path modelPath =
+            FixturePath("production-pmx-yeshiguang");
+        RequireFullAsset("production-pmx-yeshiguang");
         const std::u8string modelPathU8 = modelPath.u8string();
         const std::string modelPathUtf8(
             reinterpret_cast<const char*>(modelPathU8.data()),
             modelPathU8.size()
         );
         const std::string morphModelPath =
-            std::filesystem::path(WISTERIA_TEST_DATA_DIR)
-                .append("extended_morph.pmx")
-                .string();
+            FixturePath("extended-morph-pmx").string();
 
         WisteriaScene scene = 0U;
         Require(
@@ -3489,8 +3322,9 @@ void TestNativeAbiHeadlessRenderWhenAvailable()
 void TestStaticModelImporter()
 {
     const ImportedModelData imported = ModelImporter().Import(
-        TestAssetDirectory / "models" / "embedded_triangle.gltf"
+        FixturePath("triangle-gltf")
     );
+    RequireCoreAsset("triangle-gltf");
 
     Require(imported.meshes.size() == 1, "Importer mesh count is incorrect");
     Require(imported.materials.size() == 1, "Importer material count is incorrect");
@@ -3587,7 +3421,8 @@ void TestImportedResourceCreation()
 {
     ResourceManager resources;
     const std::filesystem::path modelPath =
-        TestAssetDirectory / "models" / "embedded_triangle.gltf";
+        FixturePath("triangle-gltf");
+    RequireCoreAsset("triangle-gltf");
     ModelAsset& model = resources.LoadModel(
         "embeddedTriangle",
         modelPath
@@ -3705,6 +3540,7 @@ void TestImporterRejectsMissingFile()
 
 void TestImportResourceCollisionIsTransactional()
 {
+    RequireCoreAsset("box-glb");
     ResourceManager resources;
     resources.CreateTexture(
         "collision::texture::0",
@@ -3716,7 +3552,7 @@ void TestImportResourceCollisionIsTransactional()
     {
         resources.LoadModel(
             "collision",
-            TestAssetDirectory / "models" / "embedded_triangle.gltf"
+            FixturePath("triangle-gltf")
         );
     }
     catch (const std::invalid_argument&)
@@ -3734,9 +3570,8 @@ void TestImportResourceCollisionIsTransactional()
 void TestConvertedMmdGlbWhenAvailable()
 {
     const std::filesystem::path modelPath =
-        TestAssetDirectory / "models" / u8"仪玄_glb" / u8"仪玄.glb";
-    if (!std::filesystem::is_regular_file(modelPath))
-        SkipTest("converted MMD GLB fixture is unavailable");
+        FixturePath("converted-mmd-glb");
+    RequireCoreAsset("converted-mmd-glb");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Converted MMD mesh primitive count changed");
@@ -3787,11 +3622,8 @@ void TestConvertedMmdGlbWhenAvailable()
 void TestConvertedMmdObjWhenAvailable()
 {
     const std::filesystem::path modelPath =
-        TestAssetDirectory / "models" / u8"仪玄_obj" / u8"仪玄.obj";
-    Require(
-        std::filesystem::is_regular_file(modelPath),
-        "converted MMD OBJ fixture is missing (core asset)"
-    );
+        FixturePath("converted-mmd-obj");
+    RequireCoreAsset("converted-mmd-obj");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Converted OBJ mesh count changed");
@@ -3887,13 +3719,10 @@ void TestConvertedMmdObjWhenAvailable()
 
 void TestRiggedGlbImportWhenAvailable()
 {
+    RequireFullAssetsTier();
     const std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "glb" /
-        u8"仪玄_glb" / u8"仪玄.glb";
-    RequireFullAsset(
-        modelPath,
-        "rigged-glb"
-    );
+        FixturePath("rigged-glb");
+    RequireFullAsset("rigged-glb");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.skeleton.has_value(), "Rigged GLB lost its Skeleton");
@@ -3975,13 +3804,10 @@ void TestRiggedGlbImportWhenAvailable()
 
 void TestDemoPmxPhysicsImportWhenAvailable()
 {
+    RequireFullAssetsTier();
     const std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"叶瞬光_pmx" / u8"叶瞬光.pmx";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yeshiguang"
-    );
+        FixturePath("production-pmx-yeshiguang");
+    RequireFullAsset("production-pmx-yeshiguang");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(
@@ -4029,13 +3855,10 @@ void TestDemoPmxPhysicsImportWhenAvailable()
 
 void TestDirectPmxMaterialImportWhenAvailable()
 {
+    RequireFullAssetsTier();
     const std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"仪玄_pmx" / u8"仪玄.pmx";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-yixuan"
-    );
+        FixturePath("production-pmx-yixuan");
+    RequireFullAsset("production-pmx-yixuan");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     Require(imported.meshes.size() == 21, "Direct PMX mesh count changed");
@@ -4199,13 +4022,10 @@ void TestDirectPmxMaterialImportWhenAvailable()
 
 void TestDirectPmxGroupMorphImportWhenAvailable()
 {
+    RequireFullAssetsTier();
     const std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"爱弥斯_pmx" / u8"爱弥斯.pmx";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-aimisi"
-    );
+        FixturePath("production-pmx-aimisi");
+    RequireFullAsset("production-pmx-aimisi");
 
     const ImportedModelData imported = ModelImporter().Import(modelPath);
     const auto group = std::find_if(
@@ -4256,13 +4076,10 @@ void TestDirectPmxGroupMorphImportWhenAvailable()
 
 void TestSabaIkSwitchBridgeWhenAvailable()
 {
+    RequireFullAssetsTier();
     const std::filesystem::path modelPath =
-        ProjectAssetDirectory / "models" / "mmd" /
-        u8"蕾米埃尔-白" / u8"蕾米埃尔-白.pmx";
-    RequireFullAsset(
-        modelPath,
-        "production-pmx-leimi"
-    );
+        FixturePath("production-pmx-leimi");
+    RequireFullAsset("production-pmx-leimi");
 
     SabaMmdRuntimeModel runtime(modelPath, {}, SabaPhysicsSettings{});
     Require(runtime.Initialize(), "Saba model failed to initialize");
@@ -4299,8 +4116,8 @@ void TestSabaIkSwitchBridgeWhenAvailable()
 void TestR1EngineOwnedMmdInstances()
 {
     const std::filesystem::path modelPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
-        "extended_morph.pmx";
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
 
     ResourceManager resources;
     ModelAsset& model = resources.LoadModel("r1::extended", modelPath);
@@ -4388,19 +4205,16 @@ void TestR1EngineOwnedMmdInstances()
 
 void TestR1ProjectMmdInstanceWhenAvailable()
 {
-    RequireFullAssetDirectory(
-        ProjectAssetDirectory / "models" / "mmd",
-        "production-mmd-directory"
-    );
-    const std::optional<std::filesystem::path> modelPath =
-        FindProjectAssetByExtension(".pmx");
-    Require(
-        modelPath.has_value(),
-        "FULL_ASSETS project PMX scan found no model"
-    );
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    const std::filesystem::path motionPath =
+        FixturePath("production-vmd-body");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
 
     ResourceManager resources;
-    ModelAsset& model = resources.LoadModel("r1::project", *modelPath);
+    ModelAsset& model = resources.LoadModel("r1::project", modelPath);
     Scene scene;
     Entity& first = scene.InstantiateModel(model);
     Entity& second = scene.InstantiateModel(model);
@@ -4455,15 +4269,9 @@ void TestR1ProjectMmdInstanceWhenAvailable()
         "Project PMX instances unexpectedly share one physics owner"
     );
 
-    const std::optional<std::filesystem::path> motionPath =
-        FindProjectAssetByExtension(".vmd");
     Require(
-        motionPath.has_value(),
-        "FULL_ASSETS project VMD scan found no motion"
-    );
-    Require(
-        firstRuntime->LoadMotion(*motionPath) &&
-        secondRuntime->LoadMotion(*motionPath),
+        firstRuntime->LoadMotion(motionPath) &&
+        secondRuntime->LoadMotion(motionPath),
         "Project VMD could not be attached through the runtime interface"
     );
     const double maximumFrame = firstRuntime->MotionMaxFrame();
@@ -4482,8 +4290,8 @@ void TestR1ProjectMmdInstanceWhenAvailable()
 void TestSabaImporterMorphTargets()
 {
     const std::filesystem::path modelPath =
-        std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
-        "extended_morph.pmx";
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
     const ImportedModelData imported = SabaMmdImporter().Import(modelPath);
 
     const MorphSet morphSet(imported.morphs);

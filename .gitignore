@@ -13,6 +13,7 @@
 /build/
 /build-linux/
 /build-fullassets/
+/build-linux-fullassets/
 /x64/
 /.vs/
 /out/

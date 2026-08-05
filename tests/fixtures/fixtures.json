@@ -60,7 +60,8 @@
     {
       "id": "pbr-quad-gltf",
       "path": "tests/data/pbr_quad.gltf",
-      "usedBy": ["TestVmdImporter"]
+      "usedBy": [],
+      "comment": "Reserved test asset; not yet referenced by any test."
     }
   ],
   "fullAssets": [

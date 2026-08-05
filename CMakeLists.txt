@@ -369,7 +369,7 @@ if(BUILD_TESTING)
             WISTERIA_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixtures.json"
         )
         target_include_directories(wisteria_${TIER}_tests PRIVATE
-            ${WISTERIA_SABA_ROOT}/external/json/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
         )
         if(MSVC)
             target_compile_options(wisteria_${TIER}_tests PRIVATE /utf-8)

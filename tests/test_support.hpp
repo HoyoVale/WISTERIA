@@ -99,47 +99,6 @@ private:
     throw TestNotConfigured(std::move(reason));
 }
 
-// Project MMD/VMD assets live outside the repository test tree. When the
-// FULL_ASSETS tier is enabled a missing fixture is a hard failure; otherwise
-// the calling case is reported NOT_CONFIGURED instead of SKIP/PASS.
-void RequireFullAsset(
-    const std::filesystem::path& path,
-    std::string_view id
-)
-{
-    if (std::filesystem::is_regular_file(path))
-        return;
-#if defined(WISTERIA_TEST_FULL_ASSETS)
-    throw std::runtime_error(
-        "FULL_ASSETS fixture missing: " + std::string(id) +
-        " at " + path.string()
-    );
-#else
-    NotConfigured(
-        "FULL_ASSETS fixture not configured: " + std::string(id)
-    );
-#endif
-}
-
-void RequireFullAssetDirectory(
-    const std::filesystem::path& path,
-    std::string_view id
-)
-{
-    if (std::filesystem::is_directory(path))
-        return;
-#if defined(WISTERIA_TEST_FULL_ASSETS)
-    throw std::runtime_error(
-        "FULL_ASSETS directory missing: " + std::string(id) +
-        " at " + path.string()
-    );
-#else
-    NotConfigured(
-        "FULL_ASSETS directory not configured: " + std::string(id)
-    );
-#endif
-}
-
 void Require(bool condition, const std::string& message)
 {
     if (!condition)

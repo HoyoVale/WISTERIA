@@ -68,8 +68,17 @@ Saba Runtime 管理」冲突。补丁验证环境缺少 `assets/models/mmd/仪�
 
 - GuardAbi 未覆盖的全部导出函数（见 `C_ABI_SAFETY_MATRIX.md`）；
 - 静态/通用模型双路径；
-- 资产 manifest 的 FULL_ASSETS 档位；
 - Context 显式资源根。
+
+## 6a. R1.0A.1 已完成的收口
+
+- `fixtures.json` 真正被测试读取（`FixturePath(id)` 唯一路径来源）；
+- CORE / FULL_ASSETS 档位真正分离，CORE 结果与机器资产无关；
+- core 缺失一律 FAIL，fullAssets 在 FULL_ASSETS 档缺失 FAIL、
+  默认档整组 NOT_CONFIGURED；
+- R1 双实例测试固定 PMX/VMD 配对，删除环境扫描；
+- ABI 矩阵补全 94 个导出并脚本化（`script/gen_abi_safety_matrix.py`）；
+- nlohmann 移入 `third-party/nlohmann/`，测试不再依赖 Saba 私有目录。
 
 ## 7. 归档校验
 
