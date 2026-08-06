@@ -931,4 +931,7 @@ finite 检查，位置回退正常但法线 NaN 的场景也会被测试抓住�
   `activate(true)` 仍被 DISABLE_DEACTIVATION 拦截）；
 - 测试钩子 `StepRestoredPhysicsForProbe` 与故障注入
   （`WISTERIA_DETERMINISM_TEST_HOOKS`，仅测试构建）；
-- 四套矩阵 CTest 5/5，ASan+UBSan integration 57 PASS / 0 报告。
+- Final Test Fix：配置指纹补齐全部有效 solver 静态字段；补反向测试
+  （非法 position/basis、-0.0f、DISABLE_DEACTIVATION 历史、非零
+  definitionMass、FollowBone transform 不匹配、Mode 2 骨骼回写）；
+- 四套矩阵 CTest 5/5，ASan+UBSan integration 59 PASS / 0 报告。

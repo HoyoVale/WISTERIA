@@ -6262,7 +6262,12 @@ bool SnapshotsEqualExceptFollowBoneActivation(
     if (left.rigidBodies.size() != right.rigidBodies.size() ||
         left.jointCount != right.jointCount ||
         left.motionFrame != right.motionFrame ||
-        left.physicsTick != right.physicsTick)
+        left.physicsTick != right.physicsTick ||
+        left.schemaVersion != right.schemaVersion ||
+        left.layoutFingerprint != right.layoutFingerprint ||
+        left.physicsConfigurationFingerprint !=
+            right.physicsConfigurationFingerprint ||
+        left.canonical != right.canonical)
     {
         return false;
     }
@@ -6448,6 +6453,27 @@ void TestR12BRestoreRotationBasisRoundTrip()
     RequireCoreAsset("pmx-physics");
     auto runtime = CreateDeterministicRuntime(modelPath);
     const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 300U);
+    // The round-trip must exercise a significant rotation (not just the
+    // near-identity frame-0 pose). Require at least ~29 degrees of rotation
+    // on some body (sin(theta/2) > 0.25).
+    float maxBasisDeviation = 0.0f;
+    for (const RigidBodySnapshot& body : snapshot.rigidBodies)
+    {
+        for (std::size_t component = 0U; component < 9U; ++component)
+        {
+            const float identity = (component % 4U == 0U) ? 1.0f : 0.0f;
+            maxBasisDeviation = std::max(
+                maxBasisDeviation,
+                std::abs(
+                    body.worldTransform.rotationBasis[component] - identity
+                )
+            );
+        }
+    }
+    Require(
+        maxBasisDeviation > 0.5f,
+        "R1.2B rotation fixture did not produce a significant rotation"
+    );
     auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
     auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
     auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
@@ -6686,6 +6712,29 @@ void TestR12BInvalidSnapshotRejections()
         std::numeric_limits<float>::infinity();
     runRejected(nanBasis, TimelineStatus::InvalidSnapshot);
 
+    PhysicsSnapshot nonFinitePosition = valid;
+    nonFinitePosition.rigidBodies[0].worldTransform.position.x =
+        std::numeric_limits<float>::quiet_NaN();
+    runRejected(nonFinitePosition, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot columnLengthError = valid;
+    columnLengthError.rigidBodies[0].worldTransform.rotationBasis[0] = 2.0f;
+    runRejected(columnLengthError, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot nonOrthogonalBasis = valid;
+    // c0 and c1 are both unit-ish but not orthogonal (dot = 0.2).
+    nonOrthogonalBasis.rigidBodies[0].worldTransform.rotationBasis = {
+        1.0f, 0.0f, 0.0f,
+        0.2f, 0.98f, 0.0f,
+        0.0f, 0.0f, 1.0f
+    };
+    runRejected(nonOrthogonalBasis, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot interpolationBasisError = valid;
+    interpolationBasisError.rigidBodies[0]
+        .interpolationTransform.rotationBasis[8] = -1.0f;
+    runRejected(interpolationBasisError, TimelineStatus::InvalidSnapshot);
+
     PhysicsSnapshot reflectionBasis = valid;
     reflectionBasis.rigidBodies[0].worldTransform.rotationBasis[8] = -1.0f;
     runRejected(reflectionBasis, TimelineStatus::InvalidSnapshot);
@@ -6725,6 +6774,10 @@ void TestR12BInvalidSnapshotRejections()
     badForce.rigidBodies[0].totalForce.x = 1.0f;
     runRejected(badForce, TimelineStatus::InvalidSnapshot);
 
+    PhysicsSnapshot negativeZeroForce = valid;
+    negativeZeroForce.rigidBodies[0].totalForce.x = -0.0f;
+    runRejected(negativeZeroForce, TimelineStatus::InvalidSnapshot);
+
     // Activation preconditions only apply to Physics/PhysicsWithBone;
     // FollowBone activation is informational.
     std::size_t physicsBodyIndex = 0U;
@@ -6741,6 +6794,11 @@ void TestR12BInvalidSnapshotRejections()
     badActivation.rigidBodies[physicsBodyIndex].activationState = 0;
     runRejected(badActivation, TimelineStatus::InvalidSnapshot);
 
+    PhysicsSnapshot negativeZeroDeactivation = valid;
+    negativeZeroDeactivation.rigidBodies[physicsBodyIndex].deactivationTime =
+        -0.0f;
+    runRejected(negativeZeroDeactivation, TimelineStatus::InvalidSnapshot);
+
     PhysicsSnapshot badTick = valid;
     badTick.physicsTick = valid.motionFrame * 4U + 1U;
     runRejected(badTick, TimelineStatus::InvalidSnapshot);
@@ -6755,34 +6813,45 @@ void TestR12BConfigurationFingerprintMismatch()
     const PhysicsSnapshot snapshot =
         CaptureCanonicalAt(*reference, 0U);
 
-    SabaPhysicsSettings differentSettings;
-    differentSettings.fixedTimeStep = 1.0f / 120.0f;
-    differentSettings.maxSubSteps = 10;
-    differentSettings.gravity = glm::vec3(0.0f, -99.0f, 0.0f);
-    differentSettings.enabled = true;
-    auto other = std::make_unique<SabaMmdRuntimeModel>(
-        modelPath,
-        std::filesystem::path{},
-        differentSettings
-    );
-    Require(
-        other->Initialize(),
-        "R1.2B config-mismatch runtime failed to initialize"
-    );
-    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(other.get());
-    Require(stepper != nullptr, "R1.2B config-mismatch lost the stepper");
-    Require(
-        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
-        "R1.2B config-mismatch PrepareFrameZero failed"
-    );
-    auto* restore = dynamic_cast<IPhysicsStateAccess*>(other.get());
-    Require(restore != nullptr, "R1.2B config-mismatch lost restore");
-    RequireRestoreAnimationFrame(*other, 0.0);
-    Require(
-        restore->RestoreState(snapshot) ==
-            TimelineStatus::SnapshotMismatch,
-        "Different gravity configuration passed the restore gate"
-    );
+    const auto expectMismatch = [&](SabaPhysicsSettings settings,
+                                    const char* what)
+    {
+        auto other = std::make_unique<SabaMmdRuntimeModel>(
+            modelPath,
+            std::filesystem::path{},
+            settings
+        );
+        Require(
+            other->Initialize(),
+            "R1.2B config-mismatch runtime failed to initialize"
+        );
+        auto* restore = dynamic_cast<IPhysicsStateAccess*>(other.get());
+        Require(
+            restore != nullptr,
+            "R1.2B config-mismatch lost restore"
+        );
+        RequireRestoreAnimationFrame(*other, 0.0);
+        Require(
+            restore->RestoreState(snapshot) ==
+                TimelineStatus::SnapshotMismatch,
+            std::string("Different ") + what +
+                " configuration passed the restore gate"
+        );
+    };
+
+    SabaPhysicsSettings differentGravity;
+    differentGravity.fixedTimeStep = 1.0f / 120.0f;
+    differentGravity.maxSubSteps = 10;
+    differentGravity.gravity = glm::vec3(0.0f, -99.0f, 0.0f);
+    differentGravity.enabled = true;
+    expectMismatch(differentGravity, "gravity");
+
+    SabaPhysicsSettings differentTimestep;
+    differentTimestep.fixedTimeStep = 1.0f / 60.0f;
+    differentTimestep.maxSubSteps = 10;
+    differentTimestep.gravity = glm::vec3(0.0f, -98.0f, 0.0f);
+    differentTimestep.enabled = true;
+    expectMismatch(differentTimestep, "fixed timestep");
 }
 
 void TestR12BCrossLayoutRejected()
@@ -6847,6 +6916,24 @@ void TestR12BAnimationPrecondition()
         SnapshotsEqualExceptFollowBoneActivation(before, after),
         "R1.2B animation precondition failure modified the world"
     );
+
+    // FollowBone transform mismatch with a correct frame tag must also be
+    // rejected as InvalidState.
+    mmd->SetMotionFrame(0.0);
+    PhysicsSnapshot tamperedFollowBone = snapshot;
+    for (RigidBodySnapshot& body : tamperedFollowBone.rigidBodies)
+    {
+        if (body.mode == PmxRigidBodyMode::FollowBone)
+        {
+            body.worldTransform.position.x += 1.0f;
+            break;
+        }
+    }
+    Require(
+        restore->RestoreState(tamperedFollowBone) ==
+            TimelineStatus::InvalidState,
+        "R1.2B restore accepted a mismatched FollowBone transform"
+    );
 }
 
 void TestR12BNoDirectStepAfterRestore()
@@ -6883,39 +6970,247 @@ void TestR12BFollowBoneAndMode2Restore()
     const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
     bool hasFollowBone = false;
     bool hasPhysicsWithBone = false;
-    for (const RigidBodySnapshot& body : snapshot.rigidBodies)
+    std::size_t mode2Index = 0U;
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
     {
+        const RigidBodySnapshot& body = snapshot.rigidBodies[index];
         hasFollowBone =
             hasFollowBone || body.mode == PmxRigidBodyMode::FollowBone;
-        hasPhysicsWithBone =
-            hasPhysicsWithBone ||
-            body.mode == PmxRigidBodyMode::PhysicsWithBone;
+        if (body.mode == PmxRigidBodyMode::PhysicsWithBone)
+        {
+            hasPhysicsWithBone = true;
+            mode2Index = index;
+        }
     }
     Require(
         hasFollowBone && hasPhysicsWithBone,
         "pmx_physics fixture lacks FollowBone or Mode 2 coverage"
     );
     auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
-    Require(restore != nullptr, "R1.2B mode test lost restore");
-    RequireRestoreAnimationFrame(*runtime, 0.0);
-    Require(
-        restore->RestoreState(snapshot) == TimelineStatus::Ok,
-        "R1.2B mode restore failed"
-    );
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
     auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
         runtime.get()
+    );
+    Require(
+        restore != nullptr && mmd != nullptr && observation != nullptr,
+        "R1.2B mode test lost a runtime surface"
+    );
+
+    // Replay long enough for Mode 2 to move and rotate, then record the
+    // snapshot-time pose (body + bone local matrices).
+    const PhysicsSnapshot snapshot300 = CaptureCanonicalAt(*runtime, 300U);
+    Require(
+        BodyMoved(
+            snapshot.rigidBodies[mode2Index],
+            snapshot300.rigidBodies[mode2Index]
+        ),
+        "R1.2B Mode 2 body did not move during replay"
+    );
+    const std::vector<glm::mat4> poseAtSnapshot(
+        runtime->GetPose().LocalMatrices().begin(),
+        runtime->GetPose().LocalMatrices().end()
+    );
+
+    Require(
+        mmd->EvaluateTick(340U, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::Ok,
+        "R1.2B Mode 2 perturbation failed"
+    );
+    RequireRestoreAnimationFrame(*runtime, 300.0);
+    Require(
+        restore->RestoreState(snapshot300) == TimelineStatus::Ok,
+        "R1.2B Mode 2 restore failed"
     );
     PhysicsSnapshot after;
     Require(
         observation->CaptureState(after) == TimelineStatus::Ok,
-        "R1.2B mode capture failed"
+        "R1.2B Mode 2 capture failed"
     );
-    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    for (std::size_t index = 0U; index < snapshot300.rigidBodies.size(); ++index)
     {
         Require(
             after.rigidBodies[index].mode ==
-                snapshot.rigidBodies[index].mode,
+                snapshot300.rigidBodies[index].mode,
             "R1.2B restore changed a rigid-body mode"
+        );
+    }
+    // Mode 2 merge write-back: body transform and bone hierarchy must match
+    // the snapshot-time state bit-exactly.
+    Require(
+        SameTransformSnapshot(
+            after.rigidBodies[mode2Index].worldTransform,
+            snapshot300.rigidBodies[mode2Index].worldTransform
+        ),
+        "R1.2B Mode 2 body transform did not round-trip"
+    );
+    const std::span<const glm::mat4> poseAfter =
+        runtime->GetPose().LocalMatrices();
+    Require(
+        poseAfter.size() == poseAtSnapshot.size(),
+        "R1.2B Mode 2 pose bone count changed"
+    );
+    std::size_t mismatchBone = 0U;
+    glm::length_t mismatchColumn = 0U;
+    glm::length_t mismatchRow = 0U;
+    bool foundMismatch = false;
+    for (std::size_t bone = 0U; bone < poseAfter.size(); ++bone)
+    {
+        for (glm::length_t column = 0; column < 4; ++column)
+        {
+            for (glm::length_t row = 0; row < 4; ++row)
+            {
+                if (poseAfter[bone][column][row] !=
+                    poseAtSnapshot[bone][column][row])
+                {
+                    mismatchBone = bone;
+                    mismatchColumn = column;
+                    mismatchRow = row;
+                    foundMismatch = true;
+                    break;
+                }
+            }
+            if (foundMismatch)
+                break;
+        }
+        if (foundMismatch)
+            break;
+    }
+    if (foundMismatch)
+    {
+        std::printf(
+            "[R12B MODE2] snapshot body basis=[%g %g %g %g %g %g %g %g %g]\n"
+            "  after body basis=[%g %g %g %g %g %g %g %g %g]\n"
+            "  poseBefore[0]=[%g %g %g %g; %g %g %g %g; %g %g %g %g; %g %g %g %g]\n"
+            "  poseAfter[0]=[%g %g %g %g; %g %g %g %g; %g %g %g %g; %g %g %g %g]\n",
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[0]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[1]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[2]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[3]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[4]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[5]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[6]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[7]
+            ),
+            static_cast<double>(
+                snapshot300.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[8]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[0]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[1]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[2]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[3]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[4]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[5]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[6]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[7]
+            ),
+            static_cast<double>(
+                after.rigidBodies[mode2Index]
+                    .worldTransform.rotationBasis[8]
+            ),
+            static_cast<double>(poseAtSnapshot[0][0][0]),
+            static_cast<double>(poseAtSnapshot[0][0][1]),
+            static_cast<double>(poseAtSnapshot[0][0][2]),
+            static_cast<double>(poseAtSnapshot[0][0][3]),
+            static_cast<double>(poseAtSnapshot[0][1][0]),
+            static_cast<double>(poseAtSnapshot[0][1][1]),
+            static_cast<double>(poseAtSnapshot[0][1][2]),
+            static_cast<double>(poseAtSnapshot[0][1][3]),
+            static_cast<double>(poseAtSnapshot[0][2][0]),
+            static_cast<double>(poseAtSnapshot[0][2][1]),
+            static_cast<double>(poseAtSnapshot[0][2][2]),
+            static_cast<double>(poseAtSnapshot[0][2][3]),
+            static_cast<double>(poseAtSnapshot[0][3][0]),
+            static_cast<double>(poseAtSnapshot[0][3][1]),
+            static_cast<double>(poseAtSnapshot[0][3][2]),
+            static_cast<double>(poseAtSnapshot[0][3][3]),
+            static_cast<double>(poseAfter[0][0][0]),
+            static_cast<double>(poseAfter[0][0][1]),
+            static_cast<double>(poseAfter[0][0][2]),
+            static_cast<double>(poseAfter[0][0][3]),
+            static_cast<double>(poseAfter[0][1][0]),
+            static_cast<double>(poseAfter[0][1][1]),
+            static_cast<double>(poseAfter[0][1][2]),
+            static_cast<double>(poseAfter[0][1][3]),
+            static_cast<double>(poseAfter[0][2][0]),
+            static_cast<double>(poseAfter[0][2][1]),
+            static_cast<double>(poseAfter[0][2][2]),
+            static_cast<double>(poseAfter[0][2][3]),
+            static_cast<double>(poseAfter[0][3][0]),
+            static_cast<double>(poseAfter[0][3][1]),
+            static_cast<double>(poseAfter[0][3][2]),
+            static_cast<double>(poseAfter[0][3][3])
+        );
+        Require(
+            false,
+            "R1.2B Mode 2 restore changed bone local matrix at bone " +
+                std::to_string(mismatchBone) + " [" +
+                std::to_string(mismatchColumn) + "][" +
+                std::to_string(mismatchRow) + "] before=" +
+                std::to_string(
+                    static_cast<double>(
+                        poseAtSnapshot[mismatchBone][mismatchColumn][mismatchRow]
+                    )
+                ) +
+                " after=" +
+                std::to_string(
+                    static_cast<double>(
+                        poseAfter[mismatchBone][mismatchColumn][mismatchRow]
+                    )
+                )
+        );
+    }
+    else
+    {
+        Require(
+            true,
+            "R1.2B Mode 2 pose matrices matched"
         );
     }
 }
@@ -7023,6 +7318,148 @@ void TestR12BRestoreStressRoundTrip()
         SnapshotsEqualExceptFollowBoneActivation(snapshot, final),
         "R1.2B 1000 restore round-trips drifted"
     );
+}
+
+void TestR12BDisableDeactivationHistory()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(runtime.get());
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr && restore != nullptr && observation != nullptr,
+        "R1.2B DISABLE history test lost a runtime surface"
+    );
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2B DISABLE history PrepareFrameZero failed"
+    );
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+    // Build a real DISABLE_DEACTIVATION history on the target instance.
+    runtime->SetAllDynamicBodiesActivationForProbe(4);  // DISABLE_DEACTIVATION
+    PhysicsSnapshot disableHistory;
+    Require(
+        observation->CaptureState(disableHistory) == TimelineStatus::Ok,
+        "R1.2B DISABLE history capture failed"
+    );
+    Require(
+        disableHistory.canonical,
+        "R1.2B DISABLE history capture lost its canonical claim"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(disableHistory) ==
+            TimelineStatus::InvalidSnapshot,
+        "R1.2B DISABLE_DEACTIVATION history passed the restore gate"
+    );
+    // PrepareFrameZero normalizes activation back to ACTIVE_TAG.
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2B DISABLE recovery failed"
+    );
+    PhysicsSnapshot canonical;
+    Require(
+        observation->CaptureState(canonical) == TimelineStatus::Ok,
+        "R1.2B DISABLE canonical capture failed"
+    );
+    for (const RigidBodySnapshot& body : canonical.rigidBodies)
+    {
+        if (body.mode != PmxRigidBodyMode::FollowBone)
+        {
+            Require(
+                body.activationState == 1,  // ACTIVE_TAG
+                "R1.2B canonical recovery left a non-ACTIVE_TAG body"
+            );
+        }
+    }
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(canonical) == TimelineStatus::Ok,
+        "R1.2B canonical restore after DISABLE history failed"
+    );
+#else
+    Require(false, "R1.2B test hooks are not compiled in");
+#endif
+}
+
+void TestR12BFollowBoneNonZeroDefinitionMass()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(runtime.get());
+    Require(stepper != nullptr, "R1.2B T23 lost the stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2B T23 PrepareFrameZero failed"
+    );
+    PhysicsSnapshot baseline;
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(observation != nullptr, "R1.2B T23 lost observation");
+    Require(
+        observation->CaptureState(baseline) == TimelineStatus::Ok,
+        "R1.2B T23 baseline capture failed"
+    );
+    std::size_t followBoneIndex = 0U;
+    for (std::size_t index = 0U; index < baseline.rigidBodies.size(); ++index)
+    {
+        if (baseline.rigidBodies[index].mode ==
+            PmxRigidBodyMode::FollowBone)
+        {
+            followBoneIndex = index;
+            break;
+        }
+    }
+    // A FollowBone body may legally carry a nonzero raw PMX mass; runtime
+    // mode (not mass) decides kinematic semantics.
+    runtime->SetDefinitionMassForProbe(
+        static_cast<std::uint32_t>(followBoneIndex),
+        123.0f
+    );
+    PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    Require(
+        snapshot.rigidBodies[followBoneIndex].definitionMass == 123.0f,
+        "R1.2B T23 definition-mass override did not reach capture"
+    );
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    Require(
+        mmd != nullptr && restore != nullptr,
+        "R1.2B T23 lost a runtime surface"
+    );
+    Require(
+        mmd->EvaluateTick(30U, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::Ok,
+        "R1.2B T23 perturbation failed"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B T23 restore with nonzero FollowBone mass failed"
+    );
+    PhysicsSnapshot after;
+    Require(
+        observation->CaptureState(after) == TimelineStatus::Ok,
+        "R1.2B T23 capture failed"
+    );
+    Require(
+        after.rigidBodies[followBoneIndex].mode ==
+                PmxRigidBodyMode::FollowBone &&
+            after.rigidBodies[followBoneIndex].definitionMass == 123.0f,
+        "R1.2B T23 FollowBone semantics changed under a nonzero raw mass"
+    );
+#else
+    Require(false, "R1.2B test hooks are not compiled in");
+#endif
 }
 
 void TestR1ProjectMmdInstanceWhenAvailable()
@@ -7415,6 +7852,14 @@ int main()
     failures += !RunTest(
         "R1.2B restore stress round trip",
         TestR12BRestoreStressRoundTrip
+    );
+    failures += !RunTest(
+        "R1.2B DISABLE_DEACTIVATION history",
+        TestR12BDisableDeactivationHistory
+    );
+    failures += !RunTest(
+        "R1.2B FollowBone nonzero definition mass",
+        TestR12BFollowBoneNonZeroDefinitionMass
     );
     failures += !RunTest(
         "R1 project MMD instance",

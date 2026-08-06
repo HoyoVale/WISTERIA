@@ -285,10 +285,27 @@ bool SameTransformBitwise(
     const RigidTransformSnapshot& right
 ) noexcept
 {
+    const auto sameBits = [](float a, float b) noexcept
+    {
+        std::uint32_t bitsA = 0U;
+        std::uint32_t bitsB = 0U;
+        std::memcpy(&bitsA, &a, sizeof(bitsA));
+        std::memcpy(&bitsB, &b, sizeof(bitsB));
+        return bitsA == bitsB;
+    };
     const btVector3 origin = left.getOrigin();
-    if (origin.x() != right.position.x ||
-        origin.y() != right.position.y ||
-        origin.z() != right.position.z)
+    if (!sameBits(
+            static_cast<float>(origin.x()),
+            right.position.x
+        ) ||
+        !sameBits(
+            static_cast<float>(origin.y()),
+            right.position.y
+        ) ||
+        !sameBits(
+            static_cast<float>(origin.z()),
+            right.position.z
+        ))
     {
         return false;
     }
@@ -297,9 +314,18 @@ bool SameTransformBitwise(
     {
         const btVector3 col = basis.getColumn(column);
         const std::size_t base = static_cast<std::size_t>(column) * 3U;
-        if (col.x() != right.rotationBasis[base + 0U] ||
-            col.y() != right.rotationBasis[base + 1U] ||
-            col.z() != right.rotationBasis[base + 2U])
+        if (!sameBits(
+                static_cast<float>(col.x()),
+                right.rotationBasis[base + 0U]
+            ) ||
+            !sameBits(
+                static_cast<float>(col.y()),
+                right.rotationBasis[base + 1U]
+            ) ||
+            !sameBits(
+                static_cast<float>(col.z()),
+                right.rotationBasis[base + 2U]
+            ))
         {
             return false;
         }
@@ -377,6 +403,8 @@ struct SabaMmdRuntimeModel::Impl
     // succeeds. faultInjectionPhase is only armed by test hooks.
     bool poisoned = false;
     int faultInjectionPhase = 0;
+    // Test-hook definition-mass overrides (T23): keyed by body index.
+    std::unordered_map<std::uint32_t, float> definitionMassOverrides;
 
     Impl(
         std::filesystem::path modelPath_,
@@ -982,8 +1010,7 @@ TimelineStatus SabaMmdRuntimeModel::CaptureState(
         snapshot.mode = static_cast<PmxRigidBodyMode>(
             (*rigidBodies)[index]->GetRigidBodyType()
         );
-        snapshot.definitionMass =
-            (*rigidBodies)[index]->GetDefinitionMass();
+        snapshot.definitionMass = this->CurrentDefinitionMass(index);
         const btTransform transform = body->getCenterOfMassTransform();
         FillTransformSnapshot(snapshot.worldTransform, transform);
         const btTransform interpolation =
@@ -1047,6 +1074,26 @@ void SabaMmdRuntimeModel::EnterPoisoned() noexcept
     this->impl->lastBoundaryCanonical = false;
     this->impl->deterministicPrepared = false;
     this->impl->expectedNextFrame = 0U;
+}
+
+float SabaMmdRuntimeModel::CurrentDefinitionMass(
+    std::size_t bodyIndex
+) const
+{
+    if (this->impl->model == nullptr)
+        return 0.0f;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr)
+        return 0.0f;
+    auto* rigidBodies = manager->GetRigidBodys();
+    if (bodyIndex >= rigidBodies->size())
+        return 0.0f;
+    const auto override = this->impl->definitionMassOverrides.find(
+        static_cast<std::uint32_t>(bodyIndex)
+    );
+    if (override != this->impl->definitionMassOverrides.end())
+        return override->second;
+    return (*rigidBodies)[bodyIndex]->GetDefinitionMass();
 }
 
 TimelineStatus SabaMmdRuntimeModel::CapturePhysicsSnapshot(
@@ -1164,7 +1211,7 @@ TimelineStatus SabaMmdRuntimeModel::ValidateSnapshotForRestore(
             &bodySnapshot.definitionMass,
             sizeof(snapshotMassBits)
         );
-        const float currentMass = rigidBody->GetDefinitionMass();
+        const float currentMass = this->CurrentDefinitionMass(index);
         std::memcpy(&currentMassBits, &currentMass, sizeof(currentMassBits));
         if (snapshotMassBits != currentMassBits)
         {
@@ -1387,6 +1434,11 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
             }
         }
     }
+    // Mirror StepFrameExact's post-physics phase: after-physics-deform nodes
+    // must have their local transforms recomputed from the (already
+    // evaluated) animation state; otherwise the restored boundary keeps
+    // physics-reflected locals that the normal boundary would not have.
+    this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->Update();
     this->SyncPoseFromSaba();
     throwIfInjected(6);
@@ -1430,7 +1482,7 @@ void SabaMmdRuntimeModel::ComputeLayoutFingerprint(
         btRigidBody* body = rigidBody->GetRigidBody();
         hasher.U32(static_cast<std::uint32_t>(index));
         hasher.I32(rigidBody->GetRigidBodyType());
-        hasher.F32(rigidBody->GetDefinitionMass());
+        hasher.F32(this->CurrentDefinitionMass(index));
         HashShapeDimensions(
             hasher,
             body != nullptr ? body->getCollisionShape() : nullptr
@@ -1547,6 +1599,7 @@ void SabaMmdRuntimeModel::ComputeConfigurationFingerprint(
     {
         hasher.BtVector3(world->getGravity());
         const btContactSolverInfo& info = world->getSolverInfo();
+        hasher.F32(static_cast<float>(info.m_tau));
         hasher.I32(info.m_numIterations);
         hasher.I32(info.m_solverMode);
         hasher.F32(static_cast<float>(info.m_erp));
@@ -1557,13 +1610,25 @@ void SabaMmdRuntimeModel::ComputeConfigurationFingerprint(
         hasher.F32(static_cast<float>(info.m_globalCfm));
         hasher.F32(static_cast<float>(info.m_frictionERP));
         hasher.F32(static_cast<float>(info.m_frictionCFM));
+        hasher.F32(static_cast<float>(info.m_friction));
         hasher.F32(static_cast<float>(info.m_restitution));
         hasher.F32(static_cast<float>(info.m_restitutionVelocityThreshold));
         hasher.F32(static_cast<float>(info.m_linearSlop));
         hasher.F32(static_cast<float>(info.m_warmstartingFactor));
+        hasher.F32(static_cast<float>(info.m_articulatedWarmstartingFactor));
         hasher.F32(static_cast<float>(info.m_damping));
         hasher.F32(static_cast<float>(info.m_maxErrorReduction));
         hasher.F32(static_cast<float>(info.m_sor));
+        hasher.I32(info.m_restingContactRestitutionThreshold);
+        hasher.I32(info.m_minimumSolverBatchSize);
+        hasher.F32(static_cast<float>(info.m_maxGyroscopicForce));
+        hasher.F32(
+            static_cast<float>(info.m_singleAxisRollingFrictionThreshold)
+        );
+        hasher.F32(static_cast<float>(info.m_leastSquaresResidualThreshold));
+        hasher.U32(info.m_jointFeedbackInWorldSpace ? 1U : 0U);
+        hasher.U32(info.m_jointFeedbackInJointFrame ? 1U : 0U);
+        hasher.I32(info.m_reportSolverAnalytics);
         hasher.I32(info.m_numNonContactInnerIterations);
     }
     hasher.F32(this->impl->physicsSettings.fixedTimeStep);
@@ -1627,6 +1692,34 @@ void SabaMmdRuntimeModel::SetFaultInjectionPhase(int phase) noexcept
 int SabaMmdRuntimeModel::FaultInjectionPhase() const noexcept
 {
     return this->impl->faultInjectionPhase;
+}
+
+void SabaMmdRuntimeModel::SetDefinitionMassForProbe(
+    std::uint32_t bodyIndex,
+    float mass
+) noexcept
+{
+    this->impl->definitionMassOverrides[bodyIndex] = mass;
+}
+
+void SabaMmdRuntimeModel::SetAllDynamicBodiesActivationForProbe(
+    int state
+) noexcept
+{
+    if (this->impl->model == nullptr)
+        return;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr)
+        return;
+    for (auto& rigidBody : *manager->GetRigidBodys())
+    {
+        if (rigidBody->GetRigidBodyType() == 0)
+            continue;
+        if (btRigidBody* body = rigidBody->GetRigidBody())
+        {
+            body->forceActivationState(state);
+        }
+    }
 }
 #endif
 

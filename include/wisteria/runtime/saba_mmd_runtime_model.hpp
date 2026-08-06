@@ -200,6 +200,7 @@ private:
     void ComputeConfigurationFingerprint(
         std::uint64_t& fingerprint
     ) const;
+    float CurrentDefinitionMass(std::size_t bodyIndex) const;
     bool IsPoisoned() const noexcept;
     void EnterPoisoned() noexcept;
     // Re-applies engine-level named morph overrides after VMD evaluation so
@@ -218,6 +219,15 @@ public:
     // the given phase (1..6) so the instance enters Poisoned.
     void SetFaultInjectionPhase(int phase) noexcept;
     int FaultInjectionPhase() const noexcept;
+    // Overrides the reported PMX definition mass for one body so tests can
+    // exercise FollowBone bodies whose raw mass is nonzero (T23).
+    void SetDefinitionMassForProbe(
+        std::uint32_t bodyIndex,
+        float mass
+    ) noexcept;
+    // Force-sets activation state on every dynamic body so tests can build
+    // a real DISABLE_DEACTIVATION history (T19).
+    void SetAllDynamicBodiesActivationForProbe(int state) noexcept;
 #endif
 
     struct Impl;
