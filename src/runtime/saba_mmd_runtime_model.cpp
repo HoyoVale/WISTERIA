@@ -91,6 +91,15 @@ std::string ToNarrowUtf8(const std::filesystem::path& path)
         u8.size()
     );
 }
+
+glm::vec3 ToGlmVec3(const btVector3& value)
+{
+    return glm::vec3(
+        static_cast<float>(value.x()),
+        static_cast<float>(value.y()),
+        static_cast<float>(value.z())
+    );
+}
 }
 
 struct SabaMmdRuntimeModel::Impl
@@ -120,6 +129,20 @@ struct SabaMmdRuntimeModel::Impl
     std::uint64_t morphRevision = 0U;
     const ModelAsset* asset = nullptr;
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
+    // Engine-level named morph overrides, re-applied after every VMD
+    // evaluation so deterministic replay preserves user configuration.
+    std::unordered_map<std::string, float> userMorphOverrides;
+    // R1.2A deterministic observation state (last Canonical Frame Boundary).
+    std::uint32_t lastExecutedSubsteps = 0U;
+    float lastRemainingAccumulator = 0.0f;
+    MotionFrameIndex lastMotionFrame = 0U;
+    TimelineTick lastPhysicsTick = 0U;
+    bool lastBoundaryCanonical = false;
+    // Deterministic stepping state machine (P0-3 fix): StepMotionFrameExact
+    // is only valid after PrepareFrameZero and must advance one frame at a
+    // time. EvaluateTick(ReplayFromStart) drives this same machine.
+    bool deterministicPrepared = false;
+    MotionFrameIndex expectedNextFrame = 0U;
 
     Impl(
         std::filesystem::path modelPath_,
@@ -328,6 +351,9 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
             static_cast<float>(this->impl->vmdFrame)
         );
     }
+    // Engine-level morph overrides survive VMD evaluation (contract §5:
+    // VMD animation -> user Morph override -> morph expansion).
+    this->ApplyUserMorphOverrides();
     this->impl->model->UpdateMorphAnimation();
     // VMD evaluation writes morph weights directly into saba's MMDMorph
     // objects, bypassing WISTERIA's SetMorphWeight(). The morph revision must
@@ -354,6 +380,406 @@ void SabaMmdRuntimeModel::Reset()
     this->impl->vmdFrame = 0.0;
     if (this->impl->model != nullptr)
         this->impl->model->ResetPhysics();
+    this->impl->lastBoundaryCanonical = false;
+    this->impl->deterministicPrepared = false;
+    this->impl->expectedNextFrame = 0U;
+}
+
+TimelineStatus SabaMmdRuntimeModel::ValidateReplayConfig(
+    const ReplayConfig& config
+)
+{
+    // R1.2A freezes exactly 30Hz motion / 120Hz physics with no warmup and
+    // no looping. Anything else is rejected up front so the replay algorithm
+    // never depends on undefined warmup/loop semantics. Physics must be
+    // enabled: a disabled world cannot claim a 120Hz canonical boundary.
+    if (config.motionFps != 30U ||
+        config.physicsHz != 120U ||
+        config.warmupFrames != 0U ||
+        config.loopMotion ||
+        !this->impl->physicsSettings.enabled)
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+    // ReplayConfig must match the live Bullet configuration, not just the
+    // frozen defaults. Otherwise StepFrameExact could step at 1/60 or run
+    // fewer than four substeps while metadata claims 30Hz/120Hz.
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysics* physics = manager->GetMMDPhysics();
+    constexpr float kFpsTolerance = 1.0e-4f;
+    if (std::abs(
+            this->impl->physicsSettings.fixedTimeStep - 1.0f / 120.0f
+        ) > kFpsTolerance ||
+        this->impl->physicsSettings.maxSubSteps < 4 ||
+        std::abs(physics->GetFPS() - 120.0f) > kFpsTolerance ||
+        physics->GetMaxSubStepCount() < 4)
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+    return TimelineStatus::Ok;
+}
+
+void SabaMmdRuntimeModel::ApplyUserMorphOverrides()
+{
+    if (this->impl->model == nullptr ||
+        this->impl->userMorphOverrides.empty())
+    {
+        return;
+    }
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    if (manager == nullptr)
+        return;
+    for (const auto& [name, weight] : this->impl->userMorphOverrides)
+    {
+        saba::MMDMorph* morph = manager->GetMorph(name);
+        if (morph != nullptr)
+            morph->SetWeight(weight);
+    }
+}
+
+TimelineStatus SabaMmdRuntimeModel::ResetCanonicalNoStep()
+{
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysics* physics = manager->GetMMDPhysics();
+    if (physics == nullptr)
+        return TimelineStatus::NoPhysics;
+
+    auto* rigidBodies = manager->GetRigidBodys();
+    // Bind kinematic motion states (they read the current animated node
+    // transforms) and re-seat the active motion states at the animated pose.
+    for (auto& rigidBody : *rigidBodies)
+    {
+        rigidBody->SetActivation(false);
+        rigidBody->ResetTransform();
+    }
+    // Synchronize the actual Bullet body transforms to the kinematic target
+    // without executing any physics step. This is the "sync Kinematic
+    // target" phase of the contract, done explicitly because Saba's own
+    // ResetPhysics hides a 1/60 step we must not run.
+    for (auto& rigidBody : *rigidBodies)
+    {
+        btRigidBody* body = rigidBody->GetRigidBody();
+        if (body == nullptr || body->getMotionState() == nullptr)
+            continue;
+        btTransform worldTransform;
+        body->getMotionState()->getWorldTransform(worldTransform);
+        body->setCenterOfMassTransform(worldTransform);
+        body->setInterpolationWorldTransform(worldTransform);
+        body->setInterpolationLinearVelocity(btVector3(0, 0, 0));
+        body->setInterpolationAngularVelocity(btVector3(0, 0, 0));
+        // Teleported bodies need their broadphase proxy AABB refreshed;
+        // clearing the pair cache alone does not update the proxy volume.
+        if (btDiscreteDynamicsWorld* world = physics->GetDynamicsWorld())
+        {
+            world->updateSingleAabb(body);
+        }
+    }
+    // Zero velocities/forces, clean broadphase pairs, and reset the frame
+    // accumulator to reach a Canonical Frame Boundary.
+    for (auto& rigidBody : *rigidBodies)
+    {
+        rigidBody->Reset(physics);
+    }
+    // Restore the true body mode: SetActivation(false) temporarily turns
+    // dynamic bodies kinematic so their target pose can be read, but a
+    // Canonical Frame Boundary must describe dynamic bodies as dynamic again
+    // (consistent with invMass and the PhysicsSnapshot). Static PMX bodies
+    // stay kinematic internally. Also normalize activation history so a
+    // boundary never inherits sleeping state from a long previous timeline.
+    for (auto& rigidBody : *rigidBodies)
+    {
+        btRigidBody* body = rigidBody->GetRigidBody();
+        if (body == nullptr)
+            continue;
+        rigidBody->SetActivation(true);
+        if (body->getInvMass() > btScalar(0))
+        {
+            body->setActivationState(ACTIVE_TAG);
+            body->setDeactivationTime(btScalar(0));
+            body->activate(true);
+        }
+    }
+    physics->ResetSimulationTime();
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::EvaluateFrameCanonical(
+    MotionFrameIndex frame,
+    const ReplayConfig& config
+)
+{
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+
+    this->impl->vmdFrame = static_cast<double>(frame);
+    this->impl->model->BeginAnimation();
+    if (this->impl->vmdAnimation != nullptr)
+    {
+        this->impl->vmdAnimation->Evaluate(static_cast<float>(frame));
+    }
+    this->ApplyUserMorphOverrides();
+    this->impl->model->UpdateMorphAnimation();
+    ++this->impl->morphRevision;
+    this->ApplyMmdIkOverrides();
+    this->impl->model->UpdateNodeAnimation(false);
+    const TimelineStatus resetStatus = this->ResetCanonicalNoStep();
+    if (resetStatus != TimelineStatus::Ok)
+        return resetStatus;
+    this->impl->model->UpdateNodeAnimation(true);
+    this->impl->model->EndAnimation();
+    this->impl->model->Update();
+    this->SyncPoseFromSaba();
+    ++this->impl->vertexRevision;
+    this->impl->lastExecutedSubsteps = 0U;
+    this->impl->lastRemainingAccumulator =
+        manager->GetMMDPhysics()->GetSimulationTime();
+    if (this->impl->lastRemainingAccumulator != 0.0f)
+    {
+        this->impl->lastBoundaryCanonical = false;
+        return TimelineStatus::DeterminismViolation;
+    }
+    this->impl->lastMotionFrame = frame;
+    this->impl->lastPhysicsTick =
+        frame * (config.physicsHz / config.motionFps);
+    this->impl->lastBoundaryCanonical = true;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::StepFrameExact(
+    MotionFrameIndex frame,
+    const ReplayConfig& config
+)
+{
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+
+    this->impl->vmdFrame = static_cast<double>(frame);
+    this->impl->model->BeginAnimation();
+    if (this->impl->vmdAnimation != nullptr)
+    {
+        this->impl->vmdAnimation->Evaluate(static_cast<float>(frame));
+    }
+    this->ApplyUserMorphOverrides();
+    this->impl->model->UpdateMorphAnimation();
+    ++this->impl->morphRevision;
+    this->ApplyMmdIkOverrides();
+    this->impl->model->UpdateNodeAnimation(false);
+    int executedSubsteps = 0;
+    if (this->impl->physicsSettings.enabled)
+    {
+        // The four-substep experiment proved stepSimulation(1/30, 10, 1/120)
+        // executes exactly 4 substeps with a zero accumulator; this existing
+        // full Update phase is therefore the deterministic reference path.
+        executedSubsteps = this->impl->model->UpdatePhysicsAnimation(
+            1.0f / 30.0f
+        );
+    }
+    this->impl->model->UpdateNodeAnimation(true);
+    this->impl->model->EndAnimation();
+    this->impl->model->Update();
+    this->SyncPoseFromSaba();
+    ++this->impl->vertexRevision;
+    this->impl->lastExecutedSubsteps =
+        static_cast<std::uint32_t>(std::max(0, executedSubsteps));
+    this->impl->lastRemainingAccumulator =
+        manager->GetMMDPhysics()->GetSimulationTime();
+    // The four-substep experiment holds on the default build, but the
+    // production path must verify the boundary on every frame rather than
+    // trusting a one-time probe. A failed boundary is never marked canonical.
+    if (this->impl->lastExecutedSubsteps != 4U ||
+        this->impl->lastRemainingAccumulator != 0.0f)
+    {
+        this->impl->lastBoundaryCanonical = false;
+        return TimelineStatus::DeterminismViolation;
+    }
+    this->impl->lastMotionFrame = frame;
+    this->impl->lastPhysicsTick =
+        frame * (config.physicsHz / config.motionFps);
+    this->impl->lastBoundaryCanonical = true;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::EvaluateTick(
+    MotionFrameIndex target,
+    SeekPolicy policy,
+    const ReplayConfig& config
+)
+{
+    this->impl->deterministicPrepared = false;
+    this->impl->expectedNextFrame = 0U;
+    const TimelineStatus profileStatus = this->ValidateReplayConfig(config);
+    if (profileStatus != TimelineStatus::Ok)
+        return profileStatus;
+
+    switch (policy)
+    {
+    case SeekPolicy::PreserveState:
+        // Interactive preview: move the VMD frame and run one full Update(0).
+        // Physics history is intentionally preserved; this is not a
+        // Canonical Frame Boundary.
+        this->impl->vmdFrame = static_cast<double>(target);
+        this->impl->lastBoundaryCanonical = false;
+        this->Update(0.0f);
+        return TimelineStatus::Ok;
+    case SeekPolicy::ResetAtTarget:
+        return this->EvaluateFrameCanonical(target, config);
+    case SeekPolicy::ReplayFromStart:
+    {
+        TimelineStatus status = this->PrepareFrameZero(config);
+        if (status != TimelineStatus::Ok)
+            return status;
+        for (MotionFrameIndex frame = 1U; frame <= target; ++frame)
+        {
+            status = this->StepMotionFrameExact(frame, config);
+            if (status != TimelineStatus::Ok)
+                return status;
+        }
+        return TimelineStatus::Ok;
+    }
+    case SeekPolicy::ReplayFromCheckpoint:
+        // R1.2C: explicit FrameCheckpoint restore + canonicalization.
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    return TimelineStatus::UnsupportedReplayProfile;
+}
+
+TimelineStatus SabaMmdRuntimeModel::PrepareFrameZero(
+    const ReplayConfig& config
+)
+{
+    const TimelineStatus profileStatus = this->ValidateReplayConfig(config);
+    if (profileStatus != TimelineStatus::Ok)
+        return profileStatus;
+    const TimelineStatus status = this->EvaluateFrameCanonical(0U, config);
+    if (status != TimelineStatus::Ok)
+    {
+        this->impl->deterministicPrepared = false;
+        this->impl->expectedNextFrame = 0U;
+        return status;
+    }
+    this->impl->deterministicPrepared = true;
+    this->impl->expectedNextFrame = 1U;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::StepMotionFrameExact(
+    MotionFrameIndex frame,
+    const ReplayConfig& config
+)
+{
+    if (!this->impl->deterministicPrepared)
+        return TimelineStatus::InvalidState;
+    if (frame != this->impl->expectedNextFrame)
+        return TimelineStatus::NonSequentialFrame;
+    const TimelineStatus profileStatus = this->ValidateReplayConfig(config);
+    if (profileStatus != TimelineStatus::Ok)
+        return profileStatus;
+    const TimelineStatus status = this->StepFrameExact(frame, config);
+    if (status != TimelineStatus::Ok)
+    {
+        this->impl->deterministicPrepared = false;
+        this->impl->expectedNextFrame = 0U;
+        return status;
+    }
+    ++this->impl->expectedNextFrame;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::CaptureState(
+    PhysicsSnapshot& output
+) const
+{
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+
+    auto* rigidBodies = manager->GetRigidBodys();
+    output.rigidBodies.clear();
+    output.rigidBodies.reserve(rigidBodies->size());
+    for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
+    {
+        btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
+        if (body == nullptr)
+            continue;
+        RigidBodySnapshot snapshot;
+        snapshot.index = static_cast<std::uint32_t>(index);
+        const btTransform transform = body->getCenterOfMassTransform();
+        snapshot.position = ToGlmVec3(transform.getOrigin());
+        const btQuaternion rotation = transform.getRotation();
+        snapshot.rotation = glm::quat(
+            rotation.w(),
+            rotation.x(),
+            rotation.y(),
+            rotation.z()
+        );
+        const btTransform interpolation =
+            body->getInterpolationWorldTransform();
+        snapshot.interpolationPosition = ToGlmVec3(interpolation.getOrigin());
+        const btQuaternion interpolationRotation =
+            interpolation.getRotation();
+        snapshot.interpolationRotation = glm::quat(
+            interpolationRotation.w(),
+            interpolationRotation.x(),
+            interpolationRotation.y(),
+            interpolationRotation.z()
+        );
+        snapshot.linearVelocity = ToGlmVec3(body->getLinearVelocity());
+        snapshot.angularVelocity = ToGlmVec3(body->getAngularVelocity());
+        snapshot.interpolationLinearVelocity =
+            ToGlmVec3(body->getInterpolationLinearVelocity());
+        snapshot.interpolationAngularVelocity =
+            ToGlmVec3(body->getInterpolationAngularVelocity());
+        snapshot.totalForce = ToGlmVec3(body->getTotalForce());
+        snapshot.totalTorque = ToGlmVec3(body->getTotalTorque());
+        snapshot.activationState = body->getActivationState();
+        snapshot.deactivationTime =
+            static_cast<float>(body->getDeactivationTime());
+        const btScalar inverseMass = body->getInvMass();
+        snapshot.mass = inverseMass > btScalar(0)
+            ? static_cast<float>(btScalar(1) / inverseMass)
+            : 0.0f;
+        snapshot.kinematic = inverseMass <= btScalar(0);
+        output.rigidBodies.push_back(snapshot);
+    }
+    output.jointCount = static_cast<std::uint32_t>(
+        manager->GetJoints()->size()
+    );
+    output.motionFrame = this->impl->lastMotionFrame;
+    output.physicsTick = this->impl->lastPhysicsTick;
+    output.canonical = this->impl->lastBoundaryCanonical;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::ReadStepDiagnostics(
+    PhysicsStepDiagnostics& output
+) const
+{
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+    output.executedSubsteps = this->impl->lastExecutedSubsteps;
+    output.remainingAccumulator = static_cast<double>(
+        manager->GetMMDPhysics()->GetSimulationTime()
+    );
+    return TimelineStatus::Ok;
 }
 
 bool SabaMmdRuntimeModel::LoadMotion(
@@ -522,8 +948,9 @@ ModelRuntimeCapabilities SabaMmdRuntimeModel::Capabilities() const
     capabilities.physics.supportsGravityOverride = true;
     capabilities.physics.supportsEnabledSwitch = true;
     capabilities.physics.supportsReset = true;
-    // Advanced Bullet tuning is not yet exposed through the WISTERIA
-    // runtime contract; all remaining flags stay false until R1.2.
+    // R1.2A adds read-only deterministic state capture; restore stays
+    // disabled until R1.2B, and advanced Bullet tuning stays disabled.
+    capabilities.physics.supportsSnapshotCapture = true;
     return capabilities;
 }
 
@@ -557,6 +984,35 @@ bool SabaMmdRuntimeModel::SetMorphWeight(
     morph->SetWeight(weight);
     ++this->impl->morphRevision;
     return true;
+}
+
+bool SabaMmdRuntimeModel::SetMorphOverride(
+    std::string_view name,
+    float weight
+)
+{
+    if (this->impl->model == nullptr || !std::isfinite(weight))
+        return false;
+    saba::MMDMorphManager* manager = this->impl->model->GetMorphManager();
+    if (manager == nullptr)
+        return false;
+    saba::MMDMorph* morph = manager->GetMorph(std::string(name));
+    if (morph == nullptr)
+        return false;
+    this->impl->userMorphOverrides[std::string(name)] = weight;
+    morph->SetWeight(weight);
+    ++this->impl->morphRevision;
+    return true;
+}
+
+void SabaMmdRuntimeModel::ClearMorphOverride(std::string_view name)
+{
+    this->impl->userMorphOverrides.erase(std::string(name));
+}
+
+void SabaMmdRuntimeModel::ClearAllMorphOverrides()
+{
+    this->impl->userMorphOverrides.clear();
 }
 
 std::optional<float> SabaMmdRuntimeModel::MorphWeight(

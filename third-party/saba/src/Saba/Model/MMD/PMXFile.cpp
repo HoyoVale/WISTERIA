@@ -201,8 +201,8 @@ namespace saba
 					ReadIndex(&vertex.m_boneIndices[3], pmx->m_header.m_boneIndexSize, file);
 					Read(&vertex.m_boneWeights[0], file);
 					Read(&vertex.m_boneWeights[1], file);
+					Read(&vertex.m_boneWeights[2], file);
 					Read(&vertex.m_boneWeights[3], file);
-					Read(&vertex.m_boneWeights[4], file);
 					break;
 				default:
 					return false;

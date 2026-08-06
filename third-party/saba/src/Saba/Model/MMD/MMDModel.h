@@ -171,7 +171,11 @@ namespace saba
 		virtual void ResetPhysics() = 0;
 		[[deprecated("Please use UpdateAllAnimation() function")]]
 		void UpdatePhysics(float elapsed);
-		virtual void UpdatePhysicsAnimation(float elapsed) = 0;
+		// Returns the number of Bullet substeps actually executed for the
+		// given elapsed time. WISTERIA's deterministic replay uses this as
+		// the only authoritative substep counter; callers that only need the
+		// side effect may ignore the return value.
+		virtual int UpdatePhysicsAnimation(float elapsed) = 0;
 		// 頂点を更新する
 		virtual void Update() = 0;
 		virtual void SetParallelUpdateHint(uint32_t parallelCount) = 0;

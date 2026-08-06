@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wisteria/runtime/mmd_runtime_model.hpp"
+#include "wisteria/runtime/determinism.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -16,7 +17,10 @@ using SabaPhysicsSettings = MmdPhysicsRuntimeSettings;
 // CPU skinning (BDEF/SDEF/QDEF), producing deformed vertex data consumed by
 // WISTERIA. Saba owns its per-model Bullet world (OwnsSimulationStep); the
 // Scene skips the shared fixed-step lifecycle for this runtime.
-class SabaMmdRuntimeModel final : public MmdRuntimeModel
+class SabaMmdRuntimeModel final
+    : public MmdRuntimeModel,
+      public IDeterministicFrameStepper,
+      public IDeterministicPhysicsObservation
 {
 public:
     SabaMmdRuntimeModel(
@@ -56,6 +60,9 @@ public:
     std::optional<float> MorphWeight(
         std::string_view name
     ) const override;
+    bool SetMorphOverride(std::string_view name, float weight) override;
+    void ClearMorphOverride(std::string_view name) override;
+    void ClearAllMorphOverrides() override;
 
     void SetMmdIkEnabled(BoneIndex bone, bool enabled) override;
     BoneIndex FindBoneIndex(const std::string& name) const override;
@@ -97,6 +104,28 @@ public:
     MmdSkinningKind SkinningKind() const noexcept override;
     PhysicsInstance* GetMmdPhysics() noexcept override;
 
+    // R1.2A deterministic timeline (see determinism.hpp for semantics).
+    TimelineStatus EvaluateTick(
+        MotionFrameIndex target,
+        SeekPolicy policy,
+        const ReplayConfig& config = {}
+    ) override;
+
+    // IDeterministicFrameStepper
+    TimelineStatus PrepareFrameZero(
+        const ReplayConfig& config
+    ) override;
+    TimelineStatus StepMotionFrameExact(
+        MotionFrameIndex frame,
+        const ReplayConfig& config
+    ) override;
+
+    // IDeterministicPhysicsObservation
+    TimelineStatus CaptureState(PhysicsSnapshot& output) const override;
+    TimelineStatus ReadStepDiagnostics(
+        PhysicsStepDiagnostics& output
+    ) const override;
+
     struct VertexDiagnostics
     {
         bool finite = true;
@@ -124,6 +153,30 @@ private:
     void ApplyPhysicsActivation();
     void ApplyMmdIkOverrides() noexcept;
     void SyncPoseFromSaba();
+    // R1.2A deterministic helpers. They own the exact evaluation order; the
+    // public EvaluateTick/stepper entries only validate and delegate.
+    TimelineStatus ValidateReplayConfig(
+        const ReplayConfig& config
+    );
+    // No-step canonical reset: bind kinematic motion states, re-seat body
+    // transforms at the current animated pose, zero velocities/forces,
+    // clean broadphase pairs and reset Bullet's frame accumulator.
+    TimelineStatus ResetCanonicalNoStep();
+    // Evaluates one motion frame without physics stepping, then performs a
+    // canonical no-step reset and publishes Pose/Vertex.
+    TimelineStatus EvaluateFrameCanonical(
+        MotionFrameIndex frame,
+        const ReplayConfig& config
+    );
+    // Executes exactly one 30Hz motion frame including the fixed physics
+    // substeps, records step diagnostics and publishes Pose/Vertex.
+    TimelineStatus StepFrameExact(
+        MotionFrameIndex frame,
+        const ReplayConfig& config
+    );
+    // Re-applies engine-level named morph overrides after VMD evaluation so
+    // they survive playback/replay (contract §5 application order).
+    void ApplyUserMorphOverrides();
 
     struct Impl;
     std::unique_ptr<Impl> impl;

@@ -1,14 +1,30 @@
 #include "test_support.hpp"
 #include "test_fixtures.hpp"
+#include "wisteria/mmd/mmd_determinism.hpp"
 #include <Saba/Model/MMD/MMDCamera.h>
+#include <Saba/Model/MMD/PMXFile.h>
 
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <optional>
 
 namespace
 {
+
+void TestGlmMultiplySanity()
+{
+    const glm::mat4 identity(1.0f);
+    const glm::vec4 input(-1.0f, 0.0f, 0.0f, 1.0f);
+    const glm::vec4 output = identity * input;
+    Require(
+        output.x == -1.0f && output.y == 0.0f &&
+            output.z == 0.0f && output.w == 1.0f,
+        "glm::mat4 * vec4 failed for an identity matrix"
+    );
+}
 
 void TestAnimatedModelImporter()
 {
@@ -4833,8 +4849,10 @@ void TestR1EngineOwnedMmdInstances()
     Require(
         !firstCapabilities.physics.supportsSolverTuning &&
         !firstCapabilities.physics.supportsCcd &&
-        !firstCapabilities.physics.supportsSnapshot,
-        "Saba backend over-advertised unexposed physics capabilities"
+        firstCapabilities.physics.supportsSnapshotCapture &&
+        !firstCapabilities.physics.supportsSnapshotRestore &&
+        !firstCapabilities.physics.supportsCanonicalRestore,
+        "Saba backend advertised unsupported physics capabilities"
     );
     Require(
         firstPhysicsInfo.available &&
@@ -4976,6 +4994,1211 @@ void TestR1EngineOwnedMmdInstances()
     );
 }
 
+// R1.2A helpers -----------------------------------------------------------
+
+namespace
+{
+std::unique_ptr<SabaMmdRuntimeModel> CreateDeterministicRuntime(
+    const std::filesystem::path& modelPath
+)
+{
+    SabaPhysicsSettings settings;
+    settings.fixedTimeStep = 1.0f / 120.0f;
+    settings.maxSubSteps = 10;
+    settings.gravity = glm::vec3(0.0f, -98.0f, 0.0f);
+    settings.enabled = true;
+    auto runtime = std::make_unique<SabaMmdRuntimeModel>(
+        modelPath,
+        std::filesystem::path{},
+        settings
+    );
+    Require(
+        runtime->Initialize(),
+        "R1.2A deterministic runtime failed to initialize"
+    );
+    return runtime;
+}
+
+FrameStateHashes CaptureDeterminismHashes(
+    SabaMmdRuntimeModel& runtime
+)
+{
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        &runtime
+    );
+    Require(observation != nullptr, "R1.2A runtime has no observation");
+    PhysicsSnapshot physics;
+    Require(
+        observation->CaptureState(physics) == TimelineStatus::Ok,
+        "R1.2A physics capture failed"
+    );
+
+    ModelFrameSnapshot frame;
+    const Pose& pose = runtime.GetPose();
+    frame.pose.localTransforms.assign(
+        pose.LocalMatrices().begin(),
+        pose.LocalMatrices().end()
+    );
+    frame.pose.globalTransforms.assign(
+        pose.GlobalMatrices().begin(),
+        pose.GlobalMatrices().end()
+    );
+    frame.pose.skinningTransforms.assign(
+        pose.SkinningMatrices().begin(),
+        pose.SkinningMatrices().end()
+    );
+    const ModelVertexFrame vertexFrame = runtime.VertexFrame();
+    frame.geometry.positions.assign(
+        vertexFrame.positions.begin(),
+        vertexFrame.positions.end()
+    );
+    frame.geometry.normals.assign(
+        vertexFrame.normals.begin(),
+        vertexFrame.normals.end()
+    );
+    const FrameStateHashes hashes = ComputeFrameStateHashes(frame, physics);
+    Require(
+        hashes.pose.valid && hashes.vertex.valid && hashes.physics.valid,
+        "R1.2A capture produced an invalid determinism hash"
+    );
+    return hashes;
+}
+
+std::pair<std::size_t, std::size_t> CountBodyKinds(
+    const PhysicsSnapshot& physics
+)
+{
+    std::size_t dynamicCount = 0U;
+    std::size_t kinematicCount = 0U;
+    for (const RigidBodySnapshot& body : physics.rigidBodies)
+    {
+        if (body.kinematic)
+            ++kinematicCount;
+        else
+            ++dynamicCount;
+    }
+    return {dynamicCount, kinematicCount};
+}
+
+bool BodyMoved(
+    const RigidBodySnapshot& before,
+    const RigidBodySnapshot& after
+)
+{
+    const float positionDelta = glm::distance(
+        before.position,
+        after.position
+    );
+    const float rotationDelta = 1.0f - std::abs(glm::dot(
+        glm::normalize(before.rotation),
+        glm::normalize(after.rotation)
+    ));
+    return positionDelta > 1.0e-4f || rotationDelta > 1.0e-4f;
+}
+
+// Builds a QDEF variant of the pmx_physics core fixture by replacing its
+// vertex block. The fixture is a stable PMX 2.1 file with 3 BDEF1 vertices,
+// 1-byte indices and (in this vendored Saba layout) a 4-byte edge flag.
+// Variants let tests exercise the invalid-bone fallback without shipping
+// separate broken assets.
+std::filesystem::path BuildQdefPmxVariant(
+    const std::array<std::array<int32_t, 4>, 3>& boneIndices,
+    const std::array<std::array<float, 4>, 3>& boneWeights
+)
+{
+    const std::filesystem::path source = FixturePath("pmx-physics");
+    std::ifstream input(source, std::ios::binary);
+    Require(input.is_open(), "Cannot open pmx_physics for QDEF variant");
+    const std::vector<std::uint8_t> bytes{
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()
+    };
+
+    // PMX header (17 bytes) + four length-prefixed strings.
+    std::size_t offset = 17U;
+    for (int stringIndex = 0; stringIndex < 4; ++stringIndex)
+    {
+        std::uint32_t length = 0U;
+        std::memcpy(&length, bytes.data() + offset, sizeof(length));
+        offset += sizeof(length) + length;
+    }
+    std::uint32_t vertexCount = 0U;
+    std::memcpy(&vertexCount, bytes.data() + offset, sizeof(vertexCount));
+    Require(
+        vertexCount == 3U,
+        "pmx_physics fixture vertex count changed; QDEF variant stale"
+    );
+    const std::size_t vertexStart = offset + sizeof(vertexCount);
+    // BDEF1 vertex: position 12 + normal 12 + uv 8 + type 1 + bone index 1
+    // + edge float 4 = 38 bytes in this fixture's Saba-compatible layout.
+    constexpr std::size_t kOriginalVertexSize = 38U;
+    const std::size_t vertexEnd =
+        vertexStart + static_cast<std::size_t>(vertexCount) *
+            kOriginalVertexSize;
+    std::uint32_t faceTriple = 0U;
+    std::memcpy(&faceTriple, bytes.data() + vertexEnd, sizeof(faceTriple));
+    Require(
+        faceTriple == 3U,
+        "pmx_physics fixture face section shifted; QDEF variant stale"
+    );
+
+    const auto appendValue = [](std::vector<std::uint8_t>& output,
+                                const void* data,
+                                std::size_t size)
+    {
+        const std::size_t begin = output.size();
+        output.resize(begin + size);
+        std::memcpy(output.data() + begin, data, size);
+    };
+
+    std::vector<std::uint8_t> newVertices;
+    newVertices.reserve(3U * 57U);
+    for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+    {
+        const std::size_t sourceBegin =
+            vertexStart + vertex * kOriginalVertexSize;
+        // position/normal/uv are unchanged (32 bytes).
+        appendValue(
+            newVertices,
+            bytes.data() + sourceBegin,
+            32U
+        );
+        const std::uint8_t weightType = 4U;  // QDEF
+        appendValue(newVertices, &weightType, sizeof(weightType));
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            const std::uint8_t boneIndex = static_cast<std::uint8_t>(
+                boneIndices[vertex][slot]
+            );
+            appendValue(newVertices, &boneIndex, sizeof(boneIndex));
+        }
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            const float weight = boneWeights[vertex][slot];
+            appendValue(newVertices, &weight, sizeof(weight));
+        }
+        const float edge = 1.0f;
+        appendValue(newVertices, &edge, sizeof(edge));
+    }
+
+    std::vector<std::uint8_t> result;
+    result.reserve(bytes.size() + newVertices.size() - 3U * kOriginalVertexSize);
+    // Header + strings + vertex count only; the original vertex block is
+    // replaced by the QDEF block below.
+    result.insert(result.end(), bytes.begin(), bytes.begin() + vertexStart);
+    result.insert(result.end(), newVertices.begin(), newVertices.end());
+    result.insert(result.end(), bytes.begin() + vertexEnd, bytes.end());
+
+    const std::filesystem::path output =
+        std::filesystem::temp_directory_path() /
+        "wisteria_qdef_invalid_bone_variant.pmx";
+    std::ofstream out(output, std::ios::binary);
+    Require(out.is_open(), "Cannot write QDEF variant PMX");
+    out.write(
+        reinterpret_cast<const char*>(result.data()),
+        static_cast<std::streamsize>(result.size())
+    );
+    return output;
+}
+}  // namespace
+
+void TestR12AFixturePhysicsSanity()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr && observation != nullptr,
+        "pmx_physics fixture did not expose deterministic interfaces"
+    );
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed on pmx_physics"
+    );
+    PhysicsSnapshot physics;
+    Require(
+        observation->CaptureState(physics) == TimelineStatus::Ok,
+        "CaptureState failed on pmx_physics"
+    );
+    const auto [dynamicCount, kinematicCount] =
+        CountBodyKinds(physics);
+    Require(
+        dynamicCount > 0U && kinematicCount > 0U &&
+            physics.jointCount > 0U,
+        "pmx_physics fixture lost dynamic/kinematic/joint content"
+    );
+}
+
+void TestR12AReplayFromStartRepeatable()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto first = CreateDeterministicRuntime(modelPath);
+    auto second = CreateDeterministicRuntime(modelPath);
+    auto* firstStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        first.get()
+    );
+    auto* secondStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        second.get()
+    );
+    Require(
+        firstStepper != nullptr && secondStepper != nullptr,
+        "R1.2A runtimes lost the deterministic stepper"
+    );
+    const ReplayConfig config;
+    Require(
+        firstStepper->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            secondStepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "PrepareFrameZero failed on one replay runtime"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 120U; ++frame)
+    {
+        Require(
+            firstStepper->StepMotionFrameExact(frame, config) ==
+                    TimelineStatus::Ok &&
+                secondStepper->StepMotionFrameExact(frame, config) ==
+                    TimelineStatus::Ok,
+            "StepMotionFrameExact failed during repeatability replay"
+        );
+    }
+    const FrameStateHashes firstHashes = CaptureDeterminismHashes(*first);
+    const FrameStateHashes secondHashes = CaptureDeterminismHashes(*second);
+    Require(
+        firstHashes.pose.exactHash == secondHashes.pose.exactHash &&
+            firstHashes.vertex.exactHash == secondHashes.vertex.exactHash &&
+            firstHashes.physics.exactHash == secondHashes.physics.exactHash,
+        "Identical ReplayFromStart runs produced different exact hashes"
+    );
+}
+
+void TestR12ASeekConsistency()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto direct = CreateDeterministicRuntime(modelPath);
+    auto staged = CreateDeterministicRuntime(modelPath);
+    auto* directRuntime = dynamic_cast<MmdRuntimeModel*>(direct.get());
+    auto* stagedRuntime = dynamic_cast<MmdRuntimeModel*>(staged.get());
+    Require(
+        directRuntime != nullptr && stagedRuntime != nullptr,
+        "R1.2A seek test lost the MMD runtime surface"
+    );
+    const ReplayConfig config;
+    Require(
+        directRuntime->EvaluateTick(
+            300U,
+            SeekPolicy::ReplayFromStart,
+            config
+        ) == TimelineStatus::Ok,
+        "Direct 300-frame replay failed"
+    );
+    Require(
+        stagedRuntime->EvaluateTick(
+            150U,
+            SeekPolicy::ReplayFromStart,
+            config
+        ) == TimelineStatus::Ok &&
+            stagedRuntime->EvaluateTick(
+                300U,
+                SeekPolicy::ReplayFromStart,
+                config
+            ) == TimelineStatus::Ok,
+        "Staged 150->300 replay failed"
+    );
+    const FrameStateHashes directHashes = CaptureDeterminismHashes(*direct);
+    const FrameStateHashes stagedHashes = CaptureDeterminismHashes(*staged);
+    Require(
+        directHashes.pose.exactHash == stagedHashes.pose.exactHash &&
+            directHashes.vertex.exactHash == stagedHashes.vertex.exactHash &&
+            directHashes.physics.exactHash == stagedHashes.physics.exactHash,
+        "Direct 300 != staged 150->300 (seek inconsistency)"
+    );
+}
+
+void TestR12AResetAtTargetCanonical()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* mmdRuntime = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        mmdRuntime != nullptr && observation != nullptr,
+        "ResetAtTarget test lost the runtime surface"
+    );
+    const ReplayConfig config;
+    Require(
+        mmdRuntime->EvaluateTick(300U, SeekPolicy::ResetAtTarget, config) ==
+            TimelineStatus::Ok,
+        "First ResetAtTarget failed"
+    );
+    const FrameStateHashes firstHashes =
+        CaptureDeterminismHashes(*runtime);
+    PhysicsSnapshot firstState;
+    Require(
+        observation->CaptureState(firstState) == TimelineStatus::Ok,
+        "First ResetAtTarget capture failed"
+    );
+    PhysicsStepDiagnostics firstDiagnostics;
+    Require(
+        observation->ReadStepDiagnostics(firstDiagnostics) ==
+            TimelineStatus::Ok,
+        "First ResetAtTarget diagnostics failed"
+    );
+
+    Require(
+        mmdRuntime->EvaluateTick(300U, SeekPolicy::ResetAtTarget, config) ==
+            TimelineStatus::Ok,
+        "Second ResetAtTarget failed"
+    );
+    const FrameStateHashes secondHashes =
+        CaptureDeterminismHashes(*runtime);
+    PhysicsSnapshot secondState;
+    Require(
+        observation->CaptureState(secondState) == TimelineStatus::Ok,
+        "Second ResetAtTarget capture failed"
+    );
+    PhysicsStepDiagnostics secondDiagnostics;
+    Require(
+        observation->ReadStepDiagnostics(secondDiagnostics) ==
+            TimelineStatus::Ok,
+        "Second ResetAtTarget diagnostics failed"
+    );
+
+    Require(
+        firstHashes.pose.exactHash == secondHashes.pose.exactHash &&
+            firstHashes.vertex.exactHash == secondHashes.vertex.exactHash &&
+            firstHashes.physics.exactHash == secondHashes.physics.exactHash,
+        "ResetAtTarget(300) twice produced different exact hashes"
+    );
+    Require(
+        secondState.rigidBodies.size() == firstState.rigidBodies.size(),
+        "ResetAtTarget changed rigid-body count"
+    );
+    bool allVelocitiesZero = true;
+    bool allForcesZero = true;
+    for (const RigidBodySnapshot& body : secondState.rigidBodies)
+    {
+        const float speed = glm::length(body.linearVelocity) +
+            glm::length(body.angularVelocity);
+        const float force = glm::length(body.totalForce) +
+            glm::length(body.totalTorque);
+        if (speed > 1.0e-6f)
+            allVelocitiesZero = false;
+        if (force > 1.0e-6f)
+            allForcesZero = false;
+    }
+    Require(
+        allVelocitiesZero && allForcesZero,
+        "ResetAtTarget left nonzero velocity or force"
+    );
+    Require(
+        secondDiagnostics.executedSubsteps == 0U &&
+            secondDiagnostics.remainingAccumulator == 0.0,
+        "ResetAtTarget boundary is not canonical (substeps/accumulator)"
+    );
+    Require(
+        secondState.canonical,
+        "ResetAtTarget snapshot is not marked canonical"
+    );
+}
+
+void TestR12AStepDiagnostics()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr && observation != nullptr,
+        "Step diagnostics test lost the runtime surface"
+    );
+    const ReplayConfig config;
+    Require(
+        stepper->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            stepper->StepMotionFrameExact(1U, config) ==
+                TimelineStatus::Ok,
+        "Step diagnostics replay failed"
+    );
+    PhysicsStepDiagnostics diagnostics;
+    Require(
+        observation->ReadStepDiagnostics(diagnostics) ==
+            TimelineStatus::Ok,
+        "ReadStepDiagnostics failed"
+    );
+    Require(
+        diagnostics.executedSubsteps == 4U,
+        "30Hz frame did not execute exactly 4 physics substeps"
+    );
+    Require(
+        diagnostics.remainingAccumulator == 0.0,
+        "Canonical frame boundary left a nonzero accumulator"
+    );
+}
+
+void TestR12ADynamicBodiesMove()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr && observation != nullptr,
+        "Dynamic movement test lost the runtime surface"
+    );
+    const ReplayConfig config;
+    Require(
+        stepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "Dynamic movement PrepareFrameZero failed"
+    );
+    PhysicsSnapshot before;
+    Require(
+        observation->CaptureState(before) == TimelineStatus::Ok,
+        "Dynamic movement baseline capture failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 60U; ++frame)
+    {
+        Require(
+            stepper->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "Dynamic movement replay failed"
+        );
+    }
+    PhysicsSnapshot after;
+    Require(
+        observation->CaptureState(after) == TimelineStatus::Ok,
+        "Dynamic movement final capture failed"
+    );
+    bool anyDynamicBodyMoved = false;
+    for (const RigidBodySnapshot& bodyBefore : before.rigidBodies)
+    {
+        if (bodyBefore.kinematic)
+            continue;
+        const RigidBodySnapshot* bodyAfter = nullptr;
+        for (const RigidBodySnapshot& candidate : after.rigidBodies)
+        {
+            if (candidate.index == bodyBefore.index)
+            {
+                bodyAfter = &candidate;
+                break;
+            }
+        }
+        Require(
+            bodyAfter != nullptr,
+            "Dynamic movement capture lost a rigid body"
+        );
+        if (BodyMoved(bodyBefore, *bodyAfter))
+            anyDynamicBodyMoved = true;
+    }
+    Require(
+        anyDynamicBodyMoved,
+        "No dynamic rigid body moved after 60 deterministic frames"
+    );
+}
+
+void TestR12ARejectsUnsupportedProfiles()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* mmdRuntime = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    Require(mmdRuntime != nullptr, "Profile rejection test lost runtime");
+
+    ReplayConfig wrongFps;
+    wrongFps.motionFps = 60U;
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            wrongFps
+        ) == TimelineStatus::UnsupportedReplayProfile,
+        "60Hz motion profile was accepted"
+    );
+    ReplayConfig wrongHz;
+    wrongHz.physicsHz = 60U;
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            wrongHz
+        ) == TimelineStatus::UnsupportedReplayProfile,
+        "60Hz physics profile was accepted"
+    );
+    ReplayConfig withWarmup;
+    withWarmup.warmupFrames = 1U;
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            withWarmup
+        ) == TimelineStatus::UnsupportedReplayProfile,
+        "warmupFrames profile was accepted"
+    );
+    ReplayConfig withLoop;
+    withLoop.loopMotion = true;
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            withLoop
+        ) == TimelineStatus::UnsupportedReplayProfile,
+        "loopMotion replay profile was accepted"
+    );
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromCheckpoint,
+            {}
+        ) == TimelineStatus::InvalidCheckpoint,
+        "ReplayFromCheckpoint did not report InvalidCheckpoint"
+    );
+}
+
+void TestR12AOutOfRangeHoldsPoseAndStepsPhysics()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr && observation != nullptr,
+        "Out-of-range test lost the runtime surface"
+    );
+    const ReplayConfig config;
+    Require(
+        stepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "Out-of-range PrepareFrameZero failed"
+    );
+    const FrameStateHashes zeroHashes = CaptureDeterminismHashes(*runtime);
+    PhysicsSnapshot zeroState;
+    Require(
+        observation->CaptureState(zeroState) == TimelineStatus::Ok,
+        "Out-of-range baseline capture failed"
+    );
+    // No VMD is loaded: motion end is frame 0, so frames 1..300 must hold
+    // the initial pose while physics keeps stepping.
+    for (MotionFrameIndex frame = 1U; frame <= 300U; ++frame)
+    {
+        Require(
+            stepper->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "Out-of-range replay failed"
+        );
+    }
+    const FrameStateHashes endHashes = CaptureDeterminismHashes(*runtime);
+    PhysicsSnapshot endState;
+    Require(
+        observation->CaptureState(endState) == TimelineStatus::Ok,
+        "Out-of-range final capture failed"
+    );
+    Require(
+        zeroHashes.pose.exactHash == endHashes.pose.exactHash &&
+            zeroHashes.vertex.exactHash == endHashes.vertex.exactHash,
+        "No-VMD replay changed the held initial pose"
+    );
+    Require(
+        zeroHashes.physics.exactHash != endHashes.physics.exactHash,
+        "No-VMD replay did not advance physics past motion end"
+    );
+    Require(
+        endState.motionFrame == 300U &&
+            endState.physicsTick == 1200U,
+        "Out-of-range snapshot recorded the wrong timeline position"
+    );
+}
+
+void TestR12AIdentityPoseMatchesBind()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    Require(stepper != nullptr, "Identity test lost the stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "Identity test PrepareFrameZero failed"
+    );
+    const ModelVertexFrame frame = runtime->VertexFrame();
+    const std::span<const glm::vec3> bind = runtime->BindPositions();
+    Require(
+        !frame.positions.empty() &&
+            frame.positions.size() == bind.size() &&
+            frame.positions.size() == frame.normals.size(),
+        "Identity test fixture lost vertex content"
+    );
+    for (std::size_t index = 0U; index < frame.positions.size(); ++index)
+    {
+        const glm::vec3& position = frame.positions[index];
+        Require(
+            std::isfinite(position.x) &&
+                std::isfinite(position.y) &&
+                std::isfinite(position.z),
+            "Identity pose produced a non-finite deformed vertex"
+        );
+        Require(
+            glm::distance(position, bind[index]) <= 1.0e-3f,
+            [&]() {
+                char buffer[256];
+                std::snprintf(
+                    buffer,
+                    sizeof(buffer),
+                    "Identity pose did not reproduce bind at v%zu: "
+                    "bind=(%.6f,%.6f,%.6f) upd=(%.6f,%.6f,%.6f)",
+                    index,
+                    static_cast<double>(bind[index].x),
+                    static_cast<double>(bind[index].y),
+                    static_cast<double>(bind[index].z),
+                    static_cast<double>(position.x),
+                    static_cast<double>(position.y),
+                    static_cast<double>(position.z)
+                );
+                return std::string(buffer);
+            }()
+        );
+    }
+}
+
+void TestR12AFourSubstepProbeLongRun()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr && observation != nullptr,
+        "Long-run probe lost the runtime surface"
+    );
+    const ReplayConfig config;
+    Require(
+        stepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "Long-run probe PrepareFrameZero failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 1000U; ++frame)
+    {
+        Require(
+            stepper->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "Long-run probe frame failed"
+        );
+        PhysicsStepDiagnostics diagnostics;
+        Require(
+            observation->ReadStepDiagnostics(diagnostics) ==
+                TimelineStatus::Ok,
+            "Long-run probe diagnostics failed"
+        );
+        Require(
+            diagnostics.executedSubsteps == 4U &&
+                diagnostics.remainingAccumulator == 0.0,
+            "Long-run probe violated the 4-substep/zero-accumulator boundary"
+        );
+    }
+}
+
+void TestR12AStepStateMachine()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    Require(stepper != nullptr, "State machine test lost the stepper");
+    const ReplayConfig config;
+    Require(
+        stepper->StepMotionFrameExact(1U, config) ==
+            TimelineStatus::InvalidState,
+        "Step before PrepareFrameZero was accepted"
+    );
+    Require(
+        stepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "State machine PrepareFrameZero failed"
+    );
+    Require(
+        stepper->StepMotionFrameExact(2U, config) ==
+            TimelineStatus::NonSequentialFrame,
+        "Jump-ahead frame was accepted"
+    );
+    Require(
+        stepper->StepMotionFrameExact(1U, config) == TimelineStatus::Ok,
+        "Expected first frame was rejected"
+    );
+    Require(
+        stepper->StepMotionFrameExact(1U, config) ==
+            TimelineStatus::NonSequentialFrame,
+        "Repeated frame was accepted"
+    );
+    Require(
+        stepper->StepMotionFrameExact(3U, config) ==
+            TimelineStatus::NonSequentialFrame,
+        "Skipped frame was accepted"
+    );
+}
+
+void TestR12ALivePhysicsConfigBinding()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* mmdRuntime = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    Require(mmdRuntime != nullptr, "Live config test lost the runtime");
+
+    MmdPhysicsRuntimeSettings wrongSettings;
+    wrongSettings.fixedTimeStep = 1.0f / 60.0f;
+    wrongSettings.maxSubSteps = 2;
+    wrongSettings.gravity = glm::vec3(0.0f, -98.0f, 0.0f);
+    wrongSettings.enabled = true;
+    mmdRuntime->SetMmdPhysicsSettings(wrongSettings);
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            {}
+        ) == TimelineStatus::UnsupportedReplayProfile,
+        "Replay accepted a live 1/60 physics configuration"
+    );
+
+    MmdPhysicsRuntimeSettings goodSettings;
+    goodSettings.fixedTimeStep = 1.0f / 120.0f;
+    goodSettings.maxSubSteps = 10;
+    goodSettings.gravity = glm::vec3(0.0f, -98.0f, 0.0f);
+    goodSettings.enabled = true;
+    mmdRuntime->SetMmdPhysicsSettings(goodSettings);
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            {}
+        ) == TimelineStatus::Ok,
+        "Replay rejected a valid restored live physics configuration"
+    );
+}
+
+void TestR12APhysicsDisabledRejected()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    SabaPhysicsSettings settings;
+    settings.fixedTimeStep = 1.0f / 120.0f;
+    settings.maxSubSteps = 10;
+    settings.gravity = glm::vec3(0.0f, -98.0f, 0.0f);
+    settings.enabled = false;
+    auto runtime = std::make_unique<SabaMmdRuntimeModel>(
+        modelPath,
+        std::filesystem::path{},
+        settings
+    );
+    Require(
+        runtime->Initialize(),
+        "Disabled-physics runtime failed to initialize"
+    );
+    auto* mmdRuntime = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    Require(mmdRuntime != nullptr, "Disabled-physics test lost the runtime");
+    Require(
+        mmdRuntime->EvaluateTick(
+            10U,
+            SeekPolicy::ReplayFromStart,
+            {}
+        ) == TimelineStatus::UnsupportedReplayProfile,
+        "Deterministic replay ran with physics disabled"
+    );
+}
+
+void TestR12ADifferentHistoryResetConverges()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto shortHistory = CreateDeterministicRuntime(modelPath);
+    auto longHistory = CreateDeterministicRuntime(modelPath);
+    auto* shortStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        shortHistory.get()
+    );
+    auto* longStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        longHistory.get()
+    );
+    auto* shortMmd = dynamic_cast<MmdRuntimeModel*>(shortHistory.get());
+    auto* longMmd = dynamic_cast<MmdRuntimeModel*>(longHistory.get());
+    Require(
+        shortStepper != nullptr && longStepper != nullptr &&
+            shortMmd != nullptr && longMmd != nullptr,
+        "Reset convergence test lost the runtime surfaces"
+    );
+    const ReplayConfig config;
+    Require(shortStepper->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            longStepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "Reset convergence PrepareFrameZero failed");
+    for (MotionFrameIndex frame = 1U; frame <= 30U; ++frame)
+    {
+        Require(
+            shortStepper->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "Short-history replay failed"
+        );
+    }
+    for (MotionFrameIndex frame = 1U; frame <= 120U; ++frame)
+    {
+        Require(
+            longStepper->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "Long-history replay failed"
+        );
+    }
+    // Different histories, same canonical reset target: the reset must
+    // erase the history difference.
+    Require(
+        shortMmd->EvaluateTick(120U, SeekPolicy::ResetAtTarget, config) ==
+                TimelineStatus::Ok &&
+            longMmd->EvaluateTick(120U, SeekPolicy::ResetAtTarget, config) ==
+                TimelineStatus::Ok,
+        "ResetAtTarget failed on divergent histories"
+    );
+    const FrameStateHashes resetShort = CaptureDeterminismHashes(*shortHistory);
+    const FrameStateHashes resetLong = CaptureDeterminismHashes(*longHistory);
+    Require(
+        resetShort.pose.exactHash == resetLong.pose.exactHash &&
+            resetShort.vertex.exactHash == resetLong.vertex.exactHash &&
+            resetShort.physics.exactHash == resetLong.physics.exactHash,
+        "Canonical reset did not converge divergent histories"
+    );
+    // And the first steps after a fresh PrepareFrameZero must also converge.
+    Require(
+        shortStepper->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            longStepper->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "Converged PrepareFrameZero failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 10U; ++frame)
+    {
+        Require(
+            shortStepper->StepMotionFrameExact(frame, config) ==
+                    TimelineStatus::Ok &&
+                longStepper->StepMotionFrameExact(frame, config) ==
+                    TimelineStatus::Ok,
+            "Converged post-reset replay failed"
+        );
+    }
+    const FrameStateHashes stepShort = CaptureDeterminismHashes(*shortHistory);
+    const FrameStateHashes stepLong = CaptureDeterminismHashes(*longHistory);
+    Require(
+        stepShort.pose.exactHash == stepLong.pose.exactHash &&
+            stepShort.vertex.exactHash == stepLong.vertex.exactHash &&
+            stepShort.physics.exactHash == stepLong.physics.exactHash,
+        "Post-reset first steps diverged between histories"
+    );
+}
+
+void TestR12AMorphOverrideLifecycle()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
+
+    const std::filesystem::path vmdPath =
+        std::filesystem::temp_directory_path() /
+        "wisteria_morph_override_test.vmd";
+    {
+        std::vector<std::uint8_t> bytes;
+        const auto appendValue = [&bytes]<typename T>(const T& value)
+        {
+            const std::size_t offset = bytes.size();
+            bytes.resize(offset + sizeof(T));
+            std::memcpy(bytes.data() + offset, &value, sizeof(T));
+        };
+        const auto appendFixed = [&bytes](
+            std::string_view value,
+            std::size_t size
+        )
+        {
+            const std::size_t begin = bytes.size();
+            bytes.resize(begin + size, 0U);
+            const std::size_t copySize = std::min(value.size(), size);
+            std::memcpy(bytes.data() + begin, value.data(), copySize);
+        };
+        appendFixed("Vocaloid Motion Data 0002", 30U);
+        appendFixed("testModel", 20U);
+        appendValue(std::uint32_t{0U});  // bone frames
+        appendValue(std::uint32_t{2U});  // morph frames
+        const auto appendMorphFrame = [&appendFixed, &appendValue](
+            std::string_view name,
+            std::uint32_t frame,
+            float weight
+        )
+        {
+            appendFixed(name, 15U);
+            appendValue(frame);
+            appendValue(weight);
+        };
+        appendMorphFrame("vertex", 0U, 0.0f);
+        appendMorphFrame("vertex", 10U, 1.0f);
+        appendValue(std::uint32_t{0U});  // camera frames
+        appendValue(std::uint32_t{0U});  // light frames
+        std::ofstream out(vmdPath, std::ios::binary);
+        Require(out.is_open(), "Cannot write morph override VMD fixture");
+        out.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size())
+        );
+    }
+
+    SabaMmdRuntimeModel runtime(modelPath);
+    Require(runtime.Initialize(), "Morph override runtime failed to init");
+    Require(runtime.LoadMotion(vmdPath), "Morph override VMD failed to load");
+    runtime.SetMotionFrame(0.0);
+
+    // SetMorphWeight stays instantaneous: the next VMD evaluation wins.
+    Require(
+        runtime.SetMorphWeight("vertex", 1.0f),
+        "SetMorphWeight rejected a valid morph"
+    );
+    runtime.Update(0.0f);
+    const std::optional<float> afterInstant = runtime.MorphWeight("vertex");
+    Require(
+        afterInstant.has_value() && NearlyEqual(*afterInstant, 0.0f),
+        "SetMorphWeight unexpectedly created a persistent override"
+    );
+
+    // SetMorphOverride persists across VMD evaluations.
+    Require(
+        runtime.SetMorphOverride("vertex", 1.0f),
+        "SetMorphOverride rejected a valid morph"
+    );
+    runtime.Update(0.0f);
+    const std::optional<float> withOverride = runtime.MorphWeight("vertex");
+    Require(
+        withOverride.has_value() && NearlyEqual(*withOverride, 1.0f),
+        "Morph override did not survive VMD evaluation"
+    );
+
+    // ClearMorphOverride restores VMD-driven weights.
+    runtime.ClearMorphOverride("vertex");
+    runtime.Update(0.0f);
+    const std::optional<float> afterClear = runtime.MorphWeight("vertex");
+    Require(
+        afterClear.has_value() && NearlyEqual(*afterClear, 0.0f),
+        "ClearMorphOverride did not restore VMD-driven weights"
+    );
+
+    // ClearAllMorphOverrides clears every entry.
+    Require(
+        runtime.SetMorphOverride("vertex", 0.5f),
+        "Second SetMorphOverride rejected"
+    );
+    runtime.ClearAllMorphOverrides();
+    runtime.Update(0.0f);
+    const std::optional<float> afterClearAll = runtime.MorphWeight("vertex");
+    Require(
+        afterClearAll.has_value() && NearlyEqual(*afterClearAll, 0.0f),
+        "ClearAllMorphOverrides did not restore VMD-driven weights"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove(vmdPath, ignored);
+}
+
+void TestR12AQdefInvalidBoneFallback()
+{
+    RequireCoreAsset("pmx-physics");
+    const auto runVariant =
+        [](const std::array<std::array<int32_t, 4>, 3>& bones,
+           const std::array<std::array<float, 4>, 3>& weights,
+           bool expectBindFallback)
+    {
+        const std::filesystem::path variant =
+            BuildQdefPmxVariant(bones, weights);
+        SabaPhysicsSettings settings;
+        settings.fixedTimeStep = 1.0f / 120.0f;
+        settings.maxSubSteps = 10;
+        settings.gravity = glm::vec3(0.0f, -98.0f, 0.0f);
+        settings.enabled = true;
+        SabaMmdRuntimeModel runtime(
+            variant,
+            std::filesystem::path{},
+            settings
+        );
+        Require(
+            runtime.Initialize(),
+            "QDEF invalid-bone variant failed to initialize"
+        );
+        auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+            &runtime
+        );
+        Require(stepper != nullptr, "QDEF variant lost the stepper");
+        Require(
+            stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+            "QDEF variant PrepareFrameZero failed"
+        );
+        const ModelVertexFrame frame = runtime.VertexFrame();
+        const std::span<const glm::vec3> bind = runtime.BindPositions();
+        Require(
+            !frame.positions.empty() &&
+                frame.positions.size() == bind.size() &&
+                frame.normals.size() == frame.positions.size(),
+            "QDEF variant lost vertex content"
+        );
+        for (std::size_t index = 0U; index < frame.positions.size(); ++index)
+        {
+            const glm::vec3& position = frame.positions[index];
+            const glm::vec3& normal = frame.normals[index];
+            Require(
+                std::isfinite(position.x) &&
+                    std::isfinite(position.y) &&
+                    std::isfinite(position.z),
+                "QDEF invalid-bone fallback produced a non-finite vertex"
+            );
+            Require(
+                std::isfinite(normal.x) &&
+                    std::isfinite(normal.y) &&
+                    std::isfinite(normal.z),
+                "QDEF invalid-bone fallback produced a non-finite normal"
+            );
+            if (expectBindFallback)
+            {
+                Require(
+                    glm::distance(position, bind[index]) <= 1.0e-3f,
+                    "All-invalid QDEF did not fall back to the bind pose"
+                );
+            }
+        }
+        std::error_code ignored;
+        std::filesystem::remove(variant, ignored);
+    };
+
+    // Case 1: slot 0 references an out-of-range bone, slot 1 is valid.
+    runVariant(
+        {{
+            {{99, 0, 0, 0}},
+            {{0, 0, 0, 0}},
+            {{0, 0, 0, 0}}
+        }},
+        {{
+            {{0.5f, 0.5f, 0.0f, 0.0f}},
+            {{0.0f, 0.0f, 0.0f, 0.0f}},
+            {{0.0f, 0.0f, 0.0f, 0.0f}}
+        }},
+        false
+    );
+    // Case 2: an invalid slot carries a nonzero raw weight.
+    runVariant(
+        {{
+            {{0, 99, 0, 0}},
+            {{0, 0, 0, 0}},
+            {{0, 0, 0, 0}}
+        }},
+        {{
+            {{0.4f, 0.2f, 0.4f, 0.0f}},
+            {{0.0f, 0.0f, 0.0f, 0.0f}},
+            {{0.0f, 0.0f, 0.0f, 0.0f}}
+        }},
+        false
+    );
+    // Case 3: all four slots invalid -> identity fallback (bind pose).
+    runVariant(
+        {{
+            {{99, 99, 99, 99}},
+            {{99, 99, 99, 99}},
+            {{99, 99, 99, 99}}
+        }},
+        {{
+            {{0.25f, 0.25f, 0.25f, 0.25f}},
+            {{0.25f, 0.25f, 0.25f, 0.25f}},
+            {{0.25f, 0.25f, 0.25f, 0.25f}}
+        }},
+        true
+    );
+}
+
+// Parser-level regression: the four QDEF bone weights must land in their
+// exact slots. A skinning-output-only test cannot detect a parser that
+// misplaces weights[2]/[3] (the old vendored code wrote to [3] and out of
+// bounds at [4]).
+void TestPmxQdefParserWeights()
+{
+    RequireCoreAsset("pmx-physics");
+    const std::array<std::array<int32_t, 4>, 3> bones{{
+        {{0, 1, 2, 3}},
+        {{0, 1, 2, 3}},
+        {{0, 1, 2, 3}}
+    }};
+    const std::array<std::array<float, 4>, 3> weights{{
+        {{0.1f, 0.2f, 0.3f, 0.4f}},
+        {{0.4f, 0.3f, 0.2f, 0.1f}},
+        {{0.25f, 0.25f, 0.25f, 0.25f}}
+    }};
+    const std::filesystem::path variant =
+        BuildQdefPmxVariant(bones, weights);
+    saba::PMXFile parsed;
+    Require(
+        saba::ReadPMXFile(&parsed, variant.string().c_str()),
+        "QDEF parser failed to read the generated variant"
+    );
+    Require(
+        parsed.m_vertices.size() == 3U,
+        "QDEF parser changed the variant vertex count"
+    );
+    for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+    {
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            Require(
+                parsed.m_vertices[vertex].m_boneIndices[slot] ==
+                    bones[vertex][slot],
+                "QDEF parser misplaced a bone index"
+            );
+            Require(
+                NearlyEqual(
+                    parsed.m_vertices[vertex].m_boneWeights[slot],
+                    weights[vertex][slot]
+                ),
+                "QDEF parser misplaced a bone weight"
+            );
+        }
+    }
+    std::error_code ignored;
+    std::filesystem::remove(variant, ignored);
+}
+
 void TestR1ProjectMmdInstanceWhenAvailable()
 {
     RequireFullAssetsTier();
@@ -5113,6 +6336,7 @@ void TestSabaImporterMorphTargets()
 int main()
 {
     int failures = 0;
+    failures += !RunTest("GLM multiply sanity", TestGlmMultiplySanity);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
     failures += !RunTest(
         "Extended PMX morph importer",
@@ -5245,6 +6469,74 @@ int main()
     failures += !RunTest(
         "R1 engine-owned MMD instances",
         TestR1EngineOwnedMmdInstances
+    );
+    failures += !RunTest(
+        "R1.2A fixture physics sanity",
+        TestR12AFixturePhysicsSanity
+    );
+    failures += !RunTest(
+        "R1.2A replay from start repeatable",
+        TestR12AReplayFromStartRepeatable
+    );
+    failures += !RunTest(
+        "R1.2A seek consistency",
+        TestR12ASeekConsistency
+    );
+    failures += !RunTest(
+        "R1.2A ResetAtTarget canonical",
+        TestR12AResetAtTargetCanonical
+    );
+    failures += !RunTest(
+        "R1.2A step diagnostics",
+        TestR12AStepDiagnostics
+    );
+    failures += !RunTest(
+        "R1.2A dynamic bodies move",
+        TestR12ADynamicBodiesMove
+    );
+    failures += !RunTest(
+        "R1.2A unsupported profiles rejected",
+        TestR12ARejectsUnsupportedProfiles
+    );
+    failures += !RunTest(
+        "R1.2A out-of-range pose/physics",
+        TestR12AOutOfRangeHoldsPoseAndStepsPhysics
+    );
+    failures += !RunTest(
+        "R1.2A identity pose matches bind",
+        TestR12AIdentityPoseMatchesBind
+    );
+    failures += !RunTest(
+        "R1.2A 1000-frame substep probe",
+        TestR12AFourSubstepProbeLongRun
+    );
+    failures += !RunTest(
+        "R1.2A step state machine",
+        TestR12AStepStateMachine
+    );
+    failures += !RunTest(
+        "R1.2A live physics config binding",
+        TestR12ALivePhysicsConfigBinding
+    );
+    failures += !RunTest(
+        "R1.2A disabled physics rejected",
+        TestR12APhysicsDisabledRejected
+    );
+    failures += !RunTest(
+        "R1.2A divergent history reset convergence",
+        TestR12ADifferentHistoryResetConverges
+    );
+    failures += !RunTest(
+        "R1.2A morph override lifecycle",
+        TestR12AMorphOverrideLifecycle
+    );
+    failures += !RunTest(
+        "R1.2A QDEF invalid-bone fallback",
+        TestR12AQdefInvalidBoneFallback
+    );
+    failures += !RunTest(
+        "PMX QDEF parser weight slots",
+        TestPmxQdefParserWeights
     );
     failures += !RunTest(
         "R1 project MMD instance",

@@ -1,9 +1,74 @@
 #include "test_support.hpp"
 
 #include <glm/gtc/constants.hpp>
+#include "wisteria/mmd/mmd_determinism.hpp"
+
+#include <limits>
 
 namespace
 {
+void TestDeterminismHashValidation()
+{
+    PoseSnapshot validPose;
+    validPose.localTransforms = {glm::mat4(1.0f)};
+    validPose.globalTransforms = {glm::mat4(1.0f)};
+    validPose.skinningTransforms = {glm::mat4(1.0f)};
+    Require(
+        HashPose(validPose).valid,
+        "Valid pose hash was marked invalid"
+    );
+
+    PoseSnapshot mismatchedPose = validPose;
+    mismatchedPose.globalTransforms.clear();
+    Require(
+        !HashPose(mismatchedPose).valid,
+        "Mismatched pose channel counts produced a valid hash"
+    );
+
+    PoseSnapshot nanPose = validPose;
+    nanPose.localTransforms[0][1][1] =
+        std::numeric_limits<float>::quiet_NaN();
+    Require(
+        !HashPose(nanPose).valid,
+        "NaN pose matrix produced a valid hash"
+    );
+
+    DeformedVertexSnapshot validVertices;
+    validVertices.positions = {glm::vec3(0.0f)};
+    validVertices.normals = {glm::vec3(0.0f, 0.0f, 1.0f)};
+    Require(
+        HashVertices(validVertices).valid,
+        "Valid vertex hash was marked invalid"
+    );
+
+    DeformedVertexSnapshot mismatchedVertices;
+    mismatchedVertices.positions = {
+        glm::vec3(0.0f),
+        glm::vec3(1.0f)
+    };
+    mismatchedVertices.normals = {glm::vec3(0.0f, 0.0f, 1.0f)};
+    Require(
+        !HashVertices(mismatchedVertices).valid,
+        "Mismatched vertex arrays produced a valid hash"
+    );
+
+    PhysicsSnapshot validPhysics;
+    RigidBodySnapshot body;
+    body.index = 0U;
+    validPhysics.rigidBodies.push_back(body);
+    Require(
+        HashPhysics(validPhysics).valid,
+        "Valid physics hash was marked invalid"
+    );
+
+    PhysicsSnapshot duplicateIndexPhysics = validPhysics;
+    duplicateIndexPhysics.rigidBodies.push_back(body);
+    Require(
+        !HashPhysics(duplicateIndexPhysics).valid,
+        "Duplicate rigid-body index produced a valid hash"
+    );
+}
+
 void TestSkeletonAndPose()
 {
     const glm::mat4 rootLocal = glm::translate(
@@ -2055,6 +2120,10 @@ int main()
     );
     failures += !RunTest("Root motion", TestRootMotion);
     failures += !RunTest("MMD append and IK constraints", TestMmdBoneConstraints);
+    failures += !RunTest(
+        "Determinism hash validation",
+        TestDeterminismHashValidation
+    );
     failures += !RunTest("Morph runtime", TestMorphRuntime);
     failures += !RunTest(
         "Bone and UV morph evaluation",

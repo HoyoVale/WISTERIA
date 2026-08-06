@@ -14,6 +14,7 @@
 /build-linux/
 /build-fullassets/
 /build-linux-fullassets/
+/build-asan/
 /x64/
 /.vs/
 /out/

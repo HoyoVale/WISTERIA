@@ -43,13 +43,17 @@ add_library(saba STATIC ${WISTERIA_SABA_SOURCES})
 target_include_directories(saba
     PUBLIC
         ${WISTERIA_SABA_ROOT}/src
-        ${WISTERIA_SABA_ROOT}/external/glm/include
         ${WISTERIA_SABA_ROOT}/external/spdlog/include
     PRIVATE
         ${WISTERIA_BULLET_ROOT}/src
 )
 
 target_compile_features(saba PRIVATE cxx_std_14)
+
+# Saba compiles against WISTERIA's GLM (glm_headers, GLM 1.0.3) instead of
+# its bundled GLM 0.9.x so the entire process shares one math ABI. Saba's own
+# external/glm directory remains vendored but is not referenced by the build.
+target_link_libraries(saba PUBLIC glm_headers)
 
 if(WIN32)
     # Saba's own CMake defines these on Windows; Path.cpp mixes
@@ -86,7 +90,7 @@ if(WISTERIA_BUILD_SABA_VIEWER)
     target_include_directories(simple_mmd_viewer_glfw
         PRIVATE
             ${WISTERIA_SABA_ROOT}/src
-            ${WISTERIA_SABA_ROOT}/external/glm/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
             ${WISTERIA_SABA_ROOT}/external/spdlog/include
             ${WISTERIA_SABA_ROOT}/external/gl3w/include
             ${WISTERIA_SABA_ROOT}/external/stb/include

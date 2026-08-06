@@ -73,7 +73,16 @@ target_include_directories(glad PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glad/include
 )
 
-# glm
+# glm — WISTERIA owns the single math ABI.
+#
+# GLM is header-only and emits identical mangled inline symbols across
+# versions, so the whole process must see exactly ONE GLM header set. The
+# engine owns GLM 1.0.3 (third-party/glm) and the Saba adapter links this
+# same interface target instead of exposing its bundled GLM 0.9.x. This keeps
+# the math ABI a WISTERIA decision: backends adapt to the engine, never the
+# other way around. Mixing two GLM versions caused an ODR collision that made
+# matrix multiplication read the wrong layout (reproduced with ASan -O1 and
+# GCC 14).
 add_library(glm_headers INTERFACE)
 
 target_include_directories(glm_headers INTERFACE
@@ -237,6 +246,7 @@ set(WISTERIA_PHYSICS_SOURCES
 )
 
 set(WISTERIA_MMD_SOURCES
+    src/mmd/mmd_determinism.cpp
     src/mmd/mmd_pose_solver.cpp
     src/mmd/mmd_camera_conversion.cpp
     src/mmd/mmd_light_conversion.cpp

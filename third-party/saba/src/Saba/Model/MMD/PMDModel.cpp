@@ -172,14 +172,14 @@ namespace saba
 		}
 	}
 
-	void PMDModel::UpdatePhysicsAnimation(float elapsed)
+	int PMDModel::UpdatePhysicsAnimation(float elapsed)
 	{
 		MMDPhysicsManager* physicsMan = GetPhysicsManager();
 		auto physics = physicsMan->GetMMDPhysics();
 
 		if (physics == nullptr)
 		{
-			return;
+			return 0;
 		}
 
 		auto rigidbodys = physicsMan->GetRigidBodys();
@@ -189,7 +189,7 @@ namespace saba
 			rb->SetActivation(true);
 		}
 
-		physics->Update(elapsed);
+		int executedSubsteps = physics->Update(elapsed);
 
 		for (auto& rb : (*rigidbodys))
 		{
@@ -207,6 +207,8 @@ namespace saba
 				node->UpdateGlobalTransform();
 			}
 		}
+
+		return executedSubsteps;
 	}
 
 	void PMDModel::Update()

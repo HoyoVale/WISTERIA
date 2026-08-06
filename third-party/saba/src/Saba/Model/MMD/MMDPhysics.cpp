@@ -16,6 +16,25 @@
 
 namespace saba
 {
+	// WISTERIA deterministic-replay narrow interface. Exposes Bullet's
+	// protected frame accumulator (m_localTime) so the engine can assert and
+	// reset Canonical Frame Boundaries without tuning any solver parameter.
+	class DeterministicDynamicsWorld final : public btDiscreteDynamicsWorld
+	{
+	public:
+		using btDiscreteDynamicsWorld::btDiscreteDynamicsWorld;
+
+		btScalar GetSimulationTime() const
+		{
+			return m_localTime;
+		}
+
+		void ResetSimulationTime()
+		{
+			m_localTime = btScalar(0);
+		}
+	};
+
 	class MMDMotionState : public btMotionState
 	{
 	public:
@@ -72,7 +91,7 @@ namespace saba
 
 		m_solver = std::make_unique<btSequentialImpulseConstraintSolver>();
 
-		m_world = std::make_unique<btDiscreteDynamicsWorld>(
+		m_world = std::make_unique<DeterministicDynamicsWorld>(
 			m_dispatcher.get(),
 			m_broadphase.get(),
 			m_solver.get(),
@@ -139,12 +158,41 @@ namespace saba
 	}
 
 
-	void MMDPhysics::Update(float time)
+	int MMDPhysics::Update(float time)
 	{
 		if (m_world != nullptr)
 		{
-			m_world->stepSimulation(time, m_maxSubStepCount, static_cast<btScalar>(1.0 / m_fps));
+			return m_world->stepSimulation(
+				time,
+				m_maxSubStepCount,
+				static_cast<btScalar>(1.0 / m_fps)
+			);
 		}
+		return 0;
+	}
+
+	float MMDPhysics::GetSimulationTime() const
+	{
+		if (m_world == nullptr)
+		{
+			return 0.0f;
+		}
+		auto* deterministicWorld = static_cast<DeterministicDynamicsWorld*>(
+			m_world.get()
+		);
+		return static_cast<float>(deterministicWorld->GetSimulationTime());
+	}
+
+	void MMDPhysics::ResetSimulationTime()
+	{
+		if (m_world == nullptr)
+		{
+			return;
+		}
+		auto* deterministicWorld = static_cast<DeterministicDynamicsWorld*>(
+			m_world.get()
+		);
+		deterministicWorld->ResetSimulationTime();
 	}
 
 	void MMDPhysics::AddRigidBody(MMDRigidBody * mmdRB)

@@ -548,9 +548,18 @@ void MorphSet::EvaluateImpulseMorphs(
             }
             MmdRigidBodyImpulse& impulse = output[iterator->second];
 
+            // GLM 0.9's floating-point vector operator== compares bit
+            // patterns (memcmp), so a parsed -0.0 component is NOT equal to
+            // +0.0 even though IEEE semantics say it is. A stop/reset
+            // control must therefore be detected with explicit componentwise
+            // equality, which is version-independent and treats -0.0 == 0.0.
             const bool stopControl =
-                offset.velocity == glm::vec3(0.0f) &&
-                offset.torque == glm::vec3(0.0f);
+                offset.velocity.x == 0.0f &&
+                offset.velocity.y == 0.0f &&
+                offset.velocity.z == 0.0f &&
+                offset.torque.x == 0.0f &&
+                offset.torque.y == 0.0f &&
+                offset.torque.z == 0.0f;
             if (stopControl)
             {
                 impulse.reset = true;

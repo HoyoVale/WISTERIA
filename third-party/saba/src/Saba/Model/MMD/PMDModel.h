@@ -56,7 +56,7 @@ namespace saba
 		void UpdateNodeAnimation(bool afterPhysicsAnim) override;
 		// Physicsを更新する
 		void ResetPhysics() override;
-		void UpdatePhysicsAnimation(float elapsed) override;
+		int UpdatePhysicsAnimation(float elapsed) override;
 		// 頂点データーを更新する
 		void Update() override;
 		void SetParallelUpdateHint(uint32_t) override {}

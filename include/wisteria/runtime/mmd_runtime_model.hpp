@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wisteria/runtime/runtime_model_base.hpp"
+#include "wisteria/runtime/determinism.hpp"
 #include "wisteria/animation/bone.hpp"
 #include "wisteria/animation/morph.hpp"
 
@@ -112,5 +113,40 @@ public:
     ) = 0;
     virtual void ResetMmdPhysics() = 0;
     virtual PhysicsInstance* GetMmdPhysics() noexcept = 0;
+
+    // R1.2A deterministic timeline entry (Saba implementation). Evaluates
+    // the target motion frame under the requested seek policy; internals
+    // delegate to IDeterministicFrameStepper and never compose Saba physics
+    // phases directly. ReplayConfig is strictly validated (30Hz/120Hz,
+    // no warmup, no looping, physics enabled). Backends that do not support
+    // deterministic timelines inherit the UnsupportedReplayProfile default,
+    // so future MMD runtimes and test doubles are not forced to implement it.
+    virtual TimelineStatus EvaluateTick(
+        MotionFrameIndex,
+        SeekPolicy,
+        const ReplayConfig& = {}
+    )
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+
+    // Engine-level morph overrides survive VMD evaluation (R1.2 contract §5)
+    // and are re-applied every frame. SetMorphWeight() itself remains an
+    // instantaneous control with the pre-R1.2 semantics; only these explicit
+    // entries create a persistent override. Backends without override
+    // support return false / are no-ops.
+    virtual bool SetMorphOverride(std::string_view name, float weight)
+    {
+        (void)name;
+        (void)weight;
+        return false;
+    }
+    virtual void ClearMorphOverride(std::string_view name)
+    {
+        (void)name;
+    }
+    virtual void ClearAllMorphOverrides()
+    {
+    }
 };
 }  // namespace wisteria

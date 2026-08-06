@@ -18,6 +18,7 @@
 #include <string>
 #include <algorithm>
 #include <future>
+#include <atomic>
 
 namespace saba
 {
@@ -113,7 +114,7 @@ namespace saba
 		void UpdateNodeAnimation(bool afterPhysicsAnim) override;
 		// Physicsを更新する
 		void ResetPhysics() override;
-		void UpdatePhysicsAnimation(float elapsed) override;
+		int UpdatePhysicsAnimation(float elapsed) override;
 		// 頂点データーを更新する
 		void Update() override;
 		void SetParallelUpdateHint(uint32_t parallelCount) override;
@@ -246,6 +247,7 @@ namespace saba
 	private:
 		void SetupParallelUpdate();
 		void Update(const UpdateRange& range);
+		void WarnInvalidBoneOnce();
 
 		void Morph(PMXMorph* morph, float weight);
 
@@ -303,6 +305,7 @@ namespace saba
 		uint32_t							m_parallelUpdateCount;
 		std::vector<UpdateRange>			m_updateRanges;
 		std::vector<std::future<void>>		m_parallelUpdateFutures;
+		std::atomic_bool					m_invalidBoneWarningEmitted{false};
 	};
 }
 

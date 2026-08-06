@@ -30,6 +30,14 @@
 
 namespace saba
 {
+	namespace
+	{
+		bool IsValidBoneIndex(int32_t index, size_t boneCount)
+		{
+			return index >= 0 && static_cast<size_t>(index) < boneCount;
+		}
+	}
+
 	PMXModel::PMXModel()
 		: m_parallelUpdateCount(0)
 	{
@@ -242,14 +250,14 @@ namespace saba
 		}
 	}
 
-	void PMXModel::UpdatePhysicsAnimation(float elapsed)
+	int PMXModel::UpdatePhysicsAnimation(float elapsed)
 	{
 		MMDPhysicsManager* physicsMan = GetPhysicsManager();
 		auto physics = physicsMan->GetMMDPhysics();
 
 		if (physics == nullptr)
 		{
-			return;
+			return 0;
 		}
 
 		auto rigidbodys = physicsMan->GetRigidBodys();
@@ -258,7 +266,7 @@ namespace saba
 			rb->SetActivation(true);
 		}
 
-		physics->Update(elapsed);
+		int executedSubsteps = physics->Update(elapsed);
 
 		for (auto& rb : (*rigidbodys))
 		{
@@ -277,6 +285,8 @@ namespace saba
 				node->UpdateGlobalTransform();
 			}
 		}
+
+		return executedSubsteps;
 	}
 
 	void PMXModel::Update()
@@ -324,6 +334,19 @@ namespace saba
 		m_parallelUpdateCount = parallelCount;
 	}
 
+	void PMXModel::WarnInvalidBoneOnce()
+	{
+		if (!m_invalidBoneWarningEmitted.exchange(
+				true,
+				std::memory_order_relaxed))
+		{
+			SABA_WARN(
+				"PMXModel: invalid vertex bone index; applying a "
+				"skinning-specific safe fallback"
+			);
+		}
+	}
+
 	bool PMXModel::Load(const std::string& filepath, const std::string& mmdDataDir)
 	{
 		Destroy();
@@ -354,7 +377,7 @@ namespace saba
 			m_positions.push_back(pos);
 			m_normals.push_back(nor);
 			m_uvs.push_back(uv);
-			VertexBoneInfo vtxBoneInfo;
+			VertexBoneInfo vtxBoneInfo{};
 			if (PMXVertexWeight::SDEF != v.m_weightType)
 			{
 				vtxBoneInfo.m_boneIndex[0] = v.m_boneIndices[0];
@@ -433,6 +456,23 @@ namespace saba
 		m_updatePositions.resize(m_positions.size());
 		m_updateNormals.resize(m_normals.size());
 		m_updateUVs.resize(m_uvs.size());
+		// Safe initial values: update buffers start at the bind pose and the
+		// morph accumulators start at zero. GLM's default constructors do not
+		// zero their components, so resize() alone would leave indeterminate
+		// values that could leak into the first deformed frame.
+		std::copy(
+			m_positions.begin(),
+			m_positions.end(),
+			m_updatePositions.begin()
+		);
+		std::copy(
+			m_normals.begin(),
+			m_normals.end(),
+			m_updateNormals.begin()
+		);
+		std::copy(m_uvs.begin(), m_uvs.end(), m_updateUVs.begin());
+		std::fill(m_morphPositions.begin(), m_morphPositions.end(), glm::vec3(0));
+		std::fill(m_morphUVs.begin(), m_morphUVs.end(), glm::vec4(0));
 
 
 		m_indexElementSize = pmx.m_header.m_vertexIndexSize;
@@ -918,6 +958,9 @@ namespace saba
 		m_nodeMan.GetNodes()->clear();
 
 		m_updateRanges.clear();
+		// A reloaded model is a new asset: reset the per-model warning flag so
+		// a subsequent broken model can report its own invalid bones.
+		m_invalidBoneWarningEmitted.store(false, std::memory_order_relaxed);
 	}
 
 	void PMXModel::SetupParallelUpdate()
@@ -991,14 +1034,23 @@ namespace saba
 
 		for (size_t i = 0; i < range.m_vertexCount; i++)
 		{
-			glm::mat4 m;
+			glm::mat4 m(1.0f);
 			switch (vtxInfo->m_skinningType)
 			{
 			case PMXModel::SkinningType::Weight1:
 			{
 				const auto i0 = vtxInfo->m_boneIndex[0];
-				const auto& m0 = transforms[i0];
-				m = m0;
+				if (IsValidBoneIndex(i0, m_transforms.size()))
+				{
+					m = transforms[i0];
+				}
+				else
+				{
+					// Never silently rebind to bone 0: an invalid reference
+					// contributes identity instead of an arbitrary bone.
+					WarnInvalidBoneOnce();
+					m = glm::mat4(1.0f);
+				}
 				break;
 			}
 			case PMXModel::SkinningType::Weight2:
@@ -1007,8 +1059,14 @@ namespace saba
 				const auto i1 = vtxInfo->m_boneIndex[1];
 				const auto w0 = vtxInfo->m_boneWeight[0];
 				const auto w1 = vtxInfo->m_boneWeight[1];
-				const auto& m0 = transforms[i0];
-				const auto& m1 = transforms[i1];
+				const bool v0 = IsValidBoneIndex(i0, m_transforms.size());
+				const bool v1 = IsValidBoneIndex(i1, m_transforms.size());
+				if (!v0 || !v1)
+				{
+					WarnInvalidBoneOnce();
+				}
+				const glm::mat4 m0 = v0 ? transforms[i0] : glm::mat4(1.0f);
+				const glm::mat4 m1 = v1 ? transforms[i1] : glm::mat4(1.0f);
 				m = m0 * w0 + m1 * w1;
 				break;
 			}
@@ -1022,10 +1080,18 @@ namespace saba
 				const auto w1 = vtxInfo->m_boneWeight[1];
 				const auto w2 = vtxInfo->m_boneWeight[2];
 				const auto w3 = vtxInfo->m_boneWeight[3];
-				const auto& m0 = transforms[i0];
-				const auto& m1 = transforms[i1];
-				const auto& m2 = transforms[i2];
-				const auto& m3 = transforms[i3];
+				const bool v0 = IsValidBoneIndex(i0, m_transforms.size());
+				const bool v1 = IsValidBoneIndex(i1, m_transforms.size());
+				const bool v2 = IsValidBoneIndex(i2, m_transforms.size());
+				const bool v3 = IsValidBoneIndex(i3, m_transforms.size());
+				if (!v0 || !v1 || !v2 || !v3)
+				{
+					WarnInvalidBoneOnce();
+				}
+				const glm::mat4 m0 = v0 ? transforms[i0] : glm::mat4(1.0f);
+				const glm::mat4 m1 = v1 ? transforms[i1] : glm::mat4(1.0f);
+				const glm::mat4 m2 = v2 ? transforms[i2] : glm::mat4(1.0f);
+				const glm::mat4 m3 = v3 ? transforms[i3] : glm::mat4(1.0f);
 				m = m0 * w0 + m1 * w1 + m2 * w2 + m3 * w3;
 				break;
 			}
@@ -1038,6 +1104,20 @@ namespace saba
 				const auto i1 = vtxInfo->m_sdef.m_boneIndex[1];
 				const auto w0 = vtxInfo->m_sdef.m_boneWeight;
 				const auto w1 = 1.0f - w0;
+				const bool v0 = IsValidBoneIndex(i0, m_transforms.size());
+				const bool v1 = IsValidBoneIndex(i1, m_transforms.size());
+				if (!v0 || !v1)
+				{
+					WarnInvalidBoneOnce();
+					const glm::mat4 m0 = v0 ? transforms[i0] : glm::mat4(1.0f);
+					const glm::mat4 m1 = v1 ? transforms[i1] : glm::mat4(1.0f);
+					const glm::mat4 blend = m0 * w0 + m1 * w1;
+					*updatePosition = glm::vec3(
+						blend * glm::vec4(*position + *morphPos, 1.0f)
+					);
+					*updateNormal = glm::normalize(glm::mat3(blend) * *normal);
+					break;
+				}
 				const auto center = vtxInfo->m_sdef.m_sdefC;
 				const auto cr0 = vtxInfo->m_sdef.m_sdefR0;
 				const auto cr1 = vtxInfo->m_sdef.m_sdefR1;
@@ -1060,29 +1140,96 @@ namespace saba
 				// Skinning with Dual Quaternions
 				// https://www.cs.utah.edu/~ladislav/dq/index.html
 				//
-				glm::dualquat dq[4];
+				// GLM's default dualquat constructor leaves components
+				// uninitialized, so every slot starts as identity and only
+				// valid nonzero-weight contributions are ever read.
+				glm::dualquat dq[4] = {
+					glm::dual_quat_identity<float, glm::defaultp>(),
+					glm::dual_quat_identity<float, glm::defaultp>(),
+					glm::dual_quat_identity<float, glm::defaultp>(),
+					glm::dual_quat_identity<float, glm::defaultp>()
+				};
 				float w[4] = { 0 };
+				int firstValid = -1;
+				float totalWeight = 0.0f;
 				for (int bi = 0; bi < 4; bi++)
 				{
-					auto boneID = vtxInfo->m_boneIndex[bi];
-					if (boneID != -1)
-					{ 
-						dq[bi] = glm::dualquat_cast(glm::mat3x4(glm::transpose(transforms[boneID])));
-						dq[bi] = glm::normalize(dq[bi]);
-						w[bi] = vtxInfo->m_boneWeight[bi];
-					}
-					else
+					const float rawWeight = vtxInfo->m_boneWeight[bi];
+					const auto boneID = vtxInfo->m_boneIndex[bi];
+					// Zero-weight slots never participate: they are skipped
+					// before any matrix read, so a degenerate transform in an
+					// ignored slot cannot poison the blend.
+					if (rawWeight == 0.0f)
 					{
-						w[bi] = 0;
+						w[bi] = 0.0f;
+						continue;
+					}
+					if (boneID == -1)
+					{
+						w[bi] = 0.0f;
+						continue;
+					}
+					if (!IsValidBoneIndex(boneID, m_transforms.size()))
+					{
+						WarnInvalidBoneOnce();
+						w[bi] = 0.0f;
+						continue;
+					}
+					auto candidate = glm::dualquat_cast(
+						glm::mat3x4(glm::transpose(transforms[boneID]))
+					);
+					const float candidateLength =
+						glm::length(candidate.real);
+					if (!std::isfinite(candidateLength) ||
+						candidateLength <= 1.0e-6f)
+					{
+						// A degenerate source matrix contributes nothing
+						// rather than corrupting the blend.
+						w[bi] = 0.0f;
+						continue;
+					}
+					dq[bi] = glm::normalize(candidate);
+					w[bi] = rawWeight;
+					if (firstValid < 0)
+					{
+						firstValid = bi;
+					}
+					totalWeight += std::abs(rawWeight);
+				}
+				// All-invalid or all-zero weights must not normalize a zero
+				// dual quaternion; fall back to identity so the vertex stays
+				// at bind (finite) instead of NaN.
+				if (firstValid < 0 || totalWeight <= 1.0e-6f)
+				{
+					m = glm::mat4(1.0f);
+					break;
+				}
+				// Hemisphere alignment uses the first valid nonzero slot as
+				// the reference, never an uninitialized or zero-weight slot.
+				for (int bi = 0; bi < 4; bi++)
+				{
+					if (bi == firstValid || w[bi] == 0.0f)
+					{
+						continue;
+					}
+					if (glm::dot(dq[firstValid].real, dq[bi].real) < 0)
+					{
+						w[bi] *= -1.0f;
 					}
 				}
-				if (glm::dot(dq[0].real, dq[1].real) < 0) { w[1] *= -1.0f; }
-				if (glm::dot(dq[0].real, dq[2].real) < 0) { w[2] *= -1.0f; }
-				if (glm::dot(dq[0].real, dq[3].real) < 0) { w[3] *= -1.0f; }
 				auto blendDQ = w[0] * dq[0]
 					+ w[1] * dq[1]
 					+ w[2] * dq[2]
 					+ w[3] * dq[3];
+				// Guard a malformed weight set that still cancels to zero
+				// (e.g. +0.5 / -0.5) from producing NaN on normalize.
+				const float blendRealLength = glm::length(blendDQ.real);
+				if (!std::isfinite(blendRealLength) ||
+					blendRealLength <= 1.0e-6f)
+				{
+					m = glm::mat4(1.0f);
+					break;
+				}
 				blendDQ = glm::normalize(blendDQ);
 				m = glm::transpose(glm::mat3x4_cast(blendDQ));
 				break;
@@ -1093,7 +1240,9 @@ namespace saba
 
 			if (PMXModel::SkinningType::SDEF != vtxInfo->m_skinningType)
 			{
-				*updatePosition = glm::vec3(m * glm::vec4(*position + *morphPos, 1));
+				const glm::vec4 input(*position + *morphPos, 1.0f);
+				const glm::vec4 transformed = m * input;
+				*updatePosition = glm::vec3(transformed);
 				*updateNormal = glm::normalize(glm::mat3(m) * *normal);
 			}
 			*updateUV = *uv + glm::vec2((*morphUV).x, (*morphUV).y);

@@ -119,7 +119,17 @@ namespace saba
 		float GetFPS() const;
 		void SetMaxSubStepCount(int numSteps);
 		int GetMaxSubStepCount() const;
-		void Update(float time);
+		// Steps the dynamics world. Returns the number of fixed substeps
+		// actually executed (the raw stepSimulation return value), so
+		// WISTERIA can verify exact 30Hz->120Hz replay without guessing from
+		// final state. Existing callers may ignore the return value.
+		int Update(float time);
+		// Deterministic replay narrow interface: read/clear Bullet's internal
+		// frame accumulator without stepping the world. Used to guarantee a
+		// Canonical Frame Boundary (remaining accumulator == 0) after
+		// canonical resets. Not a Bullet parameter-control surface.
+		float GetSimulationTime() const;
+		void ResetSimulationTime();
 
 		void AddRigidBody(MMDRigidBody* mmdRB);
 		void RemoveRigidBody(MMDRigidBody* mmdRB);

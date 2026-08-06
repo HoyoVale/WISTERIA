@@ -25,12 +25,36 @@
     {
       "id": "extended-morph-pmx",
       "path": "tests/data/extended_morph.pmx",
-      "usedBy": ["TestExtendedPmxMorphImporter", "TestExtendedMmdMorphRuntime", "TestR1EngineOwnedMmdInstances"]
+      "usedBy": [
+        "TestExtendedPmxMorphImporter",
+        "TestExtendedMmdMorphRuntime",
+        "TestR1EngineOwnedMmdInstances",
+        "TestR12AMorphOverrideLifecycle"
+      ]
     },
     {
       "id": "pmx-physics",
       "path": "tests/data/pmx_physics.pmx",
-      "usedBy": ["TestPmxPhysicsImporter", "TestPmxPhysicsImporterValidation"]
+      "usedBy": [
+        "TestPmxPhysicsImporter",
+        "TestPmxPhysicsImporterValidation",
+        "TestR12AFixturePhysicsSanity",
+        "TestR12AReplayFromStartRepeatable",
+        "TestR12ASeekConsistency",
+        "TestR12AResetAtTargetCanonical",
+        "TestR12AStepDiagnostics",
+        "TestR12ADynamicBodiesMove",
+        "TestR12ARejectsUnsupportedProfiles",
+        "TestR12AOutOfRangeHoldsPoseAndStepsPhysics",
+        "TestR12AIdentityPoseMatchesBind",
+        "TestR12AFourSubstepProbeLongRun",
+        "TestR12AStepStateMachine",
+        "TestR12ALivePhysicsConfigBinding",
+        "TestR12APhysicsDisabledRejected",
+        "TestR12ADifferentHistoryResetConverges",
+        "TestR12AQdefInvalidBoneFallback",
+        "TestPmxQdefParserWeights"
+      ]
     },
     {
       "id": "pmx-physics-invalid-group",
