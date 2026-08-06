@@ -130,6 +130,22 @@ public:
         return TimelineStatus::UnsupportedReplayProfile;
     }
 
+    // R1.2B physics snapshot capture/restore. Capture was already available
+    // through IDeterministicPhysicsObservation; these are the MMD-facing
+    // entries. Restore semantics follow the R1.2B contract.
+    virtual TimelineStatus CapturePhysicsSnapshot(
+        PhysicsSnapshot&
+    ) const
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+    virtual TimelineStatus RestorePhysicsSnapshot(
+        const PhysicsSnapshot&
+    )
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+
     // Engine-level morph overrides survive VMD evaluation (R1.2 contract §5)
     // and are re-applied every frame. SetMorphWeight() itself remains an
     // instantaneous control with the pre-R1.2 semantics; only these explicit

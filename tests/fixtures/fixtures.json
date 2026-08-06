@@ -74,7 +74,11 @@
     {
       "id": "pmx21-flip-impulse",
       "path": "tests/data/pmx21_flip_impulse.pmx",
-      "usedBy": ["TestPmx21FlipImpulseMorphRuntime", "TestPmx21FlipImpulseImporter"]
+      "usedBy": [
+        "TestPmx21FlipImpulseMorphRuntime",
+        "TestPmx21FlipImpulseImporter",
+        "TestR12BCrossLayoutRejected"
+      ]
     },
     {
       "id": "animated-triangle-gltf",

@@ -147,8 +147,8 @@ struct PhysicsBackendCapabilities
     bool supportsCcd = false;            // R1.2 前恒 false
     bool supportsCollisionMargin = false; // R1.2 前恒 false
     bool supportsJointOverrides = false;  // R1.2 前恒 false
-    // R1.2A: read-only deterministic capture is available; restore and
-    // canonical restore stay false until R1.2B.
+    // R1.2A: read-only deterministic capture; R1.2B: canonical restore
+    // (32-bit btScalar builds only).
     bool supportsSnapshotCapture = false;
     bool supportsSnapshotRestore = false;
     bool supportsCanonicalRestore = false;

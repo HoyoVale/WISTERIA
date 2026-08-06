@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 
 namespace
@@ -4850,8 +4851,8 @@ void TestR1EngineOwnedMmdInstances()
         !firstCapabilities.physics.supportsSolverTuning &&
         !firstCapabilities.physics.supportsCcd &&
         firstCapabilities.physics.supportsSnapshotCapture &&
-        !firstCapabilities.physics.supportsSnapshotRestore &&
-        !firstCapabilities.physics.supportsCanonicalRestore,
+        firstCapabilities.physics.supportsSnapshotRestore &&
+        firstCapabilities.physics.supportsCanonicalRestore,
         "Saba backend advertised unsupported physics capabilities"
     );
     Require(
@@ -5072,7 +5073,7 @@ std::pair<std::size_t, std::size_t> CountBodyKinds(
     std::size_t kinematicCount = 0U;
     for (const RigidBodySnapshot& body : physics.rigidBodies)
     {
-        if (body.kinematic)
+        if (body.mode == PmxRigidBodyMode::FollowBone)
             ++kinematicCount;
         else
             ++dynamicCount;
@@ -5086,14 +5087,21 @@ bool BodyMoved(
 )
 {
     const float positionDelta = glm::distance(
-        before.position,
-        after.position
+        before.worldTransform.position,
+        after.worldTransform.position
     );
-    const float rotationDelta = 1.0f - std::abs(glm::dot(
-        glm::normalize(before.rotation),
-        glm::normalize(after.rotation)
-    ));
-    return positionDelta > 1.0e-4f || rotationDelta > 1.0e-4f;
+    float basisDelta = 0.0f;
+    for (std::size_t index = 0U; index < 9U; ++index)
+    {
+        basisDelta = std::max(
+            basisDelta,
+            std::abs(
+                before.worldTransform.rotationBasis[index] -
+                after.worldTransform.rotationBasis[index]
+            )
+        );
+    }
+    return positionDelta > 1.0e-4f || basisDelta > 1.0e-4f;
 }
 
 // Builds a QDEF variant of the pmx_physics core fixture by replacing its
@@ -5496,7 +5504,7 @@ void TestR12ADynamicBodiesMove()
     bool anyDynamicBodyMoved = false;
     for (const RigidBodySnapshot& bodyBefore : before.rigidBodies)
     {
-        if (bodyBefore.kinematic)
+        if (bodyBefore.mode == PmxRigidBodyMode::FollowBone)
             continue;
         const RigidBodySnapshot* bodyAfter = nullptr;
         for (const RigidBodySnapshot& candidate : after.rigidBodies)
@@ -6199,6 +6207,824 @@ void TestPmxQdefParserWeights()
     std::filesystem::remove(variant, ignored);
 }
 
+// R1.2B helpers ------------------------------------------------------------
+
+namespace
+{
+std::string TimelineStatusName(TimelineStatus status)
+{
+    switch (status)
+    {
+    case TimelineStatus::Ok:
+        return "Ok";
+    case TimelineStatus::NoPhysics:
+        return "NoPhysics";
+    case TimelineStatus::InvalidCheckpoint:
+        return "InvalidCheckpoint";
+    case TimelineStatus::UnsupportedReplayProfile:
+        return "UnsupportedReplayProfile";
+    case TimelineStatus::InvalidState:
+        return "InvalidState";
+    case TimelineStatus::NonSequentialFrame:
+        return "NonSequentialFrame";
+    case TimelineStatus::DeterminismViolation:
+        return "DeterminismViolation";
+    case TimelineStatus::SnapshotMismatch:
+        return "SnapshotMismatch";
+    case TimelineStatus::InvalidSnapshot:
+        return "InvalidSnapshot";
+    case TimelineStatus::Poisoned:
+        return "Poisoned";
+    }
+    return "Unknown(" + std::to_string(static_cast<int>(status)) + ")";
+}
+
+bool SameTransformSnapshot(
+    const RigidTransformSnapshot& left,
+    const RigidTransformSnapshot& right
+)
+{
+    if (left.position != right.position)
+        return false;
+    for (std::size_t index = 0U; index < 9U; ++index)
+    {
+        if (left.rotationBasis[index] != right.rotationBasis[index])
+            return false;
+    }
+    return true;
+}
+
+bool SnapshotsEqualExceptFollowBoneActivation(
+    const PhysicsSnapshot& left,
+    const PhysicsSnapshot& right
+)
+{
+    if (left.rigidBodies.size() != right.rigidBodies.size() ||
+        left.jointCount != right.jointCount ||
+        left.motionFrame != right.motionFrame ||
+        left.physicsTick != right.physicsTick)
+    {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& a = left.rigidBodies[index];
+        const RigidBodySnapshot& b = right.rigidBodies[index];
+        if (a.index != b.index || a.mode != b.mode ||
+            a.definitionMass != b.definitionMass)
+        {
+            std::printf(
+                "[R12B DIFF] body %zu identity\n", index
+            );
+            return false;
+        }
+        if (!SameTransformSnapshot(a.worldTransform, b.worldTransform))
+        {
+            std::printf(
+                "[R12B DIFF] body %zu world\n  a pos=(%g,%g,%g) b pos=(%g,%g,%g)\n",
+                index,
+                static_cast<double>(a.worldTransform.position.x),
+                static_cast<double>(a.worldTransform.position.y),
+                static_cast<double>(a.worldTransform.position.z),
+                static_cast<double>(b.worldTransform.position.x),
+                static_cast<double>(b.worldTransform.position.y),
+                static_cast<double>(b.worldTransform.position.z)
+            );
+            std::printf("  basis a=[");
+            for (float component : a.worldTransform.rotationBasis)
+                std::printf("%g ", static_cast<double>(component));
+            std::printf("]\n  basis b=[");
+            for (float component : b.worldTransform.rotationBasis)
+                std::printf("%g ", static_cast<double>(component));
+            std::printf("]\n");
+            return false;
+        }
+        if (!SameTransformSnapshot(
+                a.interpolationTransform,
+                b.interpolationTransform
+            ))
+        {
+            std::printf(
+                "[R12B DIFF] body %zu interpolation\n  a pos=(%g,%g,%g) b pos=(%g,%g,%g)\n",
+                index,
+                static_cast<double>(a.interpolationTransform.position.x),
+                static_cast<double>(a.interpolationTransform.position.y),
+                static_cast<double>(a.interpolationTransform.position.z),
+                static_cast<double>(b.interpolationTransform.position.x),
+                static_cast<double>(b.interpolationTransform.position.y),
+                static_cast<double>(b.interpolationTransform.position.z)
+            );
+            std::printf("  basis a=[");
+            for (float component : a.interpolationTransform.rotationBasis)
+                std::printf("%g ", static_cast<double>(component));
+            std::printf("]\n  basis b=[");
+            for (float component : b.interpolationTransform.rotationBasis)
+                std::printf("%g ", static_cast<double>(component));
+            std::printf("]\n");
+            return false;
+        }
+        if (a.linearVelocity != b.linearVelocity ||
+            a.angularVelocity != b.angularVelocity ||
+            a.interpolationLinearVelocity != b.interpolationLinearVelocity ||
+            a.interpolationAngularVelocity != b.interpolationAngularVelocity)
+        {
+            std::printf("[R12B DIFF] body %zu velocity\n", index);
+            return false;
+        }
+        if (a.totalForce != b.totalForce ||
+            a.totalTorque != b.totalTorque)
+        {
+            std::printf("[R12B DIFF] body %zu force\n", index);
+            return false;
+        }
+        if (a.mode != PmxRigidBodyMode::FollowBone)
+        {
+            if (a.activationState != b.activationState ||
+                a.deactivationTime != b.deactivationTime)
+            {
+                std::printf("[R12B DIFF] body %zu activation\n", index);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+PhysicsSnapshot CaptureCanonicalAt(
+    SabaMmdRuntimeModel& runtime,
+    MotionFrameIndex frame
+)
+{
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(&runtime);
+    Require(stepper != nullptr, "R1.2B helper lost the stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2B helper PrepareFrameZero failed"
+    );
+    for (MotionFrameIndex current = 1U; current <= frame; ++current)
+    {
+        Require(
+            stepper->StepMotionFrameExact(current, {}) ==
+                TimelineStatus::Ok,
+            "R1.2B helper replay failed"
+        );
+    }
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        &runtime
+    );
+    Require(observation != nullptr, "R1.2B helper lost the observation");
+    PhysicsSnapshot snapshot;
+    Require(
+        observation->CaptureState(snapshot) == TimelineStatus::Ok,
+        "R1.2B helper capture failed"
+    );
+    Require(
+        snapshot.canonical,
+        "R1.2B helper produced a non-canonical snapshot"
+    );
+    return snapshot;
+}
+
+void RequireRestoreAnimationFrame(
+    SabaMmdRuntimeModel& runtime,
+    double frame
+)
+{
+    // Restore requires the animation evaluation frame to equal the snapshot
+    // frame. SetMotionFrame moves the tag without evaluating physics.
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(&runtime);
+    Require(mmd != nullptr, "R1.2B helper lost the MMD runtime");
+    mmd->SetMotionFrame(frame);
+}
+}  // namespace
+
+void TestR12BRestoreRoundTrip()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        mmd != nullptr && restore != nullptr && observation != nullptr,
+        "R1.2B round-trip lost a runtime surface"
+    );
+    Require(
+        mmd->EvaluateTick(30U, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::Ok,
+        "R1.2B round-trip perturbation replay failed"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    const TimelineStatus restoreStatus = restore->RestoreState(snapshot);
+    Require(
+        restoreStatus == TimelineStatus::Ok,
+        "R1.2B RestoreState failed: " + TimelineStatusName(restoreStatus)
+    );
+    PhysicsSnapshot after;
+    Require(
+        observation->CaptureState(after) == TimelineStatus::Ok,
+        "R1.2B round-trip capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(snapshot, after),
+        "R1.2B Capture -> perturb -> Restore -> Capture diverged"
+    );
+    Require(
+        after.canonical,
+        "R1.2B restore did not produce a canonical boundary"
+    );
+}
+
+void TestR12BRestoreRotationBasisRoundTrip()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 300U);
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        mmd != nullptr && restore != nullptr && observation != nullptr,
+        "R1.2B rotation round-trip lost a runtime surface"
+    );
+    Require(
+        mmd->EvaluateTick(340U, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::Ok,
+        "R1.2B rotation perturbation failed"
+    );
+    RequireRestoreAnimationFrame(*runtime, 300.0);
+    const TimelineStatus restoreStatus = restore->RestoreState(snapshot);
+    Require(
+        restoreStatus == TimelineStatus::Ok,
+        "R1.2B rotation RestoreState failed: " +
+            TimelineStatusName(restoreStatus)
+    );
+    PhysicsSnapshot after;
+    Require(
+        observation->CaptureState(after) == TimelineStatus::Ok,
+        "R1.2B rotation capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(snapshot, after),
+        "R1.2B rotation basis did not round-trip bit-exactly"
+    );
+}
+
+void TestR12BRestoreIdempotent()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        restore != nullptr && observation != nullptr,
+        "R1.2B idempotent test lost a runtime surface"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    const TimelineStatus restoreStatus = restore->RestoreState(snapshot);
+    Require(
+        restoreStatus == TimelineStatus::Ok,
+        "R1.2B first restore failed: " + TimelineStatusName(restoreStatus)
+    );
+    PhysicsSnapshot first;
+    Require(
+        observation->CaptureState(first) == TimelineStatus::Ok,
+        "R1.2B first capture failed"
+    );
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B second restore failed"
+    );
+    PhysicsSnapshot second;
+    Require(
+        observation->CaptureState(second) == TimelineStatus::Ok,
+        "R1.2B second capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(first, second),
+        "R1.2B restore was not idempotent"
+    );
+}
+
+void TestR12BRestoreDiagnosticsAndZeroStep()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        restore != nullptr && observation != nullptr,
+        "R1.2B diagnostics test lost a runtime surface"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B diagnostics restore failed"
+    );
+    PhysicsStepDiagnostics diagnostics;
+    Require(
+        observation->ReadStepDiagnostics(diagnostics) ==
+            TimelineStatus::Ok,
+        "R1.2B diagnostics read failed"
+    );
+    Require(
+        diagnostics.executedSubsteps == 0U &&
+            diagnostics.remainingAccumulator == 0.0 &&
+            !diagnostics.poisoned,
+        "R1.2B restore boundary diagnostics are wrong"
+    );
+    PhysicsSnapshot immediate;
+    PhysicsSnapshot zeroStep;
+    Require(
+        observation->CaptureState(immediate) == TimelineStatus::Ok &&
+            observation->CaptureState(zeroStep) == TimelineStatus::Ok,
+        "R1.2B zero-step capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(immediate, zeroStep),
+        "R1.2B zero-step capture diverged"
+    );
+}
+
+void TestR12BDivergentHistoryOneStep()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto shortHistory = CreateDeterministicRuntime(modelPath);
+    auto longHistory = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot =
+        CaptureCanonicalAt(*shortHistory, 0U);
+    auto* shortMmd = dynamic_cast<MmdRuntimeModel*>(shortHistory.get());
+    auto* longMmd = dynamic_cast<MmdRuntimeModel*>(longHistory.get());
+    auto* shortRestore = dynamic_cast<IPhysicsStateAccess*>(
+        shortHistory.get()
+    );
+    auto* longRestore = dynamic_cast<IPhysicsStateAccess*>(
+        longHistory.get()
+    );
+    auto* shortObservation =
+        dynamic_cast<IDeterministicPhysicsObservation*>(shortHistory.get());
+    auto* longObservation =
+        dynamic_cast<IDeterministicPhysicsObservation*>(longHistory.get());
+    Require(
+        shortMmd != nullptr && longMmd != nullptr &&
+            shortRestore != nullptr && longRestore != nullptr &&
+            shortObservation != nullptr && longObservation != nullptr,
+        "R1.2B divergent test lost a runtime surface"
+    );
+    Require(
+        shortMmd->EvaluateTick(30U, SeekPolicy::ReplayFromStart, {}) ==
+                TimelineStatus::Ok &&
+            longMmd->EvaluateTick(90U, SeekPolicy::ReplayFromStart, {}) ==
+                TimelineStatus::Ok,
+        "R1.2B divergent histories failed"
+    );
+    RequireRestoreAnimationFrame(*shortHistory, 0.0);
+    RequireRestoreAnimationFrame(*longHistory, 0.0);
+    Require(
+        shortRestore->RestoreState(snapshot) == TimelineStatus::Ok &&
+            longRestore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B divergent restore failed"
+    );
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+    Require(
+        shortHistory->StepRestoredPhysicsForProbe(4U) ==
+                TimelineStatus::Ok &&
+            longHistory->StepRestoredPhysicsForProbe(4U) ==
+                TimelineStatus::Ok,
+        "R1.2B divergent one-step probe failed"
+    );
+    PhysicsSnapshot shortState;
+    PhysicsSnapshot longState;
+    Require(
+        shortObservation->CaptureState(shortState) ==
+                TimelineStatus::Ok &&
+            longObservation->CaptureState(longState) ==
+                TimelineStatus::Ok,
+        "R1.2B divergent one-step capture failed"
+    );
+    const DeterminismHashes shortHash = HashPhysics(shortState);
+    const DeterminismHashes longHash = HashPhysics(longState);
+    Require(
+        shortHash.valid && longHash.valid &&
+            shortHash.exactHash == longHash.exactHash,
+        "Divergent collision/solver history leaked into the first step"
+    );
+#else
+    Require(false, "R1.2B test hooks are not compiled in");
+#endif
+}
+
+void TestR12BInvalidSnapshotRejections()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot valid = CaptureCanonicalAt(*runtime, 0U);
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        restore != nullptr && observation != nullptr,
+        "R1.2B rejection test lost a runtime surface"
+    );
+    const auto runRejected = [&](const PhysicsSnapshot& candidate,
+                                 TimelineStatus expected)
+    {
+        PhysicsSnapshot before;
+        Require(
+            observation->CaptureState(before) == TimelineStatus::Ok,
+            "R1.2B rejection baseline capture failed"
+        );
+        RequireRestoreAnimationFrame(*runtime, 0.0);
+        const TimelineStatus status = restore->RestoreState(candidate);
+        Require(
+            status == expected,
+            "R1.2B rejection returned the wrong status"
+        );
+        PhysicsSnapshot after;
+        Require(
+            observation->CaptureState(after) == TimelineStatus::Ok,
+            "R1.2B rejection post capture failed"
+        );
+        Require(
+            SnapshotsEqualExceptFollowBoneActivation(before, after),
+            "R1.2B rejected restore modified the world"
+        );
+    };
+
+    PhysicsSnapshot nonFiniteForce = valid;
+    nonFiniteForce.rigidBodies[0].totalForce.x =
+        std::numeric_limits<float>::quiet_NaN();
+    runRejected(nonFiniteForce, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot nanBasis = valid;
+    nanBasis.rigidBodies[0].worldTransform.rotationBasis[0] =
+        std::numeric_limits<float>::infinity();
+    runRejected(nanBasis, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot reflectionBasis = valid;
+    reflectionBasis.rigidBodies[0].worldTransform.rotationBasis[8] = -1.0f;
+    runRejected(reflectionBasis, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot countMismatch = valid;
+    countMismatch.rigidBodies.pop_back();
+    runRejected(countMismatch, TimelineStatus::SnapshotMismatch);
+
+    PhysicsSnapshot modeTampered = valid;
+    modeTampered.rigidBodies[0].mode = PmxRigidBodyMode::Physics;
+    runRejected(modeTampered, TimelineStatus::SnapshotMismatch);
+
+    PhysicsSnapshot schemaMismatch = valid;
+    schemaMismatch.schemaVersion = 3U;
+    runRejected(schemaMismatch, TimelineStatus::SnapshotMismatch);
+
+    PhysicsSnapshot massTampered = valid;
+    std::uint32_t massBits = 0U;
+    std::memcpy(
+        &massBits,
+        &massTampered.rigidBodies[0].definitionMass,
+        sizeof(massBits)
+    );
+    massBits ^= 1U;
+    std::memcpy(
+        &massTampered.rigidBodies[0].definitionMass,
+        &massBits,
+        sizeof(massBits)
+    );
+    runRejected(massTampered, TimelineStatus::SnapshotMismatch);
+
+    PhysicsSnapshot nonCanonical = valid;
+    nonCanonical.canonical = false;
+    runRejected(nonCanonical, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot badForce = valid;
+    badForce.rigidBodies[0].totalForce.x = 1.0f;
+    runRejected(badForce, TimelineStatus::InvalidSnapshot);
+
+    // Activation preconditions only apply to Physics/PhysicsWithBone;
+    // FollowBone activation is informational.
+    std::size_t physicsBodyIndex = 0U;
+    for (std::size_t index = 0U; index < valid.rigidBodies.size(); ++index)
+    {
+        if (valid.rigidBodies[index].mode !=
+            PmxRigidBodyMode::FollowBone)
+        {
+            physicsBodyIndex = index;
+            break;
+        }
+    }
+    PhysicsSnapshot badActivation = valid;
+    badActivation.rigidBodies[physicsBodyIndex].activationState = 0;
+    runRejected(badActivation, TimelineStatus::InvalidSnapshot);
+
+    PhysicsSnapshot badTick = valid;
+    badTick.physicsTick = valid.motionFrame * 4U + 1U;
+    runRejected(badTick, TimelineStatus::InvalidSnapshot);
+}
+
+void TestR12BConfigurationFingerprintMismatch()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto reference = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot =
+        CaptureCanonicalAt(*reference, 0U);
+
+    SabaPhysicsSettings differentSettings;
+    differentSettings.fixedTimeStep = 1.0f / 120.0f;
+    differentSettings.maxSubSteps = 10;
+    differentSettings.gravity = glm::vec3(0.0f, -99.0f, 0.0f);
+    differentSettings.enabled = true;
+    auto other = std::make_unique<SabaMmdRuntimeModel>(
+        modelPath,
+        std::filesystem::path{},
+        differentSettings
+    );
+    Require(
+        other->Initialize(),
+        "R1.2B config-mismatch runtime failed to initialize"
+    );
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(other.get());
+    Require(stepper != nullptr, "R1.2B config-mismatch lost the stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2B config-mismatch PrepareFrameZero failed"
+    );
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(other.get());
+    Require(restore != nullptr, "R1.2B config-mismatch lost restore");
+    RequireRestoreAnimationFrame(*other, 0.0);
+    Require(
+        restore->RestoreState(snapshot) ==
+            TimelineStatus::SnapshotMismatch,
+        "Different gravity configuration passed the restore gate"
+    );
+}
+
+void TestR12BCrossLayoutRejected()
+{
+    const std::filesystem::path sourcePath =
+        FixturePath("pmx21-flip-impulse");
+    RequireCoreAsset("pmx21-flip-impulse");
+    auto source = CreateDeterministicRuntime(sourcePath);
+    const PhysicsSnapshot snapshot =
+        CaptureCanonicalAt(*source, 0U);
+
+    const std::filesystem::path targetPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto target = CreateDeterministicRuntime(targetPath);
+    auto* targetRestore = dynamic_cast<IPhysicsStateAccess*>(target.get());
+    Require(
+        targetRestore != nullptr,
+        "R1.2B cross-layout test lost restore"
+    );
+    RequireRestoreAnimationFrame(*target, 0.0);
+    Require(
+        targetRestore->RestoreState(snapshot) ==
+            TimelineStatus::SnapshotMismatch,
+        "Cross-layout snapshot passed the restore gate"
+    );
+}
+
+void TestR12BAnimationPrecondition()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        mmd != nullptr && restore != nullptr && observation != nullptr,
+        "R1.2B animation precondition lost a runtime surface"
+    );
+    // Move the animation tag away from the snapshot frame.
+    mmd->SetMotionFrame(5.0);
+    PhysicsSnapshot before;
+    Require(
+        observation->CaptureState(before) == TimelineStatus::Ok,
+        "R1.2B animation precondition baseline capture failed"
+    );
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::InvalidState,
+        "R1.2B restore accepted a mismatched animation frame"
+    );
+    PhysicsSnapshot after;
+    Require(
+        observation->CaptureState(after) == TimelineStatus::Ok,
+        "R1.2B animation precondition post capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(before, after),
+        "R1.2B animation precondition failure modified the world"
+    );
+}
+
+void TestR12BNoDirectStepAfterRestore()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(runtime.get());
+    Require(
+        restore != nullptr && stepper != nullptr,
+        "R1.2B no-step test lost a runtime surface"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B no-step restore failed"
+    );
+    Require(
+        stepper->StepMotionFrameExact(1U, {}) ==
+            TimelineStatus::InvalidState,
+        "R1.2B restore unexpectedly enabled direct stepping"
+    );
+}
+
+void TestR12BFollowBoneAndMode2Restore()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    bool hasFollowBone = false;
+    bool hasPhysicsWithBone = false;
+    for (const RigidBodySnapshot& body : snapshot.rigidBodies)
+    {
+        hasFollowBone =
+            hasFollowBone || body.mode == PmxRigidBodyMode::FollowBone;
+        hasPhysicsWithBone =
+            hasPhysicsWithBone ||
+            body.mode == PmxRigidBodyMode::PhysicsWithBone;
+    }
+    Require(
+        hasFollowBone && hasPhysicsWithBone,
+        "pmx_physics fixture lacks FollowBone or Mode 2 coverage"
+    );
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    Require(restore != nullptr, "R1.2B mode test lost restore");
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B mode restore failed"
+    );
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    PhysicsSnapshot after;
+    Require(
+        observation->CaptureState(after) == TimelineStatus::Ok,
+        "R1.2B mode capture failed"
+    );
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        Require(
+            after.rigidBodies[index].mode ==
+                snapshot.rigidBodies[index].mode,
+            "R1.2B restore changed a rigid-body mode"
+        );
+    }
+}
+
+void TestR12BPoisonedFaultInjection()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(runtime.get());
+    Require(
+        mmd != nullptr && restore != nullptr &&
+            observation != nullptr && stepper != nullptr,
+        "R1.2B Poisoned test lost a runtime surface"
+    );
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+    Require(
+        mmd->EvaluateTick(30U, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::Ok,
+        "R1.2B Poisoned perturbation failed"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    runtime->SetFaultInjectionPhase(4);
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Poisoned,
+        "R1.2B fault injection did not poison the instance"
+    );
+    PhysicsSnapshot untouched;
+    Require(
+        observation->CaptureState(untouched) == TimelineStatus::Poisoned,
+        "R1.2B CaptureState did not report Poisoned"
+    );
+    Require(
+        stepper->StepMotionFrameExact(1U, {}) == TimelineStatus::Poisoned,
+        "R1.2B StepMotionFrameExact did not report Poisoned"
+    );
+    Require(
+        mmd->EvaluateTick(10U, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::Poisoned,
+        "R1.2B EvaluateTick did not report Poisoned"
+    );
+    PhysicsStepDiagnostics diagnostics;
+    Require(
+        observation->ReadStepDiagnostics(diagnostics) ==
+                TimelineStatus::Ok &&
+            diagnostics.poisoned,
+        "R1.2B diagnostics did not expose Poisoned"
+    );
+    // Recovery entry.
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2B PrepareFrameZero recovery failed"
+    );
+    PhysicsSnapshot recovered;
+    Require(
+        observation->CaptureState(recovered) == TimelineStatus::Ok,
+        "R1.2B recovery capture failed"
+    );
+    RequireRestoreAnimationFrame(*runtime, 0.0);
+    Require(
+        restore->RestoreState(snapshot) == TimelineStatus::Ok,
+        "R1.2B restore after recovery failed"
+    );
+#else
+    Require(false, "R1.2B test hooks are not compiled in");
+#endif
+}
+
+void TestR12BRestoreStressRoundTrip()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const PhysicsSnapshot snapshot = CaptureCanonicalAt(*runtime, 0U);
+    auto* restore = dynamic_cast<IPhysicsStateAccess*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        restore != nullptr && observation != nullptr,
+        "R1.2B stress test lost a runtime surface"
+    );
+    for (int iteration = 0; iteration < 1000; ++iteration)
+    {
+        RequireRestoreAnimationFrame(*runtime, 0.0);
+        Require(
+            restore->RestoreState(snapshot) == TimelineStatus::Ok,
+            "R1.2B stress restore failed"
+        );
+    }
+    PhysicsSnapshot final;
+    Require(
+        observation->CaptureState(final) == TimelineStatus::Ok,
+        "R1.2B stress capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(snapshot, final),
+        "R1.2B 1000 restore round-trips drifted"
+    );
+}
+
 void TestR1ProjectMmdInstanceWhenAvailable()
 {
     RequireFullAssetsTier();
@@ -6537,6 +7363,58 @@ int main()
     failures += !RunTest(
         "PMX QDEF parser weight slots",
         TestPmxQdefParserWeights
+    );
+    failures += !RunTest(
+        "R1.2B restore round trip",
+        TestR12BRestoreRoundTrip
+    );
+    failures += !RunTest(
+        "R1.2B rotation basis round trip",
+        TestR12BRestoreRotationBasisRoundTrip
+    );
+    failures += !RunTest(
+        "R1.2B restore idempotent",
+        TestR12BRestoreIdempotent
+    );
+    failures += !RunTest(
+        "R1.2B restore diagnostics and zero step",
+        TestR12BRestoreDiagnosticsAndZeroStep
+    );
+    failures += !RunTest(
+        "R1.2B divergent history one step",
+        TestR12BDivergentHistoryOneStep
+    );
+    failures += !RunTest(
+        "R1.2B invalid snapshot rejections",
+        TestR12BInvalidSnapshotRejections
+    );
+    failures += !RunTest(
+        "R1.2B configuration fingerprint mismatch",
+        TestR12BConfigurationFingerprintMismatch
+    );
+    failures += !RunTest(
+        "R1.2B cross layout rejected",
+        TestR12BCrossLayoutRejected
+    );
+    failures += !RunTest(
+        "R1.2B animation precondition",
+        TestR12BAnimationPrecondition
+    );
+    failures += !RunTest(
+        "R1.2B no direct step after restore",
+        TestR12BNoDirectStepAfterRestore
+    );
+    failures += !RunTest(
+        "R1.2B FollowBone and Mode 2 restore",
+        TestR12BFollowBoneAndMode2Restore
+    );
+    failures += !RunTest(
+        "R1.2B poisoned fault injection",
+        TestR12BPoisonedFaultInjection
+    );
+    failures += !RunTest(
+        "R1.2B restore stress round trip",
+        TestR12BRestoreStressRoundTrip
     );
     failures += !RunTest(
         "R1 project MMD instance",

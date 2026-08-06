@@ -20,7 +20,8 @@ using SabaPhysicsSettings = MmdPhysicsRuntimeSettings;
 class SabaMmdRuntimeModel final
     : public MmdRuntimeModel,
       public IDeterministicFrameStepper,
-      public IDeterministicPhysicsObservation
+      public IDeterministicPhysicsObservation,
+      public IPhysicsStateAccess
 {
 public:
     SabaMmdRuntimeModel(
@@ -126,6 +127,19 @@ public:
         PhysicsStepDiagnostics& output
     ) const override;
 
+    // R1.2B physics snapshot restore (see determinism.hpp / R1.2B contract).
+    TimelineStatus CapturePhysicsSnapshot(
+        PhysicsSnapshot& output
+    ) const override;
+    TimelineStatus RestorePhysicsSnapshot(
+        const PhysicsSnapshot& snapshot
+    ) override;
+
+    // IPhysicsStateAccess
+    TimelineStatus RestoreState(
+        const PhysicsSnapshot& snapshot
+    ) override;
+
     struct VertexDiagnostics
     {
         bool finite = true;
@@ -174,9 +188,37 @@ private:
         MotionFrameIndex frame,
         const ReplayConfig& config
     );
+    // R1.2B Phase 0 validation (read-only; never mutates the world).
+    TimelineStatus ValidateSnapshotForRestore(
+        const PhysicsSnapshot& snapshot
+    ) const;
+    // R1.2B Phase 1-6 write-back. Only called after validation passes.
+    TimelineStatus RestorePhases(const PhysicsSnapshot& snapshot);
+    void ComputeLayoutFingerprint(
+        std::uint64_t& fingerprint
+    ) const;
+    void ComputeConfigurationFingerprint(
+        std::uint64_t& fingerprint
+    ) const;
+    bool IsPoisoned() const noexcept;
+    void EnterPoisoned() noexcept;
     // Re-applies engine-level named morph overrides after VMD evaluation so
     // they survive playback/replay (contract §5 application order).
     void ApplyUserMorphOverrides();
+
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+public:
+    // Test-only: advances the restored Bullet world by exactSubsteps fixed
+    // substeps without re-evaluating animation and without touching the
+    // public deterministicPrepared contract. Used by T5/T18.
+    TimelineStatus StepRestoredPhysicsForProbe(
+        std::uint32_t exactSubsteps
+    );
+    // Test-only fault injection: make RestorePhases throw after completing
+    // the given phase (1..6) so the instance enters Poisoned.
+    void SetFaultInjectionPhase(int phase) noexcept;
+    int FaultInjectionPhase() const noexcept;
+#endif
 
     struct Impl;
     std::unique_ptr<Impl> impl;

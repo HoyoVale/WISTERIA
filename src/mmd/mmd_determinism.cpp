@@ -321,32 +321,56 @@ DeterminismHashes HashPhysics(
             return hashes;
         }
         ++expectedIndex;
-        if (!IsFinite(body.position) ||
-            !IsFinite(body.rotation) ||
-            !IsFinite(body.interpolationPosition) ||
-            !IsFinite(body.interpolationRotation) ||
+        if (!std::isfinite(body.definitionMass) ||
+            !IsFinite(body.worldTransform.position) ||
+            !IsFinite(body.interpolationTransform.position) ||
             !IsFinite(body.linearVelocity) ||
             !IsFinite(body.angularVelocity) ||
             !IsFinite(body.interpolationLinearVelocity) ||
             !IsFinite(body.interpolationAngularVelocity) ||
             !IsFinite(body.totalForce) ||
             !IsFinite(body.totalTorque) ||
-            !std::isfinite(body.deactivationTime) ||
-            !std::isfinite(body.mass))
+            !std::isfinite(body.deactivationTime))
         {
             hashes.valid = false;
             return hashes;
         }
+        for (float component : body.worldTransform.rotationBasis)
+        {
+            if (!std::isfinite(component))
+            {
+                hashes.valid = false;
+                return hashes;
+            }
+        }
+        for (float component : body.interpolationTransform.rotationBasis)
+        {
+            if (!std::isfinite(component))
+            {
+                hashes.valid = false;
+                return hashes;
+            }
+        }
         HashU32(exact, body.index);
         HashU32(canonical, body.index);
-        HashVec3(exact, body.position);
-        HashCanonicalVec3(canonical, body.position);
-        HashQuat(exact, body.rotation);
-        HashCanonicalQuat(canonical, body.rotation);
-        HashVec3(exact, body.interpolationPosition);
-        HashCanonicalVec3(canonical, body.interpolationPosition);
-        HashQuat(exact, body.interpolationRotation);
-        HashCanonicalQuat(canonical, body.interpolationRotation);
+        HashU32(exact, static_cast<std::uint32_t>(body.mode));
+        HashU32(canonical, static_cast<std::uint32_t>(body.mode));
+        HashFloat(exact, body.definitionMass);
+        HashCanonicalFloat(canonical, body.definitionMass);
+        HashVec3(exact, body.worldTransform.position);
+        HashCanonicalVec3(canonical, body.worldTransform.position);
+        for (float component : body.worldTransform.rotationBasis)
+        {
+            HashFloat(exact, component);
+            HashCanonicalFloat(canonical, component);
+        }
+        HashVec3(exact, body.interpolationTransform.position);
+        HashCanonicalVec3(canonical, body.interpolationTransform.position);
+        for (float component : body.interpolationTransform.rotationBasis)
+        {
+            HashFloat(exact, component);
+            HashCanonicalFloat(canonical, component);
+        }
         HashVec3(exact, body.linearVelocity);
         HashCanonicalVec3(canonical, body.linearVelocity);
         HashVec3(exact, body.angularVelocity);
@@ -359,14 +383,19 @@ DeterminismHashes HashPhysics(
         HashCanonicalVec3(canonical, body.totalForce);
         HashVec3(exact, body.totalTorque);
         HashCanonicalVec3(canonical, body.totalTorque);
-        HashU32(exact, static_cast<std::uint32_t>(body.activationState));
-        HashU32(canonical, static_cast<std::uint32_t>(body.activationState));
-        HashFloat(exact, body.deactivationTime);
-        HashCanonicalFloat(canonical, body.deactivationTime);
-        HashFloat(exact, body.mass);
-        HashCanonicalFloat(canonical, body.mass);
-        HashU32(exact, body.kinematic ? 1U : 0U);
-        HashU32(canonical, body.kinematic ? 1U : 0U);
+        // R1.2B v4.1.1: FollowBone activation/deactivation are informational
+        // and must not participate in PhysicsHash; Physics/PhysicsWithBone
+        // values do.
+        if (body.mode != PmxRigidBodyMode::FollowBone)
+        {
+            HashU32(exact, static_cast<std::uint32_t>(body.activationState));
+            HashU32(
+                canonical,
+                static_cast<std::uint32_t>(body.activationState)
+            );
+            HashFloat(exact, body.deactivationTime);
+            HashCanonicalFloat(canonical, body.deactivationTime);
+        }
     }
     hashes.exactHash = exact;
     hashes.canonicalHash = canonical;

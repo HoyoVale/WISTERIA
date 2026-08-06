@@ -55,6 +55,15 @@ void TestDeterminismHashValidation()
     PhysicsSnapshot validPhysics;
     RigidBodySnapshot body;
     body.index = 0U;
+    body.mode = PmxRigidBodyMode::Physics;
+    body.definitionMass = 1.0f;
+    body.worldTransform.rotationBasis = {
+        1.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 1.0f
+    };
+    body.interpolationTransform.rotationBasis =
+        body.worldTransform.rotationBasis;
     validPhysics.rigidBodies.push_back(body);
     Require(
         HashPhysics(validPhysics).valid,

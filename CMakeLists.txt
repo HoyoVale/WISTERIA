@@ -368,6 +368,12 @@ target_link_libraries(wisteria PRIVATE wisteria_platform)
 include(CTest)
 
 if(BUILD_TESTING)
+    # R1.2B test hooks (StepRestoredPhysicsForProbe / fault injection) are
+    # compiled into wisteria_core and propagate to test binaries. They are
+    # inert without explicit calls and never appear in non-testing builds.
+    target_compile_definitions(wisteria_core PUBLIC
+        WISTERIA_DETERMINISM_TEST_HOOKS=1
+    )
     # Test pyramid: pure logic (unit), engine runtime without windows (runtime),
     # asset/importer/Saba/native integration (integration), and the render
     # regression below. Each tier builds and runs independently.

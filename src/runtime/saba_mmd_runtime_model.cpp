@@ -17,12 +17,15 @@
 #include <Saba/Model/MMD/VMDFile.h>
 
 #include <cstddef>
+#include <cstring>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cmath>
 #include <chrono>
+#include <limits>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -100,7 +103,233 @@ glm::vec3 ToGlmVec3(const btVector3& value)
         static_cast<float>(value.z())
     );
 }
+
+btVector3 ToBtVector3(const glm::vec3& value)
+{
+    return btVector3(value.x, value.y, value.z);
 }
+
+// R1.2B FNV-1a64 streaming helper for layout/configuration fingerprints.
+// Explicit little-endian byte writes keep the fingerprint stable across the
+// same build regardless of host endianness.
+struct FnvHasher
+{
+    std::uint64_t state = 14695981039346656037ULL;
+
+    void Byte(std::uint8_t byte)
+    {
+        state ^= byte;
+        state *= 1099511628211ULL;
+    }
+
+    void U32(std::uint32_t value)
+    {
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            Byte(static_cast<std::uint8_t>((value >> shift) & 0xFFU));
+        }
+    }
+
+    void I32(std::int32_t value)
+    {
+        U32(static_cast<std::uint32_t>(value));
+    }
+
+    void F32(float value)
+    {
+        std::uint32_t bits = 0U;
+        std::memcpy(&bits, &value, sizeof(bits));
+        U32(bits);
+    }
+
+    void Vec3(const glm::vec3& value)
+    {
+        F32(value.x);
+        F32(value.y);
+        F32(value.z);
+    }
+
+    void Mat4(const glm::mat4& value)
+    {
+        for (glm::length_t column = 0; column < 4; ++column)
+        {
+            for (glm::length_t row = 0; row < 4; ++row)
+            {
+                F32(value[column][row]);
+            }
+        }
+    }
+
+    void BtVector3(const btVector3& value)
+    {
+        F32(static_cast<float>(value.x()));
+        F32(static_cast<float>(value.y()));
+        F32(static_cast<float>(value.z()));
+    }
+
+    void BtTransform(const btTransform& value)
+    {
+        BtVector3(value.getOrigin());
+        const btMatrix3x3& basis = value.getBasis();
+        for (int column = 0; column < 3; ++column)
+        {
+            BtVector3(basis.getColumn(column));
+        }
+    }
+};
+
+void FillTransformSnapshot(
+    RigidTransformSnapshot& output,
+    const btTransform& transform
+)
+{
+    output.position = ToGlmVec3(transform.getOrigin());
+    const btMatrix3x3& basis = transform.getBasis();
+    for (int column = 0; column < 3; ++column)
+    {
+        const btVector3 col = basis.getColumn(column);
+        output.rotationBasis[static_cast<std::size_t>(column) * 3U + 0U] =
+            static_cast<float>(col.x());
+        output.rotationBasis[static_cast<std::size_t>(column) * 3U + 1U] =
+            static_cast<float>(col.y());
+        output.rotationBasis[static_cast<std::size_t>(column) * 3U + 2U] =
+            static_cast<float>(col.z());
+    }
+}
+
+void FillBulletTransform(
+    btTransform& output,
+    const RigidTransformSnapshot& snapshot
+)
+{
+    // btMatrix3x3(v0, v1, v2) treats the vectors as ROWS. The snapshot
+    // stores explicit column-major components, so build rows explicitly to
+    // avoid a silent transpose.
+    const float c0x = snapshot.rotationBasis[0];
+    const float c0y = snapshot.rotationBasis[1];
+    const float c0z = snapshot.rotationBasis[2];
+    const float c1x = snapshot.rotationBasis[3];
+    const float c1y = snapshot.rotationBasis[4];
+    const float c1z = snapshot.rotationBasis[5];
+    const float c2x = snapshot.rotationBasis[6];
+    const float c2y = snapshot.rotationBasis[7];
+    const float c2z = snapshot.rotationBasis[8];
+    const btMatrix3x3 basis(
+        c0x, c1x, c2x,
+        c0y, c1y, c2y,
+        c0z, c1z, c2z
+    );
+    output.setBasis(basis);
+    output.setOrigin(ToBtVector3(snapshot.position));
+}
+
+bool IsPositiveZero(float value) noexcept
+{
+    std::uint32_t bits = 0U;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits == 0U;
+}
+
+bool IsFiniteBasis(const RigidTransformSnapshot& transform) noexcept
+{
+    for (float component : transform.rotationBasis)
+    {
+        if (!std::isfinite(component))
+            return false;
+    }
+    return std::isfinite(transform.position.x) &&
+        std::isfinite(transform.position.y) &&
+        std::isfinite(transform.position.z);
+}
+
+bool IsValidRotationBasis(const RigidTransformSnapshot& transform) noexcept
+{
+    if (!IsFiniteBasis(transform))
+        return false;
+    constexpr float kTolerance = 1.0e-3f;
+    glm::vec3 columns[3];
+    for (int column = 0; column < 3; ++column)
+    {
+        const std::size_t base = static_cast<std::size_t>(column) * 3U;
+        columns[column] = glm::vec3(
+            transform.rotationBasis[base + 0U],
+            transform.rotationBasis[base + 1U],
+            transform.rotationBasis[base + 2U]
+        );
+        if (std::abs(glm::length(columns[column]) - 1.0f) > kTolerance)
+            return false;
+    }
+    for (int left = 0; left < 3; ++left)
+    {
+        for (int right = left + 1; right < 3; ++right)
+        {
+            if (std::abs(glm::dot(columns[left], columns[right])) >
+                kTolerance)
+            {
+                return false;
+            }
+        }
+    }
+    const glm::mat3 matrix(
+        columns[0],
+        columns[1],
+        columns[2]
+    );
+    if (std::abs(glm::determinant(matrix) - 1.0f) > kTolerance)
+        return false;
+    return true;
+}
+
+bool SameTransformBitwise(
+    const btTransform& left,
+    const RigidTransformSnapshot& right
+) noexcept
+{
+    const btVector3 origin = left.getOrigin();
+    if (origin.x() != right.position.x ||
+        origin.y() != right.position.y ||
+        origin.z() != right.position.z)
+    {
+        return false;
+    }
+    const btMatrix3x3& basis = left.getBasis();
+    for (int column = 0; column < 3; ++column)
+    {
+        const btVector3 col = basis.getColumn(column);
+        const std::size_t base = static_cast<std::size_t>(column) * 3U;
+        if (col.x() != right.rotationBasis[base + 0U] ||
+            col.y() != right.rotationBasis[base + 1U] ||
+            col.z() != right.rotationBasis[base + 2U])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void HashShapeDimensions(FnvHasher& hasher, const btCollisionShape* shape)
+{
+    hasher.I32(shape != nullptr ? shape->getShapeType() : -1);
+    if (shape == nullptr)
+        return;
+    if (const auto* sphere = dynamic_cast<const btSphereShape*>(shape))
+    {
+        hasher.F32(static_cast<float>(sphere->getRadius()));
+    }
+    else if (const auto* box = dynamic_cast<const btBoxShape*>(shape))
+    {
+        const btVector3 halfExtents = box->getHalfExtentsWithMargin();
+        hasher.F32(static_cast<float>(halfExtents.x()));
+        hasher.F32(static_cast<float>(halfExtents.y()));
+        hasher.F32(static_cast<float>(halfExtents.z()));
+    }
+    else if (const auto* capsule = dynamic_cast<const btCapsuleShape*>(shape))
+    {
+        hasher.F32(static_cast<float>(capsule->getRadius()));
+        hasher.F32(static_cast<float>(capsule->getHalfHeight()));
+    }
+}
+}  // namespace
 
 struct SabaMmdRuntimeModel::Impl
 {
@@ -143,6 +372,11 @@ struct SabaMmdRuntimeModel::Impl
     // time. EvaluateTick(ReplayFromStart) drives this same machine.
     bool deterministicPrepared = false;
     MotionFrameIndex expectedNextFrame = 0U;
+    // R1.2B restore state: write-phase failure poisons the instance until a
+    // recovery entry (PrepareFrameZero / EvaluateTick(0, ResetAtTarget))
+    // succeeds. faultInjectionPhase is only armed by test hooks.
+    bool poisoned = false;
+    int faultInjectionPhase = 0;
 
     Impl(
         std::filesystem::path modelPath_,
@@ -383,6 +617,8 @@ void SabaMmdRuntimeModel::Reset()
     this->impl->lastBoundaryCanonical = false;
     this->impl->deterministicPrepared = false;
     this->impl->expectedNextFrame = 0U;
+    this->impl->poisoned = false;
+    this->impl->faultInjectionPhase = 0;
 }
 
 TimelineStatus SabaMmdRuntimeModel::ValidateReplayConfig(
@@ -496,16 +732,17 @@ TimelineStatus SabaMmdRuntimeModel::ResetCanonicalNoStep()
     // boundary never inherits sleeping state from a long previous timeline.
     for (auto& rigidBody : *rigidBodies)
     {
-        btRigidBody* body = rigidBody->GetRigidBody();
-        if (body == nullptr)
-            continue;
-        rigidBody->SetActivation(true);
-        if (body->getInvMass() > btScalar(0))
-        {
-            body->setActivationState(ACTIVE_TAG);
-            body->setDeactivationTime(btScalar(0));
-            body->activate(true);
-        }
+        // Bullet 3.25's activate(true) still routes through the guarded
+        // setActivationState, so DISABLE_DEACTIVATION would survive a plain
+        // reset. NormalizeCanonicalActivation uses forceActivationState to
+        // make ACTIVE_TAG unconditional (R1.2B contract §5 Phase 5).
+        rigidBody->SelectMotionStateForMode(
+            rigidBody->GetRigidBodyType()
+        );
+        rigidBody->SyncActiveMotionStateToBodyTransform();
+        rigidBody->NormalizeCanonicalActivation(
+            rigidBody->GetRigidBodyType()
+        );
     }
     physics->ResetSimulationTime();
     return TimelineStatus::Ok;
@@ -619,6 +856,13 @@ TimelineStatus SabaMmdRuntimeModel::EvaluateTick(
     const ReplayConfig& config
 )
 {
+    if (this->impl->poisoned)
+    {
+        // EvaluateTick(0, ResetAtTarget) is a documented recovery entry;
+        // every other policy is rejected while Poisoned.
+        if (policy != SeekPolicy::ResetAtTarget || target != 0U)
+            return TimelineStatus::Poisoned;
+    }
     this->impl->deterministicPrepared = false;
     this->impl->expectedNextFrame = 0U;
     const TimelineStatus profileStatus = this->ValidateReplayConfig(config);
@@ -636,7 +880,16 @@ TimelineStatus SabaMmdRuntimeModel::EvaluateTick(
         this->Update(0.0f);
         return TimelineStatus::Ok;
     case SeekPolicy::ResetAtTarget:
-        return this->EvaluateFrameCanonical(target, config);
+    {
+        const TimelineStatus status =
+            this->EvaluateFrameCanonical(target, config);
+        if (status == TimelineStatus::Ok)
+        {
+            this->impl->poisoned = false;
+            this->impl->faultInjectionPhase = 0;
+        }
+        return status;
+    }
     case SeekPolicy::ReplayFromStart:
     {
         TimelineStatus status = this->PrepareFrameZero(config);
@@ -661,6 +914,7 @@ TimelineStatus SabaMmdRuntimeModel::PrepareFrameZero(
     const ReplayConfig& config
 )
 {
+    // PrepareFrameZero is a documented Poisoned recovery entry.
     const TimelineStatus profileStatus = this->ValidateReplayConfig(config);
     if (profileStatus != TimelineStatus::Ok)
         return profileStatus;
@@ -673,6 +927,8 @@ TimelineStatus SabaMmdRuntimeModel::PrepareFrameZero(
     }
     this->impl->deterministicPrepared = true;
     this->impl->expectedNextFrame = 1U;
+    this->impl->poisoned = false;
+    this->impl->faultInjectionPhase = 0;
     return TimelineStatus::Ok;
 }
 
@@ -681,6 +937,8 @@ TimelineStatus SabaMmdRuntimeModel::StepMotionFrameExact(
     const ReplayConfig& config
 )
 {
+    if (this->impl->poisoned)
+        return TimelineStatus::Poisoned;
     if (!this->impl->deterministicPrepared)
         return TimelineStatus::InvalidState;
     if (frame != this->impl->expectedNextFrame)
@@ -703,6 +961,8 @@ TimelineStatus SabaMmdRuntimeModel::CaptureState(
     PhysicsSnapshot& output
 ) const
 {
+    if (this->impl->poisoned)
+        return TimelineStatus::Poisoned;
     if (this->impl->model == nullptr)
         return TimelineStatus::NoPhysics;
     saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
@@ -719,25 +979,18 @@ TimelineStatus SabaMmdRuntimeModel::CaptureState(
             continue;
         RigidBodySnapshot snapshot;
         snapshot.index = static_cast<std::uint32_t>(index);
-        const btTransform transform = body->getCenterOfMassTransform();
-        snapshot.position = ToGlmVec3(transform.getOrigin());
-        const btQuaternion rotation = transform.getRotation();
-        snapshot.rotation = glm::quat(
-            rotation.w(),
-            rotation.x(),
-            rotation.y(),
-            rotation.z()
+        snapshot.mode = static_cast<PmxRigidBodyMode>(
+            (*rigidBodies)[index]->GetRigidBodyType()
         );
+        snapshot.definitionMass =
+            (*rigidBodies)[index]->GetDefinitionMass();
+        const btTransform transform = body->getCenterOfMassTransform();
+        FillTransformSnapshot(snapshot.worldTransform, transform);
         const btTransform interpolation =
             body->getInterpolationWorldTransform();
-        snapshot.interpolationPosition = ToGlmVec3(interpolation.getOrigin());
-        const btQuaternion interpolationRotation =
-            interpolation.getRotation();
-        snapshot.interpolationRotation = glm::quat(
-            interpolationRotation.w(),
-            interpolationRotation.x(),
-            interpolationRotation.y(),
-            interpolationRotation.z()
+        FillTransformSnapshot(
+            snapshot.interpolationTransform,
+            interpolation
         );
         snapshot.linearVelocity = ToGlmVec3(body->getLinearVelocity());
         snapshot.angularVelocity = ToGlmVec3(body->getAngularVelocity());
@@ -750,11 +1003,6 @@ TimelineStatus SabaMmdRuntimeModel::CaptureState(
         snapshot.activationState = body->getActivationState();
         snapshot.deactivationTime =
             static_cast<float>(body->getDeactivationTime());
-        const btScalar inverseMass = body->getInvMass();
-        snapshot.mass = inverseMass > btScalar(0)
-            ? static_cast<float>(btScalar(1) / inverseMass)
-            : 0.0f;
-        snapshot.kinematic = inverseMass <= btScalar(0);
         output.rigidBodies.push_back(snapshot);
     }
     output.jointCount = static_cast<std::uint32_t>(
@@ -763,6 +1011,11 @@ TimelineStatus SabaMmdRuntimeModel::CaptureState(
     output.motionFrame = this->impl->lastMotionFrame;
     output.physicsTick = this->impl->lastPhysicsTick;
     output.canonical = this->impl->lastBoundaryCanonical;
+    output.schemaVersion = 2U;
+    this->ComputeLayoutFingerprint(output.layoutFingerprint);
+    this->ComputeConfigurationFingerprint(
+        output.physicsConfigurationFingerprint
+    );
     return TimelineStatus::Ok;
 }
 
@@ -779,8 +1032,603 @@ TimelineStatus SabaMmdRuntimeModel::ReadStepDiagnostics(
     output.remainingAccumulator = static_cast<double>(
         manager->GetMMDPhysics()->GetSimulationTime()
     );
+    output.poisoned = this->impl->poisoned;
     return TimelineStatus::Ok;
 }
+
+bool SabaMmdRuntimeModel::IsPoisoned() const noexcept
+{
+    return this->impl->poisoned;
+}
+
+void SabaMmdRuntimeModel::EnterPoisoned() noexcept
+{
+    this->impl->poisoned = true;
+    this->impl->lastBoundaryCanonical = false;
+    this->impl->deterministicPrepared = false;
+    this->impl->expectedNextFrame = 0U;
+}
+
+TimelineStatus SabaMmdRuntimeModel::CapturePhysicsSnapshot(
+    PhysicsSnapshot& output
+) const
+{
+    return this->CaptureState(output);
+}
+
+TimelineStatus SabaMmdRuntimeModel::RestorePhysicsSnapshot(
+    const PhysicsSnapshot& snapshot
+)
+{
+    return this->RestoreState(snapshot);
+}
+
+TimelineStatus SabaMmdRuntimeModel::RestoreState(
+    const PhysicsSnapshot& snapshot
+)
+{
+    if (this->IsPoisoned())
+        return TimelineStatus::Poisoned;
+#if defined(BT_USE_DOUBLE_PRECISION)
+    // R1.2B v4.1.1 freezes the scalar schema to 32-bit; a double-precision
+    // Bullet build cannot provide bit-exact snapshot restore.
+    return TimelineStatus::UnsupportedReplayProfile;
+#endif
+    const TimelineStatus validation =
+        this->ValidateSnapshotForRestore(snapshot);
+    if (validation != TimelineStatus::Ok)
+        return validation;
+    try
+    {
+        return this->RestorePhases(snapshot);
+    }
+    catch (...)
+    {
+        this->EnterPoisoned();
+        return TimelineStatus::Poisoned;
+    }
+}
+
+TimelineStatus SabaMmdRuntimeModel::ValidateSnapshotForRestore(
+    const PhysicsSnapshot& snapshot
+) const
+{
+    if (this->impl->model == nullptr)
+    {
+        return TimelineStatus::NoPhysics;
+    }
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+    {
+        return TimelineStatus::NoPhysics;
+    }
+    if (!this->impl->physicsSettings.enabled)
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+
+    if (snapshot.schemaVersion != 2U)
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+    if (!snapshot.canonical)
+    {
+        return TimelineStatus::InvalidSnapshot;
+    }
+
+    auto* rigidBodies = manager->GetRigidBodys();
+    // Count/index checks must precede every body[i] access.
+    if (snapshot.rigidBodies.size() != rigidBodies->size())
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+    if (snapshot.jointCount != manager->GetJoints()->size())
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        if (snapshot.rigidBodies[index].index != index)
+        {
+            return TimelineStatus::SnapshotMismatch;
+        }
+    }
+
+    std::uint64_t currentLayout = 0U;
+    this->ComputeLayoutFingerprint(currentLayout);
+    if (currentLayout != snapshot.layoutFingerprint)
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+    std::uint64_t currentConfig = 0U;
+    this->ComputeConfigurationFingerprint(currentConfig);
+    if (currentConfig != snapshot.physicsConfigurationFingerprint)
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& bodySnapshot =
+            snapshot.rigidBodies[index];
+        const auto& rigidBody = (*rigidBodies)[index];
+        if (static_cast<int>(bodySnapshot.mode) !=
+            rigidBody->GetRigidBodyType())
+        {
+            return TimelineStatus::SnapshotMismatch;
+        }
+        std::uint32_t snapshotMassBits = 0U;
+        std::uint32_t currentMassBits = 0U;
+        std::memcpy(
+            &snapshotMassBits,
+            &bodySnapshot.definitionMass,
+            sizeof(snapshotMassBits)
+        );
+        const float currentMass = rigidBody->GetDefinitionMass();
+        std::memcpy(&currentMassBits, &currentMass, sizeof(currentMassBits));
+        if (snapshotMassBits != currentMassBits)
+        {
+            return TimelineStatus::SnapshotMismatch;
+        }
+
+        if (!std::isfinite(bodySnapshot.definitionMass) ||
+            bodySnapshot.definitionMass < 0.0f)
+        {
+            return TimelineStatus::InvalidSnapshot;
+        }
+        if (!IsFiniteBasis(bodySnapshot.worldTransform) ||
+            !IsFiniteBasis(bodySnapshot.interpolationTransform))
+        {
+            return TimelineStatus::InvalidSnapshot;
+        }
+        if (!IsValidRotationBasis(bodySnapshot.worldTransform) ||
+            !IsValidRotationBasis(bodySnapshot.interpolationTransform))
+        {
+            return TimelineStatus::InvalidSnapshot;
+        }
+        const glm::vec3* vectors[] = {
+            &bodySnapshot.linearVelocity,
+            &bodySnapshot.angularVelocity,
+            &bodySnapshot.interpolationLinearVelocity,
+            &bodySnapshot.interpolationAngularVelocity,
+            &bodySnapshot.totalForce,
+            &bodySnapshot.totalTorque
+        };
+        for (const glm::vec3* vector : vectors)
+        {
+            if (!std::isfinite(vector->x) ||
+                !std::isfinite(vector->y) ||
+                !std::isfinite(vector->z))
+            {
+                return TimelineStatus::InvalidSnapshot;
+            }
+        }
+        if (!std::isfinite(bodySnapshot.deactivationTime))
+        {
+            return TimelineStatus::InvalidSnapshot;
+        }
+
+        // Canonical zeros use +0.0f bit patterns.
+        if (!IsPositiveZero(bodySnapshot.totalForce.x) ||
+            !IsPositiveZero(bodySnapshot.totalForce.y) ||
+            !IsPositiveZero(bodySnapshot.totalForce.z) ||
+            !IsPositiveZero(bodySnapshot.totalTorque.x) ||
+            !IsPositiveZero(bodySnapshot.totalTorque.y) ||
+            !IsPositiveZero(bodySnapshot.totalTorque.z))
+        {
+            return TimelineStatus::InvalidSnapshot;
+        }
+        if (bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
+        {
+            if (bodySnapshot.activationState != ACTIVE_TAG ||
+                !IsPositiveZero(bodySnapshot.deactivationTime))
+            {
+                return TimelineStatus::InvalidSnapshot;
+            }
+        }
+    }
+
+    if (snapshot.motionFrame >
+        std::numeric_limits<std::uint64_t>::max() / 4U)
+    {
+        return TimelineStatus::InvalidSnapshot;
+    }
+    if (snapshot.physicsTick != snapshot.motionFrame * 4U)
+    {
+        return TimelineStatus::InvalidSnapshot;
+    }
+
+    // Animation precondition: the caller must have evaluated animation at
+    // the snapshot's motion frame; FollowBone transforms must already match.
+    if (this->impl->vmdFrame != static_cast<double>(snapshot.motionFrame))
+    {
+        return TimelineStatus::InvalidState;
+    }
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& bodySnapshot =
+            snapshot.rigidBodies[index];
+        if (bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
+            continue;
+        btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
+        if (body == nullptr)
+            continue;
+        if (!SameTransformBitwise(
+                body->getCenterOfMassTransform(),
+                bodySnapshot.worldTransform
+            ))
+        {
+            return TimelineStatus::InvalidState;
+        }
+    }
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::RestorePhases(
+    const PhysicsSnapshot& snapshot
+)
+{
+    auto* manager = this->impl->model->GetPhysicsManager();
+    auto* physics = manager->GetMMDPhysics();
+    auto* rigidBodies = manager->GetRigidBodys();
+    const auto throwIfInjected = [this](int phase)
+    {
+        if (this->impl->faultInjectionPhase == phase)
+            throw std::runtime_error("R1.2B restore fault injection");
+    };
+
+    // Phase 1: motion-state selection + world/interpolation transforms.
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& bodySnapshot =
+            snapshot.rigidBodies[index];
+        const auto& rigidBody = (*rigidBodies)[index];
+        btRigidBody* body = rigidBody->GetRigidBody();
+        if (body == nullptr)
+            continue;
+        rigidBody->SelectMotionStateForMode(
+            static_cast<int>(bodySnapshot.mode)
+        );
+        btTransform worldTransform;
+        FillBulletTransform(worldTransform, bodySnapshot.worldTransform);
+        btTransform interpolationTransform;
+        FillBulletTransform(
+            interpolationTransform,
+            bodySnapshot.interpolationTransform
+        );
+        body->setCenterOfMassTransform(worldTransform);
+        body->setInterpolationWorldTransform(interpolationTransform);
+        if (bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
+        {
+            // Keep the active motion state in sync so Phase 6's
+            // ReflectGlobalTransform reads the restored pose, not a stale
+            // pre-restore transform.
+            rigidBody->SyncActiveMotionStateToBodyTransform();
+        }
+    }
+    throwIfInjected(1);
+
+    // Phase 2: velocities (regular + interpolation).
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& bodySnapshot =
+            snapshot.rigidBodies[index];
+        btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
+        if (body == nullptr)
+            continue;
+        body->setLinearVelocity(ToBtVector3(bodySnapshot.linearVelocity));
+        body->setAngularVelocity(ToBtVector3(bodySnapshot.angularVelocity));
+        body->setInterpolationLinearVelocity(
+            ToBtVector3(bodySnapshot.interpolationLinearVelocity)
+        );
+        body->setInterpolationAngularVelocity(
+            ToBtVector3(bodySnapshot.interpolationAngularVelocity)
+        );
+    }
+    throwIfInjected(2);
+
+    // Phase 3: canonical forces are +0; clear the target instance.
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
+        if (body != nullptr)
+            body->clearForces();
+    }
+    throwIfInjected(3);
+
+    // Phase 4: deterministic collision-world rebuild + solver history clear.
+    physics->RebuildCollisionWorldDeterministic();
+    physics->ClearSolverHistoryDeterministic();
+    throwIfInjected(4);
+
+    // Phase 5: canonical activation + time boundary.
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& bodySnapshot =
+            snapshot.rigidBodies[index];
+        (*rigidBodies)[index]->NormalizeCanonicalActivation(
+            static_cast<int>(bodySnapshot.mode)
+        );
+    }
+    physics->ResetSimulationTime();
+    this->impl->lastExecutedSubsteps = 0U;
+    this->impl->lastRemainingAccumulator = 0.0f;
+    throwIfInjected(5);
+
+    // Phase 6: inertia tensor, bone write-back, mesh and pose sync.
+    for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
+    {
+        const RigidBodySnapshot& bodySnapshot =
+            snapshot.rigidBodies[index];
+        const auto& rigidBody = (*rigidBodies)[index];
+        btRigidBody* body = rigidBody->GetRigidBody();
+        if (body != nullptr)
+        {
+            // Bullet already refreshes this inside setCenterOfMassTransform;
+            // calling it explicitly keeps the contract independent of that
+            // implementation detail.
+            body->updateInertiaTensor();
+        }
+        if (bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
+        {
+            rigidBody->ReflectGlobalTransform();
+        }
+        rigidBody->CalcLocalTransform();
+    }
+    if (saba::MMDNodeManager* nodes =
+            this->impl->model->GetNodeManager())
+    {
+        for (std::size_t index = 0U; index < nodes->GetNodeCount(); ++index)
+        {
+            saba::MMDNode* node = nodes->GetMMDNode(index);
+            if (node != nullptr && node->GetParent() == nullptr)
+            {
+                node->UpdateGlobalTransform();
+            }
+        }
+    }
+    this->impl->model->Update();
+    this->SyncPoseFromSaba();
+    throwIfInjected(6);
+
+    this->impl->lastBoundaryCanonical = true;
+    this->impl->lastMotionFrame = snapshot.motionFrame;
+    this->impl->lastPhysicsTick = snapshot.physicsTick;
+    // R1.2B does not restore the deterministic stepping state machine;
+    // continuation is R1.2C checkpoint semantics.
+    this->impl->deterministicPrepared = false;
+    this->impl->expectedNextFrame = 0U;
+    return TimelineStatus::Ok;
+}
+
+void SabaMmdRuntimeModel::ComputeLayoutFingerprint(
+    std::uint64_t& fingerprint
+) const
+{
+    FnvHasher hasher;
+    hasher.U32(2U);  // schemaVersion
+    hasher.U32(1U);  // layoutVersion
+    if (this->impl->model == nullptr)
+    {
+        fingerprint = hasher.state;
+        return;
+    }
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr)
+    {
+        fingerprint = hasher.state;
+        return;
+    }
+    auto* rigidBodies = manager->GetRigidBodys();
+    auto* joints = manager->GetJoints();
+    hasher.U32(static_cast<std::uint32_t>(rigidBodies->size()));
+    hasher.U32(static_cast<std::uint32_t>(joints->size()));
+
+    for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
+    {
+        const auto& rigidBody = (*rigidBodies)[index];
+        btRigidBody* body = rigidBody->GetRigidBody();
+        hasher.U32(static_cast<std::uint32_t>(index));
+        hasher.I32(rigidBody->GetRigidBodyType());
+        hasher.F32(rigidBody->GetDefinitionMass());
+        HashShapeDimensions(
+            hasher,
+            body != nullptr ? body->getCollisionShape() : nullptr
+        );
+        hasher.I32(rigidBody->GetBoneIndex());
+        hasher.Mat4(rigidBody->GetOffsetMatrix());
+        hasher.U32(rigidBody->GetGroup());
+        hasher.U32(rigidBody->GetGroupMask());
+        if (body != nullptr)
+        {
+            hasher.F32(static_cast<float>(body->getLinearDamping()));
+            hasher.F32(static_cast<float>(body->getAngularDamping()));
+            hasher.F32(static_cast<float>(body->getRestitution()));
+            hasher.F32(static_cast<float>(body->getFriction()));
+        }
+        else
+        {
+            hasher.F32(0.0f);
+            hasher.F32(0.0f);
+            hasher.F32(0.0f);
+            hasher.F32(0.0f);
+        }
+    }
+
+    std::unordered_map<const btRigidBody*, std::uint32_t> indexMap;
+    for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
+    {
+        indexMap[(*rigidBodies)[index]->GetRigidBody()] =
+            static_cast<std::uint32_t>(index);
+    }
+    for (std::size_t index = 0U; index < joints->size(); ++index)
+    {
+        btTypedConstraint* constraint =
+            (*joints)[index]->GetConstraint();
+        if (constraint == nullptr)
+        {
+            hasher.I32(-1);
+            continue;
+        }
+        hasher.I32(constraint->getConstraintType());
+        const btRigidBody* bodyA = &constraint->getRigidBodyA();
+        const btRigidBody* bodyB = &constraint->getRigidBodyB();
+        const auto bodyAIterator = indexMap.find(bodyA);
+        const auto bodyBIterator = indexMap.find(bodyB);
+        hasher.U32(
+            bodyAIterator != indexMap.end()
+                ? bodyAIterator->second
+                : 0xFFFFFFFFU
+        );
+        hasher.U32(
+            bodyBIterator != indexMap.end()
+                ? bodyBIterator->second
+                : 0xFFFFFFFFU
+        );
+        if (const auto* dof =
+                dynamic_cast<const btGeneric6DofConstraint*>(constraint))
+        {
+            hasher.BtTransform(dof->getFrameOffsetA());
+            hasher.BtTransform(dof->getFrameOffsetB());
+            btVector3 linearLower;
+            btVector3 linearUpper;
+            btVector3 angularLower;
+            btVector3 angularUpper;
+            dof->getLinearLowerLimit(linearLower);
+            dof->getLinearUpperLimit(linearUpper);
+            dof->getAngularLowerLimit(angularLower);
+            dof->getAngularUpperLimit(angularUpper);
+            hasher.BtVector3(linearLower);
+            hasher.BtVector3(linearUpper);
+            hasher.BtVector3(angularLower);
+            hasher.BtVector3(angularUpper);
+            if (const auto* spring = dynamic_cast<
+                    const btGeneric6DofSpringConstraint*>(constraint))
+            {
+                for (int axis = 0; axis < 6; ++axis)
+                {
+                    hasher.U32(spring->isSpringEnabled(axis) ? 1U : 0U);
+                    hasher.F32(
+                        static_cast<float>(spring->getStiffness(axis))
+                    );
+                    hasher.F32(
+                        static_cast<float>(spring->getDamping(axis))
+                    );
+                }
+            }
+        }
+    }
+    fingerprint = hasher.state;
+}
+
+void SabaMmdRuntimeModel::ComputeConfigurationFingerprint(
+    std::uint64_t& fingerprint
+) const
+{
+    FnvHasher hasher;
+    hasher.U32(sizeof(btScalar));  // scalar precision (4 in R1.2B)
+    hasher.U32(1U);                // physics ABI version
+    hasher.U32(1U);                // broadphase: btDbvtBroadphase
+    hasher.U32(1U);                // solver: btSequentialImpulseConstraintSolver
+    if (this->impl->model == nullptr)
+    {
+        fingerprint = hasher.state;
+        return;
+    }
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+    {
+        fingerprint = hasher.state;
+        return;
+    }
+    saba::MMDPhysics* physics = manager->GetMMDPhysics();
+    btDiscreteDynamicsWorld* world = physics->GetDynamicsWorld();
+    if (world != nullptr)
+    {
+        hasher.BtVector3(world->getGravity());
+        const btContactSolverInfo& info = world->getSolverInfo();
+        hasher.I32(info.m_numIterations);
+        hasher.I32(info.m_solverMode);
+        hasher.F32(static_cast<float>(info.m_erp));
+        hasher.F32(static_cast<float>(info.m_erp2));
+        hasher.U32(info.m_splitImpulse ? 1U : 0U);
+        hasher.F32(static_cast<float>(info.m_splitImpulsePenetrationThreshold));
+        hasher.F32(static_cast<float>(info.m_splitImpulseTurnErp));
+        hasher.F32(static_cast<float>(info.m_globalCfm));
+        hasher.F32(static_cast<float>(info.m_frictionERP));
+        hasher.F32(static_cast<float>(info.m_frictionCFM));
+        hasher.F32(static_cast<float>(info.m_restitution));
+        hasher.F32(static_cast<float>(info.m_restitutionVelocityThreshold));
+        hasher.F32(static_cast<float>(info.m_linearSlop));
+        hasher.F32(static_cast<float>(info.m_warmstartingFactor));
+        hasher.F32(static_cast<float>(info.m_damping));
+        hasher.F32(static_cast<float>(info.m_maxErrorReduction));
+        hasher.F32(static_cast<float>(info.m_sor));
+        hasher.I32(info.m_numNonContactInnerIterations);
+    }
+    hasher.F32(this->impl->physicsSettings.fixedTimeStep);
+    hasher.I32(this->impl->physicsSettings.maxSubSteps);
+    hasher.F32(physics->GetFPS());
+    hasher.I32(physics->GetMaxSubStepCount());
+
+    auto* rigidBodies = manager->GetRigidBodys();
+    for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
+    {
+        btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
+        const btCollisionShape* shape =
+            body != nullptr ? body->getCollisionShape() : nullptr;
+        hasher.U32(static_cast<std::uint32_t>(index));
+        hasher.F32(
+            shape != nullptr ? static_cast<float>(shape->getMargin()) : 0.0f
+        );
+        HashShapeDimensions(hasher, shape);
+    }
+
+    // Instance policies (Saba path constants; contract requires them hashed).
+    hasher.U32(0U);  // linked-body collision policy (none)
+    hasher.U32(1U);  // deactivation policy (Saba DISABLE_DEACTIVATION default)
+    hasher.U32(1U);  // compatibility profile (saba-compatible)
+    hasher.U32(1U);  // physics-layout conversion version
+    hasher.F32(1.0f);  // model scale
+    fingerprint = hasher.state;
+}
+
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+TimelineStatus SabaMmdRuntimeModel::StepRestoredPhysicsForProbe(
+    std::uint32_t exactSubsteps
+)
+{
+    if (this->IsPoisoned())
+        return TimelineStatus::Poisoned;
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+    if (!this->impl->physicsSettings.enabled)
+        return TimelineStatus::UnsupportedReplayProfile;
+    const float delta = static_cast<float>(exactSubsteps) / 120.0f;
+    const int executed =
+        this->impl->model->UpdatePhysicsAnimation(delta);
+    if (executed != static_cast<int>(exactSubsteps))
+        return TimelineStatus::DeterminismViolation;
+    this->impl->lastExecutedSubsteps = exactSubsteps;
+    // The probe advances Bullet without re-evaluating animation, so it is
+    // not a complete Canonical Frame Boundary.
+    this->impl->lastBoundaryCanonical = false;
+    return TimelineStatus::Ok;
+}
+
+void SabaMmdRuntimeModel::SetFaultInjectionPhase(int phase) noexcept
+{
+    this->impl->faultInjectionPhase = phase;
+}
+
+int SabaMmdRuntimeModel::FaultInjectionPhase() const noexcept
+{
+    return this->impl->faultInjectionPhase;
+}
+#endif
 
 bool SabaMmdRuntimeModel::LoadMotion(
     const std::filesystem::path& vmdPath
@@ -951,6 +1799,14 @@ ModelRuntimeCapabilities SabaMmdRuntimeModel::Capabilities() const
     // R1.2A adds read-only deterministic state capture; restore stays
     // disabled until R1.2B, and advanced Bullet tuning stays disabled.
     capabilities.physics.supportsSnapshotCapture = true;
+#if defined(BT_USE_DOUBLE_PRECISION)
+    // R1.2B v4.1.1: snapshot restore is frozen to 32-bit btScalar.
+    capabilities.physics.supportsSnapshotRestore = false;
+    capabilities.physics.supportsCanonicalRestore = false;
+#else
+    capabilities.physics.supportsSnapshotRestore = true;
+    capabilities.physics.supportsCanonicalRestore = true;
+#endif
     return capabilities;
 }
 

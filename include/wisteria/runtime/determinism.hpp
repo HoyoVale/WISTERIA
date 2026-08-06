@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -45,6 +46,11 @@ enum class TimelineStatus
     NonSequentialFrame,    // frame != expectedNextFrame
     DeterminismViolation,  // live physics settings/substeps/accumulator broke
                            // the frozen 30Hz/120Hz canonical boundary
+    // R1.2B restore status codes (contract v4.1.1).
+    SnapshotMismatch,      // schema/layout/config mismatch or tampered fields
+    InvalidSnapshot,       // invalid values: non-finite, bad rotation basis,
+                           // missing canonical claim
+    Poisoned,              // write-phase failure; instance must be rebuilt
 };
 
 // Read-only diagnostics of the last canonical frame boundary. executedSubsteps
@@ -55,6 +61,29 @@ struct PhysicsStepDiagnostics
 {
     std::uint32_t executedSubsteps = 0;
     double remainingAccumulator = 0.0;
+    // R1.2B: true while the instance is in Poisoned state. Read-only
+    // diagnostics remain available; deterministic entries are rejected.
+    bool poisoned = false;
+};
+
+// PMX rigid-body semantic mode, taken from the immutable model definition.
+// It must never be inferred from Bullet's runtime invMass.
+enum class PmxRigidBodyMode : std::uint8_t
+{
+    FollowBone = 0,        // PMX Mode 0 (Static / kinematic)
+    Physics = 1,           // PMX Mode 1 (Dynamic)
+    PhysicsWithBone = 2,   // PMX Mode 2 (DynamicAndBoneMerge)
+};
+
+// Bullet btTransform stores a 3x3 basis plus an origin, not a quaternion.
+// Quaternion round-trips are not bit-reversible, so the snapshot carries the
+// basis as 9 explicit floats (column-major).
+struct RigidTransformSnapshot
+{
+    glm::vec3 position{0.0f};
+    // Column-major 3x3 basis, serialized explicitly:
+    // [c0.x, c0.y, c0.z, c1.x, c1.y, c1.z, c2.x, c2.y, c2.z]
+    std::array<float, 9> rotationBasis{};
 };
 
 // Neutral rigid-body state (R1.2A: read-only capture; R1.2B: restore).
@@ -62,10 +91,12 @@ struct PhysicsStepDiagnostics
 struct RigidBodySnapshot
 {
     std::uint32_t index = 0;
-    glm::vec3 position{0.0f};
-    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-    glm::vec3 interpolationPosition{0.0f};
-    glm::quat interpolationRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    PmxRigidBodyMode mode = PmxRigidBodyMode::FollowBone;
+    // PMX raw mass bit pattern from the immutable definition; used only for
+    // fingerprints and per-body validation, never to decide runtime mode.
+    float definitionMass = 0.0f;
+    RigidTransformSnapshot worldTransform;
+    RigidTransformSnapshot interpolationTransform;
     glm::vec3 linearVelocity{0.0f};
     glm::vec3 angularVelocity{0.0f};
     glm::vec3 interpolationLinearVelocity{0.0f};
@@ -74,22 +105,37 @@ struct RigidBodySnapshot
     glm::vec3 totalTorque{0.0f};
     std::int32_t activationState = 0;
     float deactivationTime = 0.0f;
-    float mass = 0.0f;
-    // PMX semantic kind: kinematic (static, mass == 0) vs dynamic.
-    bool kinematic = true;
 };
 
 // Neutral physics state at a Canonical Frame Boundary.
 struct PhysicsSnapshot
 {
+    std::uint32_t schemaVersion = 2;
+    std::uint64_t layoutFingerprint = 0;
+    std::uint64_t physicsConfigurationFingerprint = 0;
     std::vector<RigidBodySnapshot> rigidBodies;
     MotionFrameIndex motionFrame = 0;  // VMD frame (30Hz motion boundary)
     TimelineTick physicsTick = 0;      // 120Hz tick (default = frame * 4)
     std::uint32_t jointCount = 0;
-    // True when the state lies on a complete Canonical Frame Boundary
-    // (animation evaluated, kinematics synced, substeps done, accumulator
-    // zero, forces cleared). Not limited to Restore-produced states.
+    // Claim written by the capture path when the state lies on a complete
+    // Canonical Frame Boundary. Restore validates it and never modifies it.
     bool canonical = false;
+};
+
+// R1.2B state restore interface. Capture (read-only) lives in
+// IDeterministicPhysicsObservation. Restore semantics follow
+// docs/architecture/R1_2B_RESTORE_STATE_CONTRACT.md (v4.1.1).
+class IPhysicsStateAccess
+{
+public:
+    virtual ~IPhysicsStateAccess() = default;
+
+    // Only canonical=true snapshots with matching layout/configuration
+    // fingerprints and an animation precondition are accepted. On success
+    // deterministicPrepared stays false (continuation is R1.2C).
+    virtual TimelineStatus RestoreState(
+        const PhysicsSnapshot& snapshot
+    ) = 0;
 };
 
 // R1.2A deterministic frame-stepping contract. Upper layers never compose

@@ -51,6 +51,16 @@ namespace saba
 		btRigidBody* GetRigidBody() const;
 		uint16_t GetGroup() const;
 		uint16_t GetGroupMask() const;
+		// R1.2B deterministic-restore narrow interface.
+		int GetRigidBodyType() const;             // 0=Kinematic 1=Dynamic 2=Aligned
+		int32_t GetBoneIndex() const;
+		const glm::mat4& GetOffsetMatrix() const;
+		float GetDefinitionMass() const;          // PMX raw mass (bit pattern)
+		void SelectMotionStateForMode(int mode);  // mode 0 = FollowBone
+		void NormalizeCanonicalActivation(int mode);
+		// Copies the rigid body's current COM transform into the active
+		// motion state so reflect/write-back phases read the restored pose.
+		void SyncActiveMotionStateToBodyTransform();
 
 		void SetActivation(bool activation);
 		void ResetTransform();
@@ -81,6 +91,8 @@ namespace saba
 
 		MMDNode*	m_node;
 		glm::mat4	m_offsetMat;
+		int32_t		m_boneIndex;
+		float		m_definitionMass;
 
 		std::string					m_name;
 	};
@@ -98,6 +110,9 @@ namespace saba
 		void Destroy();
 
 		btTypedConstraint* GetConstraint() const;
+		// R1.2B: clears cached joint impulses so restored worlds do not
+		// inherit warm-start history.
+		void ResetConstraintImpulses();
 
 	private:
 		std::unique_ptr<btTypedConstraint>	m_constraint;
@@ -124,6 +139,11 @@ namespace saba
 		// WISTERIA can verify exact 30Hz->120Hz replay without guessing from
 		// final state. Existing callers may ignore the return value.
 		int Update(float time);
+		// R1.2B deterministic restore: rebuild the collision world from the
+		// current transforms (AABBs, pairs, manifolds) and clear solver
+		// warm-start history. Semantics are defined by the R1.2B contract.
+		void RebuildCollisionWorldDeterministic();
+		void ClearSolverHistoryDeterministic();
 		// Deterministic replay narrow interface: read/clear Bullet's internal
 		// frame accumulator without stepping the world. Used to guarantee a
 		// Canonical Frame Boundary (remaining accumulator == 0) after

@@ -35,11 +35,32 @@ namespace saba
 		}
 	};
 
+	// WISTERIA deterministic-restore narrow interface for PMX joints: the
+	// solver keeps warm-start impulses inside the 6DOF limit motors, which
+	// the public API cannot clear. A subclass owned by Saba exposes the
+	// reset so a restored world does not inherit joint impulse history.
+	class SabaDeterministic6DofSpringConstraint final
+		: public btGeneric6DofSpringConstraint
+	{
+	public:
+		using btGeneric6DofSpringConstraint::btGeneric6DofSpringConstraint;
+
+		void ResetAccumulatedImpulses()
+		{
+			m_linearLimits.m_accumulatedImpulse.setValue(0, 0, 0);
+			for (int i = 0; i < 3; ++i)
+			{
+				m_angularLimits[i].m_accumulatedImpulse = 0;
+			}
+		}
+	};
+
 	class MMDMotionState : public btMotionState
 	{
 	public:
 		virtual void Reset() = 0;
 		virtual void ReflectGlobalTransform() = 0;
+		virtual void SetTransform(const btTransform& transform) = 0;
 	};
 
 	namespace
@@ -195,6 +216,76 @@ namespace saba
 		deterministicWorld->ResetSimulationTime();
 	}
 
+	void MMDPhysics::RebuildCollisionWorldDeterministic()
+	{
+		if (m_world == nullptr)
+		{
+			return;
+		}
+		btDispatcher* dispatcher = m_world->getDispatcher();
+		// 1. AABBs must reflect the restored transforms before any pair
+		//    rebuild.
+		m_world->updateAabbs();
+		// 2. Drop every existing manifold so accumulated contact impulses
+		//    die with them.
+		for (int i = dispatcher->getNumManifolds() - 1; i >= 0; --i)
+		{
+			dispatcher->clearManifold(
+				dispatcher->getManifoldByIndexInternal(i)
+			);
+		}
+		// 3. Remove old overlapping pairs (cleanProxyFromPairs alone keeps
+		//    the pair set; this removes it).
+		if (btOverlappingPairCache* pairCache = m_world->getPairCache())
+		{
+			const btCollisionObjectArray& objects =
+				m_world->getCollisionObjectArray();
+			for (int i = 0; i < objects.size(); ++i)
+			{
+				if (btBroadphaseProxy* proxy =
+						objects[i]->getBroadphaseHandle())
+				{
+					pairCache->removeOverlappingPairsContainingProxy(
+						proxy,
+						dispatcher
+					);
+				}
+			}
+		}
+		// 4. Rebuild overlapping pairs deterministically from the restored
+		//    AABBs; manifolds stay empty until the next collision dispatch.
+		if (btBroadphaseInterface* broadphase = m_world->getBroadphase())
+		{
+			broadphase->calculateOverlappingPairs(dispatcher);
+		}
+	}
+
+	void MMDPhysics::ClearSolverHistoryDeterministic()
+	{
+		if (m_world == nullptr)
+		{
+			return;
+		}
+		if (m_solver != nullptr)
+		{
+			if (auto* sequential = dynamic_cast<
+					btSequentialImpulseConstraintSolver*>(m_solver.get()))
+			{
+				sequential->reset();
+			}
+		}
+		for (int i = 0; i < m_world->getNumConstraints(); ++i)
+		{
+			btTypedConstraint* constraint = m_world->getConstraint(i);
+			auto* deterministic = dynamic_cast<
+				SabaDeterministic6DofSpringConstraint*>(constraint);
+			if (deterministic != nullptr)
+			{
+				deterministic->ResetAccumulatedImpulses();
+			}
+		}
+	}
+
 	void MMDPhysics::AddRigidBody(MMDRigidBody * mmdRB)
 	{
 		m_world->addRigidBody(
@@ -263,6 +354,11 @@ namespace saba
 		{
 		}
 
+		virtual void SetTransform(const btTransform& transform) override
+		{
+			m_transform = transform;
+		}
+
 
 	private:
 		btTransform	m_initialTransform;
@@ -308,6 +404,11 @@ namespace saba
 				m_node->SetGlobalTransform(btGlobal);
 				m_node->UpdateChildTransform();
 			}
+		}
+
+		virtual void SetTransform(const btTransform& transform) override
+		{
+			m_transform = transform;
 		}
 
 	private:
@@ -361,6 +462,11 @@ namespace saba
 			}
 		}
 
+		virtual void SetTransform(const btTransform& transform) override
+		{
+			m_transform = transform;
+		}
+
 	private:
 		MMDNode*	m_node;
 		glm::mat4	m_offset;
@@ -406,6 +512,12 @@ namespace saba
 		{
 		}
 
+		virtual void SetTransform(const btTransform&) override
+		{
+			// Kinematic motion state derives its transform from the animated
+			// node on every read; nothing to store.
+		}
+
 	private:
 		MMDNode*	m_node;
 		glm::mat4	m_offset;
@@ -417,6 +529,8 @@ namespace saba
 		, m_groupMask(0)
 		, m_node(0)
 		, m_offsetMat(1)
+		, m_boneIndex(-1)
+		, m_definitionMass(0.0f)
 	{
 	}
 
@@ -545,6 +659,12 @@ namespace saba
 		m_group = pmdRigidBody.m_groupIndex;
 		m_groupMask = pmdRigidBody.m_groupTarget;
 		m_node = node;
+		m_definitionMass = pmdRigidBody.m_rigidBodyWeight;
+		m_boneIndex = node != nullptr
+			? static_cast<int32_t>(node->GetIndex())
+			: static_cast<int32_t>(
+				  model->GetNodeManager()->GetMMDNode(0)->GetIndex()
+			  );
 		m_name = pmdRigidBody.m_rigidBodyName.ToUtf8String();
 
 		return true;
@@ -663,6 +783,12 @@ namespace saba
 		m_group = pmxRigidBody.m_group;
 		m_groupMask = pmxRigidBody.m_collisionGroup;
 		m_node = node;
+		m_definitionMass = pmxRigidBody.m_mass;
+		m_boneIndex = node != nullptr
+			? static_cast<int32_t>(node->GetIndex())
+			: static_cast<int32_t>(
+				  model->GetNodeManager()->GetMMDNode(0)->GetIndex()
+			  );
 		m_name = pmxRigidBody.m_name;
 
 		return true;
@@ -686,6 +812,61 @@ namespace saba
 	uint16_t MMDRigidBody::GetGroupMask() const
 	{
 		return m_groupMask;
+	}
+
+	int MMDRigidBody::GetRigidBodyType() const
+	{
+		return static_cast<int>(m_rigidBodyType);
+	}
+
+	int32_t MMDRigidBody::GetBoneIndex() const
+	{
+		return m_boneIndex;
+	}
+
+	const glm::mat4& MMDRigidBody::GetOffsetMatrix() const
+	{
+		return m_offsetMat;
+	}
+
+	float MMDRigidBody::GetDefinitionMass() const
+	{
+		return m_definitionMass;
+	}
+
+	void MMDRigidBody::SelectMotionStateForMode(int mode)
+	{
+		// mode 0 = FollowBone (kinematic), 1/2 = dynamic.
+		SetActivation(mode != 0);
+	}
+
+	void MMDRigidBody::NormalizeCanonicalActivation(int mode)
+	{
+		// Motion-state selection happened once in Phase 1; re-selecting here
+		// would read the (possibly stale) motion state back into the body
+		// transform. This method only normalizes activation/deactivation.
+		(void)mode;
+		if (m_rigidBody == nullptr)
+		{
+			return;
+		}
+		// forceActivationState bypasses the DISABLE_DEACTIVATION guard that
+		// plain setActivationState would honor; activate(true) then ensures
+		// ACTIVE_TAG on the next simulation step.
+		m_rigidBody->forceActivationState(ACTIVE_TAG);
+		m_rigidBody->setDeactivationTime(0);
+		m_rigidBody->activate(true);
+	}
+
+	void MMDRigidBody::SyncActiveMotionStateToBodyTransform()
+	{
+		if (m_activeMotionState == nullptr || m_rigidBody == nullptr)
+		{
+			return;
+		}
+		m_activeMotionState->SetTransform(
+			m_rigidBody->getCenterOfMassTransform()
+		);
 	}
 
 	void MMDRigidBody::SetActivation(bool activation)
@@ -800,7 +981,7 @@ namespace saba
 		invA = invA * transform;
 		invB = invB * transform;
 
-		auto constraint = std::make_unique<btGeneric6DofSpringConstraint>(
+		auto constraint = std::make_unique<SabaDeterministic6DofSpringConstraint>(
 			*rigidBodyA->GetRigidBody(),
 			*rigidBodyB->GetRigidBody(),
 			invA,
@@ -885,7 +1066,7 @@ namespace saba
 		invA = invA * transform;
 		invB = invB * transform;
 
-		auto constraint = std::make_unique<btGeneric6DofSpringConstraint>(
+		auto constraint = std::make_unique<SabaDeterministic6DofSpringConstraint>(
 			*rigidBodyA->GetRigidBody(),
 			*rigidBodyB->GetRigidBody(),
 			invA,
@@ -957,6 +1138,20 @@ namespace saba
 	btTypedConstraint * MMDJoint::GetConstraint() const
 	{
 		return m_constraint.get();
+	}
+
+	void MMDJoint::ResetConstraintImpulses()
+	{
+		if (m_constraint == nullptr)
+		{
+			return;
+		}
+		auto* deterministic = dynamic_cast<
+			SabaDeterministic6DofSpringConstraint*>(m_constraint.get());
+		if (deterministic != nullptr)
+		{
+			deterministic->ResetAccumulatedImpulses();
+		}
 	}
 
 }

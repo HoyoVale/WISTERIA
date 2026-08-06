@@ -1,10 +1,15 @@
 # R1.2 — 确定性时间线与物理回放契约（终版）
 
-> 状态：**R1.2A 已实现并通过双平台验证（2026-08-06）**；R1.2B（状态恢复）
-> 与 R1.2C（Checkpoint）未开始。R1.2 目标：让 WISTERIA 可以可靠地逐帧
-> 导出、seek、回放；相同输入（资产 + 动作 + 参数 + 帧 + 固定步配置）
-> 产生一致的 Pose/Physics/Vertex 结果。本阶段**不碰 Bullet 高级参数**
-> （solver iterations、CCD、margin、damping 等仍属 #5 社区矩阵）。
+> 状态：**R1.2A 已冻结（2026-08-06）**；**R1.2B 已冻结并实现**
+> （契约：
+> [R1_2B_RESTORE_STATE_CONTRACT.md](R1_2B_RESTORE_STATE_CONTRACT.md)
+> v4.1.1；实现与基线见
+> [R1_2B_BASELINE_20260806.md](../validation/R1_2B_BASELINE_20260806.md)）；
+> R1.2C（Checkpoint）未开始。R1.2 目标：让 WISTERIA
+> 可以可靠地逐帧导出、seek、回放；相同输入（资产 + 动作 + 参数 + 帧 +
+> 固定步配置）产生一致的 Pose/Physics/Vertex 结果。本阶段**不碰 Bullet
+> 高级参数**（solver iterations、CCD、margin、damping 等仍属 #5 社区
+> 矩阵）。
 
 ## 1. 现状问题（已核实）
 
@@ -226,125 +231,57 @@ checkpoint 恢复后的继续重放。若现有 Saba 真实顺序与此不同，
 
 ## 6. 确定性接口分层
 
-```cpp
-enum class TimelineStatus
-{
-    Ok,
-    NoPhysics,
-    InvalidCheckpoint,
-    UnsupportedReplayProfile,
-};
+接口分层（R1.2A 已实现，类型定义以
+`include/wisteria/runtime/determinism.hpp` 为准）：
 
-// R1.2A 确定性帧步进接口（唯一上层编排入口）。
-// 上层不拼接 Saba 物理相位；内部完成动画求值、Kinematic 同步、
-// 精确物理子步、回写与 accumulator/force 清理。
-class IDeterministicFrameStepper
-{
-public:
-    virtual TimelineStatus PrepareFrameZero(
-        const ReplayConfig& config
-    ) = 0;
-
-    virtual TimelineStatus StepMotionFrameExact(
-        MotionFrameIndex frame,
-        const ReplayConfig& config
-    ) = 0;
-};
-
-// R1.2A 只读观察接口（提前到 A，否则 R1.2A 的验收——PhysicsHash 一致、
-// 动态刚体确实运动、Reset 后速度/力为零、accumulator 为零——无法通过
-// 中立接口完成，只能直接访问 Bullet 或偷算 Hash）。
-class IDeterministicPhysicsObservation
-{
-public:
-    virtual TimelineStatus CaptureState(
-        PhysicsSnapshot& output
-    ) const = 0;
-
-    virtual TimelineStatus ReadStepDiagnostics(
-        PhysicsStepDiagnostics& output
-    ) const = 0;
-};
-
-struct PhysicsStepDiagnostics
-{
-    std::uint32_t executedSubsteps = 0;
-    double remainingAccumulator = 0.0;
-};
-
-// 内部窄接口（vendored Saba，仅当现有 Update 不稳定为四步时启用）
-// ResetCanonical / StepExact 的实现细节封装在 Saba Adapter 内。
-
-// R1.2B 扩展：状态恢复（Capture 已在 A 提供只读版）
-class IPhysicsStateAccess
-{
-public:
-    virtual TimelineStatus RestoreState(
-        const PhysicsSnapshot& snapshot
-    ) = 0;
-};
+```text
+IDeterministicFrameStepper        PrepareFrameZero + StepMotionFrameExact
+IDeterministicPhysicsObservation  CaptureState + ReadStepDiagnostics
+IPhysicsStateAccess               RestoreState（R1.2B，见独立契约）
 ```
+
+`TimelineStatus` 的完整枚举（含 R1.2A 状态机状态与 R1.2B 新增的
+`SnapshotMismatch` / `InvalidSnapshot` / `Poisoned`）、`PhysicsSnapshot`、
+`PmxRigidBodyMode` 与恢复语义的**唯一规范源**是
+[R1_2B_RESTORE_STATE_CONTRACT.md](R1_2B_RESTORE_STATE_CONTRACT.md)；
+本文档不再维护 R1.2B 的结构定义，避免两处权威文档漂移。
 
 WISTERIA 定义接口，Saba Adapter 内部使用 Bullet，上层不见任何 `bt*`
 类型。
 
 ## 7. PhysicsSnapshot（R1.2B）
 
-```cpp
-struct RigidBodySnapshot
-{
-    std::uint32_t index;
-    glm::vec3 position;
-    glm::quat rotation;
-    glm::vec3 interpolationPosition;
-    glm::quat interpolationRotation;
-    glm::vec3 linearVelocity;
-    glm::vec3 angularVelocity;
-    glm::vec3 interpolationLinearVelocity;
-    glm::vec3 interpolationAngularVelocity;
-    glm::vec3 totalForce;
-    glm::vec3 totalTorque;
-    std::int32_t activationState;
-    float deactivationTime;
-};
+`PhysicsSnapshot` / `RigidBodySnapshot` 的最终字段（schemaVersion、
+layoutFingerprint、`PmxRigidBodyMode`、canonical claim 语义等）以
+[R1_2B_RESTORE_STATE_CONTRACT.md](R1_2B_RESTORE_STATE_CONTRACT.md)
+§2.5 为唯一规范源。
 
-struct PhysicsSnapshot
-{
-    std::vector<RigidBodySnapshot> rigidBodies;
-    MotionFrameIndex motionFrame;     // VMD 帧（30Hz 动作边界）
-    TimelineTick physicsTick;         // 实际物理 tick（默认 = motionFrame × 4）
-    // 当前状态是否位于完整 Canonical Frame Boundary。
-    // 不限于 Restore 后的状态——PrepareFrameZero / ResetAtTarget /
-    // ReplayFromStart 的边界快照都可能为 true。
-    bool canonical = false;
-};
-```
+> 恢复 canonicalization 的旧表述（“能实现的必须执行，拿不到的标
+> false”）**已作废**。R1.2B 的 Canonical Restore Sequence、`canonical`
+> 可验证定义、失败语义与 R1.2B/R1.2C 边界全部由
+> [R1_2B_RESTORE_STATE_CONTRACT.md](R1_2B_RESTORE_STATE_CONTRACT.md)
+> 接管。
 
-恢复 canonicalization 流程（能实现的必须执行，拿不到的显式标记
-`canonical=false`）：
+### R1.2B 与 R1.2C 的 canonical 边界（修订）
 
 ```text
-写 world transform
-写 interpolation transform
-写 motion state
-写 velocity/force
-更新 inertia tensor
-更新 AABB
-清理 contact manifolds
-清理 solver warm-start 历史
-恢复或清零时间累积器
+R1.2B：定义并实现完整 Canonical Restore Sequence（含接触 manifold 与
+       solver warm-start 清理）；Restore Sequence 成功
+       → runtimeCanonicalBoundary=true
+       → 后续 Capture 输出 snapshot.canonical=true。
+R1.2C：不再重新实现 canonicalization；只增加 FrameCheckpoint 值对象、
+       DeterminismFingerprint 与 restore→replay == from-start 的等价性
+       证明，然后开放 ReplayFromCheckpoint。
 ```
-
-若 Saba/Bullet 接口拿不到部分状态，在 vendored saba 中加一层很窄的
-访问接口（仅此范围，不做通用 Bullet 参数面）。
 
 ## 8. 关节与求解历史
 
 - 第一版**不序列化关节配置**（静态约束参数由刚体状态决定）；
 - checkpoint 恢复时必须清理所有约束/接触求解历史（warm-start impulse、
   contact manifolds），使求解器从恢复后的刚体状态重新开始；
-- 若无法清除这些缓存，`ReplayFromCheckpoint` 不承诺与
-  `ReplayFromStart` hash 完全相同，文档必须如实标注。
+- 清理是 **R1.2B 硬性前置**：`RebuildCollisionWorldDeterministic` /
+  `ClearSolverHistoryDeterministic` 必须满足 R1.2B 契约 §5 Phase 4 的
+  语义并通过 T18 验收；**不存在“无法清除就降级承诺”的路径**。
 
 ## 9. 确定性 hash（双 hash）
 
@@ -381,6 +318,10 @@ struct DeterminismFingerprint
   重复运行必须完全一致；
 - `canonicalHash`：先做 `-0.0 → +0.0`、Quaternion 统一符号（w<0 取反）、
   NaN 规范化/拒绝、按约定精度量化（默认 1e-5）；
+- **PhysicsHash 例外**：transform 旋转使用 `rotationBasis` 9 个 float
+  分量直接序列化，**不执行 quaternion 转换或符号统一**（R1.2B 起快照
+  持有 basis；把 basis 转回 quaternion 再 Hash 会把刚修复的位级问题
+  请回来）。其他确实使用 quaternion 的通道（如 Pose）才执行规范化。
 - 验收：
   - 同平台同构建重复运行 → exactHash 必须相同；
   - 跨平台 → 逐组件误差必须低于阈值；canonicalHash 作为快速诊断信号，
@@ -389,7 +330,7 @@ struct DeterminismFingerprint
 Hash 契约补充：
 
 - rigid body 按稳定 index 排序；
-- quaternion 归一化和符号统一；
+- quaternion 归一化和符号统一（仅限非 Physics 通道）；
 - Matrix 明确列主序（glm 默认）；
 - NaN 拒绝或规范化（同构建内一致）；
 - Infinity 规范化；
@@ -472,7 +413,7 @@ virtual TimelineStatus EvaluateTick(
     const ReplayConfig& config = {}
 ) = 0;
 
-// R1.2B
+// R1.2B（语义见 R1_2B_RESTORE_STATE_CONTRACT.md）
 virtual TimelineStatus CapturePhysicsSnapshot(
     PhysicsSnapshot& output
 ) const = 0;
@@ -545,14 +486,26 @@ double VMD frame → 明确 FrameToTick 转换 → MotionFrameIndex
 ### R1.2B：物理状态访问接口
 
 - `IPhysicsStateAccess`（Restore；Capture 只读版已在 A）；
-- 扩展 PhysicsSnapshot；
-- vendored saba 窄访问接口（如需要）；
-- Capture 可用，Restore 不承诺确定性等价。
+- 扩展 PhysicsSnapshot（schemaVersion / layoutFingerprint /
+  physicsConfigurationFingerprint / `PmxRigidBodyMode` /
+  `RigidTransformSnapshot`（position + 3×3 rotationBasis））；
+- vendored saba 窄访问接口（先试 public API，缺什么补什么，清单见
+  R1.2B 契约 §11）；
+- **Restore 不承诺确定性等价**（等价性证明属于 R1.2C）；
+- **只接受 canonical=true 快照**；非 canonical 返回 `InvalidSnapshot`；
+- **动画前置是硬性条件**：当前动画帧与 FollowBone transforms 必须与
+  快照一致，否则返回 `InvalidState`（R1.2B 不恢复动画）；
+- **Restore 完成后 `deterministicPrepared=false`**（继续步进属于 R1.2C
+  Checkpoint 语义）；
+- 失败语义：校验拒绝不修改世界；写入期灾难性失败 → `Poisoned` 状态，
+  实例可通过 `PrepareFrameZero` / `EvaluateTick(0, ResetAtTarget)` 重建
+  （R1.2B 契约 §8）。
 
 ### R1.2C：Checkpoint
 
 - 显式 `FrameCheckpoint` 值对象（只存覆盖配置 + 物理快照 + fingerprint）；
-- 恢复 canonicalization；
+- 基于 R1.2B 的 Canonical Restore Sequence（不再重新实现 canonicalization）；
+- 恢复动画/覆盖并**重建** Kinematic target，再置 `deterministicPrepared=true`；
 - 证明 restore→replay == from start 后开放 `ReplayFromCheckpoint`。
 
 ## 14. 明确不做
@@ -659,7 +612,9 @@ R1.2A out-of-range pose/physics       （无 VMD 时保持姿态、物理继续�
 
 ### 15.7 剩余边界
 
-- R1.2B：`RestoreState` / `IPhysicsStateAccess`、完整 canonicalization；
+- R1.2B：`RestoreState` / `IPhysicsStateAccess`、Canonical Restore
+  Sequence（契约见
+  [R1_2B_RESTORE_STATE_CONTRACT.md](R1_2B_RESTORE_STATE_CONTRACT.md)）；
 - R1.2C：`FrameCheckpoint` / `DeterminismFingerprint` /
   `ReplayFromCheckpoint`；
 - 任意频率 ReplayConfig、warmup、loopMotion 语义仍未定义，保持拒绝；
@@ -960,3 +915,20 @@ finite 检查，位置回退正常但法线 NaN 的场景也会被测试抓住�
 | Linux ASan+UBSan（-O1） | integration 44 PASS | 0 sanitizer 报告 |
 
 > R1.2A 可以正式冻结；进入 R1.2B RestoreState 契约。
+
+## 20. R1.2B 实现与验收（2026-08-06）
+
+- 契约 v4.1.1 冻结后完成实现（实现细节与测试见
+  [R1_2B_BASELINE_20260806.md](../validation/R1_2B_BASELINE_20260806.md)）；
+- 新增 `RigidTransformSnapshot`（3×3 basis）、`PmxRigidBodyMode`、
+  `layoutFingerprint` / `physicsConfigurationFingerprint`、
+  `TimelineStatus::SnapshotMismatch / InvalidSnapshot / Poisoned`、
+  `IPhysicsStateAccess::RestoreState`；
+- Saba 窄接口：刚体/关节定义访问器、`SelectMotionStateForMode` /
+  `NormalizeCanonicalActivation`、`RebuildCollisionWorldDeterministic` /
+  `ClearSolverHistoryDeterministic`；
+- Canonical Reset 改用 `forceActivationState`（Bullet 3.25 的
+  `activate(true)` 仍被 DISABLE_DEACTIVATION 拦截）；
+- 测试钩子 `StepRestoredPhysicsForProbe` 与故障注入
+  （`WISTERIA_DETERMINISM_TEST_HOOKS`，仅测试构建）；
+- 四套矩阵 CTest 5/5，ASan+UBSan integration 57 PASS / 0 报告。
