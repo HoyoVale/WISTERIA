@@ -4,7 +4,9 @@
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -5000,7 +5002,8 @@ void TestR1EngineOwnedMmdInstances()
 namespace
 {
 std::unique_ptr<SabaMmdRuntimeModel> CreateDeterministicRuntime(
-    const std::filesystem::path& modelPath
+    const std::filesystem::path& modelPath,
+    const std::filesystem::path& vmdPath = {}
 )
 {
     SabaPhysicsSettings settings;
@@ -5010,7 +5013,7 @@ std::unique_ptr<SabaMmdRuntimeModel> CreateDeterministicRuntime(
     settings.enabled = true;
     auto runtime = std::make_unique<SabaMmdRuntimeModel>(
         modelPath,
-        std::filesystem::path{},
+        vmdPath,
         settings
     );
     Require(
@@ -7522,6 +7525,139 @@ void RequireEquivalentToFromStart(
         "R1.2C ReplayFromCheckpoint diverged from ReplayFromStart"
     );
 }
+
+void RequireEquivalentToFromStartWithVmd(
+    MotionFrameIndex checkpointFrame,
+    MotionFrameIndex target,
+    const std::filesystem::path& vmdPath
+)
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto baseline = CreateDeterministicRuntime(modelPath, vmdPath);
+    auto source = CreateDeterministicRuntime(modelPath, vmdPath);
+    auto diverged = CreateDeterministicRuntime(modelPath, vmdPath);
+
+    CaptureCanonicalAt(*baseline, target);
+    const FrameStateHashes baselineHashes =
+        CaptureDeterminismHashes(*baseline);
+
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, checkpointFrame);
+
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    Require(divergedMmd != nullptr, "R1.2C VMD equivalence lost runtime");
+    CaptureCanonicalAt(*diverged, checkpointFrame + 30U);
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, target) ==
+            TimelineStatus::Ok,
+        "R1.2C VMD ReplayFromCheckpoint failed"
+    );
+    const FrameStateHashes divergedHashes =
+        CaptureDeterminismHashes(*diverged);
+    Require(
+        baselineHashes.pose.exactHash == divergedHashes.pose.exactHash &&
+            baselineHashes.vertex.exactHash ==
+                divergedHashes.vertex.exactHash &&
+            baselineHashes.physics.exactHash ==
+                divergedHashes.physics.exactHash,
+        "R1.2C VMD ReplayFromCheckpoint diverged from ReplayFromStart"
+    );
+}
+
+// Writes a minimal but structurally valid VMD: header, one root-bone motion
+// track with two keyframes (frame 0 and maxFrame), and no morph/camera
+// sections. The variant selects the frame-maxFrame translate x so two files
+// hash differently for cross-VMD rejection. Saba's reader only requires the
+// 30-byte header, 20-byte model name, motion count, per-motion records and
+// then stops at end-of-file, so this is a self-contained CORE fixture.
+std::filesystem::path WriteMinimalVmd(
+    std::uint32_t variant,
+    std::uint32_t maxFrame
+)
+{
+    namespace fs = std::filesystem;
+    const fs::path directory =
+        fs::temp_directory_path() / "wisteria_r12c_fixtures";
+    fs::create_directories(directory);
+    const fs::path path =
+        directory / ("r12c_motion_" + std::to_string(variant) + ".vmd");
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    Require(out.is_open(), "R1.2C VMD fixture could not be written");
+
+    const auto writeBytes = [&out](const void* data, std::size_t size)
+    {
+        out.write(
+            static_cast<const char*>(data),
+            static_cast<std::streamsize>(size)
+        );
+    };
+    const auto writeU32 = [&out, &writeBytes](std::uint32_t value)
+    {
+        writeBytes(&value, sizeof(value));
+    };
+    const auto writeF32 = [&out, &writeBytes](float value)
+    {
+        writeBytes(&value, sizeof(value));
+    };
+    const auto writeFixed = [&writeBytes](
+        const char* text,
+        std::size_t capacity
+    )
+    {
+        char buffer[32]{};
+        const std::size_t length = std::strlen(text);
+        std::memcpy(
+            buffer,
+            text,
+            std::min(length, capacity)
+        );
+        writeBytes(buffer, capacity);
+    };
+
+    // Header: "Vocaloid Motion Data 0002" padded to 30 bytes, then a
+    // 20-byte model-name field. Saba ignores the model name on load.
+    const char header[30] = "Vocaloid Motion Data 0002";
+    writeBytes(header, sizeof(header));
+    char modelName[20]{};
+    writeBytes(modelName, sizeof(modelName));
+
+    // One bone track: keyframes at frame 0 and maxFrame.
+    writeU32(2U);
+    const float translateZero[3] = {0.0f, 0.0f, 0.0f};
+    const float translateEnd[3] = {
+        variant == 0U ? 0.3f : 0.5f,
+        0.0f,
+        0.0f
+    };
+    const float identityQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    const unsigned char interpolation[64] = {};
+    const auto writeKey = [&](
+        std::uint32_t frame,
+        const float translate[3]
+    )
+    {
+        writeFixed("root", 15U);
+        writeU32(frame);
+        writeF32(translate[0]);
+        writeF32(translate[1]);
+        writeF32(translate[2]);
+        writeF32(identityQuat[0]);
+        writeF32(identityQuat[1]);
+        writeF32(identityQuat[2]);
+        writeF32(identityQuat[3]);
+        writeBytes(interpolation, sizeof(interpolation));
+    };
+    writeKey(0U, translateZero);
+    writeKey(maxFrame, translateEnd);
+
+    // Morph section: none. The reader stops cleanly at end-of-file.
+    writeU32(0U);
+    out.close();
+    return path;
+}
 }  // namespace
 
 void TestR12CEquivalenceMatrix()
@@ -7857,6 +7993,223 @@ void TestR12CCheckpointStressRoundTrip()
             recaptured.physics
         ),
         "R1.2C 1000 create/restore cycles drifted"
+    );
+}
+
+void TestR12CVmdEquivalence()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const std::filesystem::path vmdPath = WriteMinimalVmd(0U, 30U);
+
+    // Constructor-supplied VMD must enter asset identity.
+    auto identityProbe = CreateDeterministicRuntime(modelPath, vmdPath);
+    auto* identityMmd = dynamic_cast<MmdRuntimeModel*>(identityProbe.get());
+    Require(
+        identityMmd != nullptr,
+        "R1.2C VMD identity lost runtime"
+    );
+    Require(
+        identityMmd->HasMotion(),
+        "R1.2C constructor VMD lost hasMotion identity"
+    );
+
+    // The fixture must actually drive animation state; otherwise the
+    // equivalence below would be vacuous.
+    auto poseProbe = CreateDeterministicRuntime(modelPath, vmdPath);
+    CaptureCanonicalAt(*poseProbe, 0U);
+    const FrameStateHashes frame0 =
+        CaptureDeterminismHashes(*poseProbe);
+    CaptureCanonicalAt(*poseProbe, 30U);
+    const FrameStateHashes frame30 =
+        CaptureDeterminismHashes(*poseProbe);
+    Require(
+        frame0.pose.exactHash != frame30.pose.exactHash ||
+            frame0.vertex.exactHash != frame30.vertex.exactHash,
+        "R1.2C VMD fixture did not drive animation state"
+    );
+
+    RequireEquivalentToFromStartWithVmd(0U, 2U, vmdPath);
+    RequireEquivalentToFromStartWithVmd(1U, 30U, vmdPath);
+    RequireEquivalentToFromStartWithVmd(15U, 30U, vmdPath);
+    // Checkpoint at the true VMD end, replay beyond it.
+    RequireEquivalentToFromStartWithVmd(30U, 45U, vmdPath);
+}
+
+void TestR12CTrueMotionEndHold()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const std::filesystem::path vmdPath = WriteMinimalVmd(0U, 30U);
+
+    auto source = CreateDeterministicRuntime(modelPath, vmdPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 30U);
+    const FrameStateHashes atEnd =
+        CaptureDeterminismHashes(*source);
+
+    auto diverged = CreateDeterministicRuntime(modelPath, vmdPath);
+    CaptureCanonicalAt(*diverged, 35U);
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    Require(divergedMmd != nullptr, "R1.2C motion-end lost runtime");
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, 45U) ==
+            TimelineStatus::Ok,
+        "R1.2C motion-end replay failed"
+    );
+    const FrameStateHashes beyondEnd =
+        CaptureDeterminismHashes(*diverged);
+    Require(
+        atEnd.pose.exactHash == beyondEnd.pose.exactHash &&
+            atEnd.vertex.exactHash == beyondEnd.vertex.exactHash,
+        "R1.2C VMD motion end did not hold pose/vertex"
+    );
+    Require(
+        atEnd.physics.exactHash != beyondEnd.physics.exactHash,
+        "R1.2C VMD motion-end replay did not advance physics"
+    );
+}
+
+void TestR12CMorphOverrideRestore()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+
+    auto source = CreateDeterministicRuntime(modelPath);
+    auto* sourceMmd = dynamic_cast<MmdRuntimeModel*>(source.get());
+    Require(sourceMmd != nullptr, "R1.2C override lost runtime");
+    sourceMmd->SetMotionLooping(false);
+    Require(
+        sourceMmd->SetMorphOverride("vertex", 0.5f),
+        "R1.2C override fixture could not set source morph"
+    );
+    CaptureCanonicalAt(*source, 0U);
+    FrameCheckpoint checkpoint;
+    Require(
+        sourceMmd->CreateCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.2C override CreateCheckpoint failed"
+    );
+    Require(
+        checkpoint.overrides.morphOverrides.size() == 1U &&
+            checkpoint.overrides.morphOverrides[0].first == "vertex" &&
+            checkpoint.overrides.morphOverrides[0].second == 0.5f,
+        "R1.2C checkpoint did not capture the morph override"
+    );
+
+    auto target = CreateDeterministicRuntime(modelPath);
+    auto* targetMmd = dynamic_cast<MmdRuntimeModel*>(target.get());
+    targetMmd->SetMotionLooping(false);
+    Require(
+        targetMmd->SetMorphOverride("vertex", 0.9f),
+        "R1.2C override fixture could not set target morph"
+    );
+    CaptureCanonicalAt(*target, 5U);
+    Require(
+        targetMmd->ReplayFromCheckpoint(checkpoint, 0U) ==
+            TimelineStatus::Ok,
+        "R1.2C override restore failed"
+    );
+    const std::optional<float> weight =
+        targetMmd->MorphWeight("vertex");
+    Require(
+        weight.has_value() && *weight == 0.5f,
+        "R1.2C morph override was not replaced by the checkpoint"
+    );
+    FrameCheckpoint recaptured;
+    Require(
+        targetMmd->CreateCheckpoint(recaptured) == TimelineStatus::Ok,
+        "R1.2C override recapture failed"
+    );
+    Require(
+        recaptured.overrides.morphOverrides ==
+            checkpoint.overrides.morphOverrides,
+        "R1.2C morph override fingerprint diverged after restore"
+    );
+}
+
+void TestR12CCrossVmdRejected()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const std::filesystem::path vmdA = WriteMinimalVmd(0U, 30U);
+    const std::filesystem::path vmdB = WriteMinimalVmd(1U, 30U);
+
+    auto source = CreateDeterministicRuntime(modelPath, vmdA);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 0U);
+
+    auto target = CreateDeterministicRuntime(modelPath, vmdB);
+    auto* targetMmd = dynamic_cast<MmdRuntimeModel*>(target.get());
+    Require(targetMmd != nullptr, "R1.2C cross-VMD lost runtime");
+    Require(
+        targetMmd->RestoreCheckpoint(checkpoint) ==
+            TimelineStatus::SnapshotMismatch,
+        "R1.2C cross-VMD checkpoint was not rejected"
+    );
+
+    auto same = CreateDeterministicRuntime(modelPath, vmdA);
+    auto* sameMmd = dynamic_cast<MmdRuntimeModel*>(same.get());
+    Require(
+        sameMmd->RestoreCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.2C same-VMD checkpoint was rejected"
+    );
+}
+
+void TestR12CIkOverrideRestoreWhenAvailable()
+{
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-leimi");
+    RequireFullAsset("production-pmx-leimi");
+
+    auto source = CreateDeterministicRuntime(modelPath);
+    auto* sourceMmd = dynamic_cast<MmdRuntimeModel*>(source.get());
+    Require(sourceMmd != nullptr, "R1.2C IK restore lost runtime");
+    sourceMmd->SetMotionLooping(false);
+    const std::string ikBoneName(
+        reinterpret_cast<const char*>(u8"エンジンIK")
+    );
+    const BoneIndex ikBone = sourceMmd->FindBoneIndex(ikBoneName);
+    Require(
+        ikBone != InvalidBoneIndex,
+        "R1.2C IK restore fixture lost the IK controller bone"
+    );
+    sourceMmd->SetMmdIkEnabled(ikBone, false);
+    CaptureCanonicalAt(*source, 0U);
+    FrameCheckpoint checkpoint;
+    Require(
+        sourceMmd->CreateCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.2C IK CreateCheckpoint failed"
+    );
+    Require(
+        !checkpoint.overrides.ikOverrides.empty() &&
+            !checkpoint.overrides.ikOverrides[0].second,
+        "R1.2C IK override was not captured as disabled"
+    );
+
+    auto target = CreateDeterministicRuntime(modelPath);
+    auto* targetMmd = dynamic_cast<MmdRuntimeModel*>(target.get());
+    targetMmd->SetMotionLooping(false);
+    targetMmd->SetMmdIkEnabled(ikBone, true);
+    CaptureCanonicalAt(*target, 3U);
+    Require(
+        targetMmd->ReplayFromCheckpoint(checkpoint, 0U) ==
+            TimelineStatus::Ok,
+        "R1.2C IK restore failed"
+    );
+    FrameCheckpoint recaptured;
+    Require(
+        targetMmd->CreateCheckpoint(recaptured) == TimelineStatus::Ok,
+        "R1.2C IK recapture failed"
+    );
+    Require(
+        recaptured.overrides.ikOverrides ==
+            checkpoint.overrides.ikOverrides,
+        "R1.2C IK override fingerprint diverged after restore"
     );
 }
 
@@ -8290,6 +8643,26 @@ int main()
     failures += !RunTest(
         "R1.2C checkpoint stress round trip",
         TestR12CCheckpointStressRoundTrip
+    );
+    failures += !RunTest(
+        "R1.2C VMD equivalence",
+        TestR12CVmdEquivalence
+    );
+    failures += !RunTest(
+        "R1.2C true motion end hold",
+        TestR12CTrueMotionEndHold
+    );
+    failures += !RunTest(
+        "R1.2C morph override restore",
+        TestR12CMorphOverrideRestore
+    );
+    failures += !RunTest(
+        "R1.2C cross VMD rejected",
+        TestR12CCrossVmdRejected
+    );
+    failures += !RunTest(
+        "R1.2C IK override restore when available",
+        TestR12CIkOverrideRestoreWhenAvailable
     );
     failures += !RunTest(
         "R1 project MMD instance",

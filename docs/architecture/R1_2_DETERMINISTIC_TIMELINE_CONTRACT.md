@@ -198,7 +198,17 @@ for (MotionFrameIndex frame = 1; frame <= targetFrame; ++frame)
 → Pose/Vertex 已更新
 → Bullet accumulator 为零
 → forces 已按约定清理
+→ contact manifold 与 solver warm-start 已清理（冷边界）
 ```
+
+**冷边界（Cold Canonical Boundary）是本阶段唯一支持的确定性 Profile**：
+R1.2 的每次 `StepMotionFrameExact` 都是冷启动，即该帧开始前清除
+contact manifold、接触累计冲量与关节 warm-start。这与 R1.2B 的
+`ClearContactManifoldsDeterministic` / `ClearSolverHistoryDeterministic`
+一致，也是 `restore → replay == from-start` 等价性成立的前提；否则
+from-start 携带 warm-start 而 Restore 后为冷状态，两者在接触帧必然
+分叉。保留 warm-start 的连续求解档位（`PreserveAcrossFrames`）是
+后续扩展，**不在 R1.2 契约内**；调用方不得假设两档共存。
 
 Tick 0 定义：动画帧 0 已求值、物理已 Canonical Reset、尚未执行任何物理
 步。目标 `MotionFrameIndex = N` 表示「从 0 出发完成 N 帧的 30Hz Update

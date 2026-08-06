@@ -459,7 +459,12 @@ Phase 6  惯性张量与骨骼蒙皮
            未更新 → 由后端 RestoreTransform 接口补齐
          （上层恢复顺序不依赖该条件分支的“当前事实”）
          dynamic 刚体：ReflectGlobalTransform()
+           （motionFrame == 0 时跳过：from-start 的 frame 0 是
+             PrepareFrameZero 边界，从未跑过物理，因此也没有
+             物理写回；反射会把骨骼带离动画 frame-0 姿态）
          全部刚体：CalcLocalTransform()
+           （motionFrame == 0 时同样跳过：frame 0 边界从不执行
+             该步骤，提前重算会扰动 IK/after-physics 骨骼）
          根节点 UpdateGlobalTransform()
          model->UpdateNodeAnimation(true)
          （实现发现：正常 StepFrameExact 在物理反射后也会对
@@ -467,7 +472,18 @@ Phase 6  惯性张量与骨骼蒙皮
           物理反射的 local 矩阵，不是正常帧边界）
          model->Update()
          SyncPoseFromSaba()
+         SyncFollowBoneBoundaryTransforms()
+         （canonical 边界上的 FollowBone 刚体在 after-physics 求值后
+           重新读取节点姿态，消除 Saba 的“滞后一帧”伪影，使快照值
+           与下一帧可复现；仅影响边界记录值，不改变下一帧物理输入）
 ```
+
+> R1.2C 实现补充（2026-08-07）：Checkpoint 恢复路径（
+> `RestoreCheckpointValidated`）不再走 `RestoreState` 的 Phase 0
+> FollowBone 变换前置校验，而是先完成
+> `EvaluateAnimationFrameOnly(frame) + ResetCanonicalNoStep`，再直接
+> 调用 `RestorePhases`；FollowBone 快照值由 Phase 1 逐字写回保证，
+> after-physics 求值只执行一次（Phase 6），避免 IK 二次求解漂移。
 
 顺序不可交换（全契约只有这一套顺序）：
 

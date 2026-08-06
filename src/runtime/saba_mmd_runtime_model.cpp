@@ -665,6 +665,11 @@ bool SabaMmdRuntimeModel::Initialize()
         if (!this->impl->vmdAnimation->Add(this->impl->vmdFile))
             return false;
         this->impl->vmdLoaded = true;
+        // Constructor-supplied VMD must enter asset identity exactly like
+        // LoadMotion does; otherwise checkpoint cross-VMD rejection is
+        // silently disabled for runtimes constructed with a motion.
+        this->impl->vmdFileHash = HashFileBytes(this->impl->vmdPath);
+        this->impl->hasMotion = true;
     }
     return true;
 }
@@ -889,10 +894,7 @@ TimelineStatus SabaMmdRuntimeModel::EvaluateFrameCanonical(
     const TimelineStatus resetStatus = this->ResetCanonicalNoStep();
     if (resetStatus != TimelineStatus::Ok)
         return resetStatus;
-    this->impl->model->UpdateNodeAnimation(true);
-    this->impl->model->EndAnimation();
-    this->impl->model->Update();
-    this->SyncPoseFromSaba();
+    this->PublishAfterPhysicsPose();
     ++this->impl->vertexRevision;
     this->impl->lastExecutedSubsteps = 0U;
     this->impl->lastRemainingAccumulator =
@@ -934,9 +936,12 @@ TimelineStatus SabaMmdRuntimeModel::StepFrameExact(
     int executedSubsteps = 0;
     if (this->impl->physicsSettings.enabled)
     {
-        // Deterministic replay steps cold every frame (canonical boundary
-        // semantics). Without this, a restored checkpoint (which clears
-        // warm-start) would diverge from a continuous from-start replay at
+        // R1.2 defines every StepMotionFrameExact as a Cold Canonical
+        // Boundary (total contract §5): contact manifolds and solver
+        // warm-start are cleared at the start of each motion frame. This is
+        // the only supported deterministic profile in R1.2 and is what makes
+        // restore -> replay == from-start hold; without it a restored
+        // checkpoint (cold) would diverge from a warm from-start replay at
         // frames with active contacts.
         saba::MMDPhysics* physics = manager->GetMMDPhysics();
         physics->ClearContactManifoldsDeterministic();
@@ -952,6 +957,7 @@ TimelineStatus SabaMmdRuntimeModel::StepFrameExact(
     this->impl->model->EndAnimation();
     this->impl->model->Update();
     this->SyncPoseFromSaba();
+    this->SyncFollowBoneBoundaryTransforms();
     ++this->impl->vertexRevision;
     this->impl->lastExecutedSubsteps =
         static_cast<std::uint32_t>(std::max(0, executedSubsteps));
@@ -1555,11 +1561,25 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
             // implementation detail.
             body->updateInertiaTensor();
         }
-        if (bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
+        // Frame 0 is a PrepareFrameZero boundary: no physics step has run,
+        // so from-start never writes dynamic bodies back into their bones.
+        // Reflecting the restored bodies here would move the bones away from
+        // the animated frame-0 pose and break checkpoint pose equivalence.
+        // For motionFrame > 0 the from-start boundary DOES include the
+        // post-physics write-back, so it must be reproduced.
+        if (snapshot.motionFrame > 0U &&
+            bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
         {
             rigidBody->ReflectGlobalTransform();
         }
-        rigidBody->CalcLocalTransform();
+        // Frame 0 has no physics write-back in from-start; recomputing
+        // locals from globals here would perturb IK/after-physics bones
+        // before the single after pass (the fresh frame-0 boundary never
+        // runs CalcLocalTransform).
+        if (snapshot.motionFrame > 0U)
+        {
+            rigidBody->CalcLocalTransform();
+        }
     }
     if (saba::MMDNodeManager* nodes =
             this->impl->model->GetNodeManager())
@@ -1580,6 +1600,8 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
     this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->Update();
     this->SyncPoseFromSaba();
+    this->SyncFollowBoneBoundaryTransforms();
+    ++this->impl->vertexRevision;
     throwIfInjected(6);
 
     this->impl->lastBoundaryCanonical = true;
@@ -1596,6 +1618,9 @@ void SabaMmdRuntimeModel::EvaluateAnimationFrameOnly(
     MotionFrameIndex frame
 )
 {
+    // Before-physics evaluation pass only (see header). The caller runs
+    // ResetCanonicalNoStep between this and PublishAfterPhysicsPose so the
+    // body reads happen at the same node state as StepFrameExact.
     this->impl->vmdFrame = static_cast<double>(frame);
     this->impl->model->BeginAnimation();
     if (this->impl->vmdAnimation != nullptr)
@@ -1607,11 +1632,37 @@ void SabaMmdRuntimeModel::EvaluateAnimationFrameOnly(
     ++this->impl->morphRevision;
     this->ApplyMmdIkOverrides();
     this->impl->model->UpdateNodeAnimation(false);
+}
+
+void SabaMmdRuntimeModel::PublishAfterPhysicsPose()
+{
     this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->EndAnimation();
     this->impl->model->Update();
     this->SyncPoseFromSaba();
-    ++this->impl->vertexRevision;
+    this->SyncFollowBoneBoundaryTransforms();
+}
+
+void SabaMmdRuntimeModel::SyncFollowBoneBoundaryTransforms()
+{
+    if (this->impl->model == nullptr)
+        return;
+    saba::MMDPhysicsManager* manager =
+        this->impl->model->GetPhysicsManager();
+    if (manager == nullptr)
+        return;
+    for (auto& rigidBody : *manager->GetRigidBodys())
+    {
+        if (rigidBody->GetRigidBodyType() != 0)
+            continue;
+        // Saba's kinematic motion state derives from the node on every read;
+        // SetActivation(false) re-reads it into the body transform via
+        // btRigidBody::setMotionState. Without this, a FollowBone body keeps
+        // the pose from the SetActivation moment at the START of the frame
+        // (one frame behind after-physics nodes), and a checkpoint captured
+        // at the boundary is not reproducible by EvaluateAnimationFrameOnly.
+        rigidBody->SetActivation(false);
+    }
 }
 
 void SabaMmdRuntimeModel::BuildUserOverrideState(
@@ -1678,15 +1729,23 @@ void SabaMmdRuntimeModel::ApplyUserOverrideState(
     this->impl->motionPaused = false;
 }
 
-void SabaMmdRuntimeModel::BuildFrameStateHashes(
+TimelineStatus SabaMmdRuntimeModel::BuildFrameStateHashes(
     FrameStateHashes& output
 ) const
 {
     PhysicsSnapshot physics;
-    if (this->CaptureState(physics) != TimelineStatus::Ok)
+    const TimelineStatus captureStatus =
+        this->CaptureState(physics);
+    if (captureStatus != TimelineStatus::Ok)
     {
+        // DeterminismHashes::valid defaults to true; a failed capture must
+        // not look like a valid zero hash. Consumers rely on the three
+        // valid flags to reject structurally invalid state.
         output = FrameStateHashes{};
-        return;
+        output.pose.valid = false;
+        output.vertex.valid = false;
+        output.physics.valid = false;
+        return captureStatus;
     }
     PoseSnapshot pose;
     const Pose& currentPose = this->GetPose();
@@ -1715,6 +1774,7 @@ void SabaMmdRuntimeModel::BuildFrameStateHashes(
     output.pose = HashPose(pose);
     output.vertex = HashVertices(vertex);
     output.physics = HashPhysics(physics);
+    return TimelineStatus::Ok;
 }
 
 TimelineStatus SabaMmdRuntimeModel::ValidateCheckpointStatic(
@@ -1881,8 +1941,10 @@ TimelineStatus SabaMmdRuntimeModel::CreateCheckpoint(
     candidate.fingerprint.overrides = candidate.overrides;
 
     FrameStateHashes hashes;
-    this->BuildFrameStateHashes(hashes);
-    if (!hashes.pose.valid || !hashes.vertex.valid ||
+    const TimelineStatus hashStatus =
+        this->BuildFrameStateHashes(hashes);
+    if (hashStatus != TimelineStatus::Ok ||
+        !hashes.pose.valid || !hashes.vertex.valid ||
         !hashes.physics.valid)
     {
         return TimelineStatus::DeterminismViolation;
@@ -1923,9 +1985,23 @@ TimelineStatus SabaMmdRuntimeModel::RestoreCheckpointValidated(
             this->EnterPoisoned();
             return syncStatus;
         }
-        // Phase 4: R1.2B restore (includes after-physics/Pose/Vertex).
+        // Phase 4: R1.2B restore. The R1.2C path calls RestorePhases
+        // directly instead of RestoreState: ValidateCheckpointStatic already
+        // performed Phase 0, and the FollowBone transform pre-check is
+        // replaced by RestorePhases Phase 1 writing the snapshot verbatim
+        // (the boundary construction above reproduces the animation pose,
+        // but the recorded boundary FollowBone transforms are authoritative).
+        // RestorePhases Phase 6 runs the after-physics pass exactly ONCE
+        // after the write-back, mirroring StepFrameExact; running it both
+        // here and there would re-solve IK twice and drift the pose.
+        if (this->impl->vmdFrame !=
+            static_cast<double>(checkpoint.frame))
+        {
+            this->EnterPoisoned();
+            return TimelineStatus::InvalidState;
+        }
         const TimelineStatus restoreStatus =
-            this->RestoreState(checkpoint.physics);
+            this->RestorePhases(checkpoint.physics);
         if (restoreStatus != TimelineStatus::Ok)
         {
             this->EnterPoisoned();
@@ -1933,7 +2009,13 @@ TimelineStatus SabaMmdRuntimeModel::RestoreCheckpointValidated(
         }
         // Phase 5: verify state hashes.
         FrameStateHashes current;
-        this->BuildFrameStateHashes(current);
+        const TimelineStatus hashStatus =
+            this->BuildFrameStateHashes(current);
+        if (hashStatus != TimelineStatus::Ok)
+        {
+            this->EnterPoisoned();
+            return hashStatus;
+        }
         if (this->impl->postRestoreHashXor != 0U)
         {
             current.physics.exactHash ^=

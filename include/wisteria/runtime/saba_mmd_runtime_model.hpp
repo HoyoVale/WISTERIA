@@ -194,6 +194,14 @@ private:
         MotionFrameIndex frame,
         const ReplayConfig& config
     );
+    // Before-physics evaluation pass only (BeginAnimation through
+    // UpdateNodeAnimation(false)). Callers must run ResetCanonicalNoStep
+    // between this and PublishAfterPhysicsPose to reproduce the exact
+    // canonical boundary construction of StepFrameExact.
+    void EvaluateAnimationFrameOnly(MotionFrameIndex frame);
+    // After-physics node pass + Pose/Vertex publish + FollowBone boundary
+    // re-read. Mirrors the tail of StepFrameExact.
+    void PublishAfterPhysicsPose();
     // Executes exactly one 30Hz motion frame including the fixed physics
     // substeps, records step diagnostics and publishes Pose/Vertex.
     TimelineStatus StepFrameExact(
@@ -219,10 +227,15 @@ private:
     TimelineStatus RestoreCheckpointValidated(
         const FrameCheckpoint& checkpoint
     );
-    void EvaluateAnimationFrameOnly(MotionFrameIndex frame);
+    // Canonical boundaries re-read FollowBone bodies from the fully
+    // evaluated node pose (removes Saba's one-frame lag artifact) so a
+    // checkpoint's FollowBone transform is reproducible by restore.
+    void SyncFollowBoneBoundaryTransforms();
     void BuildUserOverrideState(UserOverrideState& output) const;
     void ApplyUserOverrideState(const UserOverrideState& overrides);
-    void BuildFrameStateHashes(FrameStateHashes& output) const;
+    TimelineStatus BuildFrameStateHashes(
+        FrameStateHashes& output
+    ) const;
     void ComputeLayoutFingerprint(
         std::uint64_t& fingerprint
     ) const;
