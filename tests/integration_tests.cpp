@@ -7462,6 +7462,404 @@ void TestR12BFollowBoneNonZeroDefinitionMass()
 #endif
 }
 
+// R1.2C helpers ------------------------------------------------------------
+
+namespace
+{
+FrameCheckpoint CreateCheckpointAt(
+    SabaMmdRuntimeModel& runtime,
+    MotionFrameIndex frame
+)
+{
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(&runtime);
+    Require(mmd != nullptr, "R1.2C helper lost the MMD runtime");
+    mmd->SetMotionLooping(false);
+    CaptureCanonicalAt(runtime, frame);
+    FrameCheckpoint checkpoint;
+    Require(
+        mmd->CreateCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.2C helper CreateCheckpoint failed"
+    );
+    return checkpoint;
+}
+
+void RequireEquivalentToFromStart(
+    MotionFrameIndex checkpointFrame,
+    MotionFrameIndex target
+)
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto baseline = CreateDeterministicRuntime(modelPath);
+    auto source = CreateDeterministicRuntime(modelPath);
+    auto diverged = CreateDeterministicRuntime(modelPath);
+
+    CaptureCanonicalAt(*baseline, target);
+    const FrameStateHashes baselineHashes =
+        CaptureDeterminismHashes(*baseline);
+
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, checkpointFrame);
+
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    Require(divergedMmd != nullptr, "R1.2C equivalence lost runtime");
+    // Force a different history before replaying from the checkpoint.
+    CaptureCanonicalAt(*diverged, checkpointFrame + 30U);
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, target) ==
+            TimelineStatus::Ok,
+        "R1.2C ReplayFromCheckpoint failed"
+    );
+    const FrameStateHashes divergedHashes =
+        CaptureDeterminismHashes(*diverged);
+    Require(
+        baselineHashes.pose.exactHash == divergedHashes.pose.exactHash &&
+            baselineHashes.vertex.exactHash ==
+                divergedHashes.vertex.exactHash &&
+            baselineHashes.physics.exactHash ==
+                divergedHashes.physics.exactHash,
+        "R1.2C ReplayFromCheckpoint diverged from ReplayFromStart"
+    );
+}
+}  // namespace
+
+void TestR12CEquivalenceMatrix()
+{
+    RequireEquivalentToFromStart(0U, 1U);
+    RequireEquivalentToFromStart(0U, 150U);
+    RequireEquivalentToFromStart(0U, 300U);
+    RequireEquivalentToFromStart(1U, 150U);
+    RequireEquivalentToFromStart(1U, 2U);
+    RequireEquivalentToFromStart(1U, 3U);
+    RequireEquivalentToFromStart(150U, 300U);
+    RequireEquivalentToFromStart(300U, 340U);
+
+    // The equivalence matrix is the gate for the checkpoint capability
+    // bits: only after every matrix case passes may the backend advertise
+    // the surface. This guards against flipping the bits on compile-only.
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const ModelRuntimeCapabilities capabilities = runtime->Capabilities();
+    Require(
+        capabilities.checkpoint.supportsCheckpointCapture &&
+            capabilities.checkpoint.supportsCheckpointRestore &&
+            capabilities.checkpoint.supportsReplayFromCheckpoint,
+        "R1.2C checkpoint capabilities must be open after the "
+        "equivalence matrix passes"
+    );
+}
+
+void TestR12CZeroStepRestore()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto source = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 150U);
+
+    auto diverged = CreateDeterministicRuntime(modelPath);
+    CaptureCanonicalAt(*diverged, 180U);
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    auto* divergedStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        diverged.get()
+    );
+    auto* divergedObservation =
+        dynamic_cast<IDeterministicPhysicsObservation*>(diverged.get());
+    Require(
+        divergedMmd != nullptr && divergedStepper != nullptr &&
+            divergedObservation != nullptr,
+        "R1.2C zero-step lost a runtime surface"
+    );
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, 150U) ==
+            TimelineStatus::Ok,
+        "R1.2C zero-step ReplayFromCheckpoint failed"
+    );
+    PhysicsSnapshot restored;
+    Require(
+        divergedObservation->CaptureState(restored) == TimelineStatus::Ok,
+        "R1.2C zero-step capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(
+            checkpoint.physics,
+            restored
+        ),
+        "R1.2C zero-step restore did not reproduce the checkpoint physics"
+    );
+    Require(
+        divergedStepper->StepMotionFrameExact(151U, {}) ==
+            TimelineStatus::Ok,
+        "R1.2C zero-step restore did not prepare frame N+1"
+    );
+
+    // Also verify the restore reproduces a non-settled frame (N=1).
+    auto sourceOne = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint checkpointOne =
+        CreateCheckpointAt(*sourceOne, 1U);
+    auto divergedOne = CreateDeterministicRuntime(modelPath);
+    CaptureCanonicalAt(*divergedOne, 31U);
+    auto* divergedOneMmd = dynamic_cast<MmdRuntimeModel*>(divergedOne.get());
+    auto* divergedOneObservation =
+        dynamic_cast<IDeterministicPhysicsObservation*>(divergedOne.get());
+    Require(
+        divergedOneMmd != nullptr && divergedOneObservation != nullptr,
+        "R1.2C zero-step N=1 lost a runtime surface"
+    );
+    Require(
+        divergedOneMmd->ReplayFromCheckpoint(checkpointOne, 1U) ==
+            TimelineStatus::Ok,
+        "R1.2C zero-step N=1 replay failed"
+    );
+    PhysicsSnapshot restoredOne;
+    Require(
+        divergedOneObservation->CaptureState(restoredOne) ==
+            TimelineStatus::Ok,
+        "R1.2C zero-step N=1 capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(
+            checkpointOne.physics,
+            restoredOne
+        ),
+        "R1.2C zero-step restore diverged at frame 1"
+    );
+}
+
+void TestR12CBeyondMotionEnd()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto source = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 300U);
+    const FrameStateHashes atCheckpoint =
+        CaptureDeterminismHashes(*source);
+
+    auto diverged = CreateDeterministicRuntime(modelPath);
+    CaptureCanonicalAt(*diverged, 330U);
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    Require(divergedMmd != nullptr, "R1.2C beyond-end lost runtime");
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, 340U) ==
+            TimelineStatus::Ok,
+        "R1.2C beyond-end replay failed"
+    );
+    const FrameStateHashes beyondEnd =
+        CaptureDeterminismHashes(*diverged);
+    Require(
+        atCheckpoint.pose.exactHash == beyondEnd.pose.exactHash &&
+            atCheckpoint.vertex.exactHash == beyondEnd.vertex.exactHash,
+        "R1.2C beyond-end replay changed the held motion-end pose"
+    );
+    Require(
+        atCheckpoint.physics.exactHash != beyondEnd.physics.exactHash,
+        "R1.2C beyond-end replay did not advance physics"
+    );
+}
+
+void TestR12CCreateRejectsNonCanonical()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    Require(mmd != nullptr, "R1.2C create-reject lost runtime");
+    // Normal (non-canonical) playback state.
+    runtime->Update(1.0f / 30.0f);
+    FrameCheckpoint output;
+    output.frame = 99U;
+    Require(
+        mmd->CreateCheckpoint(output) == TimelineStatus::InvalidState,
+        "R1.2C CreateCheckpoint accepted a non-canonical boundary"
+    );
+    Require(
+        output.frame == 99U,
+        "R1.2C CreateCheckpoint modified output on failure"
+    );
+}
+
+void TestR12CCheckpointStructuralRejections()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint valid = CreateCheckpointAt(*runtime, 0U);
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* observation = dynamic_cast<IDeterministicPhysicsObservation*>(
+        runtime.get()
+    );
+    Require(
+        mmd != nullptr && observation != nullptr,
+        "R1.2C structural test lost a runtime surface"
+    );
+    const auto expectRejected = [&](const FrameCheckpoint& candidate,
+                                    TimelineStatus expected)
+    {
+        PhysicsSnapshot before;
+        Require(
+            observation->CaptureState(before) == TimelineStatus::Ok,
+            "R1.2C structural baseline capture failed"
+        );
+        const TimelineStatus status = mmd->RestoreCheckpoint(candidate);
+        Require(
+            status == expected,
+            "R1.2C structural rejection returned the wrong status"
+        );
+        PhysicsSnapshot after;
+        Require(
+            observation->CaptureState(after) == TimelineStatus::Ok,
+            "R1.2C structural post capture failed"
+        );
+        Require(
+            SnapshotsEqualExceptFollowBoneActivation(before, after),
+            "R1.2C structural rejection modified the world"
+        );
+    };
+
+    FrameCheckpoint badFrame = valid;
+    badFrame.frame += 1U;
+    expectRejected(badFrame, TimelineStatus::InvalidCheckpoint);
+
+    FrameCheckpoint badConfig = valid;
+    badConfig.config.motionFps = 60U;
+    expectRejected(badConfig, TimelineStatus::InvalidCheckpoint);
+
+    FrameCheckpoint badLoop = valid;
+    badLoop.overrides.loopMotion = true;
+    expectRejected(badLoop, TimelineStatus::InvalidCheckpoint);
+
+    FrameCheckpoint badHash = valid;
+    badHash.fingerprint.state.physics.exactHash ^= 1U;
+    expectRejected(badHash, TimelineStatus::InvalidCheckpoint);
+
+    FrameCheckpoint badCanonical = valid;
+    badCanonical.physics.canonical = false;
+    expectRejected(badCanonical, TimelineStatus::InvalidCheckpoint);
+}
+
+void TestR12CCrossCompatibilityRejected()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto source = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint valid = CreateCheckpointAt(*source, 0U);
+
+    SabaPhysicsSettings differentSettings;
+    differentSettings.fixedTimeStep = 1.0f / 120.0f;
+    differentSettings.maxSubSteps = 10;
+    differentSettings.gravity = glm::vec3(0.0f, -99.0f, 0.0f);
+    differentSettings.enabled = true;
+    auto other = std::make_unique<SabaMmdRuntimeModel>(
+        modelPath,
+        std::filesystem::path{},
+        differentSettings
+    );
+    Require(
+        other->Initialize(),
+        "R1.2C cross-compat runtime failed to initialize"
+    );
+    auto* otherMmd = dynamic_cast<MmdRuntimeModel*>(other.get());
+    Require(otherMmd != nullptr, "R1.2C cross-compat lost runtime");
+    otherMmd->SetMotionLooping(false);
+    Require(
+        otherMmd->RestoreCheckpoint(valid) ==
+            TimelineStatus::SnapshotMismatch,
+        "R1.2C accepted a checkpoint from a different configuration"
+    );
+
+    FrameCheckpoint badAsset = valid;
+    badAsset.fingerprint.asset.pmxFileHash ^= 1U;
+    auto* sourceMmd = dynamic_cast<MmdRuntimeModel*>(source.get());
+    Require(
+        sourceMmd->RestoreCheckpoint(badAsset) ==
+            TimelineStatus::SnapshotMismatch,
+        "R1.2C accepted a checkpoint with a different asset identity"
+    );
+}
+
+void TestR12CPostRestoreHashPoisoned()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto source = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 0U);
+    auto diverged = CreateDeterministicRuntime(modelPath);
+    CaptureCanonicalAt(*diverged, 30U);
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    auto* divergedStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        diverged.get()
+    );
+    Require(
+        divergedMmd != nullptr && divergedStepper != nullptr,
+        "R1.2C hash-poison test lost a runtime surface"
+    );
+#if defined(WISTERIA_DETERMINISM_TEST_HOOKS)
+    diverged->SetPostRestoreHashCorruptionForProbe(1U);
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, 1U) ==
+            TimelineStatus::DeterminismViolation,
+        "R1.2C post-restore hash corruption was not detected"
+    );
+    FrameCheckpoint ignored;
+    Require(
+        divergedMmd->CreateCheckpoint(ignored) == TimelineStatus::Poisoned,
+        "R1.2C hash corruption did not poison the instance"
+    );
+    Require(
+        divergedStepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "R1.2C hash corruption recovery failed"
+    );
+    diverged->SetPostRestoreHashCorruptionForProbe(0U);
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, 1U) ==
+            TimelineStatus::Ok,
+        "R1.2C replay after recovery failed"
+    );
+#else
+    Require(false, "R1.2C test hooks are not compiled in");
+#endif
+}
+
+void TestR12CCheckpointStressRoundTrip()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint checkpoint = CreateCheckpointAt(*runtime, 0U);
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    Require(mmd != nullptr, "R1.2C stress lost runtime");
+    for (int iteration = 0; iteration < 1000; ++iteration)
+    {
+        Require(
+            mmd->RestoreCheckpoint(checkpoint) == TimelineStatus::Ok,
+            "R1.2C stress RestoreCheckpoint failed"
+        );
+    }
+    FrameCheckpoint recaptured;
+    Require(
+        mmd->CreateCheckpoint(recaptured) == TimelineStatus::Ok,
+        "R1.2C stress recapture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(
+            checkpoint.physics,
+            recaptured.physics
+        ),
+        "R1.2C 1000 create/restore cycles drifted"
+    );
+}
+
 void TestR1ProjectMmdInstanceWhenAvailable()
 {
     RequireFullAssetsTier();
@@ -7860,6 +8258,38 @@ int main()
     failures += !RunTest(
         "R1.2B FollowBone nonzero definition mass",
         TestR12BFollowBoneNonZeroDefinitionMass
+    );
+    failures += !RunTest(
+        "R1.2C equivalence matrix",
+        TestR12CEquivalenceMatrix
+    );
+    failures += !RunTest(
+        "R1.2C zero-step restore",
+        TestR12CZeroStepRestore
+    );
+    failures += !RunTest(
+        "R1.2C beyond motion end",
+        TestR12CBeyondMotionEnd
+    );
+    failures += !RunTest(
+        "R1.2C create rejects non-canonical",
+        TestR12CCreateRejectsNonCanonical
+    );
+    failures += !RunTest(
+        "R1.2C checkpoint structural rejections",
+        TestR12CCheckpointStructuralRejections
+    );
+    failures += !RunTest(
+        "R1.2C cross compatibility rejected",
+        TestR12CCrossCompatibilityRejected
+    );
+    failures += !RunTest(
+        "R1.2C post-restore hash poisoned",
+        TestR12CPostRestoreHashPoisoned
+    );
+    failures += !RunTest(
+        "R1.2C checkpoint stress round trip",
+        TestR12CCheckpointStressRoundTrip
     );
     failures += !RunTest(
         "R1 project MMD instance",

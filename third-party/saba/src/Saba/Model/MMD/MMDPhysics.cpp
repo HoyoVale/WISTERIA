@@ -216,6 +216,23 @@ namespace saba
 		deterministicWorld->ResetSimulationTime();
 	}
 
+	void MMDPhysics::ClearContactManifoldsDeterministic()
+	{
+		if (m_world == nullptr)
+		{
+			return;
+		}
+		btDispatcher* dispatcher = m_world->getDispatcher();
+		// Drop every existing manifold so accumulated contact impulses die
+		// with them. This is the deterministic cold-step primitive.
+		for (int i = dispatcher->getNumManifolds() - 1; i >= 0; --i)
+		{
+			dispatcher->clearManifold(
+				dispatcher->getManifoldByIndexInternal(i)
+			);
+		}
+	}
+
 	void MMDPhysics::RebuildCollisionWorldDeterministic()
 	{
 		if (m_world == nullptr)
@@ -223,37 +240,81 @@ namespace saba
 			return;
 		}
 		btDispatcher* dispatcher = m_world->getDispatcher();
-		// 1. AABBs must reflect the restored transforms before any pair
-		//    rebuild.
-		m_world->updateAabbs();
-		// 2. Drop every existing manifold so accumulated contact impulses
-		//    die with them.
-		for (int i = dispatcher->getNumManifolds() - 1; i >= 0; --i)
+		// A deterministic collision world requires a canonical broadphase
+		// tree: the internal tree shape depends on insertion history and can
+		// change pair iteration order after a few frames. Re-insert every
+		// collision object in stable index order so two histories converge.
+		struct Entry
 		{
-			dispatcher->clearManifold(
-				dispatcher->getManifoldByIndexInternal(i)
-			);
-		}
-		// 3. Remove old overlapping pairs (cleanProxyFromPairs alone keeps
-		//    the pair set; this removes it).
-		if (btOverlappingPairCache* pairCache = m_world->getPairCache())
+			btCollisionObject* object;
+			short group;
+			short mask;
+		};
+		std::vector<Entry> entries;
+		const btCollisionObjectArray& objects =
+			m_world->getCollisionObjectArray();
+		entries.reserve(objects.size());
+		for (int i = 0; i < objects.size(); ++i)
 		{
-			const btCollisionObjectArray& objects =
-				m_world->getCollisionObjectArray();
-			for (int i = 0; i < objects.size(); ++i)
+			Entry entry;
+			entry.object = objects[i];
+			entry.group = 1;
+			entry.mask = -1;
+			if (btBroadphaseProxy* proxy =
+					objects[i]->getBroadphaseHandle())
 			{
-				if (btBroadphaseProxy* proxy =
-						objects[i]->getBroadphaseHandle())
-				{
-					pairCache->removeOverlappingPairsContainingProxy(
-						proxy,
-						dispatcher
-					);
-				}
+				entry.group = proxy->m_collisionFilterGroup;
+				entry.mask = proxy->m_collisionFilterMask;
+			}
+			entries.push_back(entry);
+		}
+		// The current ground proxy is about to be destroyed; drop it from
+		// the filter callback now so no stale pointer is consulted during
+		// removal/rebuild. It is re-seated after all objects are re-added.
+		MMDFilterCallback* filterCallback =
+			static_cast<MMDFilterCallback*>(m_filterCB.get());
+		if (filterCallback != nullptr)
+		{
+			filterCallback->m_nonFilterProxy.clear();
+		}
+		for (const Entry& entry : entries)
+		{
+			m_world->removeCollisionObject(entry.object);
+		}
+		ClearContactManifoldsDeterministic();
+		for (const Entry& entry : entries)
+		{
+			// Rigid bodies must go through addRigidBody so they are
+			// re-registered in m_nonStaticRigidBodies (integration list) and
+			// receive world gravity; addCollisionObject alone would leave
+			// dynamic bodies frozen.
+			if (btRigidBody* body = btRigidBody::upcast(entry.object))
+			{
+				m_world->addRigidBody(body, entry.group, entry.mask);
+			}
+			else
+			{
+				m_world->addCollisionObject(
+					entry.object,
+					entry.group,
+					entry.mask
+				);
 			}
 		}
-		// 4. Rebuild overlapping pairs deterministically from the restored
-		//    AABBs; manifolds stay empty until the next collision dispatch.
+		// The ground proxy was destroyed and recreated above; the overlap
+		// filter callback still references the old (now dangling) proxy.
+		// Re-seat it so the ground keeps its unconditional non-filter
+		// collision rule after a deterministic world rebuild.
+		if (m_groundRB != nullptr && filterCallback != nullptr)
+		{
+			filterCallback->m_nonFilterProxy.clear();
+			if (btBroadphaseProxy* proxy =
+					m_groundRB->getBroadphaseHandle())
+			{
+				filterCallback->m_nonFilterProxy.push_back(proxy);
+			}
+		}
+		m_world->updateAabbs();
 		if (btBroadphaseInterface* broadphase = m_world->getBroadphase())
 		{
 			broadphase->calculateOverlappingPairs(dispatcher);
@@ -867,6 +928,17 @@ namespace saba
 		m_activeMotionState->SetTransform(
 			m_rigidBody->getCenterOfMassTransform()
 		);
+	}
+
+	void MMDRigidBody::SyncActiveMotionStateToTransform(
+		const btTransform& transform
+	)
+	{
+		if (m_activeMotionState == nullptr || m_rigidBody == nullptr)
+		{
+			return;
+		}
+		m_activeMotionState->SetTransform(transform);
 	}
 
 	void MMDRigidBody::SetActivation(bool activation)

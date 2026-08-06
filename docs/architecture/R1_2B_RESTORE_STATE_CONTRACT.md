@@ -404,6 +404,22 @@ Phase 1  模式与 transform
                  snapshot.interpolationTransform.rotationBasis
              )
              （interpolation velocities 由 Phase 2 统一写入，Phase 1 不重复）
+           非 FollowBone：写 active motion state transform
+             - motionFrame == 0：直接写 centerOfMassTransform
+               （与 PrepareFrameZero 的
+               SyncActiveMotionStateToBodyTransform 一致）
+             - motionFrame > 0：写
+               integrate(interpolationWorldTransform,
+                         interpolationLinearVelocity,
+                         interpolationAngularVelocity,
+                         -fixedTimeStep)
+               —— 即 Bullet synchronizeSingleMotionState 在
+               m_localTime == 0（latency interpolation 开启）时写入的
+               canonical 边界插值变换
+             Saba 每帧 SetActivation(true) 会经
+             btRigidBody::setMotionState 把该变换读回刚体，
+             因此恢复 motion state 必须复刻 from-start 路径的精确值，
+             不能写 centerOfMassTransform 或省略该步。
 
 Phase 2  速度
          全部模式：写 linear/angular velocity（含 interpolation 速度）
@@ -445,6 +461,10 @@ Phase 6  惯性张量与骨骼蒙皮
          dynamic 刚体：ReflectGlobalTransform()
          全部刚体：CalcLocalTransform()
          根节点 UpdateGlobalTransform()
+         model->UpdateNodeAnimation(true)
+         （实现发现：正常 StepFrameExact 在物理反射后也会对
+          after-physics 节点做动画求值；Restore 缺少这一步会留下
+          物理反射的 local 矩阵，不是正常帧边界）
          model->Update()
          SyncPoseFromSaba()
 ```

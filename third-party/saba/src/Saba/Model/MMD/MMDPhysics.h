@@ -26,6 +26,7 @@ class btDefaultCollisionConfiguration;
 class btCollisionDispatcher;
 class btSequentialImpulseConstraintSolver;
 class btMotionState;
+class btTransform;
 struct btOverlapFilterCallback;
 
 namespace saba
@@ -61,6 +62,11 @@ namespace saba
 		// Copies the rigid body's current COM transform into the active
 		// motion state so reflect/write-back phases read the restored pose.
 		void SyncActiveMotionStateToBodyTransform();
+		// Sets the active motion state to an explicit transform. Used by the
+		// deterministic restore path to reproduce the interpolated transform
+		// that Bullet's synchronizeSingleMotionState writes at a canonical
+		// frame boundary (see R1.2B Phase 1).
+		void SyncActiveMotionStateToTransform(const btTransform& transform);
 
 		void SetActivation(bool activation);
 		void ResetTransform();
@@ -142,6 +148,7 @@ namespace saba
 		// R1.2B deterministic restore: rebuild the collision world from the
 		// current transforms (AABBs, pairs, manifolds) and clear solver
 		// warm-start history. Semantics are defined by the R1.2B contract.
+		void ClearContactManifoldsDeterministic();
 		void RebuildCollisionWorldDeterministic();
 		void ClearSolverHistoryDeterministic();
 		// Deterministic replay narrow interface: read/clear Bullet's internal

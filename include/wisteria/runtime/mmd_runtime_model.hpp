@@ -2,6 +2,7 @@
 
 #include "wisteria/runtime/runtime_model_base.hpp"
 #include "wisteria/runtime/determinism.hpp"
+#include "wisteria/runtime/checkpoint.hpp"
 #include "wisteria/animation/bone.hpp"
 #include "wisteria/animation/morph.hpp"
 
@@ -141,6 +142,29 @@ public:
     }
     virtual TimelineStatus RestorePhysicsSnapshot(
         const PhysicsSnapshot&
+    )
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+
+    // R1.2C checkpoint orchestration (contract v2, frozen). CreateCheckpoint
+    // captures the current canonical frame; failures never modify output.
+    // ReplayFromCheckpoint validates target before restoring.
+    virtual TimelineStatus CreateCheckpoint(
+        FrameCheckpoint&
+    ) const
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+    virtual TimelineStatus RestoreCheckpoint(
+        const FrameCheckpoint&
+    )
+    {
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+    virtual TimelineStatus ReplayFromCheckpoint(
+        const FrameCheckpoint&,
+        MotionFrameIndex
     )
     {
         return TimelineStatus::UnsupportedReplayProfile;

@@ -154,10 +154,20 @@ struct PhysicsBackendCapabilities
     bool supportsCanonicalRestore = false;
 };
 
+// R1.2C checkpoint capabilities. Only opened after the equivalence matrix
+// (E1-E11) passes; interface compilation alone never opens them.
+struct CheckpointBackendCapabilities
+{
+    bool supportsCheckpointCapture = false;
+    bool supportsCheckpointRestore = false;
+    bool supportsReplayFromCheckpoint = false;
+};
+
 // Runtime capability description (not per-frame state).
 struct ModelRuntimeCapabilities
 {
     PhysicsBackendCapabilities physics;
+    CheckpointBackendCapabilities checkpoint;
 };
 
 // Current physics configuration + availability (not per-frame state).

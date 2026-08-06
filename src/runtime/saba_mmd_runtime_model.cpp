@@ -3,6 +3,7 @@
 #include "wisteria/animation/animation.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/assets/model_asset.hpp"
+#include "wisteria/mmd/mmd_determinism.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/light.hpp"
@@ -18,10 +19,12 @@
 
 #include <cstddef>
 #include <cstring>
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cmath>
 #include <chrono>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <span>
@@ -355,6 +358,79 @@ void HashShapeDimensions(FnvHasher& hasher, const btCollisionShape* shape)
         hasher.F32(static_cast<float>(capsule->getHalfHeight()));
     }
 }
+
+std::uint64_t HashFileBytes(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open())
+        return 0U;
+    FnvHasher hasher;
+    char buffer[4096];
+    while (stream)
+    {
+        stream.read(buffer, sizeof(buffer));
+        const std::streamsize count = stream.gcount();
+        if (count <= 0)
+            break;
+        for (std::streamsize index = 0; index < count; ++index)
+        {
+            hasher.Byte(static_cast<std::uint8_t>(buffer[index]));
+        }
+    }
+    return hasher.state;
+}
+
+bool ReplayConfigEqual(
+    const ReplayConfig& left,
+    const ReplayConfig& right
+) noexcept
+{
+    return left.motionFps == right.motionFps &&
+        left.physicsHz == right.physicsHz &&
+        left.warmupFrames == right.warmupFrames &&
+        left.loopMotion == right.loopMotion;
+}
+
+bool SameFloatBits(float left, float right) noexcept
+{
+    std::uint32_t leftBits = 0U;
+    std::uint32_t rightBits = 0U;
+    std::memcpy(&leftBits, &left, sizeof(leftBits));
+    std::memcpy(&rightBits, &right, sizeof(rightBits));
+    return leftBits == rightBits;
+}
+
+bool UserOverrideStatesEqual(
+    const UserOverrideState& left,
+    const UserOverrideState& right
+) noexcept
+{
+    if (left.morphOverrides.size() != right.morphOverrides.size() ||
+        left.ikOverrides.size() != right.ikOverrides.size() ||
+        left.physicsEnabled != right.physicsEnabled ||
+        left.loopMotion != right.loopMotion)
+    {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.morphOverrides.size(); ++index)
+    {
+        if (left.morphOverrides[index].first !=
+                right.morphOverrides[index].first ||
+            !SameFloatBits(
+                left.morphOverrides[index].second,
+                right.morphOverrides[index].second
+            ))
+        {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U; index < left.ikOverrides.size(); ++index)
+    {
+        if (left.ikOverrides[index] != right.ikOverrides[index])
+            return false;
+    }
+    return true;
+}
 }  // namespace
 
 struct SabaMmdRuntimeModel::Impl
@@ -405,6 +481,12 @@ struct SabaMmdRuntimeModel::Impl
     int faultInjectionPhase = 0;
     // Test-hook definition-mass overrides (T23): keyed by body index.
     std::unordered_map<std::uint32_t, float> definitionMassOverrides;
+    // R1.2C asset identity.
+    std::uint64_t pmxFileHash = 0U;
+    std::uint64_t vmdFileHash = 0U;
+    bool hasMotion = false;
+    // Test hook: XOR applied to the post-restore PhysicsHash comparison.
+    std::uint64_t postRestoreHashXor = 0U;
 
     Impl(
         std::filesystem::path modelPath_,
@@ -500,6 +582,7 @@ bool SabaMmdRuntimeModel::Initialize()
         this->impl->model.reset();
         return false;
     }
+    this->impl->pmxFileHash = HashFileBytes(this->impl->modelPath);
     // Saba's viewer calls InitializeAnimation right after loading the model;
     // it resets node animation state and rebuilds the physics reset pose.
     // Skipping it leaves physics and VMD evaluation on inconsistent baselines.
@@ -752,6 +835,11 @@ TimelineStatus SabaMmdRuntimeModel::ResetCanonicalNoStep()
     {
         rigidBody->Reset(physics);
     }
+    // Canonical boundaries are cold: accumulated contact impulses and joint
+    // warm-start must not survive into the next deterministic step. This is
+    // what makes checkpoint restore == from-start for every frame N.
+    physics->ClearContactManifoldsDeterministic();
+    physics->ClearSolverHistoryDeterministic();
     // Restore the true body mode: SetActivation(false) temporarily turns
     // dynamic bodies kinematic so their target pose can be read, but a
     // Canonical Frame Boundary must describe dynamic bodies as dynamic again
@@ -846,6 +934,13 @@ TimelineStatus SabaMmdRuntimeModel::StepFrameExact(
     int executedSubsteps = 0;
     if (this->impl->physicsSettings.enabled)
     {
+        // Deterministic replay steps cold every frame (canonical boundary
+        // semantics). Without this, a restored checkpoint (which clears
+        // warm-start) would diverge from a continuous from-start replay at
+        // frames with active contacts.
+        saba::MMDPhysics* physics = manager->GetMMDPhysics();
+        physics->ClearContactManifoldsDeterministic();
+        physics->ClearSolverHistoryDeterministic();
         // The four-substep experiment proved stepSimulation(1/30, 10, 1/120)
         // executes exactly 4 substeps with a zero accumulator; this existing
         // full Update phase is therefore the deterministic reference path.
@@ -1136,7 +1231,7 @@ TimelineStatus SabaMmdRuntimeModel::RestoreState(
     }
 }
 
-TimelineStatus SabaMmdRuntimeModel::ValidateSnapshotForRestore(
+TimelineStatus SabaMmdRuntimeModel::ValidatePhysicsSnapshotStatic(
     const PhysicsSnapshot& snapshot
 ) const
 {
@@ -1285,12 +1380,26 @@ TimelineStatus SabaMmdRuntimeModel::ValidateSnapshotForRestore(
         return TimelineStatus::InvalidSnapshot;
     }
 
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::ValidateSnapshotForRestore(
+    const PhysicsSnapshot& snapshot
+) const
+{
+    const TimelineStatus staticStatus =
+        this->ValidatePhysicsSnapshotStatic(snapshot);
+    if (staticStatus != TimelineStatus::Ok)
+        return staticStatus;
+
     // Animation precondition: the caller must have evaluated animation at
     // the snapshot's motion frame; FollowBone transforms must already match.
     if (this->impl->vmdFrame != static_cast<double>(snapshot.motionFrame))
     {
         return TimelineStatus::InvalidState;
     }
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    auto* rigidBodies = manager->GetRigidBodys();
     for (std::size_t index = 0U; index < snapshot.rigidBodies.size(); ++index)
     {
         const RigidBodySnapshot& bodySnapshot =
@@ -1347,10 +1456,40 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
         body->setInterpolationWorldTransform(interpolationTransform);
         if (bodySnapshot.mode != PmxRigidBodyMode::FollowBone)
         {
-            // Keep the active motion state in sync so Phase 6's
-            // ReflectGlobalTransform reads the restored pose, not a stale
-            // pre-restore transform.
-            rigidBody->SyncActiveMotionStateToBodyTransform();
+            if (snapshot.motionFrame == 0U)
+            {
+                // PrepareFrameZero seats the active motion state directly
+                // at the body COM. Reproduce that exactly: integrateTransform
+                // would re-normalize the quaternion (1 ulp) even with zero
+                // velocity, breaking bitwise equivalence at frame 0.
+                rigidBody->SyncActiveMotionStateToBodyTransform();
+            }
+            else
+            {
+                // Keep the active motion state in sync so Phase 6's
+                // ReflectGlobalTransform reads the restored pose, not a
+                // stale pre-restore transform. The motion state must hold
+                // the same transform that Bullet's
+                // synchronizeSingleMotionState writes at a canonical frame
+                // boundary: with latency interpolation and m_localTime == 0
+                // that is integrate(interpWorld, interpVel, interpAngVel,
+                // -fixedTimeStep). Saba's per-frame SetActivation(true)
+                // calls btRigidBody::setMotionState, which READS the motion
+                // state back into the body transform; syncing the plain COM
+                // transform here would make the next replay step start from
+                // a different pose than a from-start replay.
+                btTransform boundaryMotionState;
+                btTransformUtil::integrateTransform(
+                    interpolationTransform,
+                    ToBtVector3(bodySnapshot.interpolationLinearVelocity),
+                    ToBtVector3(bodySnapshot.interpolationAngularVelocity),
+                    -this->impl->physicsSettings.fixedTimeStep,
+                    boundaryMotionState
+                );
+                rigidBody->SyncActiveMotionStateToTransform(
+                    boundaryMotionState
+                );
+            }
         }
     }
     throwIfInjected(1);
@@ -1450,6 +1589,413 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
     // continuation is R1.2C checkpoint semantics.
     this->impl->deterministicPrepared = false;
     this->impl->expectedNextFrame = 0U;
+    return TimelineStatus::Ok;
+}
+
+void SabaMmdRuntimeModel::EvaluateAnimationFrameOnly(
+    MotionFrameIndex frame
+)
+{
+    this->impl->vmdFrame = static_cast<double>(frame);
+    this->impl->model->BeginAnimation();
+    if (this->impl->vmdAnimation != nullptr)
+    {
+        this->impl->vmdAnimation->Evaluate(static_cast<float>(frame));
+    }
+    this->ApplyUserMorphOverrides();
+    this->impl->model->UpdateMorphAnimation();
+    ++this->impl->morphRevision;
+    this->ApplyMmdIkOverrides();
+    this->impl->model->UpdateNodeAnimation(false);
+    this->impl->model->UpdateNodeAnimation(true);
+    this->impl->model->EndAnimation();
+    this->impl->model->Update();
+    this->SyncPoseFromSaba();
+    ++this->impl->vertexRevision;
+}
+
+void SabaMmdRuntimeModel::BuildUserOverrideState(
+    UserOverrideState& output
+) const
+{
+    output.morphOverrides.clear();
+    output.morphOverrides.reserve(this->impl->userMorphOverrides.size());
+    for (const auto& [name, weight] : this->impl->userMorphOverrides)
+    {
+        output.morphOverrides.emplace_back(name, weight);
+    }
+    std::sort(
+        output.morphOverrides.begin(),
+        output.morphOverrides.end(),
+        [](const auto& left, const auto& right)
+        {
+            return left.first < right.first;
+        }
+    );
+    output.ikOverrides.clear();
+    for (const auto& [bone, enabled] : this->impl->mmdIkOverrides)
+    {
+        if (IsValidBoneIndex(bone, this->impl->bones))
+        {
+            output.ikOverrides.emplace_back(
+                this->impl->sabaBoneNames[bone],
+                enabled
+            );
+        }
+    }
+    std::sort(
+        output.ikOverrides.begin(),
+        output.ikOverrides.end(),
+        [](const auto& left, const auto& right)
+        {
+            return left.first < right.first;
+        }
+    );
+    output.physicsEnabled = this->impl->physicsSettings.enabled;
+    output.loopMotion = this->impl->motionLooping;
+}
+
+void SabaMmdRuntimeModel::ApplyUserOverrideState(
+    const UserOverrideState& overrides
+)
+{
+    this->impl->userMorphOverrides.clear();
+    for (const auto& [name, weight] : overrides.morphOverrides)
+    {
+        this->impl->userMorphOverrides[name] = weight;
+    }
+    this->impl->mmdIkOverrides.clear();
+    for (const auto& [name, enabled] : overrides.ikOverrides)
+    {
+        const BoneIndex bone = this->FindBoneIndex(name);
+        if (bone == InvalidBoneIndex)
+            continue;
+        this->impl->mmdIkOverrides[bone] = enabled;
+        ApplyIkEnable(this->impl->model, name, enabled);
+    }
+    this->impl->physicsSettings.enabled = overrides.physicsEnabled;
+    this->impl->motionLooping = overrides.loopMotion;
+    this->impl->motionPaused = false;
+}
+
+void SabaMmdRuntimeModel::BuildFrameStateHashes(
+    FrameStateHashes& output
+) const
+{
+    PhysicsSnapshot physics;
+    if (this->CaptureState(physics) != TimelineStatus::Ok)
+    {
+        output = FrameStateHashes{};
+        return;
+    }
+    PoseSnapshot pose;
+    const Pose& currentPose = this->GetPose();
+    pose.localTransforms.assign(
+        currentPose.LocalMatrices().begin(),
+        currentPose.LocalMatrices().end()
+    );
+    pose.globalTransforms.assign(
+        currentPose.GlobalMatrices().begin(),
+        currentPose.GlobalMatrices().end()
+    );
+    pose.skinningTransforms.assign(
+        currentPose.SkinningMatrices().begin(),
+        currentPose.SkinningMatrices().end()
+    );
+    DeformedVertexSnapshot vertex;
+    const ModelVertexFrame frame = this->VertexFrame();
+    vertex.positions.assign(
+        frame.positions.begin(),
+        frame.positions.end()
+    );
+    vertex.normals.assign(
+        frame.normals.begin(),
+        frame.normals.end()
+    );
+    output.pose = HashPose(pose);
+    output.vertex = HashVertices(vertex);
+    output.physics = HashPhysics(physics);
+}
+
+TimelineStatus SabaMmdRuntimeModel::ValidateCheckpointStatic(
+    const FrameCheckpoint& checkpoint
+) const
+{
+    if (this->impl->model == nullptr)
+        return TimelineStatus::NoPhysics;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return TimelineStatus::NoPhysics;
+    if (!this->impl->physicsSettings.enabled)
+        return TimelineStatus::UnsupportedReplayProfile;
+
+    if (checkpoint.fingerprint.schemaVersion != 1U)
+        return TimelineStatus::InvalidCheckpoint;
+    if (checkpoint.frame != checkpoint.physics.motionFrame ||
+        checkpoint.frame != checkpoint.fingerprint.frame)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (checkpoint.frame >=
+        std::numeric_limits<MotionFrameIndex>::max())
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (checkpoint.physics.physicsTick != checkpoint.frame * 4U ||
+        !checkpoint.physics.canonical)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (!ReplayConfigEqual(
+            checkpoint.config,
+            checkpoint.fingerprint.config
+        ) ||
+        !UserOverrideStatesEqual(
+            checkpoint.overrides,
+            checkpoint.fingerprint.overrides
+        ))
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (checkpoint.config.loopMotion ||
+        checkpoint.overrides.loopMotion ||
+        !checkpoint.overrides.physicsEnabled)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (!checkpoint.fingerprint.state.pose.valid ||
+        !checkpoint.fingerprint.state.vertex.valid ||
+        !checkpoint.fingerprint.state.physics.valid)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+
+    std::uint64_t currentLayout = 0U;
+    std::uint64_t currentConfig = 0U;
+    this->ComputeLayoutFingerprint(currentLayout);
+    this->ComputeConfigurationFingerprint(currentConfig);
+    if (checkpoint.physics.layoutFingerprint !=
+            checkpoint.fingerprint.asset.layoutFingerprint ||
+        checkpoint.physics.layoutFingerprint != currentLayout)
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+    if (checkpoint.physics.physicsConfigurationFingerprint !=
+            checkpoint.fingerprint.asset.physicsConfigurationFingerprint ||
+        checkpoint.physics.physicsConfigurationFingerprint != currentConfig)
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+    if (checkpoint.fingerprint.asset.pmxFileHash !=
+            this->impl->pmxFileHash ||
+        checkpoint.fingerprint.asset.vmdFileHash !=
+            this->impl->vmdFileHash ||
+        checkpoint.fingerprint.asset.hasMotion != this->impl->hasMotion)
+    {
+        return TimelineStatus::SnapshotMismatch;
+    }
+
+    // Override applicability: sorted, unique, finite, names exist.
+    for (std::size_t index = 0U;
+         index < checkpoint.overrides.morphOverrides.size();
+         ++index)
+    {
+        const auto& [name, weight] =
+            checkpoint.overrides.morphOverrides[index];
+        if (index > 0U &&
+            checkpoint.overrides.morphOverrides[index - 1U].first >= name)
+        {
+            return TimelineStatus::InvalidCheckpoint;
+        }
+        if (!std::isfinite(weight))
+            return TimelineStatus::InvalidCheckpoint;
+        if (this->impl->model->GetMorphManager() == nullptr ||
+            this->impl->model->GetMorphManager()->GetMorph(name) == nullptr)
+        {
+            return TimelineStatus::SnapshotMismatch;
+        }
+    }
+    for (std::size_t index = 0U;
+         index < checkpoint.overrides.ikOverrides.size();
+         ++index)
+    {
+        const auto& [name, enabled] =
+            checkpoint.overrides.ikOverrides[index];
+        (void)enabled;
+        if (index > 0U &&
+            checkpoint.overrides.ikOverrides[index - 1U].first >= name)
+        {
+            return TimelineStatus::InvalidCheckpoint;
+        }
+        if (this->FindBoneIndex(name) == InvalidBoneIndex)
+            return TimelineStatus::SnapshotMismatch;
+    }
+
+    const TimelineStatus physicsStatus =
+        this->ValidatePhysicsSnapshotStatic(checkpoint.physics);
+    if (physicsStatus != TimelineStatus::Ok)
+        return physicsStatus;
+
+    // Phase 0 pre-verification of the checkpoint's physics hash.
+    const DeterminismHashes physicsHash =
+        HashPhysics(checkpoint.physics);
+    if (!physicsHash.valid ||
+        physicsHash.exactHash !=
+            checkpoint.fingerprint.state.physics.exactHash)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::CreateCheckpoint(
+    FrameCheckpoint& output
+) const
+{
+    if (this->IsPoisoned())
+        return TimelineStatus::Poisoned;
+    if (!this->impl->lastBoundaryCanonical || this->impl->motionLooping)
+        return TimelineStatus::InvalidState;
+
+    FrameCheckpoint candidate;
+    candidate.frame = this->impl->lastMotionFrame;
+    const TimelineStatus captureStatus =
+        this->CapturePhysicsSnapshot(candidate.physics);
+    if (captureStatus != TimelineStatus::Ok)
+        return captureStatus;
+    this->BuildUserOverrideState(candidate.overrides);
+    candidate.config = ReplayConfig{};
+
+    candidate.fingerprint.schemaVersion = 1U;
+    candidate.fingerprint.frame = candidate.frame;
+    candidate.fingerprint.asset.pmxFileHash = this->impl->pmxFileHash;
+    candidate.fingerprint.asset.vmdFileHash = this->impl->vmdFileHash;
+    candidate.fingerprint.asset.hasMotion = this->impl->hasMotion;
+    this->ComputeLayoutFingerprint(
+        candidate.fingerprint.asset.layoutFingerprint
+    );
+    this->ComputeConfigurationFingerprint(
+        candidate.fingerprint.asset.physicsConfigurationFingerprint
+    );
+    candidate.fingerprint.config = candidate.config;
+    candidate.fingerprint.overrides = candidate.overrides;
+
+    FrameStateHashes hashes;
+    this->BuildFrameStateHashes(hashes);
+    if (!hashes.pose.valid || !hashes.vertex.valid ||
+        !hashes.physics.valid)
+    {
+        return TimelineStatus::DeterminismViolation;
+    }
+    candidate.fingerprint.state = hashes;
+    output = std::move(candidate);
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus SabaMmdRuntimeModel::RestoreCheckpoint(
+    const FrameCheckpoint& checkpoint
+)
+{
+    if (this->IsPoisoned())
+        return TimelineStatus::Poisoned;
+    const TimelineStatus validation =
+        this->ValidateCheckpointStatic(checkpoint);
+    if (validation != TimelineStatus::Ok)
+        return validation;
+    return this->RestoreCheckpointValidated(checkpoint);
+}
+
+TimelineStatus SabaMmdRuntimeModel::RestoreCheckpointValidated(
+    const FrameCheckpoint& checkpoint
+)
+{
+    try
+    {
+        // Phase 1: replace runtime config/overrides.
+        this->ApplyUserOverrideState(checkpoint.overrides);
+        // Phase 2: animation/Morph/IK evaluation only (no physics step).
+        this->EvaluateAnimationFrameOnly(checkpoint.frame);
+        // Phase 3: rebuild kinematic targets with a canonical no-step sync.
+        const TimelineStatus syncStatus =
+            this->ResetCanonicalNoStep();
+        if (syncStatus != TimelineStatus::Ok)
+        {
+            this->EnterPoisoned();
+            return syncStatus;
+        }
+        // Phase 4: R1.2B restore (includes after-physics/Pose/Vertex).
+        const TimelineStatus restoreStatus =
+            this->RestoreState(checkpoint.physics);
+        if (restoreStatus != TimelineStatus::Ok)
+        {
+            this->EnterPoisoned();
+            return restoreStatus;
+        }
+        // Phase 5: verify state hashes.
+        FrameStateHashes current;
+        this->BuildFrameStateHashes(current);
+        if (this->impl->postRestoreHashXor != 0U)
+        {
+            current.physics.exactHash ^=
+                this->impl->postRestoreHashXor;
+        }
+        if (current.pose.exactHash !=
+                checkpoint.fingerprint.state.pose.exactHash ||
+            current.vertex.exactHash !=
+                checkpoint.fingerprint.state.vertex.exactHash ||
+            current.physics.exactHash !=
+                checkpoint.fingerprint.state.physics.exactHash)
+        {
+            this->EnterPoisoned();
+            return TimelineStatus::DeterminismViolation;
+        }
+        // Phase 6: prepare continuation.
+        this->impl->deterministicPrepared = true;
+        this->impl->expectedNextFrame = checkpoint.frame + 1U;
+        this->impl->poisoned = false;
+        this->impl->faultInjectionPhase = 0;
+        return TimelineStatus::Ok;
+    }
+    catch (...)
+    {
+        this->EnterPoisoned();
+        return TimelineStatus::Poisoned;
+    }
+}
+
+TimelineStatus SabaMmdRuntimeModel::ReplayFromCheckpoint(
+    const FrameCheckpoint& checkpoint,
+    MotionFrameIndex target
+)
+{
+    if (this->IsPoisoned())
+        return TimelineStatus::Poisoned;
+    // Read-only target validation must precede any world mutation.
+    const TimelineStatus validation =
+        this->ValidateCheckpointStatic(checkpoint);
+    if (validation != TimelineStatus::Ok)
+        return validation;
+    if (target < checkpoint.frame ||
+        target == std::numeric_limits<MotionFrameIndex>::max())
+    {
+        return TimelineStatus::InvalidState;
+    }
+    const TimelineStatus restore =
+        this->RestoreCheckpoint(checkpoint);
+    if (restore != TimelineStatus::Ok)
+        return restore;
+    for (MotionFrameIndex frame = checkpoint.frame + 1U;
+         frame <= target;
+         ++frame)
+    {
+        const TimelineStatus step =
+            this->StepMotionFrameExact(frame, checkpoint.config);
+        if (step != TimelineStatus::Ok)
+        {
+            this->EnterPoisoned();
+            return step;
+        }
+    }
     return TimelineStatus::Ok;
 }
 
@@ -1721,6 +2267,13 @@ void SabaMmdRuntimeModel::SetAllDynamicBodiesActivationForProbe(
         }
     }
 }
+
+void SabaMmdRuntimeModel::SetPostRestoreHashCorruptionForProbe(
+    std::uint64_t xorValue
+) noexcept
+{
+    this->impl->postRestoreHashXor = xorValue;
+}
 #endif
 
 bool SabaMmdRuntimeModel::LoadMotion(
@@ -1741,6 +2294,8 @@ bool SabaMmdRuntimeModel::LoadMotion(
     this->impl->vmdAnimation = std::move(animation);
     this->impl->vmdFile = std::move(vmd);
     this->impl->vmdLoaded = true;
+    this->impl->vmdFileHash = HashFileBytes(vmdPath);
+    this->impl->hasMotion = true;
     this->impl->vmdFrame = 0.0;
     this->impl->motionPaused = false;
     ++this->impl->morphRevision;
@@ -1752,6 +2307,8 @@ void SabaMmdRuntimeModel::ClearMotion()
     this->impl->vmdAnimation.reset();
     this->impl->vmdFile = saba::VMDFile{};
     this->impl->vmdLoaded = false;
+    this->impl->vmdFileHash = 0U;
+    this->impl->hasMotion = false;
     this->impl->vmdFrame = 0.0;
     this->impl->motionPaused = false;
     ++this->impl->morphRevision;
@@ -1900,6 +2457,12 @@ ModelRuntimeCapabilities SabaMmdRuntimeModel::Capabilities() const
     capabilities.physics.supportsSnapshotRestore = true;
     capabilities.physics.supportsCanonicalRestore = true;
 #endif
+    // R1.2C: the equivalence matrix is green, so the checkpoint surface is
+    // open. These bits must stay false until restore->replay == from-start
+    // actually holds on the supported 30/120 profile.
+    capabilities.checkpoint.supportsCheckpointCapture = true;
+    capabilities.checkpoint.supportsCheckpointRestore = true;
+    capabilities.checkpoint.supportsReplayFromCheckpoint = true;
     return capabilities;
 }
 

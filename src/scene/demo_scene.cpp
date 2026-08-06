@@ -34,8 +34,8 @@ std::filesystem::path DemoModelPath(bool alternate)
 {
     return wisteria::assets::Root() / "models" /
         "mmd" /
-        (alternate ? u8"叶瞬光皮肤_pmx" : u8"蕾米埃尔-白") /
-        u8"蕾米埃尔-白.pmx";
+        (alternate ? u8"叶瞬光皮肤_pmx" : u8"蕾米埃尔-黑") /
+        u8"蕾米埃尔-黑.pmx";
 }
 
 std::filesystem::path DemoScenePath(bool alternate)

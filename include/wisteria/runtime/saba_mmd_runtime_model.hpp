@@ -140,6 +140,18 @@ public:
         const PhysicsSnapshot& snapshot
     ) override;
 
+    // R1.2C checkpoint orchestration.
+    TimelineStatus CreateCheckpoint(
+        FrameCheckpoint& output
+    ) const override;
+    TimelineStatus RestoreCheckpoint(
+        const FrameCheckpoint& checkpoint
+    ) override;
+    TimelineStatus ReplayFromCheckpoint(
+        const FrameCheckpoint& checkpoint,
+        MotionFrameIndex target
+    ) override;
+
     struct VertexDiagnostics
     {
         bool finite = true;
@@ -192,8 +204,25 @@ private:
     TimelineStatus ValidateSnapshotForRestore(
         const PhysicsSnapshot& snapshot
     ) const;
+    // R1.2B Phase 0 static validation (all checks except the animation
+    // precondition). Shared by RestoreState and RestoreCheckpoint.
+    TimelineStatus ValidatePhysicsSnapshotStatic(
+        const PhysicsSnapshot& snapshot
+    ) const;
+    // R1.2C Phase 0 read-only checkpoint validation.
+    TimelineStatus ValidateCheckpointStatic(
+        const FrameCheckpoint& checkpoint
+    ) const;
     // R1.2B Phase 1-6 write-back. Only called after validation passes.
     TimelineStatus RestorePhases(const PhysicsSnapshot& snapshot);
+    // R1.2C Phase 1-6 write-back (assumes ValidateCheckpointStatic passed).
+    TimelineStatus RestoreCheckpointValidated(
+        const FrameCheckpoint& checkpoint
+    );
+    void EvaluateAnimationFrameOnly(MotionFrameIndex frame);
+    void BuildUserOverrideState(UserOverrideState& output) const;
+    void ApplyUserOverrideState(const UserOverrideState& overrides);
+    void BuildFrameStateHashes(FrameStateHashes& output) const;
     void ComputeLayoutFingerprint(
         std::uint64_t& fingerprint
     ) const;
@@ -228,6 +257,11 @@ public:
     // Force-sets activation state on every dynamic body so tests can build
     // a real DISABLE_DEACTIVATION history (T19).
     void SetAllDynamicBodiesActivationForProbe(int state) noexcept;
+    // Corrupts the post-restore PhysicsHash comparison so E9 can exercise
+    // the DeterminismViolation -> Poisoned path.
+    void SetPostRestoreHashCorruptionForProbe(
+        std::uint64_t xorValue
+    ) noexcept;
 #endif
 
     struct Impl;

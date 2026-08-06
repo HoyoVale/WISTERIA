@@ -1,11 +1,14 @@
 # R1.2 — 确定性时间线与物理回放契约（终版）
 
-> 状态：**R1.2A 已冻结（2026-08-06）**；**R1.2B 已冻结并实现**
+> 状态：**R1.2A 已冻结（2026-08-06）**；**R1.2B 已冻结并实现**；
+> **R1.2C 已冻结并实现（2026-08-06）**
 > （契约：
 > [R1_2B_RESTORE_STATE_CONTRACT.md](R1_2B_RESTORE_STATE_CONTRACT.md)
 > v4.1.1；实现与基线见
 > [R1_2B_BASELINE_20260806.md](../validation/R1_2B_BASELINE_20260806.md)）；
-> R1.2C（Checkpoint）未开始。R1.2 目标：让 WISTERIA
+> R1.2C（Checkpoint）**契约已冻结，实现已完成**（精简编排稿 v2：
+> [R1_2C_FRAME_CHECKPOINT_CONTRACT.md](R1_2C_FRAME_CHECKPOINT_CONTRACT.md)）。
+> R1.2 目标：让 WISTERIA
 > 可以可靠地逐帧导出、seek、回放；相同输入（资产 + 动作 + 参数 + 帧 +
 > 固定步配置）产生一致的 Pose/Physics/Vertex 结果。本阶段**不碰 Bullet
 > 高级参数**（solver iterations、CCD、margin、damping 等仍属 #5 社区
@@ -300,16 +303,25 @@ struct FrameStateHashes
     DeterminismHashes physics;
 };
 
-// 输入 Fingerprint：资产 + 动作 + 配置 + 目标帧 + 状态 Hash。
-// 用于 checkpoint 兼容性校验；恢复时拒绝不同 PMX/刚体布局/VMD/
-// Replay Profile/hash schema。
+// R1.2C 输入 Fingerprint（唯一结构，取代早期 AssetFingerprint 草案）：
+// 资产身份 + 执行配置 + 覆盖状态 + 捕获状态 Hash。唯一规范源见
+// R1_2C_FRAME_CHECKPOINT_CONTRACT.md §3。
+struct AssetIdentity
+{
+    std::uint64_t pmxFileHash = 0;
+    std::uint64_t vmdFileHash = 0;
+    bool hasMotion = false;
+    std::uint64_t layoutFingerprint = 0;
+    std::uint64_t physicsConfigurationFingerprint = 0;
+};
+
 struct DeterminismFingerprint
 {
-    std::uint32_t schemaVersion;
-    AssetFingerprint model;
-    AssetFingerprint motion;
+    std::uint32_t schemaVersion = 1;
+    MotionFrameIndex frame = 0;
+    AssetIdentity asset;
     ReplayConfig config;
-    MotionFrameIndex targetFrame;
+    UserOverrideState overrides;   // 见 §12
     FrameStateHashes state;
 };
 ```
@@ -421,10 +433,16 @@ virtual TimelineStatus RestorePhysicsSnapshot(
     const PhysicsSnapshot& snapshot
 ) = 0;
 
-// R1.2C
-virtual FrameCheckpoint CreateCheckpoint() const = 0;
+// R1.2C（语义见 R1_2C_FRAME_CHECKPOINT_CONTRACT.md）
+virtual TimelineStatus CreateCheckpoint(
+    FrameCheckpoint& output
+) const = 0;
 virtual TimelineStatus RestoreCheckpoint(
     const FrameCheckpoint& checkpoint
+) = 0;
+virtual TimelineStatus ReplayFromCheckpoint(
+    const FrameCheckpoint& checkpoint,
+    MotionFrameIndex target
 ) = 0;
 ```
 
@@ -433,6 +451,8 @@ virtual TimelineStatus RestoreCheckpoint(
 ```cpp
 struct UserOverrideState
 {
+    // 稳定排序（UTF-8 名称字典序）、无重复名称；
+    // 排序是序列化/Hash 契约的一部分。
     std::vector<std::pair<std::string, float>> morphOverrides;
     std::vector<std::pair<std::string, bool>> ikOverrides;
     bool physicsEnabled = true;
@@ -450,7 +470,11 @@ struct FrameCheckpoint
 ```
 
 VMD 派生的 Morph/Pose/Physics 通过 tick 重新求值，不作为覆盖配置恢复。
-`DeterminismFingerprint` = §9 的三个 hash + schema version。
+`DeterminismFingerprint` 唯一结构见 §9 / R1.2C 契约 §3。
+`CreateCheckpoint` 捕获当前 canonical 帧（不接收 frame 参数）；失败不
+修改 output。`ReplayFromCheckpoint` 内部先 `RestoreCheckpoint`，再从
+`frame+1` 推进到 target；`EvaluateTick(ReplayFromCheckpoint)` 仅保留为
+预留枚举，不是真实入口。
 
 ### C ABI 边界（R1.4 才开放）
 
@@ -503,10 +527,23 @@ double VMD frame → 明确 FrameToTick 转换 → MotionFrameIndex
 
 ### R1.2C：Checkpoint
 
-- 显式 `FrameCheckpoint` 值对象（只存覆盖配置 + 物理快照 + fingerprint）；
-- 基于 R1.2B 的 Canonical Restore Sequence（不再重新实现 canonicalization）；
-- 恢复动画/覆盖并**重建** Kinematic target，再置 `deterministicPrepared=true`；
-- 证明 restore→replay == from start 后开放 `ReplayFromCheckpoint`。
+- 显式 `FrameCheckpoint` 值对象与唯一 `DeterminismFingerprint`（§9 /
+  R1.2C 契约 §3）；
+- 公开入口：`CreateCheckpoint(output)` / `RestoreCheckpoint` /
+  `ReplayFromCheckpoint(checkpoint, target)`；
+- 恢复顺序：只读校验 → 替换 config/overrides → 动画/Morph/IK 求值 →
+  重建 Kinematic target → `RestorePhysicsSnapshot`（R1.2B 内部已完成
+  after-physics/Pose/Vertex）→ 重算校验 Hash → `prepared=true`；
+- off-by-one：物理已完成 N 帧，`expectedNextFrame=N+1`；`target<N` 拒绝、
+  `target==N` 零步、`target==UINT64_MAX` 拒绝；
+- **非法 target 在 Restore 前拒绝**：静态校验 → target 范围/溢出 →
+  Restore → N+1..target；Restore 成功后重放循环任一 Step 失败 → Poisoned；
+- `CreateCheckpoint` 要求 canonical 且三个状态 Hash 全部 valid，
+  失败不修改 output；
+- 等价性测试必须使用分叉实例 C（不同历史/overrides），禁止“同一实例停在
+  N 再继续”的弱测试；
+- 证明 restore→replay == from start 后开放
+  `ReplayFromCheckpoint` 与三个 checkpoint 能力位。
 
 ## 14. 明确不做
 
