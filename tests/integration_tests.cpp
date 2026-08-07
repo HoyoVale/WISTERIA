@@ -9627,6 +9627,7 @@ void TestR14FrameDomainGuard()
     );
 }
 
+<<<<<<< HEAD
 void TestR14RuntimeCreationOptions()
 {
     const std::filesystem::path modelPath = FixturePath("pmx-physics");
@@ -9726,6 +9727,8 @@ void TestR14RuntimeCreationOptions()
     }
 }
 
+=======
+>>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 }
 
 int main()
@@ -10058,10 +10061,13 @@ int main()
         TestR14FrameDomainGuard
     );
     failures += !RunTest(
+<<<<<<< HEAD
         "R1.4 runtime creation options",
         TestR14RuntimeCreationOptions
     );
     failures += !RunTest(
+=======
+>>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
         "R1.3 trace reproducible and schema",
         TestR13TraceReproducibleAndSchema
     );
