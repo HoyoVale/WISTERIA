@@ -19,7 +19,12 @@ namespace wisteria
 struct MmdPhysicsAuditRange
 {
     bool available = false;
+    // False when any input sample was non-finite (or negative, which is
+    // invalid for these non-negative metrics). Bad samples are counted, not
+    // silently dropped.
+    bool finite = true;
     std::size_t count = 0U;
+    std::size_t nonFiniteCount = 0U;
     std::size_t zeroCount = 0U;
     float minPositive = 0.0f;
     float median = 0.0f;
@@ -36,6 +41,7 @@ struct MmdPhysicsAuditBounds
 
 struct MmdPhysicsAuditResult
 {
+    bool finite = true;
     MmdPhysicsAuditBounds modelBounds;
     bool modelHeightAvailable = false;
     float modelHeight = 0.0f;

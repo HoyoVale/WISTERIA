@@ -193,8 +193,19 @@ bool ValidateConfiguration(
         config.compatibility;
     if (!(compatibility.gravityScale > 0.0f) ||
         !IsFinite(compatibility.gravityScale) ||
+        compatibility.gravityScale != 1.0f ||
         !IsImplementedLinkedBodyMode(compatibility.linkedBodyCollision) ||
         !IsImplementedMode2(compatibility.mode2))
+    {
+        return false;
+    }
+    // Phase 0A: no adaptive enhancement is implemented on the Saba runtime.
+    // A configuration claiming otherwise would describe behaviour that does
+    // not exist while still changing the effective fingerprint.
+    if (config.adaptive.recoveryEnabled ||
+        config.adaptive.adaptiveCcdEnabled ||
+        config.adaptive.adaptiveMarginEnabled ||
+        config.adaptive.localChainEnhancementsEnabled)
     {
         return false;
     }

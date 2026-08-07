@@ -663,11 +663,20 @@ TimelineStatus SabaMmdRuntimeModel::SetMmdPhysicsConfiguration(
 {
     if (!ValidateConfiguration(configuration))
         return TimelineStatus::InvalidState;
+    // The Saba backend only accepts its own identity; arbitrary non-empty
+    // strings must not pass through the runtime gate.
+    if (configuration.identity.backend != "saba-mmd" ||
+        configuration.identity.baseline != "saba-baseline-v1")
+    {
+        return TimelineStatus::InvalidState;
+    }
     if (this->impl->model != nullptr)
     {
         // Phase 0A: profiles apply before Initialize only; switching the
         // effective behaviour of a live runtime is unsupported. Label-only
-        // changes (identical behaviour hash) remain accepted.
+        // changes (identical behaviour hash) update metadata only and never
+        // touch the Bullet world: SetPhysicsSettings / ApplyR13PhysicsProfile
+        // would re-select motion states and re-add constraints.
         const std::uint64_t previous = ComputeEffectiveConfigurationFingerprint(
             this->impl->physicsConfiguration
         );
@@ -676,6 +685,9 @@ TimelineStatus SabaMmdRuntimeModel::SetMmdPhysicsConfiguration(
         );
         if (previous != next)
             return TimelineStatus::UnsupportedReplayProfile;
+        this->impl->physicsConfiguration.identity =
+            configuration.identity;
+        return TimelineStatus::Ok;
     }
     this->impl->physicsConfiguration = configuration;
     this->SetPhysicsSettings(configuration.runtime);
@@ -701,35 +713,41 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
     if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
         return false;
 
-    output = MmdPhysicsTraceFrame{};
-    output.presetIdentity = FormatConfigurationIdentity(
+    // Trace is canonical-only: ordinary interactive Update never carries the
+    // deterministic cold-step execution profile. Failures never modify the
+    // caller's output.
+    if (!this->impl->lastBoundaryCanonical)
+        return false;
+
+    MmdPhysicsTraceFrame candidate;
+    candidate.presetIdentity = FormatConfigurationIdentity(
         this->impl->physicsConfiguration
     );
-    output.effectiveConfigurationHash = FormatTraceHex(
+    candidate.effectiveConfigurationHash = FormatTraceHex(
         ComputeEffectiveConfigurationFingerprint(
             this->impl->physicsConfiguration
         )
     );
-    output.modelHash = FormatTraceHex(this->impl->pmxFileHash);
-    output.motionHash = FormatTraceHex(this->impl->vmdFileHash);
-    output.hasMotion = this->impl->hasMotion;
-    output.frame = this->impl->lastMotionFrame;
-    output.physicsTick = this->impl->lastPhysicsTick;
-    output.canonical = this->impl->lastBoundaryCanonical;
+    candidate.modelHash = FormatTraceHex(this->impl->pmxFileHash);
+    candidate.motionHash = FormatTraceHex(this->impl->vmdFileHash);
+    candidate.hasMotion = this->impl->hasMotion;
+    candidate.frame = this->impl->lastMotionFrame;
+    candidate.physicsTick = this->impl->lastPhysicsTick;
+    candidate.canonical = this->impl->lastBoundaryCanonical;
 
     FrameStateHashes hashes;
     if (this->BuildFrameStateHashes(hashes) == TimelineStatus::Ok)
     {
-        output.poseHash.hex = FormatTraceHex(hashes.pose.exactHash);
-        output.poseHash.valid = hashes.pose.valid;
-        output.physicsHash.hex = FormatTraceHex(hashes.physics.exactHash);
-        output.physicsHash.valid = hashes.physics.valid;
-        output.vertexHash.hex = FormatTraceHex(hashes.vertex.exactHash);
-        output.vertexHash.valid = hashes.vertex.valid;
+        candidate.poseHash.hex = FormatTraceHex(hashes.pose.exactHash);
+        candidate.poseHash.valid = hashes.pose.valid;
+        candidate.physicsHash.hex = FormatTraceHex(hashes.physics.exactHash);
+        candidate.physicsHash.valid = hashes.physics.valid;
+        candidate.vertexHash.hex = FormatTraceHex(hashes.vertex.exactHash);
+        candidate.vertexHash.valid = hashes.vertex.valid;
     }
 
     auto* rigidBodies = manager->GetRigidBodys();
-    output.bodies.reserve(rigidBodies->size());
+    candidate.bodies.reserve(rigidBodies->size());
     for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
     {
         btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
@@ -760,7 +778,7 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
         }
         traceBody.linearVelocity = ToGlmVec3(body->getLinearVelocity());
         traceBody.angularVelocity = ToGlmVec3(body->getAngularVelocity());
-        output.bodies.push_back(std::move(traceBody));
+        candidate.bodies.push_back(std::move(traceBody));
     }
 
     const Pose& pose = this->GetPose();
@@ -770,7 +788,7 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
         localMatrices.size(),
         globalMatrices.size()
     );
-    output.bones.reserve(boneCount);
+    candidate.bones.reserve(boneCount);
     for (std::size_t index = 0U; index < boneCount; ++index)
     {
         MmdPhysicsTraceBone traceBone;
@@ -789,11 +807,11 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
                 ] = globalMatrices[index][column][row];
             }
         }
-        output.bones.push_back(std::move(traceBone));
+        candidate.bones.push_back(std::move(traceBone));
     }
 
     auto* joints = manager->GetJoints();
-    output.joints.reserve(joints->size());
+    candidate.joints.reserve(joints->size());
     for (std::size_t index = 0U; index < joints->size(); ++index)
     {
         MmdPhysicsTraceJoint traceJoint;
@@ -802,7 +820,7 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
             (*joints)[index]->GetConstraint(),
             traceJoint
         );
-        output.joints.push_back(std::move(traceJoint));
+        candidate.joints.push_back(std::move(traceJoint));
     }
 
     if (btDiscreteDynamicsWorld* world =
@@ -843,11 +861,11 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
             pair.normalImpulse = impulse;
             if (pair.bodyA > pair.bodyB)
                 std::swap(pair.bodyA, pair.bodyB);
-            output.contactPairs.push_back(std::move(pair));
+            candidate.contactPairs.push_back(std::move(pair));
         }
         std::sort(
-            output.contactPairs.begin(),
-            output.contactPairs.end(),
+            candidate.contactPairs.begin(),
+            candidate.contactPairs.end(),
             [](const MmdPhysicsTraceContactPair& left,
                const MmdPhysicsTraceContactPair& right)
             {
@@ -857,6 +875,7 @@ bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
             }
         );
     }
+    output = std::move(candidate);
     return true;
 }
 

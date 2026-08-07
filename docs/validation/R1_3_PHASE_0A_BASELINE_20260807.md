@@ -100,13 +100,51 @@ integration 在 GL 初始化处 abort。门禁以
 LIBGL_ALWAYS_SOFTWARE=1（llvmpipe）运行，与 R1.2 基线一致。
 ```
 
-## 5. 未完成 / 后续
+## 5. Final Validation Fix（评审轮 3，2026-08-07）
+
+评审结论：主体工程成功，Final Validation Fix Required。六项窄修复已全部
+落地并复跑四套矩阵：
+
+```text
+1. ValidateConfiguration 拒绝 Phase 0A 未实现配置：
+   gravityScale != 1.0 与任意 adaptive=true 一律 Invalid
+2. Saba Runtime 校验 backend/baseline 身份：
+   非 "saba-mmd" / "saba-baseline-v1" 一律 InvalidState
+3. Initialize 后相同 effective config 的标签切换只更新 metadata，
+   不再触碰 Bullet（不重选 motion state、不重新激活、不 remove/re-add
+   约束）；新增逐位状态不变断言
+4. CapturePhysicsTraceFrame 只在 canonical boundary 返回 true，
+   失败不改 output（candidate 模式）
+5. 审计不再静默过滤 NaN/Inf：MmdPhysicsAuditRange/Result 增加
+   finite 与 nonFiniteCount，坏样本计数并保留合法样本统计
+6. Linked-body 行为证据：
+   - 新增 Bullet 层单元测试（两体重叠 + constraint：disable=false 有接触、
+     disable=true 无接触、ground 接触不受影响）
+   - CORE 集成测试断言 ground 接触数量与接触拓扑在两种模式下不变；
+     pmx_physics 的 6 个相连对从不重叠，故无相连接触（已记录说明）
+7. 删除 MmdPhysicsDiagnosticOverrides 中的死字段 trace
+   （MmdPhysicsTraceOptions 保留为 Phase 0B 工具层预留）
+```
+
+修复后四套矩阵复跑：
+
+```text
+Windows CORE          CTest 5/5
+Windows FULL_ASSETS   CTest 5/5
+Linux CORE            CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+```
+
+## 6. 未完成 / 后续
 
 - Linux 门禁须以 `LIBGL_ALWAYS_SOFTWARE=1` 运行（WSLg D3D12/LLVM 冲突）。
 - Trace joint 误差目前覆盖 6DOF 族约束（Saba 全部关节均为此类）。
 - `ForceEnableLinkedPairsDiagnostic`、`StrictBoneLength` 按契约保持
   Reserved，未实现。
 - 跨 Profile Checkpoint 实验入口按契约 Phase 0A 不实现。
+- 尚无 CORE 夹具包含“关节相连且重叠”的刚体对；真正的 PMX 级
+  linked-collision 行为夹具留给 Phase 0B 社区对照时补充。
 
 **Phase 0A 完成（2026-08-07）**：Windows/Linux × CORE/FULL_ASSETS
-四套矩阵全部 CTest 5/5。下一阶段：Phase 0B 社区实现对照（单独契约）。
+四套矩阵全部 CTest 5/5；Final Validation Fix 六项全部闭合。
+下一阶段：Phase 0B 社区实现对照（单独契约）。

@@ -85,6 +85,8 @@ struct MmdPhysicsAdaptivePolicy
 struct MmdPhysicsTraceOptions
 {
     // Records Mode 2 translation delta; never changes physics behaviour.
+    // Reserved for Phase 0B trace tooling: Phase 0A trace already records
+    // the full Mode 2 transform, so no configuration carries this option.
     bool recordMode2TranslationDelta = false;
 };
 
@@ -100,7 +102,6 @@ struct MmdPhysicsDiagnosticOverrides
 {
     std::optional<MmdLinkedBodyCollisionMode> linkedBodyCollision;
     std::optional<MmdMode2WritebackMode> mode2;
-    MmdPhysicsTraceOptions trace;
 };
 
 // Normal-run construction entry. Phase 0A default preset is MmdRaw; every

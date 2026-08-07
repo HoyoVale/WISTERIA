@@ -416,6 +416,11 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME wisteria.${TIER} COMMAND wisteria_${TIER}_tests)
     endforeach()
+    # The linked-body A/B semantic test drives Bullet directly (the engine
+    # wrappers intentionally hide bt* from public headers).
+    target_include_directories(wisteria_unit_tests PRIVATE
+        ${WISTERIA_BULLET_ROOT}/src
+    )
     if(WISTERIA_BUILD_NATIVE)
         target_link_libraries(wisteria_integration_tests PRIVATE wisteria_native)
         target_compile_definitions(wisteria_integration_tests PRIVATE

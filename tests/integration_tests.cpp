@@ -8706,6 +8706,80 @@ void TestR13LinkedBodyAbSmoke()
             ),
         "linked-body override did not change the effective hash"
     );
+
+    // Behaviour evidence on the CORE fixture:
+    // - ground contacts must be identical and non-zero under both modes
+    //   (DisableConstraintLinkedPairs never affects the ground);
+    // - pmx_physics has 6 constraint-linked pairs, but none of them overlap,
+    //   so linked contacts are zero in both modes. The "linked collision is
+    //   really disabled" semantic is covered by the Bullet-level unit test
+    //   (addConstraint(constraint, true)) which is the exact mechanism the
+    //   Saba adapter uses.
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(imported.mmdPhysics.has_value(), "fixture lost physics data");
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> linkedPairs;
+    for (const MmdJointDefinition& joint :
+         imported.mmdPhysics->Joints())
+    {
+        if (joint.bodyA != InvalidRigidBodyIndex &&
+            joint.bodyB != InvalidRigidBodyIndex &&
+            joint.bodyA != joint.bodyB)
+        {
+            linkedPairs.push_back({
+                std::min(joint.bodyA, joint.bodyB),
+                std::max(joint.bodyA, joint.bodyB)
+            });
+        }
+    }
+    Require(
+        !linkedPairs.empty(),
+        "pmx-physics fixture unexpectedly has no linked pairs"
+    );
+    auto rawRuntime = CreateConfiguredRuntime(modelPath, raw);
+    const std::vector<MmdPhysicsTraceFrame> rawTrace =
+        CaptureTraceFrames(*rawRuntime, 300U);
+    auto countContacts = [&linkedPairs](
+        const std::vector<MmdPhysicsTraceFrame>& trace)
+    {
+        int linkedContacts = 0;
+        int groundContacts = 0;
+        for (const MmdPhysicsTraceFrame& frame : trace)
+        {
+            for (const MmdPhysicsTraceContactPair& pair :
+                 frame.contactPairs)
+            {
+                if (pair.bodyA == MmdPhysicsTraceGroundBodyIndex ||
+                    pair.bodyB == MmdPhysicsTraceGroundBodyIndex)
+                {
+                    ++groundContacts;
+                    continue;
+                }
+                for (const auto& link : linkedPairs)
+                {
+                    if ((pair.bodyA == link.first &&
+                         pair.bodyB == link.second) ||
+                        (pair.bodyA == link.second &&
+                         pair.bodyB == link.first))
+                    {
+                        ++linkedContacts;
+                        break;
+                    }
+                }
+            }
+        }
+        return std::pair<int, int>{linkedContacts, groundContacts};
+    };
+    const auto rawCounts = countContacts(rawTrace);
+    const auto disableCounts = countContacts(traceA);
+    Require(
+        rawCounts.second > 0 && disableCounts.second > 0 &&
+            rawCounts.second == disableCounts.second,
+        "DisableConstraintLinkedPairs changed ground contacts"
+    );
+    Require(
+        rawCounts.first == 0 && disableCounts.first == 0,
+        "CORE fixture unexpectedly produced linked contacts"
+    );
 }
 
 void TestR13Mode2AbSmoke()
@@ -8864,6 +8938,13 @@ void TestR13MmdPhysicsConfigurationRuntime()
         runtime.SetMmdPhysicsConfiguration(raw) == TimelineStatus::Ok,
         "pre-initialize MMD_RAW configuration apply failed"
     );
+    MmdPhysicsConfiguration foreign = raw;
+    foreign.identity.backend = "other-backend";
+    Require(
+        runtime.SetMmdPhysicsConfiguration(foreign) ==
+            TimelineStatus::InvalidState,
+        "foreign backend identity was accepted"
+    );
     MmdPhysicsConfiguration readBack;
     Require(
         runtime.GetMmdPhysicsConfiguration(readBack),
@@ -8876,6 +8957,20 @@ void TestR13MmdPhysicsConfigurationRuntime()
     Require(
         runtime.Initialize(),
         "Saba runtime failed to initialize with R1.3 configuration"
+    );
+
+    // Metadata-only switch must not touch the Bullet world: every captured
+    // state must stay bit-identical. Establish a canonical boundary first.
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(&runtime);
+    Require(stepper != nullptr, "runtime lost the deterministic stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed before the label switch"
+    );
+    MmdPhysicsTraceFrame before;
+    Require(
+        runtime.CapturePhysicsTraceFrame(before),
+        "trace capture before label switch failed"
     );
 
     // Label-only switch (behaviour-identical) after Initialize stays valid.
@@ -8894,6 +8989,59 @@ void TestR13MmdPhysicsConfigurationRuntime()
         "label switch identity mismatch"
     );
 
+    MmdPhysicsTraceFrame after;
+    Require(
+        runtime.CapturePhysicsTraceFrame(after),
+        "trace capture after label switch failed"
+    );
+    Require(
+        before.poseHash.hex == after.poseHash.hex &&
+            before.physicsHash.hex == after.physicsHash.hex &&
+            before.vertexHash.hex == after.vertexHash.hex,
+        "label switch changed a state hash"
+    );
+    Require(
+        before.bodies.size() == after.bodies.size(),
+        "label switch changed the rigid-body set"
+    );
+    for (std::size_t index = 0U; index < before.bodies.size(); ++index)
+    {
+        const MmdPhysicsTraceBody& left = before.bodies[index];
+        const MmdPhysicsTraceBody& right = after.bodies[index];
+        Require(
+            left.worldTransform.position ==
+                    right.worldTransform.position &&
+                left.worldTransform.rotationBasis ==
+                    right.worldTransform.rotationBasis &&
+                left.interpolationWorldTransform.position ==
+                    right.interpolationWorldTransform.position &&
+                left.interpolationWorldTransform.rotationBasis ==
+                    right.interpolationWorldTransform.rotationBasis &&
+                left.motionStateTransform.position ==
+                    right.motionStateTransform.position &&
+                left.motionStateTransform.rotationBasis ==
+                    right.motionStateTransform.rotationBasis &&
+                left.motionStateAvailable == right.motionStateAvailable &&
+                left.linearVelocity == right.linearVelocity &&
+                left.angularVelocity == right.angularVelocity,
+            "label switch changed a rigid-body transform"
+        );
+    }
+    Require(
+        before.bones.size() == after.bones.size(),
+        "label switch changed the bone set"
+    );
+    for (std::size_t index = 0U; index < before.bones.size(); ++index)
+    {
+        Require(
+            before.bones[index].localMatrix ==
+                    after.bones[index].localMatrix &&
+                before.bones[index].globalMatrix ==
+                    after.bones[index].globalMatrix,
+            "label switch changed a bone matrix"
+        );
+    }
+
     // Phase 0A forbids switching effective behaviour of a live runtime.
     MmdPhysicsConfiguration changed = community;
     changed.runtime.gravity.y = -9.8f;
@@ -8910,6 +9058,67 @@ void TestR13MmdPhysicsConfigurationRuntime()
         runtime.SetMmdPhysicsConfiguration(anonymous) ==
             TimelineStatus::InvalidState,
         "anonymous configuration was accepted by the runtime"
+    );
+}
+
+void TestR13TraceCanonicalGate()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    SabaMmdRuntimeModel runtime(modelPath);
+
+    MmdPhysicsTraceFrame untouched;
+    untouched.frame = 999U;
+    untouched.presetIdentity = "sentinel";
+    Require(
+        !runtime.CapturePhysicsTraceFrame(untouched),
+        "trace capture succeeded before Initialize"
+    );
+    Require(
+        untouched.frame == 999U &&
+            untouched.presetIdentity == "sentinel",
+        "failed trace capture modified the caller's output"
+    );
+
+    Require(runtime.Initialize(), "Saba runtime failed to initialize");
+    Require(
+        !runtime.CapturePhysicsTraceFrame(untouched),
+        "trace capture succeeded outside a canonical boundary"
+    );
+
+    runtime.Update(1.0f / 30.0f);
+    Require(
+        !runtime.CapturePhysicsTraceFrame(untouched),
+        "trace capture succeeded after an ordinary Update"
+    );
+
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(&runtime);
+    Require(stepper != nullptr, "runtime lost the deterministic stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed"
+    );
+    MmdPhysicsTraceFrame canonical;
+    Require(
+        runtime.CapturePhysicsTraceFrame(canonical),
+        "trace capture failed at the canonical frame 0"
+    );
+    Require(
+        canonical.canonical && canonical.frame == 0U,
+        "canonical frame 0 trace is not canonical"
+    );
+    Require(
+        stepper->StepMotionFrameExact(1U, {}) == TimelineStatus::Ok,
+        "StepMotionFrameExact failed"
+    );
+    Require(
+        runtime.CapturePhysicsTraceFrame(canonical),
+        "trace capture failed after StepMotionFrameExact"
+    );
+    Require(
+        canonical.canonical && canonical.frame == 1U &&
+            canonical.physicsTick == 4U,
+        "post-step trace is not the canonical frame 1"
     );
 }
 
@@ -9235,6 +9444,10 @@ int main()
     failures += !RunTest(
         "R1.3 config apply on Saba runtime",
         TestR13MmdPhysicsConfigurationRuntime
+    );
+    failures += !RunTest(
+        "R1.3 trace canonical gate",
+        TestR13TraceCanonicalGate
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",

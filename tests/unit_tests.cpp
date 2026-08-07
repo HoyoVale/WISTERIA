@@ -6,6 +6,8 @@
 #include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 #include "trace_jsonl.hpp"
 
+#include <btBulletDynamicsCommon.h>
+
 #include <limits>
 
 namespace
@@ -78,6 +80,131 @@ void TestDeterminismHashValidation()
     Require(
         !HashPhysics(duplicateIndexPhysics).valid,
         "Duplicate rigid-body index produced a valid hash"
+    );
+}
+
+void TestBulletLinkedBodyCollisionDisable()
+{
+    // R1.3 §8.1: DisableConstraintLinkedPairs must suppress contact only for
+    // constraint-linked pairs and must never affect ground contacts. This is
+    // the exact Bullet mechanism used by the Saba adapter (removeConstraint
+    // + addConstraint(constraint, disable)).
+    btDefaultCollisionConfiguration configuration;
+    btCollisionDispatcher dispatcher(&configuration);
+    btDbvtBroadphase broadphase;
+    btSequentialImpulseConstraintSolver solver;
+    btDiscreteDynamicsWorld world(
+        &dispatcher,
+        &broadphase,
+        &solver,
+        &configuration
+    );
+    world.setGravity(btVector3(0.0f, 0.0f, 0.0f));
+
+    btBoxShape boxShape(btVector3(0.5f, 0.5f, 0.5f));
+    btStaticPlaneShape groundShape(btVector3(0.0f, 1.0f, 0.0f), 0.0f);
+
+    btTransform groundTransform;
+    groundTransform.setIdentity();
+    btDefaultMotionState groundMotion(groundTransform);
+    btRigidBody::btRigidBodyConstructionInfo groundInfo(
+        0.0f,
+        &groundMotion,
+        &groundShape,
+        btVector3(0.0f, 0.0f, 0.0f)
+    );
+    btRigidBody ground(groundInfo);
+    world.addRigidBody(&ground, 1, 1);
+
+    btTransform startA;
+    startA.setIdentity();
+    startA.setOrigin(btVector3(0.0f, 0.25f, 0.0f));
+    btDefaultMotionState motionA(startA);
+    btRigidBody::btRigidBodyConstructionInfo infoA(
+        1.0f,
+        &motionA,
+        &boxShape,
+        btVector3(1.0f, 1.0f, 1.0f)
+    );
+    btRigidBody bodyA(infoA);
+    btDefaultMotionState motionB(startA);
+    btRigidBody::btRigidBodyConstructionInfo infoB(
+        1.0f,
+        &motionB,
+        &boxShape,
+        btVector3(1.0f, 1.0f, 1.0f)
+    );
+    btRigidBody bodyB(infoB);
+    world.addRigidBody(&bodyA, 1, 1);
+    world.addRigidBody(&bodyB, 1, 1);
+
+    btTransform frame;
+    frame.setIdentity();
+    btPoint2PointConstraint constraint(
+        bodyA,
+        bodyB,
+        btVector3(0.0f, 0.0f, 0.0f),
+        btVector3(0.0f, 0.0f, 0.0f)
+    );
+
+    const auto pairContact = [&world](
+        const btCollisionObject* first,
+        const btCollisionObject* second)
+    {
+        btDispatcher* dispatch = world.getDispatcher();
+        for (int index = 0; index < dispatch->getNumManifolds(); ++index)
+        {
+            const btPersistentManifold* manifold =
+                dispatch->getManifoldByIndexInternal(index);
+            if (manifold == nullptr || manifold->getNumContacts() == 0)
+                continue;
+            const btCollisionObject* body0 = manifold->getBody0();
+            const btCollisionObject* body1 = manifold->getBody1();
+            if ((body0 == first && body1 == second) ||
+                (body0 == second && body1 == first))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto clearManifolds = [&world]()
+    {
+        btDispatcher* dispatch = world.getDispatcher();
+        for (int index = dispatch->getNumManifolds() - 1;
+             index >= 0;
+             --index)
+        {
+            dispatch->clearManifold(
+                dispatch->getManifoldByIndexInternal(index)
+            );
+        }
+    };
+
+    // PmxMaskOnly equivalent: addConstraint without the disable flag.
+    world.addConstraint(&constraint, false);
+    world.stepSimulation(1.0f / 60.0f, 1, 1.0f / 60.0f);
+    Require(
+        pairContact(&bodyA, &bodyB),
+        "linked overlapping bodies did not collide with disable=false"
+    );
+    Require(
+        pairContact(&bodyA, &ground),
+        "body-ground contact missing with disable=false"
+    );
+
+    // DisableConstraintLinkedPairs equivalent: re-add with the disable flag.
+    world.removeConstraint(&constraint);
+    world.addConstraint(&constraint, true);
+    clearManifolds();
+    world.stepSimulation(1.0f / 60.0f, 1, 1.0f / 60.0f);
+    Require(
+        !pairContact(&bodyA, &bodyB),
+        "linked overlapping bodies still collide with disable=true"
+    );
+    Require(
+        pairContact(&bodyA, &ground),
+        "body-ground contact was affected by linked-body disable"
     );
 }
 
@@ -2218,6 +2345,42 @@ void TestMmdPhysicsConfigurationValidation()
         !ValidateConfiguration(badOrigin),
         "unknown originPreset was accepted"
     );
+
+    // Phase 0A rejects unimplemented behaviour claims: gravityScale is not
+    // applied by the Saba runtime yet, and no adaptive enhancement exists.
+    MmdPhysicsConfiguration badScale =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    badScale.compatibility.gravityScale = 2.0f;
+    Require(
+        !ValidateConfiguration(badScale),
+        "gravityScale != 1 was accepted"
+    );
+
+    MmdPhysicsConfiguration adaptiveOn =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    adaptiveOn.adaptive.recoveryEnabled = true;
+    Require(
+        !ValidateConfiguration(adaptiveOn),
+        "unimplemented recovery flag was accepted"
+    );
+    adaptiveOn = BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    adaptiveOn.adaptive.adaptiveCcdEnabled = true;
+    Require(
+        !ValidateConfiguration(adaptiveOn),
+        "unimplemented adaptive CCD flag was accepted"
+    );
+    adaptiveOn = BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    adaptiveOn.adaptive.adaptiveMarginEnabled = true;
+    Require(
+        !ValidateConfiguration(adaptiveOn),
+        "unimplemented adaptive margin flag was accepted"
+    );
+    adaptiveOn = BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    adaptiveOn.adaptive.localChainEnhancementsEnabled = true;
+    Require(
+        !ValidateConfiguration(adaptiveOn),
+        "unimplemented chain enhancement flag was accepted"
+    );
 }
 
 void TestMmdPhysicsConfigurationDerivation()
@@ -2613,6 +2776,41 @@ void TestMmdPhysicsAudit()
             !emptyAudit.shapeMarginRatioAvailable,
         "empty audit reported unavailable data as available"
     );
+
+    // Non-finite samples must be reported, never silently dropped, while
+    // valid samples still contribute statistics.
+    std::vector<Bone> mixedBones(3U);
+    mixedBones[0].name = "root";
+    mixedBones[1].name = "child-valid";
+    mixedBones[1].parentIndex = 0U;
+    mixedBones[1].bindLocalMatrix =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    mixedBones[2].name = "child-nan";
+    mixedBones[2].parentIndex = 0U;
+    mixedBones[2].bindLocalMatrix =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f));
+    mixedBones[2].bindLocalMatrix[3] = glm::vec4(
+        std::numeric_limits<float>::quiet_NaN(),
+        0.0f,
+        0.0f,
+        1.0f
+    );
+    const MmdPhysicsAuditResult nanAudit = RunMmdPhysicsAudit(
+        asset,
+        mixedBones,
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)
+    );
+    Require(
+        !nanAudit.finite && !nanAudit.boneLength.finite,
+        "audit did not report non-finite bone lengths"
+    );
+    Require(
+        nanAudit.boneLength.nonFiniteCount == 1U &&
+            nanAudit.boneLength.count == 1U &&
+            nanAudit.boneLength.available &&
+            NearlyEqual(nanAudit.boneLength.median, 1.0f),
+        "audit did not separate valid samples from non-finite ones"
+    );
 }
 
 int main()
@@ -2669,6 +2867,10 @@ int main()
     failures += !RunTest(
         "Determinism hash validation",
         TestDeterminismHashValidation
+    );
+    failures += !RunTest(
+        "Bullet linked-body collision disable",
+        TestBulletLinkedBodyCollisionDisable
     );
     failures += !RunTest(
         "MMD physics configuration presets",

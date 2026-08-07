@@ -44,8 +44,16 @@ MmdPhysicsAuditRange SummarizeRange(
     finiteValues.reserve(values.size());
     for (const float value : values)
     {
-        if (IsFinite(value) && value >= 0.0f)
-            finiteValues.push_back(value);
+        if (!IsFinite(value) || value < 0.0f)
+        {
+            // Bone lengths, body sizes and joint extents are non-negative;
+            // a negative or non-finite sample is bad data that must be
+            // reported instead of silently filtered.
+            ++result.nonFiniteCount;
+            result.finite = false;
+            continue;
+        }
+        finiteValues.push_back(value);
     }
     if (finiteValues.empty())
     {
@@ -179,6 +187,11 @@ MmdPhysicsAuditResult RunMmdPhysicsAudit(
         result.shapeMarginPerMedianBodySize =
             options.collisionMargin / result.rigidBodySize.median;
     }
+    result.finite =
+        result.boneLength.finite &&
+        result.rigidBodySize.finite &&
+        result.jointLinearRange.finite &&
+        result.jointAngularRangeDeg.finite;
     return result;
 }
 }  // namespace wisteria
