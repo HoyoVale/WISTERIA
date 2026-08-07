@@ -1,5 +1,6 @@
 #include "native_context.hpp"
 
+#include "stable_native_context.hpp"
 #include "wisteria/platform/application.hpp"
 #include "../windows_path.hpp"
 
@@ -19,7 +20,10 @@ std::mutex gContextMutex;
 std::atomic<std::uint64_t> gNextOpaqueHandle{1U};
 }
 
-Context::Context() = default;
+Context::Context()
+    : stable(std::make_unique<StableContextState>())
+{
+}
 Context::~Context() = default;
 
 std::uint64_t AllocateOpaqueHandle() noexcept

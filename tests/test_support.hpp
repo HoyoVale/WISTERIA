@@ -20,6 +20,7 @@
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_native.h"
+#include "wisteria/native/wisteria_stable_runtime.h"
 #endif
 #include "wisteria/assets/saba_mmd_importer.hpp"
 #include "wisteria/animation/pose.hpp"

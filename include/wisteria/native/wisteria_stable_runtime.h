@@ -26,8 +26,16 @@
 extern "C" {
 #endif
 
-#ifndef WISTERIA_STABLE_API
-#define WISTERIA_STABLE_API
+#if defined(_WIN32)
+#  if defined(WISTERIA_NATIVE_BUILD)
+#    define WISTERIA_STABLE_API __declspec(dllexport)
+#  else
+#    define WISTERIA_STABLE_API __declspec(dllimport)
+#  endif
+#elif defined(__GNUC__) || defined(__clang__)
+#  define WISTERIA_STABLE_API __attribute__((visibility("default")))
+#else
+#  define WISTERIA_STABLE_API
 #endif
 
 /* --- version layering (contract §2A) -------------------------------- */

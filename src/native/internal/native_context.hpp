@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 
 namespace wisteria
@@ -52,6 +53,8 @@ struct SceneEntry
     std::unordered_map<WisteriaLight, LightEntry> lights;
 };
 
+struct StableContextState;
+
 struct Context
 {
     Context();
@@ -59,6 +62,10 @@ struct Context
 
     Context(const Context&) = delete;
     Context& operator=(const Context&) = delete;
+
+    // R1.4 Phase 0B: Stable C ABI v1 context-owned state. Always
+    // constructed so stable handles work on every registered context.
+    std::unique_ptr<StableContextState> stable;
 
     std::unordered_map<WisteriaModel, std::unique_ptr<ModelEntry>> models;
     std::unique_ptr<Application> application;
@@ -133,10 +140,11 @@ enum WisteriaStatus GuardAbi(Context& context, Function&& function) noexcept
 // status codes are returned directly by the body; unexpected C++ exceptions
 // are mapped here and never cross extern "C".
 template<typename Function>
-enum WisteriaStatus InvokeAbi(
+auto InvokeAbi(
     WisteriaContext contextHandle,
     Function&& function
 ) noexcept
+    -> std::invoke_result_t<Function, Context&>
 {
     // Resolve the lease outside the try block so the catch handlers can
     // record the error without re-running FindContext (whose mutex lock can

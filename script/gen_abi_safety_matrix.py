@@ -188,7 +188,10 @@ def main() -> int:
         # unguarded exports, and RAW_TRY/GUARDED are only allowed for the
         # documented exceptions (the global context creator and the three
         # proven leaves). New C API must go through InvokeAbi.
-        allowed_raw_try = {"wisteria_create_context"}
+        allowed_raw_try = {
+            "wisteria_create_context",
+            "wisteria_stable_context_create",
+        }
         unsafe = []
         for function, file, status in rows:
             if status == "DECLARED_ONLY":

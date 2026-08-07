@@ -2526,6 +2526,17 @@ void TestMmdCameraConversionMatchesSaba()
 
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 
+std::string PathUtf8(const std::filesystem::path& path)
+{
+    // The C ABI contract is UTF-8 paths; .string() would use the ANSI code
+    // page on Windows and bypass PathFromUtf8 (see TestNativeAbiSabaWhenAvailable).
+    const std::u8string utf8 = path.u8string();
+    return std::string(
+        reinterpret_cast<const char*>(utf8.data()),
+        utf8.size()
+    );
+}
+
 void TestNativeAbiLifecycle()
 {
     WisteriaContext context = 0U;
@@ -4009,6 +4020,330 @@ void TestNativeAbiHeadlessRenderWhenAvailable()
         throw;
     }
     std::filesystem::current_path(previousWorkingDirectory);
+}
+
+void TestStableRuntimeAbiE2E()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK &&
+            context != 0U,
+        "stable context create failed"
+    );
+
+    WisteriaRuntimeCreationOptionsV1 options;
+    memset(&options, 0, sizeof(options));
+    options.struct_size = sizeof(options);
+    options.struct_version = 1U;
+    options.compatibility = WISTERIA_PROFILE_ID_RAW;
+    options.fixed_time_step = 1.0f / 120.0f;
+    options.max_sub_steps = 10;
+    options.gravity[1] = -98.0f;
+    options.physics_enabled = 1;
+
+    WisteriaEntity entityA = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &options,
+            PathUtf8(modelPath).c_str(),
+            &entityA
+        ) == WISTERIA_STATUS_OK && entityA != 0U,
+        "stable entity create failed"
+    );
+
+    WisteriaRuntimeCapabilitiesV1 capabilities;
+    memset(&capabilities, 0, sizeof(capabilities));
+    Require(
+        wisteria_stable_entity_capabilities(
+            context,
+            entityA,
+            &capabilities
+        ) == WISTERIA_STATUS_OK,
+        "stable entity capabilities failed"
+    );
+    Require(
+        capabilities.struct_version == 1U &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_DETERMINISTIC_EXACT_FRAME) != 0U &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_CHECKPOINT_CAPTURE) != 0U &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_CHECKPOINT_SERIALIZATION) != 0U &&
+            capabilities.runtime_backend_id ==
+                WISTERIA_BACKEND_ID_SABA_MMD &&
+            capabilities.structural_frame_limit ==
+                std::numeric_limits<std::uint64_t>::max() / 4U &&
+            capabilities.max_deterministic_motion_frame == 16777216ULL,
+        "stable capabilities mismatch"
+    );
+
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(context, entityA) ==
+            WISTERIA_STATUS_OK,
+        "stable prepare_frame_zero failed"
+    );
+    Require(
+        wisteria_stable_entity_step_exact(context, entityA, 1U) ==
+            WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_step_exact(context, entityA, 2U) ==
+                WISTERIA_STATUS_OK,
+        "stable step_exact failed"
+    );
+
+    WisteriaCheckpoint checkpoint = 0U;
+    const std::uint32_t checkpointCreateStatus =
+        wisteria_stable_checkpoint_create(
+            context,
+            entityA,
+            &checkpoint
+        );
+    Require(
+        checkpointCreateStatus == WISTERIA_STATUS_OK && checkpoint != 0U,
+        "stable checkpoint create failed: status=" +
+            std::to_string(checkpointCreateStatus)
+    );
+    WisteriaCheckpointInfoV1 info;
+    memset(&info, 0, sizeof(info));
+    Require(
+        wisteria_stable_checkpoint_info(context, checkpoint, &info) ==
+            WISTERIA_STATUS_OK,
+        "stable checkpoint info failed"
+    );
+    Require(
+        info.frame == 2U && info.physics_tick == 8U &&
+            info.payload_kind == WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C &&
+            info.payload_schema ==
+                WISTERIA_CHECKPOINT_PAYLOAD_SCHEMA_MMD_R12C &&
+            info.build_compatibility_id ==
+                CurrentBuildCompatibilityId(),
+        "stable checkpoint info mismatch"
+    );
+
+    std::uint64_t wireSize = 0U;
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            checkpoint,
+            nullptr,
+            &wireSize
+        ) == WISTERIA_STATUS_OK && wireSize > 0U,
+        "stable checkpoint serialize size query failed"
+    );
+    std::vector<std::uint8_t> wire(static_cast<std::size_t>(wireSize));
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            checkpoint,
+            wire.data(),
+            &wireSize
+        ) == WISTERIA_STATUS_OK,
+        "stable checkpoint serialize failed"
+    );
+
+    std::vector<std::uint8_t> corrupted = wire;
+    corrupted[corrupted.size() / 2U] ^= 0x01U;
+    WisteriaCheckpoint rejected = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            corrupted.data(),
+            corrupted.size(),
+            &rejected
+        ) == WISTERIA_STATUS_INVALID_CHECKPOINT,
+        "stable deserialize accepted corrupted bytes"
+    );
+
+    WisteriaCheckpoint checkpointFromWire = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            wire.data(),
+            wire.size(),
+            &checkpointFromWire
+        ) == WISTERIA_STATUS_OK && checkpointFromWire != 0U,
+        "stable checkpoint deserialize failed"
+    );
+
+    WisteriaEntity entityB = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &options,
+            PathUtf8(modelPath).c_str(),
+            &entityB
+        ) == WISTERIA_STATUS_OK && entityB != 0U,
+        "stable second entity create failed"
+    );
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(context, entityB) ==
+            WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_replay_exact(context, entityB, 9U) ==
+                WISTERIA_STATUS_OK,
+        "stable second entity diverge failed"
+    );
+    Require(
+        wisteria_stable_checkpoint_restore(
+            context,
+            checkpointFromWire,
+            entityB
+        ) == WISTERIA_STATUS_OK,
+        "stable checkpoint restore failed"
+    );
+    Require(
+        wisteria_stable_entity_step_exact(context, entityB, 3U) ==
+            WISTERIA_STATUS_OK,
+        "stable continuation after restore failed"
+    );
+
+    // Checkpoints survive source-entity destruction (contract §4).
+    Require(
+        wisteria_stable_entity_destroy(context, entityA) ==
+            WISTERIA_STATUS_OK,
+        "stable entity destroy failed"
+    );
+    WisteriaEntity entityC = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &options,
+            PathUtf8(modelPath).c_str(),
+            &entityC
+        ) == WISTERIA_STATUS_OK && entityC != 0U,
+        "stable third entity create failed"
+    );
+    Require(
+        wisteria_stable_checkpoint_restore(
+            context,
+            checkpointFromWire,
+            entityC
+        ) == WISTERIA_STATUS_OK,
+        "stable checkpoint did not survive source entity destroy"
+    );
+
+    // Cross-context isolation: handles never leak between contexts.
+    WisteriaStableContext otherContext = 0U;
+    Require(
+        wisteria_stable_context_create(&otherContext) == WISTERIA_STATUS_OK &&
+            otherContext != 0U,
+        "stable second context create failed"
+    );
+    WisteriaRuntimeCapabilitiesV1 foreignCaps;
+    memset(&foreignCaps, 0, sizeof(foreignCaps));
+    Require(
+        wisteria_stable_entity_capabilities(
+            otherContext,
+            entityB,
+            &foreignCaps
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "stable entity leaked across contexts"
+    );
+    Require(
+        wisteria_stable_checkpoint_destroy(
+            otherContext,
+            checkpointFromWire
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "stable checkpoint leaked across contexts"
+    );
+    Require(
+        wisteria_stable_context_destroy(otherContext) == WISTERIA_STATUS_OK,
+        "stable second context destroy failed"
+    );
+
+    Require(
+        wisteria_stable_entity_destroy(
+            context,
+            0x1234567890ULL
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "unknown stable entity handle was accepted"
+    );
+
+    WisteriaRuntimeCreationOptionsV1 badOptions = options;
+    badOptions.fixed_time_step = 0.0f;
+    WisteriaEntity badEntity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &badOptions,
+            PathUtf8(modelPath).c_str(),
+            &badEntity
+        ) == WISTERIA_STATUS_INVALID_ARGUMENT,
+        "zero fixed_time_step options were accepted"
+    );
+
+    Require(
+        wisteria_stable_checkpoint_destroy(context, checkpoint) ==
+            WISTERIA_STATUS_OK &&
+            wisteria_stable_checkpoint_destroy(
+                context,
+                checkpointFromWire
+            ) == WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_destroy(context, entityB) ==
+                WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_destroy(context, entityC) ==
+                WISTERIA_STATUS_OK &&
+            wisteria_stable_context_destroy(context) == WISTERIA_STATUS_OK,
+        "stable ABI teardown failed"
+    );
+}
+
+void TestStableRuntimeAbiMotionLifecycle()
+{
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    const std::filesystem::path vmdPath =
+        FixturePath("production-vmd-body");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK &&
+            context != 0U,
+        "stable motion context create failed"
+    );
+    WisteriaRuntimeCreationOptionsV1 options;
+    memset(&options, 0, sizeof(options));
+    options.struct_size = sizeof(options);
+    options.struct_version = 1U;
+    options.compatibility = WISTERIA_PROFILE_ID_RAW;
+    options.fixed_time_step = 1.0f / 120.0f;
+    options.max_sub_steps = 10;
+    options.gravity[1] = -98.0f;
+    options.physics_enabled = 1;
+    WisteriaEntity entity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &options,
+            PathUtf8(modelPath).c_str(),
+            &entity
+        ) == WISTERIA_STATUS_OK && entity != 0U,
+        "stable motion entity create failed"
+    );
+    Require(
+        wisteria_stable_entity_load_motion(
+            context,
+            entity,
+            PathUtf8(vmdPath).c_str()
+        ) == WISTERIA_STATUS_OK,
+        "stable entity load_motion failed"
+    );
+    Require(
+        wisteria_stable_entity_unload_motion(context, entity) ==
+            WISTERIA_STATUS_OK,
+        "stable entity unload_motion failed"
+    );
+    Require(
+        wisteria_stable_entity_destroy(context, entity) ==
+            WISTERIA_STATUS_OK &&
+            wisteria_stable_context_destroy(context) == WISTERIA_STATUS_OK,
+        "stable motion teardown failed"
+    );
 }
 
 #endif
@@ -9976,6 +10311,14 @@ int main()
     failures += !RunTest(
         "Native ABI exception boundary",
         TestNativeAbiExceptionBoundary
+    );
+    failures += !RunTest(
+        "R1.4 stable ABI runtime E2E",
+        TestStableRuntimeAbiE2E
+    );
+    failures += !RunTest(
+        "R1.4 stable ABI motion lifecycle",
+        TestStableRuntimeAbiMotionLifecycle
     );
     failures += !RunTest(
         "Native ABI Saba runtime",

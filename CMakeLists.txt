@@ -342,6 +342,7 @@ if(WISTERIA_BUILD_NATIVE)
         src/native/native_common.cpp
         src/native/native_model.cpp
         src/native/native_scene.cpp
+        src/native/wisteria_stable_runtime.cpp
         src/native/native_window.cpp
         src/native/windows_path.cpp
     )
@@ -479,6 +480,7 @@ if(BUILD_TESTING)
     target_include_directories(wisteria_abi_c_smoke PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
+    target_link_libraries(wisteria_abi_c_smoke PRIVATE wisteria_native)
     add_test(NAME wisteria.abi-c-smoke COMMAND wisteria_abi_c_smoke)
 
     # R1.4 Phase 0A Step 8: checkpoint wire bytes must survive a process

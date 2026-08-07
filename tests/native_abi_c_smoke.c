@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 #define STATIC_ASSERT(cond, name) \
     typedef char static_assert_##name[(cond) ? 1 : -1]
@@ -53,6 +54,34 @@ STATIC_ASSERT(WISTERIA_STABLE_RUNTIME_ABI_VERSION == 1u, abi_version);
 
 int main(void)
 {
+    WisteriaStableContext context = 0U;
+    if (wisteria_stable_context_create(&context) != WISTERIA_STATUS_OK ||
+        context == 0U)
+    {
+        printf("stable context create failed\n");
+        return 1;
+    }
+
+    WisteriaStableContextInfoV1 info;
+    memset(&info, 0, sizeof(info));
+    if (wisteria_stable_context_info(context, &info) != WISTERIA_STATUS_OK ||
+        info.struct_version != 1U ||
+        info.abi_version != WISTERIA_STABLE_RUNTIME_ABI_VERSION)
+    {
+        printf("stable context info failed\n");
+        return 2;
+    }
+    if (wisteria_stable_last_error(context) == NULL)
+    {
+        printf("stable last_error returned NULL\n");
+        return 3;
+    }
+    if (wisteria_stable_context_destroy(context) != WISTERIA_STATUS_OK)
+    {
+        printf("stable context destroy failed\n");
+        return 4;
+    }
+
     printf("wisteria stable ABI C smoke OK\n");
     return 0;
 }

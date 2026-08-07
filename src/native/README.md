@@ -7,6 +7,11 @@ thin and must not become the owner of engine policy.
   validation helpers.
 - `native_common.cpp`: ABI version, status and context lifecycle.
 - `native_model.cpp`: headless model, motion, physics stepping and diagnostics.
+- `wisteria_stable_runtime.cpp`: R1.4 Stable C ABI v1 subset (context-owned
+  entities/checkpoints, deterministic timeline, checkpoint wire
+  serialization). Frozen surface: `include/wisteria/native/
+  wisteria_stable_runtime.h`; contract:
+  `docs/architecture/R1_4_STABLE_RUNTIME_BOUNDARY_CONTRACT.md`.
 - `native_window.cpp`: optional desktop window, input and camera facade.
 - `windows_path.*`: Windows-only UTF-8 path conversion.
 
