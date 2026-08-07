@@ -35,7 +35,9 @@ rule-id：LB-01
   babylon mmdAmmoPhysics.js（joint 创建）：
           collision: true // do not disable collision between the two rigid bodies
           mmdAmmoJSPlugin.js：world.n(joint, !impostorJoint.joint.jointData.collision)
-          → 默认不禁碰；PMX joint 的 collision 标志可逐关节禁碰
+          → 默认不禁碰；Babylon internal per-joint collision control
+            （PMX 构造路径固定 true；标准 PMX 2.0/2.1 Joint 无 collision
+            字段，collision mask 属于 Rigid Body 数据）
   nanoem  physics_bullet.cc：world->m_world->addConstraint(joint->m_internalConstraint)
           → 不传 disable（与 saba 一致）
 许可证：三者均可作 Evidence（MIT / MIT / MIT）
@@ -46,8 +48,9 @@ rule-id：LB-01
       TestR13LinkedBodyAbSmoke（确定性 + ground 不受影响）
       TestR13TraceDiffExtendedLocators（接触拓扑定位）
 轨迹 A/B（WISTERIA 同 executionProfile）：
-      凑企鹅 VMD：First contact-topology divergence = motionFrame 1 / pair (0,1)
-      蕾米埃尔 VMD：frame 10 / pair (0,248)
+      corpus-asset-01 + motion-01：First contact-topology divergence =
+        motionFrame 1 / pair (0,1)
+      corpus-asset-03 + motion-03：frame 10 / pair (0,248)
       （见 R1_3B_STEP9_TRACES_20260807.md §7.2–7.4）
 
 裁决：
@@ -57,9 +60,13 @@ rule-id：LB-01
   DisableConstraintLinkedPairs
     → REJECTED for COMMUNITY（社区默认均不禁碰；该开关是 WISTERIA
       A/B 诊断）。若未来作为 ADAPTIVE 增强，需先经契约评审。
-  babylon 逐关节 collision 标志
-    → INCONCLUSIVE（是否映射 PMX joint 数据、saba/nanoem 是否支持，
-      需要 corpus joint 数据核验）
+  Babylon internal per-joint collision control
+    → REFERENCE_SPECIFIC
+      说明：Babylon physics abstraction exposes a collision boolean,
+      but standard PMX 2.0/2.1 joint data contains no corresponding field.
+      The PMX construction path uses collision=true, which supports the
+      LB-01 baseline rather than defining a separate portable MMD
+      compatibility rule.
 ```
 
 ## M2-01：Mode 2 写回（PhysicsWithBone）
@@ -85,7 +92,7 @@ rule-id：M2-01
 测试：TestR13Mode2AbSmoke（确定性）
       TestR13Mode2WritebackPose（FULL_ASSETS 生产模型写回生效）
 轨迹 A/B（WISTERIA 同 executionProfile）：
-      叶瞬光 no-VMD：FullTransformDiagnostic 只改变骨骼写回
+      corpus-asset-02 no-VMD：FullTransformDiagnostic 只改变骨骼写回
       （First bone divergence frame 10 / bone 17 / delta 0.092，
         无 body COM / 接触拓扑变化）
       （见 R1_3B_STEP9_TRACES_20260807.md §7.1）
@@ -105,10 +112,10 @@ rule-id：M2-01
 ## 开放项（下一步完成证据包）
 
 ```text
-1. babylon 逐关节 collision 标志的 corpus 数据核验（LB-01 INCONCLUSIVE）；
-2. 分叉源逐刚体归属：凑企鹅 pair (0,1) / body 8、蕾米埃尔 joint 696
+1. 分叉源逐刚体归属：corpus-asset-01 pair (0,1) / body 8、
+   corpus-asset-03 joint 696
    （Step 9 §7.4 遗留）；
-3. 两处 ADMITTED_COMMUNITY 均为 v1 基线确认（无行为变化）——
+2. 两处 ADMITTED_COMMUNITY 均为 v1 基线确认（无行为变化）——
    等待第一条真正改变 COMMUNITY 行为的规则出现时 bump v2。
 ```
 
@@ -117,5 +124,21 @@ rule-id：M2-01
 ```text
 登记日期：2026-08-07
 证据整理：DeepSeek（Codex）
-裁决确认：待用户（Floral Wisteria）拍板
+裁决确认：APPROVED — 2026-08-07（Floral Wisteria 拍板，方案①）
+
+最终裁决：
+  LB-01 APPROVED
+    PmxMaskOnly → ADMITTED_COMMUNITY（baseline-confirmed）
+    DisableConstraintLinkedPairs → REJECTED for COMMUNITY（keep diagnostic）
+    Babylon internal collision boolean → REFERENCE_SPECIFIC
+  M2-01 APPROVED
+    PreserveAnimatedTranslation → ADMITTED_COMMUNITY（baseline-confirmed）
+    FullTransformDiagnostic → REJECTED for COMMUNITY（keep diagnostic）
+    StrictBoneLength → RESERVED
+
+MMD_COMMUNITY v1 remains behavior-identical to MMD_RAW v1。
+No profileRevision bump。
+
+Step 11：N/A — no newly admitted effective behavior
+  （LB-01 / M2-01 均为 v1 基线确认，不制造无意义代码改动）
 ```
