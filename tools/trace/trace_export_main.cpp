@@ -9,6 +9,8 @@
 // usage:
 //   wisteria_trace_export --model <pmx> [--motion <vmd>]
 //       [--out <trace.jsonl>] [--frames N] [--sample-interval M]
+//       [--linked-body PmxMaskOnly|DisableConstraintLinkedPairs]
+//       [--mode2 PreserveAnimatedTranslation|FullTransformDiagnostic]
 
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
 #include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
@@ -69,6 +71,8 @@ int main(int argc, char** argv)
     std::string outPath = "wisteria_trace.jsonl";
     std::uint64_t totalFrames = 300U;
     std::uint64_t sampleInterval = 10U;
+    std::string linkedBody;
+    std::string mode2;
 
     if (const auto error = TakeArg(argc, argv, "--model", modelPath))
     {
@@ -79,6 +83,8 @@ int main(int argc, char** argv)
     TakeArg(argc, argv, "--out", outPath);
     TakeInt(argc, argv, "--frames", totalFrames);
     TakeInt(argc, argv, "--sample-interval", sampleInterval);
+    TakeArg(argc, argv, "--linked-body", linkedBody);
+    TakeArg(argc, argv, "--mode2", mode2);
     if (sampleInterval == 0U)
     {
         std::cerr << "--sample-interval must be >= 1\n";
@@ -91,12 +97,58 @@ int main(int argc, char** argv)
             ? std::filesystem::path()
             : std::filesystem::path(motionPath)
     );
+    wisteria::MmdPhysicsConfiguration configuration =
+        wisteria::BuildPresetConfiguration(wisteria::MmdPhysicsPreset::MmdRaw);
+    if (!linkedBody.empty() || !mode2.empty())
+    {
+        wisteria::MmdPhysicsDiagnosticOverrides overrides;
+        if (linkedBody == "DisableConstraintLinkedPairs")
+        {
+            overrides.linkedBodyCollision =
+                wisteria::MmdLinkedBodyCollisionMode::
+                    DisableConstraintLinkedPairs;
+        }
+        else if (linkedBody == "PmxMaskOnly")
+        {
+            overrides.linkedBodyCollision =
+                wisteria::MmdLinkedBodyCollisionMode::PmxMaskOnly;
+        }
+        else if (!linkedBody.empty())
+        {
+            std::cerr << "unknown --linked-body value: " << linkedBody
+                      << "\n";
+            return 2;
+        }
+        if (mode2 == "FullTransformDiagnostic")
+        {
+            overrides.mode2 =
+                wisteria::MmdMode2WritebackMode::FullTransformDiagnostic;
+        }
+        else if (mode2 == "PreserveAnimatedTranslation")
+        {
+            overrides.mode2 =
+                wisteria::MmdMode2WritebackMode::
+                    PreserveAnimatedTranslation;
+        }
+        else if (!mode2.empty())
+        {
+            std::cerr << "unknown --mode2 value: " << mode2 << "\n";
+            return 2;
+        }
+        const wisteria::TimelineStatus deriveStatus =
+            wisteria::DeriveDiagnosticConfiguration(
+                configuration,
+                overrides,
+                configuration
+            );
+        if (deriveStatus != wisteria::TimelineStatus::Ok)
+        {
+            std::cerr << "deriving A/B configuration failed\n";
+            return 1;
+        }
+    }
     const wisteria::TimelineStatus configStatus =
-        runtime.SetMmdPhysicsConfiguration(
-            wisteria::BuildPresetConfiguration(
-                wisteria::MmdPhysicsPreset::MmdRaw
-            )
-        );
+        runtime.SetMmdPhysicsConfiguration(configuration);
     if (configStatus != wisteria::TimelineStatus::Ok)
     {
         std::cerr << "configuration rejected: "

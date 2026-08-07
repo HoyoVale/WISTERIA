@@ -145,7 +145,9 @@ WISTERIA 侧轨迹由 `wisteria_trace_export` 生成：
 
 ```bash
 wisteria_trace_export --model <pmx> [--motion <vmd>] --out <trace.jsonl> \
-  --frames 300 --sample-interval 10
+  --frames 300 --sample-interval 10 \
+  [--linked-body PmxMaskOnly|DisableConstraintLinkedPairs] \
+  [--mode2 PreserveAnimatedTranslation|FullTransformDiagnostic]
 ```
 
 ## 时钟校准（synthetic fixture）

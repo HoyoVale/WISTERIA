@@ -71,3 +71,66 @@ tools/trace/trace_export_main.cpp     WISTERIA canonical trace 导出 CLI
 tools/reference_trace/compare_traces.mjs  跨实现逐刚体对照脚本
 tools/reference_trace/trace.mjs       两个适配器 bug 已修复
 ```
+
+## 7. A/B 开关证据（WISTERIA 侧，同 executionProfile）
+
+方法：`wisteria_trace_export --linked-body / --mode2` 生成开关两侧
+canonical JSONL，`wisteria_trace_diff` 对照。两侧均为
+`deterministic-cold-step-v1`（同 executionProfile），因此构成
+候选规则的**因果证据**（Rule Admission 六项中的轨迹 A/B）。
+
+### 7.1 Mode 2：叶瞬光 no-VMD（300 frames，sample 10）
+
+```text
+A = PreserveAnimatedTranslation（基线）
+B = FullTransformDiagnostic
+
+First bone divergence：frame 10 / bone 17 / maxMatrixDelta 0.092
+无 body COM 分叉、无接触拓扑/关节变化
+
+解释：开关只改变骨骼写回（诊断语义），不改变 Bullet 刚体；
+frame 10 起骨骼姿态分叉 —— 开关产生预期因果效果。
+```
+
+### 7.2 Linked-body：凑企鹅 + penguin_walking.vmd（300 frames，sample 10）
+
+```text
+A = PmxMaskOnly（基线）
+B = DisableConstraintLinkedPairs
+
+First divergence：frame 10 / body 8 / pos 0.016 / rot 1.29°
+First contact-topology divergence：frame 10 / pair (0,1)
+First motion-state divergence：frame 10 / body 8
+First bone divergence：frame 10 / bone 56
+Max divergence：frame 20 / body 8 / pos 0.061 / rot 5.87°
+```
+
+### 7.3 Linked-body：蕾米埃尔-白 + 梦的翅膀motion.vmd（300 frames，sample 10）
+
+```text
+First divergence：frame 10 / body 6 / pos 0.115 / rot 15.30°
+First contact-topology divergence：frame 10 / pair (0,248)
+Joint error delta：joint 696 / linear 1.85 / angular 127.91°
+Max divergence：frame 300 / body 556 / pos 1.876 / rot 105.21°
+```
+
+### 7.4 逐帧首分叉（凑企鹅 sample 1）
+
+```text
+First contact-topology divergence：motionFrame 1 / pair (0,1)
+First body divergence：motionFrame 5 / body 8 / pos 0.043
+Max body divergence：motionFrame 18 / body 8 / pos 0.233
+```
+
+结论：
+
+```text
+1. DisableConstraintLinkedPairs 在真实 corpus 资产上产生可观测、
+   可复现的接触拓扑变化（凑企鹅 pair (0,1) 自 motionFrame 1 起）——
+   linked-body A/B 证据成立；
+2. FullTransformDiagnostic 只改变骨骼写回、不改变 Bullet 状态——
+   诊断语义与实现一致；
+3. 候选规则进入 COMMUNITY/ADAPTIVE 的裁决还需要：
+   - 逐刚体追踪分叉源（body 8 / pair (0,1) / joint 696 的归属）；
+   - 与 nanoem（Source Semantics）对照确认社区语义。
+```
