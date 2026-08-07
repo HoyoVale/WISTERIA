@@ -194,6 +194,13 @@ private:
     // machine so trace/checkpoint/step surfaces never accept real-time
     // history as canonical evidence.
     void InvalidateDeterministicBoundary() noexcept;
+    // R1.4 Entry Guard: rejects motion frames outside the supported
+    // deterministic domain (frame * 4 must never overflow and replay loops
+    // must never be able to wrap). All deterministic entries funnel through
+    // this helper.
+    TimelineStatus ValidateDeterministicFrameDomain(
+        MotionFrameIndex target
+    ) const noexcept;
     void ApplyMmdIkOverrides() noexcept;
     void SyncPoseFromSaba();
     // R1.2A deterministic helpers. They own the exact evaluation order; the
