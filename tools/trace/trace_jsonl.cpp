@@ -122,15 +122,20 @@ float PositionError(
 }
 
 float RotationErrorDeg(
-    const MmdPhysicsTraceBody& left,
-    const MmdPhysicsTraceBody& right
+    const MmdPhysicsTraceTransform& left,
+    const MmdPhysicsTraceTransform& right
 )
 {
     // R = L^T * R; angle = acos((trace(R) - 1) / 2). Columns are normalized
     // first so that comparing a basis to itself always yields 0 even when
     // the stored matrix is not perfectly orthonormal.
-    const auto& a = left.worldTransform.rotationBasis;
-    const auto& b = right.worldTransform.rotationBasis;
+    const auto& a = left.rotationBasis;
+    const auto& b = right.rotationBasis;
+    // Bitwise-identical bases must always report zero rotation error:
+    // normalization + acos is not exact under floating point and could turn
+    // identical data into a ~0.04 degree false divergence.
+    if (a == b)
+        return 0.0f;
     std::array<glm::vec3, 3> columnsA{};
     std::array<glm::vec3, 3> columnsB{};
     for (int column = 0; column < 3; ++column)
@@ -147,14 +152,14 @@ float RotationErrorDeg(
         );
         const float lengthA = glm::length(columnsA[static_cast<std::size_t>(column)]);
         const float lengthB = glm::length(columnsB[static_cast<std::size_t>(column)]);
-        if (lengthA > 1.0e-12f)
-        {
-            columnsA[static_cast<std::size_t>(column)] /= lengthA;
-        }
-        if (lengthB > 1.0e-12f)
-        {
-            columnsB[static_cast<std::size_t>(column)] /= lengthB;
-        }
+        // A degenerate (zero-length) column makes the stored basis an invalid
+        // rotation; rotation error is not meaningful there and a self-compare
+        // must never report a false divergence. Position error still catches
+        // real differences.
+        if (lengthA <= 1.0e-12f || lengthB <= 1.0e-12f)
+            return 0.0f;
+        columnsA[static_cast<std::size_t>(column)] /= lengthA;
+        columnsB[static_cast<std::size_t>(column)] /= lengthB;
     }
     // R = A^T * B (column-major): R[colB][rowA] = dot(colA_rowA, colB).
     float trace = 0.0f;
@@ -169,6 +174,27 @@ float RotationErrorDeg(
     return glm::degrees(std::acos(clamped));
 }
 
+float RotationErrorDeg(
+    const MmdPhysicsTraceBody& left,
+    const MmdPhysicsTraceBody& right
+)
+{
+    return RotationErrorDeg(
+        left.worldTransform,
+        right.worldTransform
+    );
+}
+
+bool PairLess(
+    const MmdPhysicsTraceContactPair& left,
+    const MmdPhysicsTraceContactPair& right
+)
+{
+    if (left.bodyA != right.bodyA)
+        return left.bodyA < right.bodyA;
+    return left.bodyB < right.bodyB;
+}
+
 const MmdPhysicsTraceBody* FindBody(
     const MmdPhysicsTraceFrame& frame,
     std::uint32_t index
@@ -178,6 +204,19 @@ const MmdPhysicsTraceBody* FindBody(
     {
         if (body.index == index)
             return &body;
+    }
+    return nullptr;
+}
+
+const MmdPhysicsTraceBone* FindBone(
+    const MmdPhysicsTraceFrame& frame,
+    BoneIndex index
+)
+{
+    for (const MmdPhysicsTraceBone& bone : frame.bones)
+    {
+        if (bone.index == index)
+            return &bone;
     }
     return nullptr;
 }
@@ -548,6 +587,130 @@ TraceDiffResult DiffTraceStreams(
                 break;
             }
         }
+
+        // Contact-topology divergence: pairs are sorted by (bodyA, bodyB);
+        // walk both sets and report the first pair present in one side only.
+        if (!result.contactTopologyFound)
+        {
+            std::size_t indexA = 0U;
+            std::size_t indexB = 0U;
+            while (indexA < frameA.contactPairs.size() ||
+                   indexB < frameB.contactPairs.size())
+            {
+                const bool endA = indexA >= frameA.contactPairs.size();
+                const bool endB = indexB >= frameB.contactPairs.size();
+                if (endB ||
+                    (!endA &&
+                     PairLess(
+                         frameA.contactPairs[indexA],
+                         frameB.contactPairs[indexB]
+                     )))
+                {
+                    result.contactTopologyFound = true;
+                    result.contactTopologyFrame = frameA.frame;
+                    result.contactTopologyBodyA =
+                        frameA.contactPairs[indexA].bodyA;
+                    result.contactTopologyBodyB =
+                        frameA.contactPairs[indexA].bodyB;
+                    result.identical = false;
+                    break;
+                }
+                if (endA ||
+                    PairLess(
+                        frameB.contactPairs[indexB],
+                        frameA.contactPairs[indexA]
+                    ))
+                {
+                    result.contactTopologyFound = true;
+                    result.contactTopologyFrame = frameA.frame;
+                    result.contactTopologyBodyA =
+                        frameB.contactPairs[indexB].bodyA;
+                    result.contactTopologyBodyB =
+                        frameB.contactPairs[indexB].bodyB;
+                    result.identical = false;
+                    break;
+                }
+                ++indexA;
+                ++indexB;
+            }
+        }
+
+        // Motion-state divergence: only when both sides can authoritatively
+        // read the motion-state transform.
+        for (const MmdPhysicsTraceBody& bodyA : frameA.bodies)
+        {
+            const MmdPhysicsTraceBody* bodyB =
+                FindBody(frameB, bodyA.index);
+            if (bodyB == nullptr ||
+                !bodyA.motionStateAvailable ||
+                !bodyB->motionStateAvailable)
+            {
+                continue;
+            }
+            const float positionError = glm::length(
+                bodyA.motionStateTransform.position -
+                bodyB->motionStateTransform.position
+            );
+            const float rotationErrorDeg = RotationErrorDeg(
+                bodyA.motionStateTransform,
+                bodyB->motionStateTransform
+            );
+            if (positionError > Epsilon || rotationErrorDeg > Epsilon)
+            {
+                result.identical = false;
+                if (!result.motionStateFound)
+                {
+                    result.motionStateFound = true;
+                    result.motionStateFrame = frameA.frame;
+                    result.motionStateBody = bodyA.index;
+                    result.motionStatePositionError = positionError;
+                }
+            }
+        }
+
+        // Bone divergence: local/global matrix max delta by source bone
+        // index.
+        for (const MmdPhysicsTraceBone& boneA : frameA.bones)
+        {
+            const MmdPhysicsTraceBone* boneB =
+                FindBone(frameB, boneA.index);
+            float maxDelta = 0.0f;
+            if (boneB != nullptr)
+            {
+                for (std::size_t element = 0U; element < 16U; ++element)
+                {
+                    maxDelta = std::max(
+                        maxDelta,
+                        std::abs(
+                            boneA.localMatrix[element] -
+                            boneB->localMatrix[element]
+                        )
+                    );
+                    maxDelta = std::max(
+                        maxDelta,
+                        std::abs(
+                            boneA.globalMatrix[element] -
+                            boneB->globalMatrix[element]
+                        )
+                    );
+                }
+            }
+            else
+            {
+                maxDelta = 1.0e30f;
+            }
+            if (maxDelta > Epsilon)
+            {
+                result.identical = false;
+                if (!result.boneFound)
+                {
+                    result.boneFound = true;
+                    result.boneFrame = frameA.frame;
+                    result.boneIndex = boneA.index;
+                    result.boneMaxMatrixDelta = maxDelta;
+                }
+            }
+        }
     }
 
     while (std::getline(right, lineB))
@@ -593,6 +756,30 @@ std::string FormatTraceDiff(const TraceDiffResult& result)
             " positionError=" + std::to_string(result.maxPositionError) +
             " rotationErrorDeg=" +
             std::to_string(result.maxRotationErrorDeg) + "\n";
+    }
+    if (result.contactTopologyFound)
+    {
+        text += "First contact-topology divergence: frame=" +
+            std::to_string(result.contactTopologyFrame) +
+            " pair=(" +
+            std::to_string(result.contactTopologyBodyA) + "," +
+            std::to_string(result.contactTopologyBodyB) + ")\n";
+    }
+    if (result.motionStateFound)
+    {
+        text += "First motion-state divergence: frame=" +
+            std::to_string(result.motionStateFrame) +
+            " body=" + std::to_string(result.motionStateBody) +
+            " positionError=" +
+            std::to_string(result.motionStatePositionError) + "\n";
+    }
+    if (result.boneFound)
+    {
+        text += "First bone divergence: frame=" +
+            std::to_string(result.boneFrame) +
+            " bone=" + std::to_string(result.boneIndex) +
+            " maxMatrixDelta=" +
+            std::to_string(result.boneMaxMatrixDelta) + "\n";
     }
     if (result.jointDeltaFound)
     {

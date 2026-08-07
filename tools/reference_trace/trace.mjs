@@ -30,6 +30,7 @@ import {
   normalizeAngularVelocity,
   normalizeRotationBasis
 } from "./coordinate_normalization_lib.mjs";
+import { prepareFrame0, stepMotionFrame } from "./frame_driver.mjs";
 
 // Pinned source commit (see README "冻结身份").
 const PINNED_SOURCE_COMMIT = "3f523d392c176d5c9c9f9264f622d0631c1d298e";
@@ -74,6 +75,13 @@ async function main() {
   const vmdPath = process.argv[6] ?? null;
   const environmentMode = process.argv[7] ?? "NormalizedComparison";
   const dt = 1.0 / 120.0;
+  if (environmentMode !== "NormalizedComparison") {
+    throw new Error(
+      `environmentMode "${environmentMode}" is not implemented yet; ` +
+        "NativeCompatibilityAudit requires the native gravity/ground/" +
+        "solver defaults to be preserved (contract §4.3)"
+    );
+  }
 
   const pmxBytes = readFileSync(pmxPath);
   const modelHash = sha256Hex(pmxBytes);
@@ -206,6 +214,10 @@ async function main() {
 
   let motionHash = null;
   if (vmdPath) {
+    const { RegisterMmdRuntimeModelAnimation } = await import(
+      "babylon-mmd/esm/Runtime/Animation/mmdRuntimeModelAnimation.pure.js"
+    );
+    RegisterMmdRuntimeModelAnimation();
     const { VmdLoader } = await import("babylon-mmd/esm/Loader/vmdLoader.js");
     const vmdBytes = readFileSync(vmdPath);
     motionHash = sha256Hex(vmdBytes);
@@ -364,17 +376,28 @@ async function main() {
     }
   };
 
-  // motionFrame 0: prepared boundary, no physics step.
-  emitFrame(0, 0, bind);
+  // motionFrame 0: prepared boundary through the shared frame driver
+  // (sample(0) -> initializePhysics -> afterPhysics, no physics tick).
+  prepareFrame0({
+    sample: () => model.beforePhysics(0),
+    initialize: () => model.initializePhysics(),
+    publish: () => model.afterPhysics()
+  });
+  {
+    const matrices = model.worldTransformMatrices;
+    const positions = meshes.map((_, index) => skinMesh(index, matrices));
+    emitFrame(0, 0, positions);
+  }
 
   for (let motionFrame = 1; motionFrame <= totalMotionFrames; ++motionFrame) {
-    // Exactly 4 fixed 120Hz ticks per motion frame (contract §4.1).
-    // beforePhysics takes the absolute 30fps frame number.
-    for (let tick = 0; tick < 4; ++tick) {
-      model.beforePhysics(motionFrame);
-      physicsEngine._step(dt);
-      model.afterPhysics();
-    }
+    // Shared driver: sample(N) once -> exactly 4 ticks -> publish once
+    // (contract §4.1; beforePhysics takes the absolute 30fps frame number).
+    stepMotionFrame({
+      frame: motionFrame,
+      sample: () => model.beforePhysics(motionFrame),
+      tick: () => physicsEngine._step(dt),
+      publish: () => model.afterPhysics()
+    });
     if (motionFrame % sampleInterval === 0) {
       const matrices = model.worldTransformMatrices;
       const positions = meshes.map((_, index) => skinMesh(index, matrices));
@@ -389,13 +412,14 @@ async function main() {
     executionProfile: "reference-continuous-120hz-v1",
     gravity: [0, -98, 0],
     fixedTimeStep: 1 / 120,
-    groundPolicy: "synthetic-y0-plane",
+    groundPolicy: "synthetic-ground-box-v1",
     sourceRepositoryCommit: PINNED_SOURCE_COMMIT,
     referencePackageName: identity.referencePackageName,
     referencePackageVersion: identity.referencePackageVersion,
     referencePackageIntegrity: identity.referencePackageIntegrity,
     corePackageName: identity.corePackageName,
     corePackageVersion: identity.corePackageVersion,
+    corePackageIntegrity: identity.corePackageIntegrity,
     physicsPackageName: identity.physicsPackageName,
     physicsPackageVersion: identity.physicsPackageVersion,
     physicsPackageIntegrity: identity.physicsPackageIntegrity,

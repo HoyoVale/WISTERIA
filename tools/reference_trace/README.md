@@ -12,7 +12,7 @@
 | 实现 | commit | 许可证 | 角色 |
 | ---- | ------ | ------ | ---- |
 | babylon-mmd | `3f523d392c176d5c9c9f9264f622d0631c1d298e` | MIT | Runnable Trace（强制） |
-| nanoem | `30acffaa29f5d2eb9e997d69418f2e4b97b5894f` | physics 组件 MIT/X11；应用层 MPL | Source Semantics（Runnable 待 feasibility） |
+| nanoem | `30acffaa29f5d2eb9e997d69418f2e4b97b5894f` | physics 组件 MIT/X11；应用层 MPL | Source Semantics（feasibility 结论：见 `docs/validation/R1_3B_NANOEM_FEASIBILITY_20260807.md`） |
 | libmmd | `091e70c55dc4c6f2e7ad8d46fea92ce3d1849ba5` | Boost Software License 1.0 | Historical Reference |
 | blender_mmd_tools | `0ba5ca97c7d9652cca8d3c626553063c146bf315` | GPLv3（仅证据，不复制） | 模型制作/修复侧参考 |
 | saba / Bullet | vendored | MIT / zlib | 内部基线 / API 语义 |
@@ -33,7 +33,7 @@
 
 ```bash
 cd tools/reference_trace
-npm install              # 使用 package-lock.json（精确版本）
+npm ci                   # 使用 package-lock.json（精确版本，clean install）
 
 npm run spike -- <model.pmx>          # 加载验证
 npm run trace -- <model.pmx> <out.csv> [motionFrames] [sampleInterval] [vmdPath] [environmentMode]
@@ -70,10 +70,18 @@ node bundle_trace.cjs "<model.pmx>" "<out.csv>" 300 1
   ReferenceCoordinateNormalization v1 归一化（见 Phase 0B 契约 §5）。
 - 动画时钟：`model.beforePhysics(frameTime)` 接收**绝对 30fps 帧号**
   （babylon-mmd runtime 传入 `elapsedFrameTime`）。trace 因此按
-  motionFrame 循环：`beforePhysics(N)` + 4 个 120Hz tick，
-  与 WISTERIA 确定性时钟一致。
+  motionFrame 循环，且与校准共用 frame_driver.mjs：
+  `beforePhysics(N) ×1 → 4 个 120Hz tick → afterPhysics ×1`；
+  frame 0 为 `beforePhysics(0) → initializePhysics → afterPhysics`。
+- VMD 路径必须先在 `createRuntimeAnimation` 前调用
+  `RegisterMmdRuntimeModelAnimation()`（pinned babylon-mmd 要求）。
+- `environmentMode` 目前只支持 `NormalizedComparison`；
+  `NativeCompatibilityAudit` 未实现前显式报错，禁止标签造假。
 - 逐刚体读取使用 pinned 版本的内部 API（`model._physicsModel._impostors`
   + `impostor.physicsBody`），版本由 package-lock.json 锁定。
+- Normalized ground 当前是 Babylon `CreateGround` + BoxImpostor
+  （env 记录为 `synthetic-ground-box-v1`），不是 Saba 的
+  `btStaticPlaneShape`；研究 ground/contact topology 前需显式区分。
 
 ## 统一时钟与 CSV 输出
 

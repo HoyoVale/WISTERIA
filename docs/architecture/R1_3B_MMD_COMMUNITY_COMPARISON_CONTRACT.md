@@ -164,7 +164,6 @@ simulatedSeconds = motionFrame / 30
 
 帧边界执行顺序（唯一，v2 冻结）：
 
-```text
 motionFrame 0：
   Evaluate animation at frame 0
   → kinematic sync
@@ -178,18 +177,15 @@ motionFrame N（N >= 1）：
   → execute physics ticks 4(N-1)+1 ... 4N（恰好 4 个 120Hz tick）
   → dynamic writeback
   → output boundary = motionFrame N / physicsTick 4N
-```
 
 Frame 0 是 prepared boundary，不是 stepped frame。
 
 synthetic clock calibration fixture 必须验证：
 
-```text
 frame 0   → 累计 0 ticks
 frame 1   → 累计 4 ticks
 frame 2   → 累计 8 ticks
 frame 300 → 累计 1200 ticks
-```
 
 有 VMD 时：在 motionFrame N 对齐动画采样语义，然后执行该帧对应的
 4 个 120Hz physics ticks（顺序同上）。

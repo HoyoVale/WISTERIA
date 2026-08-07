@@ -34,6 +34,22 @@ struct TraceDiffResult
     std::size_t lineCountA = 0U;
     std::size_t lineCountB = 0U;
 
+    // Phase 0B extended locators.
+    bool contactTopologyFound = false;
+    MotionFrameIndex contactTopologyFrame = 0U;
+    std::uint32_t contactTopologyBodyA = 0U;
+    std::uint32_t contactTopologyBodyB = 0U;
+
+    bool motionStateFound = false;
+    MotionFrameIndex motionStateFrame = 0U;
+    std::uint32_t motionStateBody = 0U;
+    float motionStatePositionError = 0.0f;
+
+    bool boneFound = false;
+    MotionFrameIndex boneFrame = 0U;
+    BoneIndex boneIndex = InvalidBoneIndex;
+    float boneMaxMatrixDelta = 0.0f;
+
     bool firstFound = false;
     MotionFrameIndex firstFrame = 0U;
     std::uint32_t firstBody = 0U;

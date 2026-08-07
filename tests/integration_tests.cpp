@@ -8632,6 +8632,139 @@ void TestR13TraceDiffLocatesInjection()
     );
 }
 
+void TestR13TraceDiffExtendedLocators()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateConfiguredRuntime(
+        modelPath,
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)
+    );
+    const std::vector<MmdPhysicsTraceFrame> frames =
+        CaptureTraceFrames(*runtime, 250U);
+    const std::string lines = TraceLines(frames);
+
+    const auto rewrite = [&lines](const auto& mutate)
+    {
+        std::istringstream source(lines);
+        std::ostringstream output;
+        std::string line;
+        while (std::getline(source, line))
+        {
+            if (line.empty())
+                continue;
+            MmdPhysicsTraceFrame frame;
+            Require(
+                wisteria::trace::ReadTraceFrameJson(line, frame),
+                "trace line failed to parse during extended diff rewrite"
+            );
+            mutate(frame);
+            Require(
+                wisteria::trace::WriteTraceFrameJson(frame, output),
+                "trace line failed to write during extended diff rewrite"
+            );
+        }
+        return output.str();
+    };
+    const auto diffFrom = [&lines](const std::string& modified)
+    {
+        std::istringstream left(lines);
+        std::istringstream right(modified);
+        return wisteria::trace::DiffTraceStreams(left, right);
+    };
+
+    // Contact-topology divergence: an extra pair at frame 100.
+    const std::string topologyLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 100U)
+                return;
+            MmdPhysicsTraceContactPair pair;
+            pair.bodyA = 250U;
+            pair.bodyB = 251U;
+            frame.contactPairs.push_back(pair);
+            std::sort(
+                frame.contactPairs.begin(),
+                frame.contactPairs.end(),
+                [](const MmdPhysicsTraceContactPair& left,
+                   const MmdPhysicsTraceContactPair& right)
+                {
+                    if (left.bodyA != right.bodyA)
+                        return left.bodyA < right.bodyA;
+                    return left.bodyB < right.bodyB;
+                }
+            );
+        }
+    );
+    const wisteria::trace::TraceDiffResult topologyResult =
+        diffFrom(topologyLines);
+    Require(
+        !topologyResult.identical && topologyResult.contactTopologyFound,
+        "contact-topology divergence was not located"
+    );
+    Require(
+        topologyResult.contactTopologyFrame == 100U &&
+            topologyResult.contactTopologyBodyA == 250U &&
+            topologyResult.contactTopologyBodyB == 251U,
+        "contact-topology locator points at the wrong pair"
+    );
+    Require(
+        wisteria::trace::FormatTraceDiff(topologyResult).find(
+            "First contact-topology divergence: frame=100 pair=(250,251)"
+        ) != std::string::npos,
+        "formatted diff misses the contact-topology divergence"
+    );
+
+    // Motion-state divergence: body 0 motion-state position shifts at 120.
+    const std::string motionLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 120U || frame.bodies.empty())
+                return;
+            frame.bodies[0].motionStateTransform.position.x += 0.001f;
+        }
+    );
+    const wisteria::trace::TraceDiffResult motionResult =
+        diffFrom(motionLines);
+    Require(
+        !motionResult.identical && motionResult.motionStateFound,
+        "motion-state divergence was not located"
+    );
+    Require(
+        motionResult.motionStateFrame == 120U &&
+            motionResult.motionStateBody == 0U,
+        "motion-state locator points at the wrong body"
+    );
+    Require(
+        std::abs(motionResult.motionStatePositionError - 0.001f) < 1.0e-4f,
+        "motion-state position error mismatch"
+    );
+
+    // Bone divergence: bone 0 global translation shifts at 200.
+    const std::string boneLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 200U || frame.bones.empty())
+                return;
+            frame.bones[0].globalMatrix[12] += 0.001f;
+        }
+    );
+    const wisteria::trace::TraceDiffResult boneResult =
+        diffFrom(boneLines);
+    Require(
+        !boneResult.identical && boneResult.boneFound,
+        "bone divergence was not located"
+    );
+    Require(
+        boneResult.boneFrame == 200U && boneResult.boneIndex == 0U,
+        "bone locator points at the wrong bone"
+    );
+    Require(
+        std::abs(boneResult.boneMaxMatrixDelta - 0.001f) < 1.0e-4f,
+        "bone matrix delta mismatch"
+    );
+}
+
 void TestR13ThreePresetsThreeHundredFrames()
 {
     const std::filesystem::path modelPath = FixturePath("pmx-physics");
@@ -9675,6 +9808,10 @@ int main()
     failures += !RunTest(
         "R1.3 trace diff locates injection",
         TestR13TraceDiffLocatesInjection
+    );
+    failures += !RunTest(
+        "R1.3 trace diff extended locators",
+        TestR13TraceDiffExtendedLocators
     );
     failures += !RunTest(
         "R1.3 three presets 300 frames",
