@@ -8818,14 +8818,11 @@ void TestR13TraceDiffExtendedLocators()
     const wisteria::trace::TraceDiffResult jointRemovedResult =
         diffFrom(jointRemovedLines);
     Require(
-        !jointRemovedResult.identical && jointRemovedResult.jointDeltaFound &&
-            jointRemovedResult.jointIndex == 0U,
+        !jointRemovedResult.identical &&
+            jointRemovedResult.jointPresenceFound &&
+            jointRemovedResult.jointPresenceFrame == 100U &&
+            jointRemovedResult.jointPresenceIndex == 0U,
         "removed joint was not located"
-    );
-    Require(
-        jointRemovedResult.jointLinearDelta > 1.0e6f &&
-            jointRemovedResult.jointAngularDeltaDeg > 1.0e6f,
-        "removed joint delta is not sentinel-sized"
     );
 
     const std::string jointAddedLines = rewrite(
@@ -8841,8 +8838,10 @@ void TestR13TraceDiffExtendedLocators()
     const wisteria::trace::TraceDiffResult jointAddedResult =
         diffFrom(jointAddedLines);
     Require(
-        !jointAddedResult.identical && jointAddedResult.jointDeltaFound &&
-            jointAddedResult.jointIndex == 999U,
+        !jointAddedResult.identical &&
+            jointAddedResult.jointPresenceFound &&
+            jointAddedResult.jointPresenceFrame == 220U &&
+            jointAddedResult.jointPresenceIndex == 999U,
         "extra joint present only in B was not located"
     );
 }

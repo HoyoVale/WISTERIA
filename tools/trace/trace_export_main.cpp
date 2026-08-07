@@ -52,6 +52,15 @@ std::optional<std::string> TakeInt(
     std::string text;
     if (const auto error = TakeArg(argc, argv, name, text))
         return error;
+    // The whole string must be an unsigned decimal integer; reject signs,
+    // garbage and trailing characters instead of relying on library behavior.
+    if (text.empty())
+        return "empty integer for " + name;
+    for (const char character : text)
+    {
+        if (character < '0' || character > '9')
+            return "invalid integer for " + name;
+    }
     try
     {
         value = std::stoull(text);
@@ -81,8 +90,17 @@ int main(int argc, char** argv)
     }
     TakeArg(argc, argv, "--motion", motionPath);
     TakeArg(argc, argv, "--out", outPath);
-    TakeInt(argc, argv, "--frames", totalFrames);
-    TakeInt(argc, argv, "--sample-interval", sampleInterval);
+    if (const auto error = TakeInt(argc, argv, "--frames", totalFrames))
+    {
+        std::cerr << *error << "\n";
+        return 2;
+    }
+    if (const auto error =
+            TakeInt(argc, argv, "--sample-interval", sampleInterval))
+    {
+        std::cerr << *error << "\n";
+        return 2;
+    }
     TakeArg(argc, argv, "--linked-body", linkedBody);
     TakeArg(argc, argv, "--mode2", mode2);
     if (sampleInterval == 0U)

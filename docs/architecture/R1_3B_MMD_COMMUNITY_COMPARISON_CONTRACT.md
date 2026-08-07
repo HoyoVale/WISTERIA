@@ -46,7 +46,7 @@ Phase 0B 的一句话定义：
 ```text
 1. 统一 Clock：motionFrame / physicsTick / simulatedSeconds，
    冻结 30Hz 动作 = 4 × 120Hz 物理 tick 的映射
-2. 叶瞬光首次 300-frame 结果降级为 Historical Preliminary
+2. corpus-asset-02 首次 300-frame 结果降级为 Historical Preliminary
    Observation，统一时间轴后复验
 3. 增加 environmentMode：NormalizedComparison /
    NativeCompatibilityAudit；executionProfile 不同只能当观察证据
@@ -194,7 +194,7 @@ frame 300 → 累计 1200 ticks
 任何对照报告禁止单独使用模糊的 `frame`；必须同时给出
 `motionFrame / physicsTick / simulatedSeconds`。
 
-**叶瞬光首次 300-frame 对照（±10.5 → ±6.8）降级为
+**corpus-asset-02 首次 300-frame 对照（±10.5 → ±6.8）降级为
 Historical Preliminary Observation**：该结果来自 babylon harness 的
 120Hz tick 计数（300 tick = 2.5s），与 WISTERIA motionFrame 300
 （= 10s）不是同一时间轴，统一 Clock 后必须复验。
@@ -280,9 +280,14 @@ Runtime-local object order MUST NOT be used as cross-reference identity。
 没有 source identity 的逐体 diff 结论（如“body 274 分叉”）不具备
 跨实现证据效力。
 
-## 5. 坐标归一化（ReferenceCoordinateNormalization v1）
+## 5. 坐标归一化（canonical target + adapter mapping）
 
-坐标系反射（saba 与 babylon-mmd 的 Z 轴相反）：
+canonical target 固定为 WISTERIA canonical coordinate；**是否应用
+Z reflection 是 adapter-specific evidence decision，不由 reference
+名称预设**。
+
+当证据确认 reference coordinate 确实需要 Z reflection 时，使用
+ZReflectionNormalizationV1：
 
 ```text
 S = diag(1, 1, -1)
@@ -305,6 +310,17 @@ bone transform:  T'  = H T H
 - 跨实现旋转以 rotation basis（3×3 矩阵）为标准表示，
   不直接比较经过符号转换的 quaternion；
 - 所有 reference adapter 输出 WISTERIA canonical coordinate。
+```
+
+pinned adapter mapping（已核验）：
+
+```text
+babylon-mmd 1.3.0 / 3f523d392c176d5c9c9f9264f622d0631c1d298e
+  刚体世界变换 → IdentityToWisteriaCanonical
+  依据：corpus no-VMD prepared frame0 对齐
+  （position ≤ 3e-8，rotation ≤ 2.4e-6°）
+
+nanoem 等后续 adapter 若确需反射 → ZReflectionNormalizationV1
 ```
 
 验收：synthetic transform fixture golden test 必须覆盖
@@ -332,6 +348,7 @@ Contact topology：
   First contact-topology divergence: frame / pairA / pairB
   First motion-state divergence: frame / body
   First bone divergence: frame / bone / maxMatrixDelta
+  First joint-presence divergence: frame / joint
   Joint error delta: joint / linear / angular
 ```
 
@@ -462,7 +479,7 @@ preset 身份变化（如 mmd-community-v1 → v2）
 3. 单位与重力裁决
    回答“PMX 1 单位在 WISTERIA 中具体代表什么”；
    输入：Phase 0A 单位审计 + NativeCompatibilityAudit
-4. 叶瞬光 mode-2 分歧专项（Historical Preliminary）
+4. corpus-asset-02 mode-2 分歧专项（Historical Preliminary）
    统一 Clock + 逐刚体轨迹对比 → 第三参考（nanoem source semantics）
    → 判定归属；不得直接引用旧 frame300 数值
 5. 其他候选（只列项，不冻结）
@@ -534,7 +551,7 @@ preset 身份变化（如 mmd-community-v1 → v2）
 6. WISTERIA diff 工具升级（contact / motion-state / bone）
 7. nanoem feasibility spike（升级 Runnable 与否）
 8. 对照 corpus 冻结（3 类资产 + hash）
-9. 首批候选规则 A/B 轨迹采集（含叶瞬光专项复验）
+9. 首批候选规则 A/B 轨迹采集（含 corpus-asset-02 专项复验）
 10. 规则裁决与证据包归档
 11. MMD_COMMUNITY 首条规则实现 + 测试
 12. 四套矩阵 + 对照报告

@@ -66,6 +66,12 @@ struct TraceDiffResult
     std::uint32_t jointIndex = 0U;
     float jointLinearDelta = 0.0f;
     float jointAngularDeltaDeg = 0.0f;
+
+    // Joint presence divergence (missing/extra joint in one side only),
+    // kept separate from numeric joint error deltas.
+    bool jointPresenceFound = false;
+    MotionFrameIndex jointPresenceFrame = 0U;
+    std::uint32_t jointPresenceIndex = 0U;
 };
 
 TraceDiffResult DiffTraceStreams(

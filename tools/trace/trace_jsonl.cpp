@@ -603,12 +603,11 @@ TraceDiffResult DiffTraceStreams(
             if (!foundInB)
             {
                 result.identical = false;
-                if (!result.jointDeltaFound)
+                if (!result.jointPresenceFound)
                 {
-                    result.jointDeltaFound = true;
-                    result.jointIndex = jointA.index;
-                    result.jointLinearDelta = 1.0e30f;
-                    result.jointAngularDeltaDeg = 1.0e30f;
+                    result.jointPresenceFound = true;
+                    result.jointPresenceFrame = frameA.frame;
+                    result.jointPresenceIndex = jointA.index;
                 }
             }
         }
@@ -626,12 +625,11 @@ TraceDiffResult DiffTraceStreams(
             if (!foundInA)
             {
                 result.identical = false;
-                if (!result.jointDeltaFound)
+                if (!result.jointPresenceFound)
                 {
-                    result.jointDeltaFound = true;
-                    result.jointIndex = jointB.index;
-                    result.jointLinearDelta = 1.0e30f;
-                    result.jointAngularDeltaDeg = 1.0e30f;
+                    result.jointPresenceFound = true;
+                    result.jointPresenceFrame = frameA.frame;
+                    result.jointPresenceIndex = jointB.index;
                 }
             }
         }
@@ -851,6 +849,12 @@ std::string FormatTraceDiff(const TraceDiffResult& result)
             std::to_string(result.jointIndex) +
             " linear=" + std::to_string(result.jointLinearDelta) +
             " angular=" + std::to_string(result.jointAngularDeltaDeg) + "\n";
+    }
+    if (result.jointPresenceFound)
+    {
+        text += "First joint-presence divergence: frame=" +
+            std::to_string(result.jointPresenceFrame) +
+            " joint=" + std::to_string(result.jointPresenceIndex) + "\n";
     }
     text += "comparedFrames=" + std::to_string(result.comparedFrames) +
         " linesA=" + std::to_string(result.lineCountA) +

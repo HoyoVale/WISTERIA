@@ -23,8 +23,7 @@
     {
       "id": "corpus-asset-01",
       "class": 1,
-      "name": "凑企鹅",
-      "path": "assets/models/mmd/凑企鹅/凑企鹅.pmx",
+      "localPath": "PRIVATE (FULL_ASSETS, local only)",
       "pmx": {
         "sha256": "a3b7105dc3cfef22540e7aa77e6f0497453541f600f9002bc98c6c7cd2db7680",
         "fnv1a64": "b4cecdc35c9c7926"
@@ -39,7 +38,7 @@
         "massMax": 1.0
       },
       "motion": {
-        "path": "assets/models/mmd/凑企鹅/penguin_walking.vmd",
+        "alias": "motion-01",
         "sha256": "cb35fd4a6194a35ab46061ce8de13d5371d91dff6b81471e3dd1733490482395",
         "fnv1a64": "14145a55cbb3840d",
         "verified": [0, 1, 10, 300]
@@ -48,8 +47,7 @@
     {
       "id": "corpus-asset-02",
       "class": 2,
-      "name": "叶瞬光",
-      "path": "assets/models/mmd/叶瞬光_pmx/叶瞬光.pmx",
+      "localPath": "PRIVATE (FULL_ASSETS, local only)",
       "pmx": {
         "sha256": "208e7484db2e495010a1dbe103bd2f76a903356a43f1a1b6b9b3bf42b06738f3",
         "fnv1a64": "b53b21f696c7335f"
@@ -64,7 +62,7 @@
         "massMax": 218.31
       },
       "motion": {
-        "path": "assets/motions/皮卡皮卡皮卡丘+/身体动作.vmd",
+        "alias": "motion-02",
         "sha256": "d7b19886bb28830274c278739975edda89575fccbc1f2c54ddfd7bb966e05c20",
         "fnv1a64": "3aa39fe68e622f20",
         "verified": [0, 1, 10, 300]
@@ -73,8 +71,7 @@
     {
       "id": "corpus-asset-03",
       "class": 3,
-      "name": "蕾米埃尔-白",
-      "path": "assets/models/mmd/蕾米埃尔-白/蕾米埃尔-白.pmx",
+      "localPath": "PRIVATE (FULL_ASSETS, local only)",
       "pmx": {
         "sha256": "f1f503ed7a0a4922fc16e6f28bff6b4130b02202ece1cbedae663c6cbca6679a",
         "fnv1a64": "369e5cfa96731cfa"
@@ -89,7 +86,7 @@
         "massMax": 4146.89
       },
       "motion": {
-        "path": "assets/motions/梦的翅膀/梦的翅膀motion.vmd",
+        "alias": "motion-03",
         "sha256": "4dddf29105a1bdeae2e5cc3eb001d8bb7c2cde880fa2a0fac72fd145e53c7b6e",
         "fnv1a64": "e5b56b2d1c86d690",
         "verified": [0, 1, 10, 300]

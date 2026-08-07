@@ -141,6 +141,18 @@ node compare_traces.mjs --wisteria <trace.jsonl> --reference <bodies.csv> [--env
 bodies.csv，报告 first/max divergence（位置 + 旋转）。参考侧执行配置与
 WISTERIA 的 deterministic-cold-step 不同，结果仅作观察证据。
 
+正式证据模式（Step 8–9 Evidence Integrity Closure）：
+
+```bash
+node compare_traces.mjs --wisteria <trace.jsonl> --reference <bodies.csv> \
+  --env <env.json> --corpus corpus.json --asset corpus-asset-02 \
+  [--no-motion]
+```
+
+该模式校验 reference SHA-256、WISTERIA FNV-1a64、motion identity 与
+comparisonPoints；帧集不对称或旋转基非法会报 EVIDENCE INVALID 并 exit 1。
+无 VMD 运行需加 `--no-motion`（校验两侧确无 motion）。
+
 WISTERIA 侧轨迹由 `wisteria_trace_export` 生成：
 
 ```bash
@@ -168,7 +180,7 @@ WISTERIA 侧同款校验由现有 C++ 测试覆盖：
 
 ## 第一次对照结果（Historical Preliminary，待复验）
 
-叶瞬光.pmx 刚体构成：**495 个**（38 FollowBone / 74 Physics /
+corpus-asset-02（私有生产模型）刚体构成：**495 个**（38 FollowBone / 74 Physics /
 383 PhysicsWithBone），质量 0.01–218.31，模型以 mode 2 为主。
 
 | 实现 | frame 10 | frame 300 | 收敛 |
