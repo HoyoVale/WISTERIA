@@ -4305,6 +4305,33 @@ void TestStableRuntimeAbiE2E()
         "stable serialize accepted an invalid asset identity"
     );
 
+    // Phase 0B asset identity precondition: hasMotion=true with a zero VMD
+    // hash is invalid even when the PMX hash is present ("hasMotion"
+    // distinguishes no-VMD from vmdFileHash == 0).
+    FrameCheckpoint vmdIdentityCheckpoint = decodedWire;
+    vmdIdentityCheckpoint.fingerprint.asset.hasMotion = true;
+    const std::vector<std::uint8_t> invalidVmdWire =
+        SerializeCheckpoint(vmdIdentityCheckpoint);
+    WisteriaCheckpoint invalidVmdCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            invalidVmdWire.data(),
+            invalidVmdWire.size(),
+            &invalidVmdCheckpoint
+        ) == WISTERIA_STATUS_OK && invalidVmdCheckpoint != 0U,
+        "stable deserialize rejected a structurally valid VMD-identity wire"
+    );
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            invalidVmdCheckpoint,
+            nullptr,
+            &ignoredSize
+        ) == WISTERIA_STATUS_INVALID_STATE,
+        "stable serialize accepted hasMotion without a VMD hash"
+    );
+
     WisteriaEntity entityB = 0U;
     Require(
         wisteria_stable_entity_create(
@@ -4562,6 +4589,10 @@ void TestStableRuntimeAbiE2E()
             wisteria_stable_checkpoint_destroy(
                 context,
                 invalidAssetCheckpoint
+            ) == WISTERIA_STATUS_OK &&
+            wisteria_stable_checkpoint_destroy(
+                context,
+                invalidVmdCheckpoint
             ) == WISTERIA_STATUS_OK &&
             wisteria_stable_checkpoint_destroy(
                 context,

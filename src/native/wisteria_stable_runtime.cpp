@@ -48,6 +48,16 @@ bool StableFrameWithinExactDomain(std::uint64_t frame) noexcept
     return frame <= kSabaExactFrameLimit;
 }
 
+// Asset identity validity (Phase 0B precondition): the PMX hash must be
+// present, and a claimed VMD must carry a real hash ("hasMotion" is what
+// distinguishes no-VMD from vmdFileHash == 0).
+bool StableAssetIdentityValid(const FrameCheckpoint& checkpoint) noexcept
+{
+    return checkpoint.fingerprint.asset.pmxFileHash != 0U &&
+        (!checkpoint.fingerprint.asset.hasMotion ||
+         checkpoint.fingerprint.asset.vmdFileHash != 0U);
+}
+
 std::uint32_t MapTimelineStatus(TimelineStatus status) noexcept
 {
     switch (status)
@@ -592,7 +602,7 @@ std::uint32_t wisteria_stable_checkpoint_create(
             MapTimelineStatus(mmd->CreateCheckpoint(checkpoint));
         if (status != WISTERIA_STATUS_OK)
             return status;
-        if (checkpoint.fingerprint.asset.pmxFileHash == 0U)
+        if (!StableAssetIdentityValid(checkpoint))
         {
             TrySetError(
                 &ctx,
@@ -738,7 +748,7 @@ std::uint32_t wisteria_stable_checkpoint_serialize(
                 "unknown stable checkpoint handle"
             );
         }
-        if (iterator->second.fingerprint.asset.pmxFileHash == 0U)
+        if (!StableAssetIdentityValid(iterator->second))
         {
             TrySetError(
                 &ctx,
