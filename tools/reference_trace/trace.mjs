@@ -24,12 +24,6 @@ import { PhysicsImpostor } from "@babylonjs/core/Physics/v1/physicsImpostor.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import Ammo from "ammojs-typed";
-import {
-  normalizePosition,
-  normalizeLinearVelocity,
-  normalizeAngularVelocity,
-  normalizeRotationBasis
-} from "./coordinate_normalization_lib.mjs";
 import { prepareFrame0, stepMotionFrame } from "./frame_driver.mjs";
 
 // Pinned source commit (see README "冻结身份").
@@ -172,6 +166,35 @@ async function main() {
   const parsedObject = await plugin._parseFileAsync(state.arrayBuffer);
   const rigidBodyCount = parsedObject.rigidBodies?.length ?? 0;
   console.log("rigid body count:", rigidBodyCount);
+  const modes = [0, 0, 0];
+  let dynamicMassMin = Infinity;
+  let dynamicMassMax = -Infinity;
+  let dynamicCount = 0;
+  for (const rigidBody of parsedObject.rigidBodies ?? []) {
+    const mode = rigidBody.physicsMode ?? rigidBody.mode;
+    if (mode !== undefined) {
+      modes[mode] = (modes[mode] ?? 0) + 1;
+    }
+    if (mode === 1 || mode === 2) {
+      dynamicCount += 1;
+      dynamicMassMin = Math.min(dynamicMassMin, rigidBody.mass);
+      dynamicMassMax = Math.max(dynamicMassMax, rigidBody.mass);
+    }
+  }
+  console.log(
+    "rigid body modes (0=follow,1=physics,2=physics+merge):",
+    modes.join("/"),
+    "dynamic count:",
+    dynamicCount,
+    "dynamic mass range:",
+    Number.isFinite(dynamicMassMin)
+      ? dynamicMassMin.toFixed(2)
+      : "n/a",
+    "-",
+    Number.isFinite(dynamicMassMax)
+      ? dynamicMassMax.toFixed(2)
+      : "n/a"
+  );
 
   // Bind-pose reference (read before any stepping).
   const bind = meshes.map(
@@ -310,7 +333,11 @@ async function main() {
     return maxD;
   };
 
-  // Per-rigid-body row, normalized to the WISTERIA canonical coordinate.
+  // Per-rigid-body row. Empirical verification on the pinned babylon-mmd
+  // (corpus assets + CORE pmx_physics): ammo rigid-body world transforms
+  // already match the WISTERIA canonical coordinate directly, so no
+  // Z-reflection is applied here. The ReferenceCoordinateNormalization
+  // formulas remain library-tested for adapters that do need them.
   const readBodyRow = (index) => {
     const impostor = impostors[index];
     if (impostor === null || impostor === undefined) return null;
@@ -318,29 +345,34 @@ async function main() {
     if (body === null || body === undefined) return null;
     const transform = body.getWorldTransform();
     const origin = transform.getOrigin();
-    const position = normalizePosition([origin.x(), origin.y(), origin.z()]);
+    const position = [origin.x(), origin.y(), origin.z()];
     const basis = transform.getBasis();
+    // ammo.js getRow returns a reused temporary vector; copy every component
+    // immediately after each call or later rows overwrite earlier ones.
     const row0 = basis.getRow(0);
+    const row0Values = [row0.x(), row0.y(), row0.z()];
     const row1 = basis.getRow(1);
+    const row1Values = [row1.x(), row1.y(), row1.z()];
     const row2 = basis.getRow(2);
+    const row2Values = [row2.x(), row2.y(), row2.z()];
     const basisColMajor = [
-      row0.x(), row1.x(), row2.x(),
-      row0.y(), row1.y(), row2.y(),
-      row0.z(), row1.z(), row2.z()
+      row0Values[0], row1Values[0], row2Values[0],
+      row0Values[1], row1Values[1], row2Values[1],
+      row0Values[2], row1Values[2], row2Values[2]
     ];
-    const rotation = normalizeRotationBasis(basisColMajor);
+    const rotation = basisColMajor;
     const linear = body.getLinearVelocity();
     const angular = body.getAngularVelocity();
-    const linearVelocity = normalizeLinearVelocity([
+    const linearVelocity = [
       linear.x(),
       linear.y(),
       linear.z()
-    ]);
-    const angularVelocity = normalizeAngularVelocity([
+    ];
+    const angularVelocity = [
       angular.x(),
       angular.y(),
       angular.z()
-    ]);
+    ];
     return [
       position[0], position[1], position[2],
       ...rotation,
@@ -364,9 +396,10 @@ async function main() {
   const emitFrame = (motionFrame, physicsTick, positions) => {
     const bounds = aggregate(positions);
     const displacement = maxDisplacement(positions, bind);
-    // Z-reflection normalization for the aggregate bounds.
-    const minZ = -bounds.maxZ;
-    const maxZ = -bounds.minZ;
+    // Bounds derive from the same scene-space bone matrices as the rigid
+    // bodies; keep the raw convention (see readBodyRow note).
+    const minZ = bounds.minZ;
+    const maxZ = bounds.maxZ;
     const simulatedSeconds = physicsTick / 120;
     csv +=
       `${motionFrame},${physicsTick},${simulatedSeconds.toFixed(6)},` +

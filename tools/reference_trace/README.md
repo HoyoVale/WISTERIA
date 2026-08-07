@@ -66,8 +66,13 @@ node bundle_trace.cjs "<model.pmx>" "<out.csv>" 300 1
   saba 基线；世界重力 `-98`（10:1 尺度，与 saba 一致）。
 - 蒙皮在 GPU shader 里，CPU 顶点缓冲永远是绑定位；轨迹读取必须在 CPU 上
   用 `worldTransformMatrices × bone.getAbsoluteInverseBindMatrix()` 手动蒙皮。
-- 坐标约定：saba 与 babylon-mmd 的 **Z 轴相反**，逐项对比时按
-  ReferenceCoordinateNormalization v1 归一化（见 Phase 0B 契约 §5）。
+- 坐标约定（Step 9 实测修正）：pinned babylon-mmd 的**刚体世界变换与
+  WISTERIA canonical 坐标直接一致**，reference 适配器不再施加 Z 反射；
+  ReferenceCoordinateNormalization v1 公式仍保留（golden test 覆盖），
+  供确需反射的适配器使用。早期“Z 相反”结论仅适用于旧 mesh bounds
+  对照路径，已被本实现取代。
+- ammo.js 陷阱：`btMatrix3x3.getRow()` 返回复用临时对象，必须**每次调用
+  后立即拷贝三个分量**，否则三行会全部变成最后一行（已修复并有对照验证）。
 - 动画时钟：`model.beforePhysics(frameTime)` 接收**绝对 30fps 帧号**
   （babylon-mmd runtime 传入 `elapsedFrameTime`）。trace 因此按
   motionFrame 循环，且与校准共用 frame_driver.mjs：
@@ -125,6 +130,23 @@ motionFrame 语义采样动画并执行物理。
 
 参数校验：`motionFrames` 必须是整数 ≥ 0，`sampleInterval` 必须是整数 ≥ 1，
 非法输入直接报错退出。
+
+## 跨实现对照
+
+```bash
+node compare_traces.mjs --wisteria <trace.jsonl> --reference <bodies.csv> [--env <env.json>]
+```
+
+按 motionFrame + sourceRigidBodyIndex 对齐 WISTERIA JSONL 与 reference
+bodies.csv，报告 first/max divergence（位置 + 旋转）。参考侧执行配置与
+WISTERIA 的 deterministic-cold-step 不同，结果仅作观察证据。
+
+WISTERIA 侧轨迹由 `wisteria_trace_export` 生成：
+
+```bash
+wisteria_trace_export --model <pmx> [--motion <vmd>] --out <trace.jsonl> \
+  --frames 300 --sample-interval 10
+```
 
 ## 时钟校准（synthetic fixture）
 

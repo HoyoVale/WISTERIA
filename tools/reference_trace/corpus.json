@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "frozen": "2026-08-07",
+  "identity": {
+    "sha256": "cross-implementation canonical asset identity",
+    "fnv1a64": "WISTERIA R1.2C internal deterministic asset identity (FNV-1a 64 over raw file bytes)"
+  },
+  "environment": {
+    "environmentMode": "NormalizedComparison",
+    "gravity": [0, -98, 0],
+    "fixedTimeStep": 0.008333333333333333,
+    "groundPolicy": "synthetic-ground-box-v1",
+    "referenceExecutionProfile": "reference-continuous-120hz-v1",
+    "wisteriaExecutionProfile": "deterministic-cold-step-v1",
+    "initialTransform": {
+      "position": [0, 0, 0],
+      "rotation": [1, 0, 0, 0],
+      "scale": 1
+    },
+    "comparisonPoints": [0, 10, 30, 100, 300]
+  },
+  "assets": [
+    {
+      "id": "corpus-asset-01",
+      "class": 1,
+      "name": "凑企鹅",
+      "path": "assets/models/mmd/凑企鹅/凑企鹅.pmx",
+      "pmx": {
+        "sha256": "a3b7105dc3cfef22540e7aa77e6f0497453541f600f9002bc98c6c7cd2db7680",
+        "fnv1a64": "b4cecdc35c9c7926"
+      },
+      "rigidBodies": {
+        "count": 9,
+        "mode0FollowBone": 1,
+        "mode1Physics": 8,
+        "mode2PhysicsWithBone": 0,
+        "dynamicCount": 8,
+        "massMin": 1.0,
+        "massMax": 1.0
+      },
+      "motion": {
+        "path": "assets/models/mmd/凑企鹅/penguin_walking.vmd",
+        "sha256": "cb35fd4a6194a35ab46061ce8de13d5371d91dff6b81471e3dd1733490482395",
+        "fnv1a64": "14145a55cbb3840d",
+        "verified": [0, 1, 10, 300]
+      }
+    },
+    {
+      "id": "corpus-asset-02",
+      "class": 2,
+      "name": "叶瞬光",
+      "path": "assets/models/mmd/叶瞬光_pmx/叶瞬光.pmx",
+      "pmx": {
+        "sha256": "208e7484db2e495010a1dbe103bd2f76a903356a43f1a1b6b9b3bf42b06738f3",
+        "fnv1a64": "b53b21f696c7335f"
+      },
+      "rigidBodies": {
+        "count": 495,
+        "mode0FollowBone": 38,
+        "mode1Physics": 74,
+        "mode2PhysicsWithBone": 383,
+        "dynamicCount": 457,
+        "massMin": 0.01,
+        "massMax": 218.31
+      },
+      "motion": {
+        "path": "assets/motions/皮卡皮卡皮卡丘+/身体动作.vmd",
+        "sha256": "d7b19886bb28830274c278739975edda89575fccbc1f2c54ddfd7bb966e05c20",
+        "fnv1a64": "3aa39fe68e622f20",
+        "verified": [0, 1, 10, 300]
+      }
+    },
+    {
+      "id": "corpus-asset-03",
+      "class": 3,
+      "name": "蕾米埃尔-白",
+      "path": "assets/models/mmd/蕾米埃尔-白/蕾米埃尔-白.pmx",
+      "pmx": {
+        "sha256": "f1f503ed7a0a4922fc16e6f28bff6b4130b02202ece1cbedae663c6cbca6679a",
+        "fnv1a64": "369e5cfa96731cfa"
+      },
+      "rigidBodies": {
+        "count": 633,
+        "mode0FollowBone": 89,
+        "mode1Physics": 269,
+        "mode2PhysicsWithBone": 275,
+        "dynamicCount": 544,
+        "massMin": 0.01,
+        "massMax": 4146.89
+      },
+      "motion": {
+        "path": "assets/motions/梦的翅膀/梦的翅膀motion.vmd",
+        "sha256": "4dddf29105a1bdeae2e5cc3eb001d8bb7c2cde880fa2a0fac72fd145e53c7b6e",
+        "fnv1a64": "e5b56b2d1c86d690",
+        "verified": [0, 1, 10, 300]
+      }
+    }
+  ],
+  "rejectedCandidates": [
+    {
+      "id": "production-pmx-suibian",
+      "reason": "rigid body count 0; no physics content"
+    },
+    {
+      "id": "production-pmx-yixuan",
+      "reason": "269 bodies (37/82/150); kept as Class 3 backup"
+    },
+    {
+      "id": "production-pmx-aimisi",
+      "reason": "695 bodies (40/643/12); Mode 1 dominant, no Mode 2 coverage"
+    }
+  ]
+}

@@ -8,6 +8,7 @@
     "build:spike": "esbuild spike_load.mjs --bundle --platform=node --format=esm --outfile=bundle.mjs",
     "calibrate": "node clock_calibration.mjs",
     "coordinate": "node coordinate_normalization.mjs",
+    "corpus-hash": "node corpus_hash.mjs",
     "trace": "npm run build:trace && node bundle_trace.cjs",
     "spike": "npm run build:spike && node bundle.mjs"
   },

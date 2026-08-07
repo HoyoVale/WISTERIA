@@ -383,6 +383,11 @@ add_executable(wisteria_trace_diff
 )
 target_link_libraries(wisteria_trace_diff PRIVATE wisteria_trace_tooling)
 
+add_executable(wisteria_trace_export
+    tools/trace/trace_export_main.cpp
+)
+target_link_libraries(wisteria_trace_export PRIVATE wisteria_trace_tooling)
+
 # automated tests
 include(CTest)
 
