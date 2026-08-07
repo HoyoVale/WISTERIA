@@ -382,10 +382,23 @@ Entity& Scene::InstantiateModel(
     const Transform& transform
 )
 {
+    return this->InstantiateModel(
+        model,
+        RuntimeCreationOptions{},
+        transform
+    );
+}
+
+Entity& Scene::InstantiateModel(
+    const ModelAsset& model,
+    const RuntimeCreationOptions& options,
+    const Transform& transform
+)
+{
     Entity& entity = this->CreateEntity(transform);
     auto instance = std::make_unique<ModelInstance>(
         model,
-        this->modelBackends.CreateRuntime(model)
+        this->modelBackends.CreateRuntime(model, options)
     );
     ModelInstance& instanceReference = *instance;
     const bool backendDriven = instanceReference.HasRuntime();

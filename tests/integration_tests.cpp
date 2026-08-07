@@ -4,6 +4,7 @@
 #include "wisteria/mmd/physics/mmd_physics_audit.hpp"
 #include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 #include "wisteria/mmd/physics/mmd_physics_trace.hpp"
+#include "wisteria/runtime/model_backend.hpp"
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
 #include "trace_jsonl.hpp"
@@ -9626,6 +9627,105 @@ void TestR14FrameDomainGuard()
     );
 }
 
+void TestR14RuntimeCreationOptions()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+
+    ModelAsset asset("pmx-physics");
+    ModelSourceDescriptor descriptor;
+    descriptor.sourcePath = modelPath;
+    descriptor.backend = ModelBackendKind::SabaMmd;
+    asset.SetSourceDescriptor(descriptor);
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+
+    // Default options: MMD_RAW baseline with SabaBaseline settings.
+    {
+        auto runtime = registry.CreateRuntime(asset);
+        auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+        Require(
+            mmd != nullptr,
+            "default creation did not produce an MMD runtime"
+        );
+        MmdPhysicsConfiguration config;
+        Require(
+            mmd->GetMmdPhysicsConfiguration(config),
+            "default creation config read failed"
+        );
+        Require(
+            FormatConfigurationIdentity(config) == "mmd-raw-v1",
+            "default creation identity mismatch"
+        );
+        Require(
+            ValidateConfiguration(config),
+            "default creation config invalid"
+        );
+        const ModelPhysicsRuntimeInfo info = mmd->PhysicsInfo();
+        Require(
+            NearlyEqual(info.gravity, glm::vec3(0.0f, -98.0f, 0.0f)),
+            "default creation gravity mismatch"
+        );
+    }
+
+    // Semantic preset + custom stable settings: custom identity, applied
+    // before Initialize.
+    {
+        RuntimeCreationOptions options;
+        options.physicsPreset = MmdPhysicsPreset::MmdCommunity;
+        options.physicsSettings.gravity =
+            glm::vec3(0.0f, -55.0f, 0.0f);
+        auto runtime = registry.CreateRuntime(asset, options);
+        auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+        Require(
+            mmd != nullptr,
+            "optioned creation did not produce an MMD runtime"
+        );
+        MmdPhysicsConfiguration config;
+        Require(
+            mmd->GetMmdPhysicsConfiguration(config),
+            "optioned creation config read failed"
+        );
+        Require(
+            FormatConfigurationIdentity(config) ==
+                "custom-from-mmd-community-v1",
+            "optioned creation identity mismatch"
+        );
+        Require(
+            ValidateConfiguration(config),
+            "optioned creation config invalid"
+        );
+        Require(
+            config.runtime.gravity == glm::vec3(0.0f, -55.0f, 0.0f),
+            "optioned gravity not applied to the authoritative config"
+        );
+        const ModelPhysicsRuntimeInfo info = mmd->PhysicsInfo();
+        Require(
+            NearlyEqual(info.gravity, glm::vec3(0.0f, -55.0f, 0.0f)),
+            "optioned gravity not applied to the physics world"
+        );
+    }
+
+    // Preset-only options (settings equal SabaBaseline) keep the direct
+    // preset identity.
+    {
+        RuntimeCreationOptions options;
+        options.physicsPreset = MmdPhysicsPreset::MmdCommunity;
+        auto runtime = registry.CreateRuntime(asset, options);
+        auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+        MmdPhysicsConfiguration config;
+        Require(
+            mmd->GetMmdPhysicsConfiguration(config),
+            "preset-only config read failed"
+        );
+        Require(
+            FormatConfigurationIdentity(config) == "mmd-community-v1",
+            "preset-only identity mismatch"
+        );
+    }
+}
+
 }
 
 int main()
@@ -9956,6 +10056,10 @@ int main()
     failures += !RunTest(
         "R1.4 frame domain guard",
         TestR14FrameDomainGuard
+    );
+    failures += !RunTest(
+        "R1.4 runtime creation options",
+        TestR14RuntimeCreationOptions
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",

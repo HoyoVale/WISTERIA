@@ -56,6 +56,11 @@ public:
         const ModelAsset& model,
         const Transform& transform = {}
     );
+    Entity& InstantiateModel(
+        const ModelAsset& model,
+        const RuntimeCreationOptions& options,
+        const Transform& transform = {}
+    );
     bool RemoveEntity(const Entity& entity);
     void ClearEntities() noexcept;
 

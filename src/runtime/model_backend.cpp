@@ -1,6 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/runtime/model_backend.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
+#include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -23,7 +24,8 @@ public:
     }
 
     std::unique_ptr<IModelRuntimeDriver> CreateRuntime(
-        const ModelAsset& asset
+        const ModelAsset& asset,
+        const RuntimeCreationOptions& options
     ) const override
     {
         const ModelSourceDescriptor* source =
@@ -37,6 +39,28 @@ public:
         auto runtime = std::make_unique<SabaMmdRuntimeModel>(
             source->sourcePath
         );
+        // R1.4: authoritative configuration is built from stable options and
+        // applied before Initialize. A physics-settings override that
+        // diverges from the frozen preset carries a custom identity.
+        MmdPhysicsConfiguration configuration =
+            BuildPresetConfiguration(options.physicsPreset);
+        configuration.runtime = options.physicsSettings;
+        if (ComputeEffectiveConfigurationFingerprint(configuration) !=
+            ComputeEffectiveConfigurationFingerprint(
+                BuildPresetConfiguration(options.physicsPreset)
+            ))
+        {
+            configuration.identity.originPreset =
+                ToPresetNameLower(options.physicsPreset);
+        }
+        const TimelineStatus configStatus =
+            runtime->SetMmdPhysicsConfiguration(configuration);
+        if (configStatus != TimelineStatus::Ok)
+        {
+            throw std::runtime_error(
+                "Saba MMD runtime rejected creation options"
+            );
+        }
         runtime->SetAsset(&asset);
         if (!runtime->Initialize())
         {
@@ -74,7 +98,8 @@ const IModelBackend* ModelBackendRegistry::Find(
 }
 
 std::unique_ptr<IModelRuntimeDriver> ModelBackendRegistry::CreateRuntime(
-    const ModelAsset& asset
+    const ModelAsset& asset,
+    const RuntimeCreationOptions& options
 ) const
 {
     const ModelBackendKind kind = asset.BackendKind();
@@ -83,7 +108,7 @@ std::unique_ptr<IModelRuntimeDriver> ModelBackendRegistry::CreateRuntime(
     const IModelBackend* backend = this->Find(kind);
     if (backend == nullptr)
         throw std::logic_error("No backend registered for model asset");
-    return backend->CreateRuntime(asset);
+    return backend->CreateRuntime(asset, options);
 }
 
 void RegisterDefaultModelBackends(ModelBackendRegistry& registry)
