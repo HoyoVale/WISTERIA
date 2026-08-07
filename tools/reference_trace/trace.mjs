@@ -11,7 +11,9 @@ async function main() {
   const pmxPath = process.argv[2];
   const outPath = process.argv[3] ?? "reference_trace.csv";
   const totalFrames = Number(process.argv[4] ?? 300);
-  const sampleInterval = Number(process.argv[5] ?? 10);
+  // Default to one row per motion frame (4 ticks); tick-based sampling can
+  // be requested explicitly with a different interval.
+  const sampleInterval = Number(process.argv[5] ?? 4);
   const dt = 1.0 / 120.0;
   const bytes = readFileSync(pmxPath);
 
@@ -238,7 +240,18 @@ async function main() {
     return maxD;
   };
 
-  let csv = "frame,min_x,min_y,min_z,max_x,max_y,max_z,max_displacement\n";
+  let csv =
+    "motionFrame,physicsTick,simulatedSeconds," +
+    "min_x,min_y,min_z,max_x,max_y,max_z,max_displacement\n";
+
+  // motionFrame 0 is a prepared boundary (no physics step): emit the
+  // bind-pose row so the WISTERIA comparison point at tick 0 exists.
+  {
+    const bounds = aggregate(bind);
+    csv += `0,0,0.000000,${bounds.minX},${bounds.minY},${bounds.minZ},` +
+      `${bounds.maxX},${bounds.maxY},${bounds.maxZ},0\n`;
+  }
+
   for (let frame = 0; frame < totalFrames; ++frame) {
     model.beforePhysics(dt);
     physicsEngine._step(dt);
@@ -248,12 +261,16 @@ async function main() {
     const positions = meshes.map((_, index) => skinMesh(index, matrices));
     const bounds = aggregate(positions);
     const displacement = maxDisplacement(positions, bind);
+    const physicsTick = frame + 1;
+    const motionFrame = Math.floor(physicsTick / 4);
+    const simulatedSeconds = physicsTick / 120;
     csv +=
-      `${frame + 1},${bounds.minX},${bounds.minY},${bounds.minZ},` +
+      `${motionFrame},${physicsTick},${simulatedSeconds.toFixed(6)},` +
+      `${bounds.minX},${bounds.minY},${bounds.minZ},` +
       `${bounds.maxX},${bounds.maxY},${bounds.maxZ},${displacement}\n`;
   }
   writeFileSync(outPath, csv);
-  console.log("wrote", outPath, "rows:", totalFrames / sampleInterval);
+  console.log("wrote", outPath, "rows:", 1 + totalFrames / sampleInterval);
   process.exit(0);
 }
 
