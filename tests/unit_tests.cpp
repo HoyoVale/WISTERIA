@@ -3323,6 +3323,25 @@ void TestCheckpointWireCodec()
         "round trip changed checkpoint fields"
     );
 
+    // Production serialize writes the engine-owned identity in the header.
+    const std::size_t buildIdOffset = 24U;  // magic(4) + 5 U32 ids
+    std::uint64_t wireBuildId = 0U;
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        wireBuildId |=
+            static_cast<std::uint64_t>(
+                bytes[buildIdOffset + static_cast<std::size_t>(shift / 8)]
+            ) << shift;
+    }
+    Require(
+        wireBuildId == CurrentBuildCompatibilityId(),
+        "production serializer did not write the engine-owned build id"
+    );
+    Require(
+        CurrentBuildCompatibilityId() != 0U,
+        "engine build identity must be non-zero"
+    );
+
     // Tampered payload byte is rejected and output is left untouched.
     std::vector<std::uint8_t> tampered = bytes;
     tampered[bytes.size() / 2U] ^= 0x01U;
@@ -3341,9 +3360,10 @@ void TestCheckpointWireCodec()
         "failed deserialize modified the output"
     );
 
-    // Build-compatibility mismatch.
+    // Build-compatibility mismatch (test-only override).
     CheckpointSerializationOptions otherBuild;
-    otherBuild.buildCompatibilityId = 2U;
+    otherBuild.buildCompatibilityIdOverride =
+        CurrentBuildCompatibilityId() + 1U;
     Require(
         DeserializeCheckpoint(
             bytes.data(),
@@ -3352,6 +3372,22 @@ void TestCheckpointWireCodec()
             decoded
         ) == TimelineStatus::InvalidCheckpoint,
         "build-compatibility mismatch was accepted"
+    );
+
+    // Default deserialize must also reject a foreign identity.
+    CheckpointSerializationOptions foreignBytes;
+    foreignBytes.buildCompatibilityIdOverride =
+        CurrentBuildCompatibilityId() + 1U;
+    const std::vector<std::uint8_t> foreignBytesSerialized =
+        SerializeCheckpoint(valid, foreignBytes);
+    Require(
+        DeserializeCheckpoint(
+            foreignBytesSerialized.data(),
+            foreignBytesSerialized.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "default deserializer accepted a foreign build identity"
     );
 
     // Truncation.
@@ -3535,9 +3571,9 @@ void TestCheckpointWireCodec()
         "zero-length input was accepted"
     );
 
-    // Zero build compatibility id is invalid on serialize.
+    // Zero build compatibility id override is invalid on serialize.
     CheckpointSerializationOptions zeroBuild;
-    zeroBuild.buildCompatibilityId = 0U;
+    zeroBuild.buildCompatibilityIdOverride = 0U;
     bool threw = false;
     try
     {

@@ -218,9 +218,10 @@ constexpr std::uint8_t kWireMagic[4] = {'W', 'C', 'P', 'K'};
 constexpr std::size_t kMinMorphEntryBytes = 8U;   // len(4) + weight(4)
 constexpr std::size_t kMinIkEntryBytes = 5U;      // len(4) + enabled(1)
 // Encoded RigidBodySnapshot size: index(4) + mode(1) + mass(4) +
-// 2 * transform(position 12 + basis 16) + 6 * vec3(12) +
-// activationState(4) + deactivationTime(4) == 145 bytes.
-constexpr std::size_t kMinBodyBytes = 145U;
+// 2 * transform(position 12 + basis 36) + 6 * vec3(12) +
+// activationState(4) + deactivationTime(4) == 185 bytes. The rotation
+// basis is the frozen 9 explicit float32 (column-major 3x3), not 4.
+constexpr std::size_t kMinBodyBytes = 185U;
 
 void EncodeTransform(Writer& writer, const RigidTransformSnapshot& transform)
 {
@@ -233,13 +234,20 @@ void EncodeTransform(Writer& writer, const RigidTransformSnapshot& transform)
 
 bool DecodeTransform(Reader& reader, RigidTransformSnapshot& transform)
 {
-    return reader.ReadF32(transform.position.x) &&
-        reader.ReadF32(transform.position.y) &&
-        reader.ReadF32(transform.position.z) &&
-        reader.ReadBytes(
-            reinterpret_cast<std::uint8_t*>(transform.rotationBasis.data()),
-            transform.rotationBasis.size() * sizeof(float)
-        );
+    if (!(reader.ReadF32(transform.position.x) &&
+          reader.ReadF32(transform.position.y) &&
+          reader.ReadF32(transform.position.z)))
+    {
+        return false;
+    }
+    // Basis must go through the little-endian codec like every other float;
+    // memcpy-ing wire bytes into host floats would break on big-endian.
+    for (float& component : transform.rotationBasis)
+    {
+        if (!reader.ReadF32(component))
+            return false;
+    }
+    return true;
 }
 
 void EncodeVector(Writer& writer, const glm::vec3& value)
@@ -699,7 +707,11 @@ std::vector<std::uint8_t> SerializeCheckpoint(
     const CheckpointSerializationOptions& options
 )
 {
-    if (options.buildCompatibilityId == 0U)
+    const std::uint64_t buildCompatibilityId =
+        options.buildCompatibilityIdOverride.value_or(
+            CurrentBuildCompatibilityId()
+        );
+    if (buildCompatibilityId == 0U)
     {
         throw std::invalid_argument(
             "buildCompatibilityId must be non-zero"
@@ -712,7 +724,7 @@ std::vector<std::uint8_t> SerializeCheckpoint(
     writer.U32(CheckpointPayloadSchemaMmdR12C);
     writer.U32(CheckpointBackendIdSabaMmd);
     writer.U32(CheckpointDeterministicProfileColdStepV1);
-    writer.U64(options.buildCompatibilityId);
+    writer.U64(buildCompatibilityId);
     const std::size_t payloadSizeOffset = writer.Buffer().size();
     writer.U64(0U);  // payload size placeholder
     const std::size_t checksumOffset = writer.Buffer().size();
@@ -788,7 +800,11 @@ TimelineStatus DeserializeCheckpoint(
     {
         return TimelineStatus::InvalidCheckpoint;
     }
-    if (buildId != options.buildCompatibilityId)
+    const std::uint64_t expectedBuildId =
+        options.buildCompatibilityIdOverride.value_or(
+            CurrentBuildCompatibilityId()
+        );
+    if (buildId != expectedBuildId)
     {
         return TimelineStatus::InvalidCheckpoint;
     }

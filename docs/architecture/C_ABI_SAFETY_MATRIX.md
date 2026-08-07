@@ -16,12 +16,12 @@
 
 | 状态 | 数量 |
 | ---- | ---- |
-| 总计 | 111 |
+| 总计 | 113 |
 | INVOKE_ABI | 90 |
 | GUARDED | 0 |
 | RAW_TRY | 1 |
 | PROVEN_NO_THROW_LEAF | 3 |
-| DECLARED_ONLY | 17 |
+| DECLARED_ONLY | 19 |
 | UNGUARDED | 0 |
 
 ## native_common.cpp
@@ -162,13 +162,15 @@
 | `wisteria_stable_entity_capabilities` | DECLARED_ONLY |
 | `wisteria_stable_entity_create` | DECLARED_ONLY |
 | `wisteria_stable_entity_destroy` | DECLARED_ONLY |
+| `wisteria_stable_entity_load_motion` | DECLARED_ONLY |
 | `wisteria_stable_entity_prepare_frame_zero` | DECLARED_ONLY |
 | `wisteria_stable_entity_replay_exact` | DECLARED_ONLY |
 | `wisteria_stable_entity_set_preview_frame` | DECLARED_ONLY |
 | `wisteria_stable_entity_step_exact` | DECLARED_ONLY |
+| `wisteria_stable_entity_unload_motion` | DECLARED_ONLY |
 | `wisteria_stable_last_error` | DECLARED_ONLY |
 
-`wisteria_stable_runtime.h (declared-only)`：0/17 GUARDED
+`wisteria_stable_runtime.h (declared-only)`：0/19 GUARDED
 
 ## 生成
 

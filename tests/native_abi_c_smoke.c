@@ -31,16 +31,24 @@ STATIC_ASSERT(offsetof(WisteriaRuntimeCreationOptionsV1, struct_size) == 0,
               options_size_offset);
 STATIC_ASSERT(offsetof(WisteriaCheckpointInfoV1, struct_size) == 0,
               checkpoint_info_size_offset);
+STATIC_ASSERT(offsetof(WisteriaCheckpointInfoV1, build_compatibility_id) == 24,
+              checkpoint_build_id_offset);
+STATIC_ASSERT(sizeof(WisteriaCheckpointInfoV1) == 64,
+              checkpoint_info_struct_size);
+STATIC_ASSERT(sizeof(WisteriaStableContextInfoV1) == 44,
+              context_info_struct_size);
 
 /* fixed numeric constants */
 STATIC_ASSERT(WISTERIA_STATUS_OK == 0u, status_ok);
 STATIC_ASSERT(WISTERIA_STATUS_POISONED == 15u, status_poisoned);
+STATIC_ASSERT(WISTERIA_STATUS_NO_PHYSICS == 16u, status_no_physics);
 STATIC_ASSERT(WISTERIA_BACKEND_ID_SABA_MMD == 1u, backend_saba);
 STATIC_ASSERT(WISTERIA_PROFILE_ID_RAW == 1u, profile_raw);
 STATIC_ASSERT(WISTERIA_PROFILE_ID_ADAPTIVE == 3u, profile_adaptive);
 STATIC_ASSERT(WISTERIA_CAP_SUPPORTS_CHECKPOINT_SERIALIZATION == (1u << 6),
               cap_serialization);
 STATIC_ASSERT(WISTERIA_CHECKPOINT_WIRE_VERSION == 1u, wire_version);
+STATIC_ASSERT(WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C == 1u, payload_kind);
 STATIC_ASSERT(WISTERIA_STABLE_RUNTIME_ABI_VERSION == 1u, abi_version);
 
 int main(void)

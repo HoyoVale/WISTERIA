@@ -9877,7 +9877,7 @@ void TestR14CheckpointWireRoundTrip()
 
     // Build-compatibility mismatch is rejected before restore.
     CheckpointSerializationOptions foreignBuild;
-    foreignBuild.buildCompatibilityId = 0xDEADBEEFULL;
+    foreignBuild.buildCompatibilityIdOverride = 0xDEADBEEFULL;
     Require(
         DeserializeCheckpoint(
             bytes.data(),

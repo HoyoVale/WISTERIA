@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """R1.4 Phase 0A Step 8: checkpoint wire cross-process regression.
 
-Process A (dump) serializes a canonical checkpoint to a file. Process B
-(load) deserializes the same bytes in a separate address space and restores
-them on a fresh runtime. Both processes print the exact physics hash of the
-checkpoint payload; this harness asserts the hashes match and both exits are
-successful.
+Process A (dump) serializes a canonical checkpoint at frame N and also
+captures the exact physics hash after stepping to N+1. Process B (load)
+deserializes the same bytes in a separate address space, restores them on a
+fresh runtime, re-creates the checkpoint at N, then steps to N+1 and creates
+another checkpoint. This harness asserts both the restored N hash and the
+deterministic-continuation N+1 hash match across the two processes.
 """
 
 from __future__ import annotations
@@ -17,10 +18,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-HASH_RE = re.compile(r"^HASH=([0-9a-fA-F]+)$", re.MULTILINE)
+HASH_N_RE = re.compile(r"^HASH_N=([0-9a-fA-F]+)$", re.MULTILINE)
+HASH_N1_RE = re.compile(r"^HASH_N1=([0-9a-fA-F]+)$", re.MULTILINE)
 
 
-def run(cli: str, mode: str, model: Path, frame: int, wire: Path) -> int | None:
+def run(
+    cli: str,
+    mode: str,
+    model: Path,
+    frame: int,
+    wire: Path,
+) -> tuple[int, int] | None:
     result = subprocess.run(
         [cli, mode, str(model), str(frame), str(wire)],
         capture_output=True,
@@ -29,11 +37,15 @@ def run(cli: str, mode: str, model: Path, frame: int, wire: Path) -> int | None:
     if result.returncode != 0:
         print(result.stderr, file=sys.stderr)
         return None
-    match = HASH_RE.search(result.stdout)
-    if match is None:
-        print(f"{mode} printed no HASH: {result.stdout}", file=sys.stderr)
+    match_n = HASH_N_RE.search(result.stdout)
+    match_n1 = HASH_N1_RE.search(result.stdout)
+    if match_n is None or match_n1 is None:
+        print(
+            f"{mode} printed no HASH_N/HASH_N1: {result.stdout}",
+            file=sys.stderr,
+        )
         return None
-    return int(match.group(1), 16)
+    return int(match_n.group(1), 16), int(match_n1.group(1), 16)
 
 
 def main() -> int:
@@ -45,31 +57,37 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         wire = Path(tmp) / "checkpoint.bin"
-        dump_hash = run(
+        dump_hashes = run(
             str(args.cli),
             "dump",
             args.model,
             args.frame,
             wire,
         )
-        if dump_hash is None:
+        if dump_hashes is None:
             return 1
-        load_hash = run(
+        load_hashes = run(
             str(args.cli),
             "load",
             args.model,
             args.frame,
             wire,
         )
-        if load_hash is None:
+        if load_hashes is None:
             return 2
-        if dump_hash != load_hash:
+        if dump_hashes != load_hashes:
             print(
-                f"hash mismatch: dump={dump_hash:#x} load={load_hash:#x}",
+                f"hash mismatch: dump_N={dump_hashes[0]:#x} "
+                f"load_N={load_hashes[0]:#x} "
+                f"dump_N1={dump_hashes[1]:#x} "
+                f"load_N1={load_hashes[1]:#x}",
                 file=sys.stderr,
             )
             return 3
-    print(f"cross-process checkpoint round trip OK ({dump_hash:#x})")
+    print(
+        f"cross-process checkpoint round trip OK "
+        f"(N={dump_hashes[0]:#x}, N+1={dump_hashes[1]:#x})"
+    )
     return 0
 
 

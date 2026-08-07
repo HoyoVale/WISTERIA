@@ -34,6 +34,7 @@ extern "C" {
 
 #define WISTERIA_STABLE_RUNTIME_ABI_VERSION 1u
 #define WISTERIA_CHECKPOINT_WIRE_VERSION 1u
+#define WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C 1u
 #define WISTERIA_CHECKPOINT_PAYLOAD_SCHEMA_MMD_R12C 1u
 #define WISTERIA_DETERMINISTIC_PROFILE_COLD_STEP_V1 1u
 
@@ -64,6 +65,7 @@ typedef uint64_t WisteriaCheckpoint;
 #define WISTERIA_STATUS_SNAPSHOT_MISMATCH 13u
 #define WISTERIA_STATUS_INVALID_SNAPSHOT 14u
 #define WISTERIA_STATUS_POISONED 15u
+#define WISTERIA_STATUS_NO_PHYSICS 16u
 
 /* --- backend / semantic profile / capability ids --------------------- */
 
@@ -90,11 +92,7 @@ typedef struct WisteriaStableContextInfoV1
     uint32_t struct_size;
     uint32_t struct_version;
     uint32_t abi_version;
-    uint32_t backend_id;             /* WISTERIA_BACKEND_ID_* */
-    uint32_t profile_id;             /* WISTERIA_PROFILE_ID_* */
-    uint32_t deterministic_profile_id;
-    uint32_t checkpoint_payload_kind;
-    uint32_t reserved[4];
+    uint32_t reserved[8];
 } WisteriaStableContextInfoV1;
 
 /* WISTERIA_RUNTIME_CAPABILITIES_V1 */
@@ -134,11 +132,12 @@ typedef struct WisteriaCheckpointInfoV1
     uint32_t wire_version;
     uint32_t payload_schema;
     uint32_t payload_kind;
-    uint32_t build_compatibility_id;
-    uint32_t reserved[2];
+    uint32_t reserved;
+    uint64_t build_compatibility_id; /* engine-owned identity; uint64 */
     uint64_t payload_size;
     uint64_t frame;                  /* MotionFrameIndex */
     uint64_t physics_tick;           /* TimelineTick */
+    uint32_t reserved2[2];
 } WisteriaCheckpointInfoV1;
 
 /* --- stable function surface (declarations; implementation follows) --- */
@@ -160,47 +159,67 @@ WISTERIA_STABLE_API uint32_t wisteria_stable_entity_create(
     WisteriaEntity* out_entity);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_destroy(
+    WisteriaStableContext context,
     WisteriaEntity entity);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_capabilities(
+    WisteriaStableContext context,
     WisteriaEntity entity,
     WisteriaRuntimeCapabilitiesV1* capabilities);
 
+WISTERIA_STABLE_API uint32_t wisteria_stable_entity_load_motion(
+    WisteriaStableContext context,
+    WisteriaEntity entity,
+    const char* vmd_path_utf8);
+
+WISTERIA_STABLE_API uint32_t wisteria_stable_entity_unload_motion(
+    WisteriaStableContext context,
+    WisteriaEntity entity);
+
 /* deterministic timeline (uint64 canonical frames) */
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_prepare_frame_zero(
+    WisteriaStableContext context,
     WisteriaEntity entity);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_step_exact(
+    WisteriaStableContext context,
     WisteriaEntity entity,
     uint64_t frame);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_replay_exact(
+    WisteriaStableContext context,
     WisteriaEntity entity,
     uint64_t target);
 
 /* interactive preview (double frame; never mixed with exact timeline) */
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_set_preview_frame(
+    WisteriaStableContext context,
     WisteriaEntity entity,
     double frame);
 
 /* checkpoint lifecycle: Context-owned opaque value objects */
 WISTERIA_STABLE_API uint32_t wisteria_stable_checkpoint_create(
+    WisteriaStableContext context,
     WisteriaEntity entity,
     WisteriaCheckpoint* out_checkpoint);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_checkpoint_restore(
+    WisteriaStableContext context,
     WisteriaCheckpoint checkpoint,
     WisteriaEntity entity);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_checkpoint_destroy(
+    WisteriaStableContext context,
     WisteriaCheckpoint checkpoint);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_checkpoint_info(
+    WisteriaStableContext context,
     WisteriaCheckpoint checkpoint,
     WisteriaCheckpointInfoV1* info);
 
 /* checkpoint serialization (portable bytes, build-gated semantics) */
 WISTERIA_STABLE_API uint32_t wisteria_stable_checkpoint_serialize(
+    WisteriaStableContext context,
     WisteriaCheckpoint checkpoint,
     uint8_t* bytes,
     uint64_t* in_out_size);

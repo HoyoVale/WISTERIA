@@ -127,16 +127,42 @@ int DumpMode(
     auto runtime = CreateRuntime(modelPath);
     const FrameCheckpoint checkpoint =
         CreateCheckpointAt(*runtime, frame);
+    const DeterminismHashes hashN = HashPhysics(checkpoint.physics);
+    if (!hashN.valid)
+    {
+        throw std::runtime_error("dump produced invalid N physics hash");
+    }
+
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    if (mmd == nullptr || stepper == nullptr)
+    {
+        throw std::runtime_error("runtime lost MMD/stepper surface");
+    }
+    if (stepper->StepMotionFrameExact(frame + 1U, {}) !=
+        TimelineStatus::Ok)
+    {
+        throw std::runtime_error("dump N+1 step failed");
+    }
+    FrameCheckpoint next;
+    if (mmd->CreateCheckpoint(next) != TimelineStatus::Ok)
+    {
+        throw std::runtime_error("dump N+1 CreateCheckpoint failed");
+    }
+    const DeterminismHashes hashN1 = HashPhysics(next.physics);
+    if (!hashN1.valid)
+    {
+        throw std::runtime_error("dump produced invalid N+1 physics hash");
+    }
+
     const std::vector<std::uint8_t> bytes =
         SerializeCheckpoint(checkpoint);
     WriteFile(outputPath, bytes);
 
-    const DeterminismHashes hashes = HashPhysics(checkpoint.physics);
-    if (!hashes.valid)
-    {
-        throw std::runtime_error("dump produced invalid physics hash");
-    }
-    std::cout << "HASH=" << std::hex << hashes.exactHash << '\n';
+    std::cout << "HASH_N=" << std::hex << hashN.exactHash << '\n';
+    std::cout << "HASH_N1=" << std::hex << hashN1.exactHash << '\n';
     std::cout << "BYTES=" << std::dec << bytes.size() << '\n';
     return 0;
 }
@@ -173,18 +199,40 @@ int LoadMode(
     {
         throw std::runtime_error("ReplayFromCheckpoint failed");
     }
+
+    FrameCheckpoint restoredAtN;
+    if (mmd->CreateCheckpoint(restoredAtN) != TimelineStatus::Ok)
+    {
+        throw std::runtime_error(
+            "CreateCheckpoint at N after restore failed"
+        );
+    }
+    const DeterminismHashes hashN = HashPhysics(restoredAtN.physics);
+    if (!hashN.valid)
+    {
+        throw std::runtime_error("load produced invalid N physics hash");
+    }
+
     if (stepper->StepMotionFrameExact(frame + 1U, {}) !=
         TimelineStatus::Ok)
     {
         throw std::runtime_error("step after restore failed");
     }
-
-    const DeterminismHashes hashes = HashPhysics(decoded.physics);
-    if (!hashes.valid)
+    FrameCheckpoint restoredAtN1;
+    if (mmd->CreateCheckpoint(restoredAtN1) != TimelineStatus::Ok)
     {
-        throw std::runtime_error("load produced invalid physics hash");
+        throw std::runtime_error(
+            "CreateCheckpoint at N+1 after restore failed"
+        );
     }
-    std::cout << "HASH=" << std::hex << hashes.exactHash << '\n';
+    const DeterminismHashes hashN1 = HashPhysics(restoredAtN1.physics);
+    if (!hashN1.valid)
+    {
+        throw std::runtime_error("load produced invalid N+1 physics hash");
+    }
+
+    std::cout << "HASH_N=" << std::hex << hashN.exactHash << '\n';
+    std::cout << "HASH_N1=" << std::hex << hashN1.exactHash << '\n';
     std::cout << "RESTORE_OK\n";
     return 0;
 }
