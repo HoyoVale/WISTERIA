@@ -74,6 +74,12 @@ async function main() {
   const sampleInterval = Number(process.argv[5] ?? 1);
   const vmdPath = process.argv[6] ?? null;
   const environmentMode = process.argv[7] ?? "NormalizedComparison";
+  if (!Number.isInteger(totalMotionFrames) || totalMotionFrames < 0) {
+    throw new Error("motionFrames must be an integer >= 0");
+  }
+  if (!Number.isInteger(sampleInterval) || sampleInterval < 1) {
+    throw new Error("sampleInterval must be an integer >= 1");
+  }
   const dt = 1.0 / 120.0;
   if (environmentMode !== "NormalizedComparison") {
     throw new Error(

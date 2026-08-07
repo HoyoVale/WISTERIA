@@ -8763,6 +8763,88 @@ void TestR13TraceDiffExtendedLocators()
         std::abs(boneResult.boneMaxMatrixDelta - 0.001f) < 1.0e-4f,
         "bone matrix delta mismatch"
     );
+
+    // Bone presence must be symmetric: removing a bone from B is located,
+    // and adding a bone only to B is located too.
+    const std::string boneRemovedLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 150U || frame.bones.empty())
+                return;
+            frame.bones.erase(frame.bones.begin());
+        }
+    );
+    const wisteria::trace::TraceDiffResult boneRemovedResult =
+        diffFrom(boneRemovedLines);
+    Require(
+        !boneRemovedResult.identical && boneRemovedResult.boneFound &&
+            boneRemovedResult.boneFrame == 150U &&
+            boneRemovedResult.boneIndex == 0U,
+        "removed bone was not located"
+    );
+    Require(
+        boneRemovedResult.boneMaxMatrixDelta > 1.0e6f,
+        "removed bone delta is not sentinel-sized"
+    );
+
+    const std::string boneAddedLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 200U)
+                return;
+            MmdPhysicsTraceBone extra;
+            extra.index = 999U;
+            frame.bones.push_back(extra);
+        }
+    );
+    const wisteria::trace::TraceDiffResult boneAddedResult =
+        diffFrom(boneAddedLines);
+    Require(
+        !boneAddedResult.identical && boneAddedResult.boneFound &&
+            boneAddedResult.boneFrame == 200U &&
+            boneAddedResult.boneIndex == 999U,
+        "extra bone present only in B was not located"
+    );
+
+    // Joint presence must be symmetric as well.
+    const std::string jointRemovedLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 100U || frame.joints.empty())
+                return;
+            frame.joints.erase(frame.joints.begin());
+        }
+    );
+    const wisteria::trace::TraceDiffResult jointRemovedResult =
+        diffFrom(jointRemovedLines);
+    Require(
+        !jointRemovedResult.identical && jointRemovedResult.jointDeltaFound &&
+            jointRemovedResult.jointIndex == 0U,
+        "removed joint was not located"
+    );
+    Require(
+        jointRemovedResult.jointLinearDelta > 1.0e6f &&
+            jointRemovedResult.jointAngularDeltaDeg > 1.0e6f,
+        "removed joint delta is not sentinel-sized"
+    );
+
+    const std::string jointAddedLines = rewrite(
+        [](MmdPhysicsTraceFrame& frame)
+        {
+            if (frame.frame != 220U)
+                return;
+            MmdPhysicsTraceJoint extra;
+            extra.index = 999U;
+            frame.joints.push_back(extra);
+        }
+    );
+    const wisteria::trace::TraceDiffResult jointAddedResult =
+        diffFrom(jointAddedLines);
+    Require(
+        !jointAddedResult.identical && jointAddedResult.jointDeltaFound &&
+            jointAddedResult.jointIndex == 999U,
+        "extra joint present only in B was not located"
+    );
 }
 
 void TestR13ThreePresetsThreeHundredFrames()

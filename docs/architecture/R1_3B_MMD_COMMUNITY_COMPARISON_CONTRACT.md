@@ -212,6 +212,10 @@ Historical Preliminary Observation**：该结果来自 babylon harness 的
 - 初始 transform（模型原点、朝向、缩放）
 - 比较时间点：motionFrame 0 / 10 / 30 / 100 / 300
   （长跑可加 720 / 1200，对应 simulatedSeconds 24 / 40）
+- corpus identity（Step 8 冻结）：
+  SHA-256 = 跨实现 canonical asset identity（reference harness 已输出）
+  WISTERIA FNV-1a64 = R1.2C 内部 deterministic asset identity（不改）
+  corpus registry 同时记录 sha256 与 wisteriaFnv1a64
 ```
 
 ### 4.3 两种 Evidence Mode（v2 冻结）

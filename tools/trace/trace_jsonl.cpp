@@ -587,6 +587,54 @@ TraceDiffResult DiffTraceStreams(
                 break;
             }
         }
+        // Joint presence must be symmetric: joints present in only one side
+        // are divergences too (source joint index is the identity).
+        for (const MmdPhysicsTraceJoint& jointA : frameA.joints)
+        {
+            bool foundInB = false;
+            for (const MmdPhysicsTraceJoint& jointB : frameB.joints)
+            {
+                if (jointB.index == jointA.index)
+                {
+                    foundInB = true;
+                    break;
+                }
+            }
+            if (!foundInB)
+            {
+                result.identical = false;
+                if (!result.jointDeltaFound)
+                {
+                    result.jointDeltaFound = true;
+                    result.jointIndex = jointA.index;
+                    result.jointLinearDelta = 1.0e30f;
+                    result.jointAngularDeltaDeg = 1.0e30f;
+                }
+            }
+        }
+        for (const MmdPhysicsTraceJoint& jointB : frameB.joints)
+        {
+            bool foundInA = false;
+            for (const MmdPhysicsTraceJoint& jointA : frameA.joints)
+            {
+                if (jointA.index == jointB.index)
+                {
+                    foundInA = true;
+                    break;
+                }
+            }
+            if (!foundInA)
+            {
+                result.identical = false;
+                if (!result.jointDeltaFound)
+                {
+                    result.jointDeltaFound = true;
+                    result.jointIndex = jointB.index;
+                    result.jointLinearDelta = 1.0e30f;
+                    result.jointAngularDeltaDeg = 1.0e30f;
+                }
+            }
+        }
 
         // Contact-topology divergence: pairs are sorted by (bodyA, bodyB);
         // walk both sets and report the first pair present in one side only.
@@ -708,6 +756,22 @@ TraceDiffResult DiffTraceStreams(
                     result.boneFrame = frameA.frame;
                     result.boneIndex = boneA.index;
                     result.boneMaxMatrixDelta = maxDelta;
+                }
+            }
+        }
+        // Bone presence must be symmetric: bones present only in B are
+        // divergences too (source bone index is the identity).
+        for (const MmdPhysicsTraceBone& boneB : frameB.bones)
+        {
+            if (FindBone(frameA, boneB.index) == nullptr)
+            {
+                result.identical = false;
+                if (!result.boneFound)
+                {
+                    result.boneFound = true;
+                    result.boneFrame = frameA.frame;
+                    result.boneIndex = boneB.index;
+                    result.boneMaxMatrixDelta = 1.0e30f;
                 }
             }
         }

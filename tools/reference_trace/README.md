@@ -123,6 +123,9 @@ VMD 路径：第 6 个参数传入 `.vmd` 文件，harness 用 `VmdLoader` 加�
 绑定到模型（`createRuntimeAnimation` + `setRuntimeAnimation`），随后按
 motionFrame 语义采样动画并执行物理。
 
+参数校验：`motionFrames` 必须是整数 ≥ 0，`sampleInterval` 必须是整数 ≥ 1，
+非法输入直接报错退出。
+
 ## 时钟校准（synthetic fixture）
 
 `npm run calibrate` 只用 ammojs-typed（地面 + 一个动态盒）验证参考侧
