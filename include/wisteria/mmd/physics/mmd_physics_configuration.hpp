@@ -32,9 +32,11 @@ struct MmdPhysicsProfileIdentity
     std::string baseline = "saba-baseline-v1";
     MmdPhysicsPreset preset = MmdPhysicsPreset::MmdRaw;
     std::uint32_t profileRevision = 1U;
-    // Non-empty only for DeriveDiagnosticConfiguration outputs; records the
-    // source preset label (e.g. "mmd-raw"). Human/Trace identity only and
-    // never hashed into the effective fingerprint (R1.3 §5).
+    // Non-empty for DeriveDiagnosticConfiguration outputs, legacy constructor
+    // overrides and low-level SetPhysicsSettings/SetMmdPhysicsSettings
+    // overrides; records the source preset label (e.g. "mmd-raw").
+    // Human/Trace identity only and never hashed into the effective
+    // fingerprint (R1.3 §5).
     std::string originPreset;
 };
 

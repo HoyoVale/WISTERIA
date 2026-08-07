@@ -640,25 +640,30 @@ void SabaMmdRuntimeModel::SetPhysicsSettings(
     const SabaPhysicsSettings& settings
 )
 {
-    this->impl->physicsSettings = settings;
-    // Low-level compatibility entry: every change must synchronize into the
-    // authoritative configuration (R1.3 contract §4).
-    this->impl->physicsConfiguration.runtime = settings;
+    // Low-level compatibility entry (R1.3 contract §4). Build the candidate
+    // authoritative configuration first: invalid input must never modify the
+    // stored configuration or the Bullet world (Guard Fix).
+    MmdPhysicsConfiguration candidate = this->impl->physicsConfiguration;
+    candidate.runtime = settings;
     // Keep the profile identity honest: a low-level settings override that
     // diverges from the preset must stop claiming a direct preset label.
-    if (this->impl->physicsConfiguration.identity.originPreset.empty() &&
+    if (candidate.identity.originPreset.empty() &&
         ComputeEffectiveConfigurationFingerprint(
-            this->impl->physicsConfiguration) !=
+            candidate) !=
             ComputeEffectiveConfigurationFingerprint(
                 BuildPresetConfiguration(
-                    this->impl->physicsConfiguration.identity.preset
+                    candidate.identity.preset
                 )))
     {
-        this->impl->physicsConfiguration.identity.originPreset =
+        candidate.identity.originPreset =
             ToPresetNameLower(
-                this->impl->physicsConfiguration.identity.preset
+                candidate.identity.preset
             );
     }
+    if (!ValidateConfiguration(candidate))
+        return;
+    this->impl->physicsConfiguration = std::move(candidate);
+    this->impl->physicsSettings = settings;
     this->InvalidateDeterministicBoundary();
     if (this->impl->model != nullptr)
     {
@@ -726,6 +731,8 @@ bool SabaMmdRuntimeModel::GetMmdPhysicsConfiguration(
     MmdPhysicsConfiguration& output
 ) const
 {
+    if (!ValidateConfiguration(this->impl->physicsConfiguration))
+        return false;
     output = this->impl->physicsConfiguration;
     return true;
 }
@@ -957,6 +964,10 @@ bool SabaMmdRuntimeModel::Initialize()
 {
     if (this->impl->model != nullptr)
         return true;
+    // Guard Fix: never create the model or Bullet world from an invalid
+    // authoritative configuration (e.g. invalid legacy constructor input).
+    if (!ValidateConfiguration(this->impl->physicsConfiguration))
+        return false;
 
     this->impl->model = std::make_shared<saba::PMXModel>();
     const std::string modelPath = ToNarrowUtf8(this->impl->modelPath);

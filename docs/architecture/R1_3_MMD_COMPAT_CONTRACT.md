@@ -273,6 +273,10 @@ adaptive              = 全部 false
   冻结 Preset。DeriveDiagnosticConfiguration 不是 custom 配置的唯一产生
   途径（低层构造与 SetMmdPhysicsSettings 的越界设置会自动转为 custom
   身份）；任何成功暴露给调用者的配置必须通过 ValidateConfiguration。
+- 低层入口 Guard：SetPhysicsSettings / SetMmdPhysicsSettings 与构造函数
+  的非法输入不得修改权威配置或 Bullet world（no-op）；非法构造参数使
+  Initialize 返回 false；GetMmdPhysicsConfiguration 仅在当前配置合法时
+  返回 true。
 - MmdPhysicsConfiguration 是 R1.3 唯一权威配置对象；现有
   SetMmdPhysicsSettings 只作为兼容性低层入口，其修改必须同步进入
   当前 Configuration、重新计算 effective fingerprint，并使已有

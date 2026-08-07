@@ -242,3 +242,37 @@ Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
 
 **R1.3 Phase 0A — Frozen + Implemented + Validated（2026-08-07）**。
 停止 Phase 0A 审查，进入 Phase 0B 社区实现对照（单独契约）。
+
+## 9. Guard Fix（评审轮 6，2026-08-07）
+
+Closure Fix 不变量（Get == true ⇒ Validate == true）的最后一道旁路：
+低层 settings 入口此前无输入校验，`fixedTimeStep=0` 或 NaN gravity 会直接
+写入权威配置并送进 Bullet。
+
+修复：
+
+```text
+1. SetPhysicsSettings 先构造 candidate（同步 runtime、必要时转
+   custom-from-*），ValidateConfiguration 失败则整体 no-op，
+   不改配置、不改 Bullet；
+2. Initialize 在创建模型/Bullet 之前校验当前权威配置，非法返回 false；
+3. GetMmdPhysicsConfiguration 仅在配置合法时返回 true，
+   失败不改 output；
+4. originPreset 头注释更新（legacy 构造与低层 setter 也会产生 custom）；
+5. 负向测试：
+   - SetMmdPhysicsSettings(fixedTimeStep=0) → 配置不变且仍合法
+   - SetMmdPhysicsSettings(gravity=NaN) → 配置不变且仍合法
+   - constructor(非法 settings) → Initialize == false、Get == false
+```
+
+修复后四套矩阵复跑（2026-08-07）：
+
+```text
+Windows CORE          CTest 5/5
+Windows FULL_ASSETS   CTest 5/5
+Linux CORE            CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+```
+
+**R1.3 Phase 0A — Frozen + Implemented + Validated（2026-08-07，
+Guard Fix 闭合）**。停止 Phase 0A 审查，正式进入 Phase 0B。

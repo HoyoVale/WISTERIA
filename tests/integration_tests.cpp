@@ -9146,6 +9146,71 @@ void TestR13MmdPhysicsConfigurationRuntime()
         "SetMmdPhysicsSettings produced a configuration its own validator "
         "rejects"
     );
+
+    // Guard Fix: invalid low-level input must be a no-op for the
+    // authoritative configuration and the Get invariant must hold.
+    MmdPhysicsConfiguration validBeforeInvalid;
+    Require(
+        runtime.GetMmdPhysicsConfiguration(validBeforeInvalid),
+        "baseline config read failed before invalid settings"
+    );
+    SabaPhysicsSettings zeroStep = SabaPhysicsSettings{};
+    zeroStep.fixedTimeStep = 0.0f;
+    runtime.SetMmdPhysicsSettings(zeroStep);
+    MmdPhysicsConfiguration afterZeroStep;
+    Require(
+        runtime.GetMmdPhysicsConfiguration(afterZeroStep),
+        "Get failed after rejected zero timestep settings"
+    );
+    Require(
+        ValidateConfiguration(afterZeroStep),
+        "rejected zero timestep settings corrupted the configuration"
+    );
+    Require(
+        afterZeroStep.runtime.fixedTimeStep ==
+                validBeforeInvalid.runtime.fixedTimeStep &&
+            afterZeroStep.runtime.gravity ==
+                validBeforeInvalid.runtime.gravity,
+        "rejected zero timestep settings modified the configuration"
+    );
+
+    SabaPhysicsSettings nanGravity = SabaPhysicsSettings{};
+    nanGravity.gravity.y = std::numeric_limits<float>::quiet_NaN();
+    runtime.SetMmdPhysicsSettings(nanGravity);
+    MmdPhysicsConfiguration afterNanGravity;
+    Require(
+        runtime.GetMmdPhysicsConfiguration(afterNanGravity),
+        "Get failed after rejected NaN gravity settings"
+    );
+    Require(
+        ValidateConfiguration(afterNanGravity),
+        "rejected NaN gravity settings corrupted the configuration"
+    );
+    Require(
+        afterNanGravity.runtime.gravity ==
+            validBeforeInvalid.runtime.gravity,
+        "rejected NaN gravity settings modified the configuration"
+    );
+
+    // Guard Fix: a legacy constructor with invalid settings must fail
+    // Initialize and must not expose an invalid configuration.
+    SabaPhysicsSettings invalidCtorSettings;
+    invalidCtorSettings.fixedTimeStep = 0.0f;
+    SabaMmdRuntimeModel invalidRuntime(modelPath, {}, invalidCtorSettings);
+    Require(
+        !invalidRuntime.Initialize(),
+        "Initialize accepted an invalid legacy configuration"
+    );
+    MmdPhysicsConfiguration neverExposed;
+    neverExposed.runtime.maxSubSteps = 42;
+    Require(
+        !invalidRuntime.GetMmdPhysicsConfiguration(neverExposed),
+        "Get exposed an invalid legacy configuration"
+    );
+    Require(
+        neverExposed.runtime.maxSubSteps == 42,
+        "failed Get modified the caller's output"
+    );
 }
 
 void TestR13TraceCanonicalGate()
