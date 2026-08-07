@@ -480,4 +480,25 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     add_test(NAME wisteria.abi-c-smoke COMMAND wisteria_abi_c_smoke)
+
+    # R1.4 Phase 0A Step 8: checkpoint wire bytes must survive a process
+    # boundary. Process A dumps, process B loads and restores; the harness
+    # compares the exact physics hash printed by both sides.
+    add_executable(wisteria_checkpoint_wire_cli tests/checkpoint_wire_cli.cpp)
+    target_link_libraries(wisteria_checkpoint_wire_cli PRIVATE
+        wisteria_core
+    )
+    if(MSVC)
+        target_compile_options(wisteria_checkpoint_wire_cli PRIVATE /utf-8)
+    endif()
+    add_test(
+        NAME wisteria.checkpoint-cross-process
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/script/checkpoint_cross_process_test.py
+            $<TARGET_FILE:wisteria_checkpoint_wire_cli>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/pmx_physics.pmx
+    )
+    set_tests_properties(wisteria.checkpoint-cross-process PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
 endif()
