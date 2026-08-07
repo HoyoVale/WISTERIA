@@ -103,6 +103,17 @@ void btCollisionDispatcher::clearManifold(btPersistentManifold* manifold)
 	manifold->clearManifold();
 }
 
+void btCollisionDispatcher::resetCollisionPools()
+{
+	while (m_manifoldsPtr.size() != 0U)
+	{
+		releaseManifold(m_manifoldsPtr[m_manifoldsPtr.size() - 1U]);
+	}
+	m_persistentManifoldPoolAllocator->freeAllMemory();
+	m_collisionAlgorithmPoolAllocator->freeAllMemory();
+}
+
+
 void btCollisionDispatcher::releaseManifold(btPersistentManifold* manifold)
 {
 	//printf("releaseManifold: gNumManifold %d\n",gNumManifold);

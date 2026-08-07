@@ -115,6 +115,15 @@ public:
 
 	virtual void clearManifold(btPersistentManifold* manifold);
 
+	// WISTERIA deterministic-restore: release every registered manifold and
+	// reset both the persistent-manifold and collision-algorithm pool free
+	// lists to canonical order. Call only after every collision object has
+	// been removed (so no algorithm is still live). The next collision pass
+	// then creates manifolds/algorithms in pair-iteration order regardless
+	// of prior release history (restore == from-start).
+	void resetCollisionPools();
+
+
 	btCollisionAlgorithm* findAlgorithm(const btCollisionObjectWrapper* body0Wrap, const btCollisionObjectWrapper* body1Wrap, btPersistentManifold* sharedManifold, ebtDispatcherQueryType queryType);
 
 	virtual bool needsCollision(const btCollisionObject* body0, const btCollisionObject* body1);

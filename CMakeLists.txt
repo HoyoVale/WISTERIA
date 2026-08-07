@@ -547,6 +547,7 @@ if(BUILD_TESTING)
                 production-pmx-yeshiguang
                 production-vmd-body
                 --frame 30
+                --require-n1
         )
         set_tests_properties(
             wisteria.stable-checkpoint-cross-process-full PROPERTIES

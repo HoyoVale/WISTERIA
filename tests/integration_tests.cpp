@@ -8699,6 +8699,82 @@ void TestR12CVmdEquivalence()
     RequireEquivalentToFromStartWithVmd(30U, 45U, vmdPath);
 }
 
+void RequireProductionVmdContinuationEquivalence(
+    const std::filesystem::path& modelPath,
+    const std::filesystem::path& vmdPath
+)
+{
+    auto baseline = CreateDeterministicRuntime(modelPath, vmdPath);
+    CaptureCanonicalAt(*baseline, 31U);
+    const FrameStateHashes baselineHashes =
+        CaptureDeterminismHashes(*baseline);
+
+    auto source = CreateDeterministicRuntime(modelPath, vmdPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 30U);
+
+    auto diverged = CreateDeterministicRuntime(modelPath, vmdPath);
+    CaptureCanonicalAt(*diverged, 60U);
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    Require(
+        divergedMmd != nullptr,
+        "production VMD equivalence lost MMD surface"
+    );
+    Require(
+        divergedMmd->ReplayFromCheckpoint(checkpoint, 30U) ==
+            TimelineStatus::Ok,
+        "production VMD ReplayFromCheckpoint failed"
+    );
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        diverged.get()
+    );
+    Require(
+        stepper != nullptr &&
+            stepper->StepMotionFrameExact(31U, {}) == TimelineStatus::Ok,
+        "production VMD step 31 failed"
+    );
+    const FrameStateHashes divergedHashes =
+        CaptureDeterminismHashes(*diverged);
+    Require(
+        baselineHashes.pose.exactHash ==
+                divergedHashes.pose.exactHash &&
+            baselineHashes.vertex.exactHash ==
+                divergedHashes.vertex.exactHash &&
+            baselineHashes.physics.exactHash ==
+                divergedHashes.physics.exactHash,
+        "production VMD restore->continuation diverged from from-start"
+    );
+}
+
+// R1.2C integrity regression: production VMD restore at N must continue to
+// N+1 exactly like from-start (Cold Canonical Boundary contract). Two
+// independent production assets with VMD + physics cover the general cause.
+void TestR12CProductionVmdContinuationEquivalence()
+{
+    RequireFullAssetsTier();
+    const std::filesystem::path yeshiguang =
+        FixturePath("production-pmx-yeshiguang");
+    const std::filesystem::path bodyVmd =
+        FixturePath("production-vmd-body");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
+    RequireProductionVmdContinuationEquivalence(
+        yeshiguang,
+        bodyVmd
+    );
+
+    const std::filesystem::path couqie =
+        FixturePath("production-pmx-couqie");
+    const std::filesystem::path penguinVmd =
+        FixturePath("production-vmd-penguin");
+    RequireFullAsset("production-pmx-couqie");
+    RequireFullAsset("production-vmd-penguin");
+    RequireProductionVmdContinuationEquivalence(
+        couqie,
+        penguinVmd
+    );
+}
+
 void TestR12CTrueMotionEndHold()
 {
     const std::filesystem::path modelPath =
@@ -10851,6 +10927,10 @@ int main()
     failures += !RunTest(
         "R1.2C VMD equivalence",
         TestR12CVmdEquivalence
+    );
+    failures += !RunTest(
+        "R1.2C production VMD continuation equivalence",
+        TestR12CProductionVmdContinuationEquivalence
     );
     failures += !RunTest(
         "R1.2C true motion end hold",

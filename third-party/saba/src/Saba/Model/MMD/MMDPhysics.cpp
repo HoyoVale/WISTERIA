@@ -106,7 +106,12 @@ namespace saba
 
 	bool MMDPhysics::Create()
 	{
-		m_broadphase = std::make_unique<btDbvtBroadphase>();
+		// R1.2C deterministic continuation: use a history-free broadphase.
+		// btDbvtBroadphase's tree/uid state depends on insertion history,
+		// so even after a canonical rebuild the pair iteration order can
+		// differ between from-start and restore on some platforms. Pair
+		// enumeration by object index order is fully canonical.
+		m_broadphase = std::make_unique<btSimpleBroadphase>();
 		m_collisionConfig = std::make_unique<btDefaultCollisionConfiguration>();
 		m_dispatcher = std::make_unique<btCollisionDispatcher>(m_collisionConfig.get());
 
@@ -281,7 +286,12 @@ namespace saba
 		{
 			m_world->removeCollisionObject(entry.object);
 		}
-		ClearContactManifoldsDeterministic();
+		// WISTERIA deterministic-restore: release every manifold and reset
+		// the manifold/algorithm pool free lists so the re-added world
+		// creates manifolds/algorithms in canonical pair-iteration order
+		// independent of release history.
+		static_cast<btCollisionDispatcher*>(dispatcher)
+			->resetCollisionPools();
 		for (const Entry& entry : entries)
 		{
 			// Rigid bodies must go through addRigidBody so they are

@@ -111,6 +111,28 @@ public:
 		}
 	}
 
+	// WISTERIA deterministic-restore: rebuild the free list in canonical
+	// pool order so subsequent allocations (manifold/algorithm creation)
+	// return objects in a history-independent order. Without this, the LIFO
+	// free list order depends on prior release history and changes creation
+	// order, which in turn changes constraint-solve iteration order.
+	void freeAllMemory()
+	{
+		btMutexLock(&m_mutex);
+		unsigned char* p = m_pool;
+		m_firstFree = p;
+		m_freeCount = m_maxElements;
+		int count = m_maxElements;
+		while (--count)
+		{
+			*(void**)p = (p + m_elemSize);
+			p += m_elemSize;
+		}
+		*(void**)p = 0;
+		btMutexUnlock(&m_mutex);
+	}
+
+
 	int getElementSize() const
 	{
 		return m_elemSize;

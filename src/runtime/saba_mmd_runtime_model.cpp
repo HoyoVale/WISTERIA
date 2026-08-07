@@ -1368,6 +1368,15 @@ TimelineStatus SabaMmdRuntimeModel::StepFrameExact(
         saba::MMDPhysics* physics = manager->GetMMDPhysics();
         physics->ClearContactManifoldsDeterministic();
         physics->ClearSolverHistoryDeterministic();
+        // R1.2C integrity fix (production-VMD continuation): the Cold
+        // Canonical Boundary must also canonicalize the collision world
+        // itself. Clearing manifold contents and solver warm-start is not
+        // enough: the broadphase tree shape and the registered manifold set
+        // are history-dependent (evolved during from-start, rebuilt during
+        // restore), so the next step's pair/solve order can diverge on
+        // dense models. Rebuild the world in stable index order at every
+        // step start so from-start and restore share the same registry.
+        physics->RebuildCollisionWorldDeterministic();
         // The four-substep experiment proved stepSimulation(1/30, 10, 1/120)
         // executes exactly 4 substeps with a zero accumulator; this existing
         // full Update phase is therefore the deterministic reference path.
@@ -1809,6 +1818,11 @@ TimelineStatus SabaMmdRuntimeModel::ValidatePhysicsSnapshotStatic(
                 return TimelineStatus::InvalidSnapshot;
             }
         }
+        else if (bodySnapshot.activationState < ACTIVE_TAG ||
+                 bodySnapshot.activationState > DISABLE_SIMULATION)
+        {
+            return TimelineStatus::InvalidSnapshot;
+        }
     }
 
     if (snapshot.motionFrame >
@@ -1963,8 +1977,14 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
     }
     throwIfInjected(3);
 
-    // Phase 4: deterministic collision-world rebuild + solver history clear.
-    physics->RebuildCollisionWorldDeterministic();
+    // Phase 4: solver history clear. The deterministic collision-world
+    // rebuild deliberately does NOT run here: StepFrameExact canonicalizes
+    // the world at every step start (ClearContactManifolds +
+    // ClearSolverHistory + RebuildCollisionWorldDeterministic) for BOTH
+    // from-start and restore. A second rebuild during restore leaves
+    // allocation-history-dependent internal state (e.g. pair-cache hash
+    // table order) that makes the next step diverge from from-start on some
+    // platforms (R1.2C production-VMD continuation integrity fix).
     physics->ClearSolverHistoryDeterministic();
     throwIfInjected(4);
 
@@ -1973,9 +1993,26 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
     {
         const RigidBodySnapshot& bodySnapshot =
             snapshot.rigidBodies[index];
-        (*rigidBodies)[index]->NormalizeCanonicalActivation(
-            static_cast<int>(bodySnapshot.mode)
-        );
+        const auto& rigidBody = (*rigidBodies)[index];
+        if (bodySnapshot.mode == PmxRigidBodyMode::FollowBone)
+        {
+            // Preserve the captured kinematic activation verbatim so a
+            // restored checkpoint reproduces from-start byte-for-byte
+            // (R1.2C production-VMD cross-process equality). FollowBone
+            // bodies never simulate, so their activation history does not
+            // influence the next deterministic step.
+            if (btRigidBody* body = rigidBody->GetRigidBody())
+            {
+                body->forceActivationState(bodySnapshot.activationState);
+                body->setDeactivationTime(bodySnapshot.deactivationTime);
+            }
+        }
+        else
+        {
+            rigidBody->NormalizeCanonicalActivation(
+                static_cast<int>(bodySnapshot.mode)
+            );
+        }
     }
     physics->ResetSimulationTime();
     this->impl->lastExecutedSubsteps = 0U;
