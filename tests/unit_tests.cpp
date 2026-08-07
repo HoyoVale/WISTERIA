@@ -3390,6 +3390,19 @@ void TestCheckpointWireCodec()
         "default deserializer accepted a foreign build identity"
     );
 
+    // A zero override is invalid on deserialize too (interface contract).
+    CheckpointSerializationOptions zeroOverride;
+    zeroOverride.buildCompatibilityIdOverride = 0U;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            zeroOverride,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "zero build identity override was accepted by deserialize"
+    );
+
     // Truncation.
     Require(
         DeserializeCheckpoint(

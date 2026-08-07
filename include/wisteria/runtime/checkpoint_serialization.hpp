@@ -32,9 +32,90 @@ inline constexpr std::uint64_t DeterministicCompatibilityRevision = 1U;
 inline constexpr std::uint64_t SabaCompatibilityRevision = 1U;
 inline constexpr std::uint64_t BulletCompatibilityRevision = 1U;
 inline constexpr std::uint64_t CheckpointPayloadImplementationRevision = 1U;
-// 1 = little-endian 64-bit address-space class (Windows/Linux x64 are in
-// this class). Big-endian or non-64-bit toolchains must use another class.
-inline constexpr std::uint64_t BuildPlatformCompatibilityClass = 1U;
+
+// Compile-time build platform class: OS + architecture + compiler family +
+// compiler version folded with FNV-1a64. Windows/MSVC and Linux/GCC builds
+// therefore receive different classes until cross-platform exact
+// determinism is proven (contract §2C: portable bytes != portable
+// deterministic semantics). Big-endian or non-64-bit toolchains are also
+// distinguished through their architecture tag.
+inline constexpr std::uint64_t BuildPlatformCompatibilityClass()
+{
+    constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t kPrime = 1099511628211ULL;
+    std::uint64_t state = kOffsetBasis;
+
+#if defined(_WIN32)
+    constexpr const char* kOs = "windows";
+#elif defined(__linux__)
+    constexpr const char* kOs = "linux";
+#elif defined(__APPLE__)
+    constexpr const char* kOs = "apple";
+#else
+    constexpr const char* kOs = "unknown-os";
+#endif
+
+#if defined(_M_X64) || defined(__x86_64__)
+    constexpr const char* kArch = "x86-64";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    constexpr const char* kArch = "arm64";
+#elif defined(__i386__) || defined(_M_IX86)
+    constexpr const char* kArch = "x86";
+#else
+    constexpr const char* kArch = "unknown-arch";
+#endif
+
+#if defined(_MSC_VER)
+    constexpr const char* kCompiler = "msvc";
+#elif defined(__clang__)
+    constexpr const char* kCompiler = "clang";
+#elif defined(__GNUC__)
+    constexpr const char* kCompiler = "gcc";
+#else
+    constexpr const char* kCompiler = "unknown-compiler";
+#endif
+
+#if defined(_MSC_FULL_VER)
+    constexpr std::uint64_t kCompilerVersion = _MSC_FULL_VER;
+#elif defined(_MSC_VER)
+    constexpr std::uint64_t kCompilerVersion = _MSC_VER;
+#elif defined(__clang__)
+    constexpr std::uint64_t kCompilerVersion =
+        static_cast<std::uint64_t>(__clang_major__) * 10000U +
+        static_cast<std::uint64_t>(__clang_minor__) * 100U +
+        static_cast<std::uint64_t>(__clang_patchlevel__);
+#elif defined(__GNUC__)
+    constexpr std::uint64_t kCompilerVersion =
+        static_cast<std::uint64_t>(__GNUC__) * 10000U +
+        static_cast<std::uint64_t>(__GNUC_MINOR__) * 100U +
+        static_cast<std::uint64_t>(__GNUC_PATCHLEVEL__);
+#else
+    constexpr std::uint64_t kCompilerVersion = 0U;
+#endif
+
+    const auto fold = [&state, kPrime](const char* text)
+    {
+        while (*text != '\0')
+        {
+            state ^= static_cast<std::uint8_t>(*text);
+            state *= kPrime;
+            ++text;
+        }
+    };
+    const auto foldU64 = [&state, kPrime](std::uint64_t value)
+    {
+        for (int shift = 0; shift < 64; shift += 8)
+        {
+            state ^= static_cast<std::uint8_t>((value >> shift) & 0xFFU);
+            state *= kPrime;
+        }
+    };
+    fold("os:"); fold(kOs);
+    fold("arch:"); fold(kArch);
+    fold("compiler:"); fold(kCompiler);
+    foldU64(kCompilerVersion);
+    return state;
+}
 
 inline constexpr std::uint64_t CurrentBuildCompatibilityId()
 {
@@ -46,7 +127,7 @@ inline constexpr std::uint64_t CurrentBuildCompatibilityId()
         SabaCompatibilityRevision,
         BulletCompatibilityRevision,
         CheckpointPayloadImplementationRevision,
-        BuildPlatformCompatibilityClass
+        BuildPlatformCompatibilityClass()
     };
     for (const std::uint64_t part : parts)
     {
@@ -62,6 +143,10 @@ inline constexpr std::uint64_t CurrentBuildCompatibilityId()
 static_assert(
     CurrentBuildCompatibilityId() != 0U,
     "build compatibility identity must be non-zero"
+);
+static_assert(
+    BuildPlatformCompatibilityClass() != 0U,
+    "build platform compatibility class must be non-zero"
 );
 
 struct CheckpointSerializationOptions

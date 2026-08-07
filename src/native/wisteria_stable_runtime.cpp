@@ -370,7 +370,8 @@ std::uint32_t wisteria_stable_entity_capabilities(
         capabilities->runtime_backend_version = 1U;
         capabilities->deterministic_profile_id =
             WISTERIA_DETERMINISTIC_PROFILE_COLD_STEP_V1;
-        capabilities->reserved = 0U;
+        capabilities->checkpoint_payload_kind =
+            WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C;
         capabilities->structural_frame_limit = kStructuralFrameLimit;
         capabilities->max_deterministic_motion_frame =
             kSabaExactFrameLimit;
@@ -532,6 +533,14 @@ std::uint32_t wisteria_stable_checkpoint_create(
             MapTimelineStatus(mmd->CreateCheckpoint(checkpoint));
         if (status != WISTERIA_STATUS_OK)
             return status;
+        if (checkpoint.fingerprint.asset.pmxFileHash == 0U)
+        {
+            TrySetError(
+                &ctx,
+                "asset identity is invalid; checkpoint capture rejected"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
         const WisteriaCheckpoint handle =
             static_cast<WisteriaCheckpoint>(AllocateOpaqueHandle());
         ctx.stable->checkpoints.emplace(handle, std::move(checkpoint));
@@ -651,6 +660,14 @@ std::uint32_t wisteria_stable_checkpoint_serialize(
                 &ctx,
                 "unknown stable checkpoint handle"
             );
+        }
+        if (iterator->second.fingerprint.asset.pmxFileHash == 0U)
+        {
+            TrySetError(
+                &ctx,
+                "asset identity is invalid; checkpoint serialize rejected"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
         }
         const std::vector<std::uint8_t> wire =
             SerializeCheckpoint(iterator->second);

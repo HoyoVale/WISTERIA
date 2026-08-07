@@ -804,7 +804,7 @@ TimelineStatus DeserializeCheckpoint(
         options.buildCompatibilityIdOverride.value_or(
             CurrentBuildCompatibilityId()
         );
-    if (buildId != expectedBuildId)
+    if (expectedBuildId == 0U || buildId != expectedBuildId)
     {
         return TimelineStatus::InvalidCheckpoint;
     }

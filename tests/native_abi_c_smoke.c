@@ -38,6 +38,14 @@ STATIC_ASSERT(sizeof(WisteriaCheckpointInfoV1) == 64,
               checkpoint_info_struct_size);
 STATIC_ASSERT(sizeof(WisteriaStableContextInfoV1) == 44,
               context_info_struct_size);
+STATIC_ASSERT(sizeof(WisteriaRuntimeCapabilitiesV1) == 64,
+              capabilities_struct_size);
+STATIC_ASSERT(sizeof(WisteriaRuntimeCreationOptionsV1) == 56,
+              creation_options_struct_size);
+STATIC_ASSERT(
+    offsetof(WisteriaRuntimeCapabilitiesV1, checkpoint_payload_kind) == 24,
+    capabilities_payload_kind_offset
+);
 
 /* fixed numeric constants */
 STATIC_ASSERT(WISTERIA_STATUS_OK == 0u, status_ok);

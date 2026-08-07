@@ -112,7 +112,7 @@ typedef struct WisteriaRuntimeCapabilitiesV1
     uint32_t runtime_backend_id;
     uint32_t runtime_backend_version;
     uint32_t deterministic_profile_id;
-    uint32_t reserved;
+    uint32_t checkpoint_payload_kind;  /* WISTERIA_CHECKPOINT_PAYLOAD_KIND_* */
     uint64_t structural_frame_limit;      /* guard: UINT64_MAX / 4 */
     uint64_t max_deterministic_motion_frame; /* backend-advertised exact domain */
     uint32_t reserved2[4];

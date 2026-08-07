@@ -2537,6 +2537,49 @@ std::string PathUtf8(const std::filesystem::path& path)
     );
 }
 
+constexpr std::uint64_t kStableTestFnvOffsetBasis =
+    14695981039346656037ULL;
+constexpr std::uint64_t kStableTestFnvPrime = 1099511628211ULL;
+
+std::uint64_t StableTestFnv1a64(
+    const std::vector<std::uint8_t>& bytes
+)
+{
+    std::uint64_t state = kStableTestFnvOffsetBasis;
+    for (const std::uint8_t byte : bytes)
+    {
+        state ^= byte;
+        state *= kStableTestFnvPrime;
+    }
+    return state;
+}
+
+void StableTestWriteU64Le(
+    std::vector<std::uint8_t>& bytes,
+    std::size_t offset,
+    std::uint64_t value
+)
+{
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        bytes[offset + static_cast<std::size_t>(shift / 8)] =
+            static_cast<std::uint8_t>((value >> shift) & 0xFFU);
+    }
+}
+
+void StableTestRechecksum(std::vector<std::uint8_t>& bytes)
+{
+    const std::size_t checksumOffset =
+        static_cast<std::size_t>(CheckpointWireHeaderSize) - 8U;
+    std::fill(
+        bytes.begin() + static_cast<std::ptrdiff_t>(checksumOffset),
+        bytes.begin() + static_cast<std::ptrdiff_t>(checksumOffset + 8U),
+        0U
+    );
+    const std::uint64_t checksum = StableTestFnv1a64(bytes);
+    StableTestWriteU64Le(bytes, checksumOffset, checksum);
+}
+
 void TestNativeAbiLifecycle()
 {
     WisteriaContext context = 0U;
@@ -4075,6 +4118,8 @@ void TestStableRuntimeAbiE2E()
                 WISTERIA_CAP_SUPPORTS_CHECKPOINT_SERIALIZATION) != 0U &&
             capabilities.runtime_backend_id ==
                 WISTERIA_BACKEND_ID_SABA_MMD &&
+            capabilities.checkpoint_payload_kind ==
+                WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C &&
             capabilities.structural_frame_limit ==
                 std::numeric_limits<std::uint64_t>::max() / 4U &&
             capabilities.max_deterministic_motion_frame == 16777216ULL,
@@ -4166,6 +4211,66 @@ void TestStableRuntimeAbiE2E()
             &checkpointFromWire
         ) == WISTERIA_STATUS_OK && checkpointFromWire != 0U,
         "stable checkpoint deserialize failed"
+    );
+
+    // Phase 0B asset identity precondition: a stored checkpoint whose asset
+    // identity is invalid (pmx hash == 0) must be rejected by serialize.
+    std::vector<std::uint8_t> invalidAssetWire = wire;
+    // Locate every wire copy of the pmx hash (top-level + fingerprint) so
+    // the duplicate-field consistency check still passes; patching only one
+    // copy would be rejected as tampering.
+    FrameCheckpoint decodedWire;
+    Require(
+        DeserializeCheckpoint(
+            wire.data(),
+            wire.size(),
+            {},
+            decodedWire
+        ) == TimelineStatus::Ok,
+        "E2E wire failed C++-side deserialize"
+    );
+    const std::uint64_t pmxHash =
+        decodedWire.fingerprint.asset.pmxFileHash;
+    std::size_t patchedCopies = 0U;
+    for (std::size_t offset = 0U; offset + 8U <= wire.size(); ++offset)
+    {
+        std::uint64_t candidate = 0U;
+        for (int shift = 0; shift < 64; shift += 8)
+        {
+            candidate |= static_cast<std::uint64_t>(
+                wire[offset + static_cast<std::size_t>(shift / 8)]
+            ) << shift;
+        }
+        if (candidate == pmxHash)
+        {
+            StableTestWriteU64Le(invalidAssetWire, offset, 0U);
+            ++patchedCopies;
+        }
+    }
+    Require(
+        patchedCopies >= 2U,
+        "pmx hash copies not found in E2E wire"
+    );
+    StableTestRechecksum(invalidAssetWire);
+    WisteriaCheckpoint invalidAssetCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            invalidAssetWire.data(),
+            invalidAssetWire.size(),
+            &invalidAssetCheckpoint
+        ) == WISTERIA_STATUS_OK && invalidAssetCheckpoint != 0U,
+        "stable deserialize rejected a structurally valid wire"
+    );
+    std::uint64_t ignoredSize = 0U;
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            invalidAssetCheckpoint,
+            nullptr,
+            &ignoredSize
+        ) == WISTERIA_STATUS_INVALID_STATE,
+        "stable serialize accepted an invalid asset identity"
     );
 
     WisteriaEntity entityB = 0U;
@@ -4280,6 +4385,10 @@ void TestStableRuntimeAbiE2E()
             wisteria_stable_checkpoint_destroy(
                 context,
                 checkpointFromWire
+            ) == WISTERIA_STATUS_OK &&
+            wisteria_stable_checkpoint_destroy(
+                context,
+                invalidAssetCheckpoint
             ) == WISTERIA_STATUS_OK &&
             wisteria_stable_entity_destroy(context, entityB) ==
                 WISTERIA_STATUS_OK &&
