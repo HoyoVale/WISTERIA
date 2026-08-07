@@ -321,5 +321,24 @@ bool btSimpleBroadphase::testAabbOverlap(btBroadphaseProxy* proxy0, btBroadphase
 
 void btSimpleBroadphase::resetPool(btDispatcher* dispatcher)
 {
-	//not yet
+	// WISTERIA deterministic-restore: full canonical reset of the handle
+	// pool. Call only after every proxy has been destroyed. The free list
+	// is rebuilt in canonical order (0 -> 1 -> 2 -> ...) so a subsequent
+	// re-add assigns the same handle to the same object regardless of how
+	// many times the world has been rebuilt. btSimpleBroadphase's LIFO
+	// freeHandle would otherwise flip the handle/object mapping on every
+	// rebuild, changing calculateOverlappingPairs iteration order and
+	// leaking rebuild-count parity into the next step.
+	(void)dispatcher;
+	btAssert(m_numHandles == 0);
+	m_firstFreeHandle = 0;
+	m_LastHandleIndex = -1;
+	m_numHandles = 0;
+	m_invalidPair = 0;
+	for (int i = 0; i < m_maxHandles; ++i)
+	{
+		m_pHandles[i].SetNextFree(i + 1);
+		m_pHandles[i].m_clientObject = nullptr;
+	}
+	m_pHandles[m_maxHandles - 1].SetNextFree(-1);
 }

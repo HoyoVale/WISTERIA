@@ -103,3 +103,34 @@ R1.2C equivalence matrix（E1–E11）只在 `pmx-physics` + 最小生成 VMD �
 - 回归：两个生产资产对的 restore→continuation 等价测试；
   Stable C ABI FULL 跨进程 E2E 强制 N/N+1 字节相等。
 - R1.2C equivalence 声明恢复为对任意 Saba MMD 资产的 cold-boundary 语义。
+
+## Final Canonicalization Guard（第二轮，2026-08-08）
+
+审查指出 `btSimpleBroadphase` 的 handle 分配是 LIFO free-list：
+每次 rebuild 会翻转 handle/object 映射，而 `calculateOverlappingPairs`
+按 handle 索引迭代，pair 顺序因此依赖 rebuild 次数奇偶。上一轮三条测试
+路径恰好都落在同 parity，掩盖了该历史泄漏。本轮补：
+
+1. 真正实现 `btSimpleBroadphase::resetPool(dispatcher)`：
+   在确认 `m_numHandles == 0` 后把 free-list 重置为
+   `0 → 1 → 2 → ...`，`RebuildCollisionWorldDeterministic()` 在 remove-all
+   后调用它，使 rebuild 成为幂等 canonical 操作；
+2. 恢复 `RestorePhases` Phase 4 的
+   `RebuildCollisionWorldDeterministic()`（R1.2B raw RestoreState 的
+   canonical-world 语义不因 R1.2C 修复被削掉）；
+3. 新回归：`diverged history = 59 / 60 / 61` 三种 parity 下
+   restore(30) → step(31) 都必须与 from-start 相等；
+4. 新回归：同一状态 rebuild 1 次 vs 2 次后 step 的 exact hash 必须相等
+   （直接封死 rebuild-count parity）；
+5. `ComputeConfigurationFingerprint` 更新为
+   `physics ABI / deterministic world revision = 2`、
+   `broadphase = btSimpleBroadphase (2)`，旧 DBVT 身份不再撒谎；
+6. `DeterministicCompatibilityRevision / SabaCompatibilityRevision /
+   BulletCompatibilityRevision` 1 → 2
+   （wire payload revision 保持 1，schema 未变）；
+7. FULL Stable cross-process 保持 `--require-n1`；
+8. R1.3 focused regression（RAW==COMMUNITY、linked-body A/B、
+   Mode2 A/B、trace/export smoke）由既有集成测试覆盖并在四矩阵重跑；
+   realtime 性能：四矩阵 FULL 集成耗时与修复前同量级
+   （Windows FULL ≈ 88s / Linux FULL ≈ 100s），
+   简单 broadphase 未使 realtime 路径显著恶化。

@@ -96,13 +96,13 @@ protected:
 		return proxy0;
 	}
 
-	///reset broadphase internal structures, to ensure determinism/reproducability
-	virtual void resetPool(btDispatcher* dispatcher);
-
 	void validate();
 
 protected:
 public:
+	///reset broadphase internal structures, to ensure determinism/reproducability
+	virtual void resetPool(btDispatcher* dispatcher);
+
 	btSimpleBroadphase(int maxProxies = 16384, btOverlappingPairCache* overlappingPairCache = 0);
 	virtual ~btSimpleBroadphase();
 

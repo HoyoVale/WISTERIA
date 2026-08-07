@@ -1977,14 +1977,13 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
     }
     throwIfInjected(3);
 
-    // Phase 4: solver history clear. The deterministic collision-world
-    // rebuild deliberately does NOT run here: StepFrameExact canonicalizes
-    // the world at every step start (ClearContactManifolds +
-    // ClearSolverHistory + RebuildCollisionWorldDeterministic) for BOTH
-    // from-start and restore. A second rebuild during restore leaves
-    // allocation-history-dependent internal state (e.g. pair-cache hash
-    // table order) that makes the next step diverge from from-start on some
-    // platforms (R1.2C production-VMD continuation integrity fix).
+    // Phase 4: deterministic collision-world rebuild + solver history clear.
+    // RebuildCollisionWorldDeterministic is now an idempotent canonical
+    // operation (btSimpleBroadphase::resetPool canonicalizes the handle
+    // pool), so running it here AND again at the next StepFrameExact start
+    // cannot leak rebuild-count history. This keeps R1.2B raw
+    // RestoreState's frozen "canonical world after restore" semantics.
+    physics->RebuildCollisionWorldDeterministic();
     physics->ClearSolverHistoryDeterministic();
     throwIfInjected(4);
 
@@ -2680,8 +2679,8 @@ void SabaMmdRuntimeModel::ComputeConfigurationFingerprint(
 {
     FnvHasher hasher;
     hasher.U32(sizeof(btScalar));  // scalar precision (4 in R1.2B)
-    hasher.U32(1U);                // physics ABI version
-    hasher.U32(1U);                // broadphase: btDbvtBroadphase
+    hasher.U32(2U);                // physics ABI / deterministic world revision
+    hasher.U32(2U);                // broadphase: btSimpleBroadphase (canonical)
     hasher.U32(1U);                // solver: btSequentialImpulseConstraintSolver
     // R1.3 fingerprint v2: effective configuration behaviour. Preset labels
     // are deliberately excluded (RAW/COMMUNITY/ADAPTIVE share one hash while
@@ -2834,6 +2833,17 @@ void SabaMmdRuntimeModel::SetPostRestoreHashCorruptionForProbe(
 ) noexcept
 {
     this->impl->postRestoreHashXor = xorValue;
+}
+
+void SabaMmdRuntimeModel::ProbeRebuildCollisionWorldNow() noexcept
+{
+    if (this->impl->model == nullptr)
+        return;
+    saba::MMDPhysicsManager* manager =
+        this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return;
+    manager->GetMMDPhysics()->RebuildCollisionWorldDeterministic();
 }
 #endif
 

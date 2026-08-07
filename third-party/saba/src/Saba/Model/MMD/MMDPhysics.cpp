@@ -286,6 +286,12 @@ namespace saba
 		{
 			m_world->removeCollisionObject(entry.object);
 		}
+		// Canonical handle pool: without this, btSimpleBroadphase's LIFO
+		// freeHandle flips the handle/object mapping on every rebuild, so
+		// pair iteration order (by handle index) depends on rebuild-count
+		// parity. Reset makes Rebuild an idempotent canonical operation.
+		static_cast<btSimpleBroadphase*>(m_broadphase.get())
+			->resetPool(dispatcher);
 		// WISTERIA deterministic-restore: release every manifold and reset
 		// the manifold/algorithm pool free lists so the re-added world
 		// creates manifolds/algorithms in canonical pair-iteration order

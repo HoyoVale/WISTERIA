@@ -28,9 +28,12 @@ inline constexpr std::uint64_t CheckpointWireHeaderSize = 48U;
 // them invalidates every previously serialized checkpoint. Production
 // serializers write CurrentBuildCompatibilityId() and deserializers compare
 // against it; callers cannot substitute their own identity.
-inline constexpr std::uint64_t DeterministicCompatibilityRevision = 1U;
-inline constexpr std::uint64_t SabaCompatibilityRevision = 1U;
-inline constexpr std::uint64_t BulletCompatibilityRevision = 1U;
+// R1.2C integrity revision: deterministic Cold Boundary execution changed
+// (step-start world canonicalization, canonical broadphase, pool reset), so
+// old checkpoints are NOT compatible with this build.
+inline constexpr std::uint64_t DeterministicCompatibilityRevision = 2U;
+inline constexpr std::uint64_t SabaCompatibilityRevision = 2U;
+inline constexpr std::uint64_t BulletCompatibilityRevision = 2U;
 inline constexpr std::uint64_t CheckpointPayloadImplementationRevision = 1U;
 
 // Compile-time build platform class: OS + architecture + compiler family +

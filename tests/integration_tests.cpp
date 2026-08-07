@@ -8701,7 +8701,8 @@ void TestR12CVmdEquivalence()
 
 void RequireProductionVmdContinuationEquivalence(
     const std::filesystem::path& modelPath,
-    const std::filesystem::path& vmdPath
+    const std::filesystem::path& vmdPath,
+    MotionFrameIndex divergedHistory
 )
 {
     auto baseline = CreateDeterministicRuntime(modelPath, vmdPath);
@@ -8714,7 +8715,7 @@ void RequireProductionVmdContinuationEquivalence(
         CreateCheckpointAt(*source, 30U);
 
     auto diverged = CreateDeterministicRuntime(modelPath, vmdPath);
-    CaptureCanonicalAt(*diverged, 60U);
+    CaptureCanonicalAt(*diverged, divergedHistory);
     auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
     Require(
         divergedMmd != nullptr,
@@ -8758,9 +8759,23 @@ void TestR12CProductionVmdContinuationEquivalence()
         FixturePath("production-vmd-body");
     RequireFullAsset("production-pmx-yeshiguang");
     RequireFullAsset("production-vmd-body");
+    // Rebuild-count parity guard: restore must produce the same future
+    // regardless of the diverged runtime's step history (odd/even rebuild
+    // phases before the restore).
     RequireProductionVmdContinuationEquivalence(
         yeshiguang,
-        bodyVmd
+        bodyVmd,
+        59U
+    );
+    RequireProductionVmdContinuationEquivalence(
+        yeshiguang,
+        bodyVmd,
+        60U
+    );
+    RequireProductionVmdContinuationEquivalence(
+        yeshiguang,
+        bodyVmd,
+        61U
     );
 
     const std::filesystem::path couqie =
@@ -8771,7 +8786,64 @@ void TestR12CProductionVmdContinuationEquivalence()
     RequireFullAsset("production-vmd-penguin");
     RequireProductionVmdContinuationEquivalence(
         couqie,
-        penguinVmd
+        penguinVmd,
+        60U
+    );
+}
+
+// R1.2C integrity: RebuildCollisionWorldDeterministic must be an idempotent
+// canonical operation. Restoring the same checkpoint, then running one vs
+// two extra rebuilds before step N+1 must produce identical hashes
+// (btSimpleBroadphase::resetPool removes rebuild-count parity).
+void TestR12CCollisionWorldRebuildIdempotent()
+{
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    const std::filesystem::path vmdPath =
+        FixturePath("production-vmd-body");
+    RequireFullAsset("production-pmx-yeshiguang");
+    RequireFullAsset("production-vmd-body");
+
+    auto source = CreateDeterministicRuntime(modelPath, vmdPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 30U);
+
+    const auto runVariant = [&](std::uint32_t extraRebuilds)
+    {
+        auto runtime = CreateDeterministicRuntime(modelPath, vmdPath);
+        CaptureCanonicalAt(*runtime, 30U);
+        auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+        Require(
+            mmd->ReplayFromCheckpoint(checkpoint, 30U) ==
+                TimelineStatus::Ok,
+            "rebuild idempotence restore failed"
+        );
+        for (std::uint32_t index = 0U; index < extraRebuilds; ++index)
+        {
+            runtime->ProbeRebuildCollisionWorldNow();
+        }
+        auto* stepper =
+            dynamic_cast<IDeterministicFrameStepper*>(runtime.get());
+        Require(
+            stepper->StepMotionFrameExact(31U, {}) ==
+                TimelineStatus::Ok,
+            "rebuild idempotence step 31 failed"
+        );
+        return CaptureDeterminismHashes(*runtime);
+    };
+
+    const FrameStateHashes once = runVariant(1U);
+    const FrameStateHashes twice = runVariant(2U);
+    std::ostringstream message;
+    message << "rebuild parity leak: once=" << std::hex
+            << once.physics.exactHash << " twice="
+            << twice.physics.exactHash;
+    Require(
+        once.pose.exactHash == twice.pose.exactHash &&
+            once.vertex.exactHash == twice.vertex.exactHash &&
+            once.physics.exactHash == twice.physics.exactHash,
+        message.str()
     );
 }
 
@@ -10931,6 +11003,10 @@ int main()
     failures += !RunTest(
         "R1.2C production VMD continuation equivalence",
         TestR12CProductionVmdContinuationEquivalence
+    );
+    failures += !RunTest(
+        "R1.2C collision world rebuild idempotence",
+        TestR12CCollisionWorldRebuildIdempotent
     );
     failures += !RunTest(
         "R1.2C true motion end hold",

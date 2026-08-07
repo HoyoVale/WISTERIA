@@ -299,6 +299,10 @@ public:
     void SetPostRestoreHashCorruptionForProbe(
         std::uint64_t xorValue
     ) noexcept;
+    // Test-only: run the deterministic collision-world rebuild once. Used
+    // to prove RebuildCollisionWorldDeterministic is an idempotent
+    // canonical operation (rebuild-count parity must not leak).
+    void ProbeRebuildCollisionWorldNow() noexcept;
 #endif
 
     struct Impl;
