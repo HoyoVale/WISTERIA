@@ -42,16 +42,32 @@ public:
         // R1.4: authoritative configuration is built from stable options and
         // applied before Initialize. A physics-settings override that
         // diverges from the frozen preset carries a custom identity.
+        MmdPhysicsPreset preset = MmdPhysicsPreset::MmdRaw;
+        switch (options.compatibility)
+        {
+            case RuntimeCompatibilityProfile::Raw:
+                preset = MmdPhysicsPreset::MmdRaw;
+                break;
+            case RuntimeCompatibilityProfile::Community:
+                preset = MmdPhysicsPreset::MmdCommunity;
+                break;
+            case RuntimeCompatibilityProfile::Adaptive:
+                preset = MmdPhysicsPreset::WisteriaAdaptive;
+                break;
+        }
         MmdPhysicsConfiguration configuration =
-            BuildPresetConfiguration(options.physicsPreset);
-        configuration.runtime = options.physicsSettings;
+            BuildPresetConfiguration(preset);
+        configuration.runtime.fixedTimeStep = options.physics.fixedTimeStep;
+        configuration.runtime.maxSubSteps = options.physics.maxSubSteps;
+        configuration.runtime.gravity = options.physics.gravity;
+        configuration.runtime.enabled = options.physics.enabled;
         if (ComputeEffectiveConfigurationFingerprint(configuration) !=
             ComputeEffectiveConfigurationFingerprint(
-                BuildPresetConfiguration(options.physicsPreset)
+                BuildPresetConfiguration(preset)
             ))
         {
             configuration.identity.originPreset =
-                ToPresetNameLower(options.physicsPreset);
+                ToPresetNameLower(preset);
         }
         const TimelineStatus configStatus =
             runtime->SetMmdPhysicsConfiguration(configuration);

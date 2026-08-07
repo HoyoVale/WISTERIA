@@ -395,12 +395,16 @@ Entity& Scene::InstantiateModel(
     const Transform& transform
 )
 {
-    Entity& entity = this->CreateEntity(transform);
+    // R1.4 failure transaction boundary: all pre-init option validation and
+    // runtime initialization happen before any Scene mutation, so a failed
+    // creation never leaves a ghost Entity behind.
+    auto runtime = this->modelBackends.CreateRuntime(model, options);
     auto instance = std::make_unique<ModelInstance>(
         model,
-        this->modelBackends.CreateRuntime(model, options)
+        std::move(runtime)
     );
     ModelInstance& instanceReference = *instance;
+    Entity& entity = this->CreateEntity(transform);
     const bool backendDriven = instanceReference.HasRuntime();
     entity.SetModelInstance(std::move(instance));
 

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "wisteria/assets/model_asset.hpp"
-#include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 #include "wisteria/runtime/runtime_model_base.hpp"
+#include "wisteria/runtime/runtime_creation_options.hpp"
 
 #include <memory>
 #include <string_view>
@@ -10,16 +10,6 @@
 
 namespace wisteria
 {
-// R1.4 Phase 0A: WISTERIA-governed runtime creation options. Selects
-// semantic profiles and stable physics settings; never concrete backend
-// implementations (contract §2B: "Saba executes; WISTERIA governs").
-struct RuntimeCreationOptions
-{
-    MmdPhysicsPreset physicsPreset = MmdPhysicsPreset::MmdRaw;
-    MmdPhysicsRuntimeSettings physicsSettings;
-    std::uint32_t reserved[4] = {0U, 0U, 0U, 0U};
-};
-
 class IModelBackend
 {
 public:

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wisteria/runtime/determinism.hpp"
+#include "wisteria/runtime/runtime_creation_options.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -15,6 +16,10 @@ namespace wisteria
 // governance. These neutral types are the single authoritative configuration
 // source; the Saba adapter translates them into runtime settings.
 // Contract: docs/architecture/R1_3_MMD_COMPAT_CONTRACT.md
+
+// The stable physics settings subset is shared with the generic runtime
+// layer (R1.4); MMD keeps it as an alias so both layers stay in sync.
+using MmdPhysicsRuntimeSettings = RuntimePhysicsSettings;
 
 enum class MmdPhysicsPreset : std::uint8_t
 {
@@ -52,16 +57,6 @@ enum class MmdMode2WritebackMode : std::uint8_t
     PreserveAnimatedTranslation = 0,  // current Saba baseline
     StrictBoneLength = 1,             // Reserved (Phase 0A)
     FullTransformDiagnostic = 2       // diagnostic only
-};
-
-// Runtime base physics values are part of the authoritative configuration;
-// there must never be a second independent copy (R1.3 §4).
-struct MmdPhysicsRuntimeSettings
-{
-    float fixedTimeStep = 1.0f / 120.0f;
-    int maxSubSteps = 10;
-    glm::vec3 gravity{0.0f, -98.0f, 0.0f};
-    bool enabled = true;
 };
 
 struct MmdPhysicsCompatibilityProfile

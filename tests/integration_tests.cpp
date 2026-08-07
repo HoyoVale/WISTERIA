@@ -9627,7 +9627,6 @@ void TestR14FrameDomainGuard()
     );
 }
 
-<<<<<<< HEAD
 void TestR14RuntimeCreationOptions()
 {
     const std::filesystem::path modelPath = FixturePath("pmx-physics");
@@ -9674,8 +9673,9 @@ void TestR14RuntimeCreationOptions()
     // before Initialize.
     {
         RuntimeCreationOptions options;
-        options.physicsPreset = MmdPhysicsPreset::MmdCommunity;
-        options.physicsSettings.gravity =
+        options.compatibility =
+            RuntimeCompatibilityProfile::Community;
+        options.physics.gravity =
             glm::vec3(0.0f, -55.0f, 0.0f);
         auto runtime = registry.CreateRuntime(asset, options);
         auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
@@ -9712,7 +9712,8 @@ void TestR14RuntimeCreationOptions()
     // preset identity.
     {
         RuntimeCreationOptions options;
-        options.physicsPreset = MmdPhysicsPreset::MmdCommunity;
+        options.compatibility =
+            RuntimeCompatibilityProfile::Community;
         auto runtime = registry.CreateRuntime(asset, options);
         auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
         MmdPhysicsConfiguration config;
@@ -9727,8 +9728,75 @@ void TestR14RuntimeCreationOptions()
     }
 }
 
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
+void TestR14RuntimeCreationFailureTransaction()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+
+    ModelAsset asset("pmx-physics");
+    ModelSourceDescriptor descriptor;
+    descriptor.sourcePath = modelPath;
+    descriptor.backend = ModelBackendKind::SabaMmd;
+    asset.SetSourceDescriptor(descriptor);
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+
+    // Invalid options must throw at the registry/adapter boundary.
+    RuntimeCreationOptions zeroStep;
+    zeroStep.physics.fixedTimeStep = 0.0f;
+    bool threw = false;
+    try
+    {
+        (void)registry.CreateRuntime(asset, zeroStep);
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+    Require(threw, "zero fixedTimeStep options were accepted");
+
+    RuntimeCreationOptions nanGravity;
+    nanGravity.physics.gravity.y =
+        std::numeric_limits<float>::quiet_NaN();
+    threw = false;
+    try
+    {
+        (void)registry.CreateRuntime(asset, nanGravity);
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+    Require(threw, "NaN gravity options were accepted");
+
+    // Scene-level failure transaction: failed InstantiateModel must not
+    // leave a ghost Entity behind.
+    Scene scene;
+    Require(scene.EntityCount() == 0U, "scene did not start empty");
+    try
+    {
+        (void)scene.InstantiateModel(asset, zeroStep);
+    }
+    catch (const std::exception&)
+    {
+    }
+    Require(
+        scene.EntityCount() == 0U,
+        "failed InstantiateModel left a ghost entity"
+    );
+
+    // A valid creation still produces exactly one Entity.
+    (void)scene.InstantiateModel(
+        asset,
+        RuntimeCreationOptions{}
+    );
+    Require(
+        scene.EntityCount() == 1U,
+        "valid InstantiateModel did not create exactly one entity"
+    );
+}
+
 }
 
 int main()
@@ -10061,13 +10129,14 @@ int main()
         TestR14FrameDomainGuard
     );
     failures += !RunTest(
-<<<<<<< HEAD
         "R1.4 runtime creation options",
         TestR14RuntimeCreationOptions
     );
     failures += !RunTest(
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
+        "R1.4 runtime creation failure transaction",
+        TestR14RuntimeCreationFailureTransaction
+    );
+    failures += !RunTest(
         "R1.3 trace reproducible and schema",
         TestR13TraceReproducibleAndSchema
     );

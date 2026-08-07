@@ -1,12 +1,6 @@
-<<<<<<< HEAD
 # R1.4 — Stable Runtime Boundary 契约
 
 > 状态：**Phase 0A Contract Frozen（2026-08-07）**。R1.3 Phase 0A/B
-=======
-# R1.4 — Stable Runtime Boundary 契约（draft v1）
-
-> 状态：**Draft v1（待评审，不进入实现）**。R1.3 Phase 0A/B
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 > 完成（2026-08-07）之后的主线。
 >
 > Entry Audit（2026-08-07）结论：R1.2/R1.3 留下的内部基础足够好，
@@ -67,10 +61,7 @@ GLM / STL / C++ bool 作为 wire layout
   deterministic frame（preview 与 exact 分开）
   checkpoint（create / restore / destroy / serialize / deserialize）
   serialization 边界
-<<<<<<< HEAD
   runtime creation options（Initialize 前语义选择）
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 
 保持 experimental：
   Window / Input / Camera / Render / Light / Primitive /
@@ -112,21 +103,23 @@ R1.4 冻结的创建顺序：
   返回 Runtime
 
 要求：
-  - options 必须包含 authoritative MmdPhysicsConfiguration（或等价
-    中立配置）与 backends 选择；
+  - options 必须包含 WISTERIA 语义 Profile
+    （RuntimeCompatibilityProfile）与稳定物理设置
+    （RuntimePhysicsSettings）；**不包含 backend 选择**；
   - 任何 future COMMUNITY v2 的 checkpoint restore 必须先创建
     COMMUNITY v2 Runtime 再 restore；Checkpoint 不偷偷重建
     backend configuration；
   - 具体 struct 设计在 Phase 0A Contract 冻结，但创建顺序必须现在
     写进契约。
-<<<<<<< HEAD
 
 范围限制（拍板：APPROVED WITH SCOPE LIMIT）：
   RuntimeCreationOptionsV1 只暴露 WISTERIA 治理的稳定语义：
-    semantic preset（MMD_RAW / MMD_COMMUNITY / WISTERIA_ADAPTIVE）
+    semantic profile（Raw / Community / Adaptive，
+      由 backend adapter 翻译为 MmdPhysicsPreset）
     stable runtime physics settings（fixedTimeStep / maxSubSteps /
       gravity / enabled）
-    reserved / flags
+    （内部 C++ options 无 reserved；Stable C ABI struct 使用
+      struct_size / struct_version / reserved）
   不镜像内部 MmdPhysicsConfiguration（originPreset、诊断字段、
     adaptive 预留、backend/baseline 字符串等都不是 stable user
     semantics）；
@@ -134,8 +127,6 @@ R1.4 冻结的创建顺序：
     profiles, not concrete backend implementations.**
   backend identity 是查询与 checkpoint compatibility identity，
   不是上层选择物理实现的控制旋钮（Saba executes; WISTERIA governs）。
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 ```
 
 ### C. Checkpoint wire envelope + payload schema
@@ -176,12 +167,9 @@ Wire schema 规则：
   v1 serialized checkpoint = portable bytes ≠ portable deterministic
   semantics；buildCompatibilityId mismatch → restore 前拒绝（不产生
   任何 mutation）；跨版本放宽需先通过跨版本等价性测试。
-<<<<<<< HEAD
   A serialized checkpoint may identify the backend required for
   compatibility, but deserialization/restoration does not grant the
   caller authority to select or substitute that backend.
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 ```
 
 ### D. Deterministic frame domain + status / capabilities
@@ -189,30 +177,21 @@ Wire schema 规则：
 ```text
 Frame domain（Entry Guard 已落地，契约固化）：
   MotionFrameIndex storage = uint64_t；
-<<<<<<< HEAD
   两层界限（拍板：MODIFY）：
     StructuralFrameLimit
       = UINT64_MAX / 4（底层防溢出 Guard，本次已实现）
     Backend-advertised ExactDeterministicFrameLimit
       = Saba MMD v1 = 2^24 = 16,777,216（包含本身；
         VMDAnimation::Evaluate(float) 的连续整数精确域）
-=======
-  SupportedDeterministicFrameRange 由 backend/profile 公布；
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
   frame * 4 必须 checked（禁止溢出）；
   replay 循环禁止出现 ++frame wrap；
   统一 ValidateDeterministicFrameDomain()：
     ResetAtTarget / ReplayFromStart / StepMotionFrameExact /
     ReplayFromCheckpoint / Checkpoint deserialize /
     C ABI deterministic entries 全部走同一入口；
-<<<<<<< HEAD
   Stable ABI 不硬编码全引擎统一上限，通过 capability 返回：
     uint64_t max_deterministic_motion_frame;
   （其他 backend 未来可以比 Saba 大）
-=======
-  Saba 精确动画采样上限（float 2^24 ≈ 6.47 天 @30FPS）在 Phase 0A
-    确定具体公布值。
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 
 交互帧与确定性帧分层（禁止合并）：
   entity_set_preview_frame(double)   → interactive（InvalidateBoundary）
@@ -245,11 +224,8 @@ Threading：
 Error 语义：
   lastError 是 best-effort sticky diagnostic；
   status code 是权威；
-<<<<<<< HEAD
   successful call 不保证清空 lastError；
   lastError 不得被程序逻辑解析（禁止 strstr(lastError, ...) 判断）；
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
   stable v1 不承诺“每个 non-OK 都解释本次失败”。
 ```
 
@@ -283,12 +259,9 @@ C ABI 概念面：
   checkpoint deserialize from bytes
 
 Checkpoint 不随源 Entity 销毁失效（R1.2 已证明实例间 restore 合法）。
-<<<<<<< HEAD
   source Entity destroyed ≠ checkpoint invalid；
   Context destroyed → checkpoint handles invalid（与 opaque-handle
   ownership 一致）。
-=======
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 ```
 
 ## 5. 推荐执行顺序
@@ -304,7 +277,6 @@ Checkpoint 不随源 Entity 销毁失效（R1.2 已证明实例间 restore 合�
 8. 四套矩阵 + checkpoint 跨实例/跨进程回归
 ```
 
-<<<<<<< HEAD
 ## 6. 拍板裁决（Frozen decisions，2026-08-07）
 
 ```text
@@ -318,7 +290,8 @@ Checkpoint 不随源 Entity 销毁失效（R1.2 已证明实例间 restore 合�
    capability 返回 max_deterministic_motion_frame，不硬编码全局上限
 3. RuntimeCreationOptions
    APPROVED WITH SCOPE LIMIT：只暴露 semantic preset + stable physics
-   settings + reserved；不镜像内部配置；不提供 backend 选择旋钮；
+   settings；不镜像内部配置；不提供 backend 选择旋钮；
+   （内部 C++ 无 reserved，版本化属于 C ABI struct）；
    “Saba executes; WISTERIA governs.”
 4. Context-owned opaque checkpoint
    APPROVED：WisteriaCheckpoint = uint64_t，Context 持有；
@@ -329,22 +302,4 @@ Checkpoint 不随源 Entity 销毁失效（R1.2 已证明实例间 restore 合�
 6. Threading
    APPROVED：creator-thread-affine；stable v1 调用必须在创建线程；
    未来 headless 迁移通过新 capability/context 类型开放，不改 v1 承诺
-=======
-## 6. 待评审/拍板点
-
-```text
-1. Stable v1 subset 是否严格限定为 runtime/checkpoint 面
-   （建议：是；Window/Input/Light 等继续 experimental）
-2. Frame domain 公布值
-   （建议：checked 上限 min(UINT64_MAX/4, Saba float 精确域)，
-   具体数字 Phase 0A 冻结）
-3. RuntimeCreationOptions 是否首版即携带完整
-   MmdPhysicsConfiguration（建议：是，避免 v2 再改 ABI）
-4. Checkpoint 是否采用 Context-owned opaque handle
-   （建议：是，符合现有架构）
-5. lastError 语义
-   （建议：best-effort sticky diagnostic，status 为权威）
-6. Threading
-   （建议：creator-thread-affine，首版不开放迁移）
->>>>>>> aa3e59a76627e73ae18adc762aac3d285c3b1477
 ```
