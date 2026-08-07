@@ -9114,6 +9114,38 @@ void TestR13MmdPhysicsConfigurationRuntime()
             "custom-from-mmd-raw-v1",
         "legacy custom settings kept the direct MMD_RAW identity"
     );
+    // Authority invariant: every configuration the runtime exposes must pass
+    // its own validator, and the pre-init roundtrip must be accepted.
+    Require(
+        ValidateConfiguration(legacyConfig),
+        "legacy custom configuration fails its own validator"
+    );
+    Require(
+        legacy.SetMmdPhysicsConfiguration(legacyConfig) ==
+            TimelineStatus::Ok,
+        "pre-init custom configuration roundtrip was rejected"
+    );
+
+    // Low-level settings override after Initialize must produce a valid
+    // custom configuration too.
+    SabaPhysicsSettings overridden = SabaPhysicsSettings{};
+    overridden.gravity.y = -99.0f;
+    runtime.SetMmdPhysicsSettings(overridden);
+    MmdPhysicsConfiguration overriddenConfig;
+    Require(
+        runtime.GetMmdPhysicsConfiguration(overriddenConfig),
+        "overridden runtime config read failed"
+    );
+    Require(
+        FormatConfigurationIdentity(overriddenConfig) ==
+            "custom-from-mmd-community-v1",
+        "SetMmdPhysicsSettings override kept a direct preset identity"
+    );
+    Require(
+        ValidateConfiguration(overriddenConfig),
+        "SetMmdPhysicsSettings produced a configuration its own validator "
+        "rejects"
+    );
 }
 
 void TestR13TraceCanonicalGate()
@@ -9232,6 +9264,16 @@ void TestR13TraceCanonicalGate()
         [&]() { runtime.ResetMmdPhysics(); }
     );
     expectInvalidated("PauseMotion", [&]() { runtime.PauseMotion(); });
+    expectInvalidated("ResumeMotion", [&]() { runtime.ResumeMotion(); });
+    expectInvalidated(
+        "SetMotionLooping",
+        [&]() { runtime.SetMotionLooping(false); }
+    );
+    expectInvalidated(
+        "RestartMotion",
+        [&]() { runtime.RestartMotion(false); }
+    );
+    expectInvalidated("ClearMotion", [&]() { runtime.ClearMotion(); });
 }
 
 }

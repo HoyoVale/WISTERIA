@@ -2407,14 +2407,41 @@ void TestMmdPhysicsConfigurationValidation()
         "unknown profile revision was accepted"
     );
 
-    // A forged custom identity must still keep preset runtime values.
-    MmdPhysicsConfiguration forgedDerived =
+    // custom-from-* may carry legal runtime overrides (closure fix): the
+    // configuration a runtime exposes after a low-level override must pass
+    // its own validator.
+    MmdPhysicsConfiguration customOverride =
         BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
-    forgedDerived.identity.originPreset = "mmd-raw";
-    forgedDerived.runtime.gravity.y = -9.8f;
+    customOverride.identity.originPreset = "mmd-raw";
+    customOverride.runtime.gravity.y = -9.8f;
     Require(
-        !ValidateConfiguration(forgedDerived),
-        "custom identity with mutated runtime was accepted"
+        ValidateConfiguration(customOverride),
+        "custom identity with a legal gravity override was rejected"
+    );
+    customOverride.runtime.fixedTimeStep = 1.0f / 60.0f;
+    Require(
+        ValidateConfiguration(customOverride),
+        "custom identity with a legal timestep override was rejected"
+    );
+
+    // The custom label must still match its preset, and forbidden fields
+    // stay forbidden even under a custom identity.
+    MmdPhysicsConfiguration wrongOrigin = customOverride;
+    wrongOrigin.identity.originPreset = "mmd-community";
+    Require(
+        !ValidateConfiguration(wrongOrigin),
+        "custom identity with a mismatched origin was accepted"
+    );
+    customOverride.compatibility.gravityScale = 2.0f;
+    Require(
+        !ValidateConfiguration(customOverride),
+        "custom config with gravityScale != 1 was accepted"
+    );
+    customOverride.compatibility.gravityScale = 1.0f;
+    customOverride.adaptive.recoveryEnabled = true;
+    Require(
+        !ValidateConfiguration(customOverride),
+        "custom config with an unimplemented adaptive flag was accepted"
     );
 }
 

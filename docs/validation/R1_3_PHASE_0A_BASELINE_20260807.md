@@ -206,3 +206,39 @@ Windows FULL_ASSETS   CTest 5/5
 Linux CORE            CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
 Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
 ```
+
+## 8. Closure Fix（评审轮 5，2026-08-07）
+
+最后一个 P0：权威 Configuration 自洽性。低层构造与
+`SetMmdPhysicsSettings` 产生的 `custom-from-*` 配置此前会被自己的
+`ValidateConfiguration()` 拒绝（custom 身份 + 合法 runtime override 不
+被认可）。
+
+修复（方案 A，最小改动）：
+
+```text
+1. custom-from-* 配置允许承载合法 runtime override
+   （gravity / fixedTimeStep / maxSubSteps / enabled）与已实现 A/B 开关；
+2. 直接 Preset 仍必须严格等于 BuildPresetConfiguration(preset)；
+3. 仍禁止 gravityScale != 1、adaptive=true、Reserved 模式、
+   非 finite / 非法数值；
+4. 新增权威不变量测试：
+   - legacy 构造函数自定义设置 → Get → ValidateConfiguration == true
+   - SetMmdPhysicsSettings 自定义设置（post-init）→ Get → Validate == true
+   - pre-init roundtrip：Get(A) → Set(A) → Ok
+5. 契约同步 custom 配置语义；
+6. canonical 失效矩阵补充代表性 mutator
+   （ResumeMotion / SetMotionLooping / RestartMotion / ClearMotion）。
+```
+
+修复后四套矩阵复跑（2026-08-07）：
+
+```text
+Windows CORE          CTest 5/5
+Windows FULL_ASSETS   CTest 5/5
+Linux CORE            CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+```
+
+**R1.3 Phase 0A — Frozen + Implemented + Validated（2026-08-07）**。
+停止 Phase 0A 审查，进入 Phase 0B 社区实现对照（单独契约）。

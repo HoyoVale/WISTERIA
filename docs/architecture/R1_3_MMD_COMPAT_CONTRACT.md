@@ -27,6 +27,10 @@
 > 移除死字段 `trace`（`MmdPhysicsTraceOptions` 保留为 Phase 0B 工具层）；
 > 明确允许 effective-equivalent 的 metadata-only 标签切换（不改 Bullet）；
 > 所有非确定性 mutator 必须使 deterministic canonical/prepared 状态失效。
+>
+> Closure Fix 契约同步（2026-08-07）：`custom-from-*` 配置可承载合法
+> runtime override 与已实现 A/B 开关；任何 Runtime 暴露的
+> `MmdPhysicsConfiguration` 必须通过自己的 `ValidateConfiguration()`。
 
 ## 0. 阶段定位
 
@@ -264,6 +268,11 @@ adaptive              = 全部 false
   强制校验入口，匿名/无身份配置必须被拒绝；
 - 派生配置身份：originPreset=MmdRaw → identity=custom-from-mmd-raw，
   同时计算 effectiveConfigurationHash。
+- custom-from-* 配置可承载合法 runtime override（gravity、fixedTimeStep、
+  maxSubSteps、enabled）与已实现 A/B 开关；直接 Preset 仍必须严格等于
+  冻结 Preset。DeriveDiagnosticConfiguration 不是 custom 配置的唯一产生
+  途径（低层构造与 SetMmdPhysicsSettings 的越界设置会自动转为 custom
+  身份）；任何成功暴露给调用者的配置必须通过 ValidateConfiguration。
 - MmdPhysicsConfiguration 是 R1.3 唯一权威配置对象；现有
   SetMmdPhysicsSettings 只作为兼容性低层入口，其修改必须同步进入
   当前 Configuration、重新计算 effective fingerprint，并使已有

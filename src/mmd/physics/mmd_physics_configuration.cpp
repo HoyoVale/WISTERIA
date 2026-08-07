@@ -214,16 +214,13 @@ bool ValidateConfiguration(
     {
         if (identity.originPreset != ToPresetNameLower(identity.preset))
             return false;
-        // Derived/custom configurations may only deviate from the preset in
-        // the two A/B switches; runtime, gravity scale and adaptive slots
-        // stay frozen to the preset values.
-        if (runtime.fixedTimeStep != preset.runtime.fixedTimeStep ||
-            runtime.maxSubSteps != preset.runtime.maxSubSteps ||
-            runtime.gravity != preset.runtime.gravity ||
-            runtime.enabled != preset.runtime.enabled)
-        {
-            return false;
-        }
+        // custom-from-* configurations are allowed to carry legal runtime
+        // overrides (gravity, fixedTimeStep, maxSubSteps, enabled) and the
+        // implemented A/B switches. The numeric sanity checks above enforce
+        // finite/positive values, gravityScale stays 1.0, adaptive slots stay
+        // disabled, and Reserved modes stay rejected. The effective
+        // fingerprint hashes all of these runtime behaviours, so a custom
+        // label never hides behaviour from the machine identity.
     }
     // FullTransformDiagnostic must not enter a direct preset profile.
     if (identity.originPreset.empty() &&
