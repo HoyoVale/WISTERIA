@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Regenerate docs/architecture/C_ABI_SAFETY_MATRIX.md from the C ABI header
-and native implementation files.
+"""Regenerate docs/architecture/C_ABI_SAFETY_MATRIX.md from the C ABI
+headers (legacy v0.7 + stable v1 subset) and native implementation files.
 
 Usage:
     python script/gen_abi_safety_matrix.py [--check]
@@ -18,16 +18,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = ROOT / "include" / "wisteria" / "native" / "wisteria_native.h"
+STABLE_HEADER = (
+    ROOT / "include" / "wisteria" / "native" / "wisteria_stable_runtime.h"
+)
 NATIVE_DIR = ROOT / "src" / "native"
 MATRIX = ROOT / "docs" / "architecture" / "C_ABI_SAFETY_MATRIX.md"
 
 EXPORT_RE = re.compile(
-    r"WISTERIA_API\s+[^;]*?\b(wisteria_\w+)\s*\("
+    r"(?:WISTERIA_API|WISTERIA_STABLE_API)\s+[^;]*?\b(wisteria_\w+)\s*\("
 )
 
 
-def exported_functions() -> list[str]:
-    text = HEADER.read_text(encoding="utf-8")
+def exported_functions(header: Path) -> list[str]:
+    text = header.read_text(encoding="utf-8")
     return EXPORT_RE.findall(text)
 
 
@@ -95,6 +98,8 @@ def render(rows: list[tuple[str, str, str]]) -> str:
     lines.append("- `GUARDED`：函数体包含 `GuardAbi(context, [&]{ ... })`；")
     lines.append("- `RAW_TRY`：有裸 `try/catch`，未统一走 `GuardAbi`；")
     lines.append("- `PROVEN_NO_THROW_LEAF`：无状态查询/常量 leaf，可证明不抛；")
+    lines.append("- `DECLARED_ONLY`：头文件已冻结但实现未落地（Phase 0A "
+                 "Stable v1 subset 只冻结声明）；不参与 INVOKE_ABI 门禁。")
     lines.append("- `UNGUARDED`：无异常边界。")
     lines.append("")
 
@@ -107,7 +112,8 @@ def render(rows: list[tuple[str, str, str]]) -> str:
     guarded = sum(1 for _, _, s in rows if s == "GUARDED")
     raw = sum(1 for _, _, s in rows if s == "RAW_TRY")
     leaf = sum(1 for _, _, s in rows if s == "PROVEN_NO_THROW_LEAF")
-    uncovered = total - invoke - guarded - raw - leaf
+    declared = sum(1 for _, _, s in rows if s == "DECLARED_ONLY")
+    uncovered = total - invoke - guarded - raw - leaf - declared
     lines.append("## 汇总")
     lines.append("")
     lines.append("| 状态 | 数量 |")
@@ -117,6 +123,7 @@ def render(rows: list[tuple[str, str, str]]) -> str:
     lines.append(f"| GUARDED | {guarded} |")
     lines.append(f"| RAW_TRY | {raw} |")
     lines.append(f"| PROVEN_NO_THROW_LEAF | {leaf} |")
+    lines.append(f"| DECLARED_ONLY | {declared} |")
     lines.append(f"| UNGUARDED | {uncovered} |")
     lines.append("")
 
@@ -151,7 +158,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    functions = exported_functions()
+    functions = exported_functions(HEADER)
+    stable_functions = exported_functions(STABLE_HEADER)
     sources = {
         path.name: path.read_text(encoding="utf-8")
         for path in NATIVE_DIR.glob("*.cpp")
@@ -160,6 +168,18 @@ def main() -> int:
     for function in functions:
         file, status, _ = classify(function, sources)
         rows.append((function, file, status))
+    for function in stable_functions:
+        file, status, _ = classify(function, sources)
+        if file == "NOT_FOUND":
+            rows.append(
+                (
+                    function,
+                    "wisteria_stable_runtime.h (declared-only)",
+                    "DECLARED_ONLY",
+                )
+            )
+        else:
+            rows.append((function, file, status))
     rendered = render(rows)
     rendered += "\n"
 
@@ -171,6 +191,8 @@ def main() -> int:
         allowed_raw_try = {"wisteria_create_context"}
         unsafe = []
         for function, file, status in rows:
+            if status == "DECLARED_ONLY":
+                continue
             if status == "UNGUARDED":
                 unsafe.append(f"UNGUARDED {function} ({file})")
             elif status == "RAW_TRY" and function not in allowed_raw_try:
@@ -196,11 +218,17 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        print(f"matrix up to date: {len(functions)} exported functions")
+        print(
+            "matrix up to date: "
+            f"{len(functions)} legacy + {len(stable_functions)} stable exports"
+        )
         return 0
 
     MATRIX.write_text(rendered, encoding="utf-8")
-    print(f"wrote {MATRIX}: {len(functions)} exported functions")
+    print(
+        f"wrote {MATRIX}: "
+        f"{len(functions)} legacy + {len(stable_functions)} stable exports"
+    )
     return 0
 
 
