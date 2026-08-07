@@ -13,6 +13,10 @@ namespace wisteria::native
 struct StableEntityEntry
 {
     std::unique_ptr<wisteria::IModelRuntimeDriver> runtime;
+    // The Saba adapter stores a pointer to the ModelAsset inside the
+    // runtime (SetAsset). The entry must own the asset so the pointer never
+    // dangles after entity_create returns.
+    std::unique_ptr<wisteria::ModelAsset> asset;
 };
 
 // R1.4 Phase 0B: Stable C ABI v1 context-owned state (contract §4). The

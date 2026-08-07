@@ -12,8 +12,9 @@
  *   - every extensible public struct carries struct_size + struct_version;
  *   - status / capability / backend / profile identifiers are fixed-width
  *     integers with fixed numeric constants (no C enum ABI size);
- *   - Context is creator-thread-affine: all stable calls for a Context run
- *     on the thread that created it;
+ *   - Context is creator-thread-affine: all stable calls for a Context must
+ *     run on the thread that created it. This is a caller precondition, not
+ *     a runtime-enforced invariant (no owner-thread rejection in v1);
  *   - status code is the authoritative result; last_error is a best-effort
  *     sticky human-readable diagnostic (successful calls do not clear it).
  */

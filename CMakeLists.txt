@@ -503,4 +503,54 @@ if(BUILD_TESTING)
     set_tests_properties(wisteria.checkpoint-cross-process PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+
+    # R1.4 Phase 0B: Stable C ABI cross-process checkpoint E2E. The CLI only
+    # speaks the public stable surface; the harness compares wire bytes at
+    # N and N+1 across two processes. The FULL variant additionally loads a
+    # VMD in both processes so checkpoint identity covers motion.
+    add_executable(wisteria_stable_checkpoint_cli
+        tests/stable_checkpoint_wire_cli.cpp
+    )
+    target_link_libraries(wisteria_stable_checkpoint_cli PRIVATE
+        wisteria_native
+    )
+    target_compile_features(wisteria_stable_checkpoint_cli PRIVATE cxx_std_20)
+    target_compile_definitions(wisteria_stable_checkpoint_cli PRIVATE
+        WISTERIA_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixtures.json"
+    )
+    target_include_directories(wisteria_stable_checkpoint_cli PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
+    )
+    if(MSVC)
+        target_compile_options(wisteria_stable_checkpoint_cli PRIVATE /utf-8)
+    endif()
+    add_test(
+        NAME wisteria.stable-checkpoint-cross-process
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/script/stable_checkpoint_cross_process_test.py
+            $<TARGET_FILE:wisteria_stable_checkpoint_cli>
+            pmx-physics
+            -
+            --frame 30
+            --require-n1
+    )
+    set_tests_properties(wisteria.stable-checkpoint-cross-process PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    if(WISTERIA_TEST_FULL_ASSETS)
+        add_test(
+            NAME wisteria.stable-checkpoint-cross-process-full
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/script/stable_checkpoint_cross_process_test.py
+                $<TARGET_FILE:wisteria_stable_checkpoint_cli>
+                production-pmx-yeshiguang
+                production-vmd-body
+                --frame 30
+        )
+        set_tests_properties(
+            wisteria.stable-checkpoint-cross-process-full PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+    endif()
 endif()

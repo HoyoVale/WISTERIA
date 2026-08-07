@@ -72,6 +72,8 @@ int main(void)
 
     WisteriaStableContextInfoV1 info;
     memset(&info, 0, sizeof(info));
+    info.struct_size = sizeof(info);
+    info.struct_version = 1U;
     if (wisteria_stable_context_info(context, &info) != WISTERIA_STATUS_OK ||
         info.struct_version != 1U ||
         info.abi_version != WISTERIA_STABLE_RUNTIME_ABI_VERSION)

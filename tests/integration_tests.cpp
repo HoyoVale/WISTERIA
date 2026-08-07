@@ -2580,6 +2580,28 @@ void StableTestRechecksum(std::vector<std::uint8_t>& bytes)
     StableTestWriteU64Le(bytes, checksumOffset, checksum);
 }
 
+void StableTestPatchU64Value(
+    std::vector<std::uint8_t>& bytes,
+    std::uint64_t oldValue,
+    std::uint64_t newValue
+)
+{
+    for (std::size_t offset = 0U; offset + 8U <= bytes.size(); ++offset)
+    {
+        std::uint64_t candidate = 0U;
+        for (int shift = 0; shift < 64; shift += 8)
+        {
+            candidate |= static_cast<std::uint64_t>(
+                bytes[offset + static_cast<std::size_t>(shift / 8)]
+            ) << shift;
+        }
+        if (candidate == oldValue)
+        {
+            StableTestWriteU64Le(bytes, offset, newValue);
+        }
+    }
+}
+
 void TestNativeAbiLifecycle()
 {
     WisteriaContext context = 0U;
@@ -4100,6 +4122,8 @@ void TestStableRuntimeAbiE2E()
 
     WisteriaRuntimeCapabilitiesV1 capabilities;
     memset(&capabilities, 0, sizeof(capabilities));
+    capabilities.struct_size = sizeof(capabilities);
+    capabilities.struct_version = 1U;
     Require(
         wisteria_stable_entity_capabilities(
             context,
@@ -4153,6 +4177,8 @@ void TestStableRuntimeAbiE2E()
     );
     WisteriaCheckpointInfoV1 info;
     memset(&info, 0, sizeof(info));
+    info.struct_size = sizeof(info);
+    info.struct_version = 1U;
     Require(
         wisteria_stable_checkpoint_info(context, checkpoint, &info) ==
             WISTERIA_STATUS_OK,
@@ -4187,6 +4213,12 @@ void TestStableRuntimeAbiE2E()
             &wireSize
         ) == WISTERIA_STATUS_OK,
         "stable checkpoint serialize failed"
+    );
+    Require(
+        info.payload_size ==
+            wireSize -
+                static_cast<std::uint64_t>(CheckpointWireHeaderSize),
+        "checkpoint info payload_size must exclude the wire header"
     );
 
     std::vector<std::uint8_t> corrupted = wire;
@@ -4338,6 +4370,8 @@ void TestStableRuntimeAbiE2E()
     );
     WisteriaRuntimeCapabilitiesV1 foreignCaps;
     memset(&foreignCaps, 0, sizeof(foreignCaps));
+    foreignCaps.struct_size = sizeof(foreignCaps);
+    foreignCaps.struct_version = 1U;
     Require(
         wisteria_stable_entity_capabilities(
             otherContext,
@@ -4379,6 +4413,145 @@ void TestStableRuntimeAbiE2E()
         "zero fixed_time_step options were accepted"
     );
 
+    // P0-1: the advertised exact domain (2^24) is enforced by the stable
+    // surface even though the core structural guard is wider.
+    Require(
+        wisteria_stable_entity_step_exact(
+            context,
+            entityB,
+            16777217ULL
+        ) == WISTERIA_STATUS_INVALID_STATE &&
+            wisteria_stable_entity_step_exact(
+                context,
+                entityB,
+                std::numeric_limits<std::uint64_t>::max()
+            ) == WISTERIA_STATUS_INVALID_STATE &&
+            wisteria_stable_entity_replay_exact(
+                context,
+                entityB,
+                16777217ULL
+            ) == WISTERIA_STATUS_INVALID_STATE &&
+            wisteria_stable_entity_replay_exact(
+                context,
+                entityB,
+                std::numeric_limits<std::uint64_t>::max()
+            ) == WISTERIA_STATUS_INVALID_STATE,
+        "stable exact frame limit was not enforced"
+    );
+
+    // Boundary-legal wire at exactly 2^24 deserializes; 2^24+1 and
+    // UINT64_MAX are rejected as INVALID_CHECKPOINT before entering the map.
+    std::vector<std::uint8_t> boundaryWire = wire;
+    StableTestPatchU64Value(boundaryWire, 2U, 16777216ULL);
+    StableTestPatchU64Value(boundaryWire, 8U, 67108864ULL);
+    StableTestRechecksum(boundaryWire);
+    WisteriaCheckpoint boundaryCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            boundaryWire.data(),
+            boundaryWire.size(),
+            &boundaryCheckpoint
+        ) == WISTERIA_STATUS_OK && boundaryCheckpoint != 0U,
+        "stable deserialize rejected the exact-domain boundary"
+    );
+    std::uint64_t boundarySize = 0U;
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            boundaryCheckpoint,
+            nullptr,
+            &boundarySize
+        ) == WISTERIA_STATUS_OK,
+        "stable serialize rejected a boundary-legal checkpoint"
+    );
+
+    std::vector<std::uint8_t> overLimitWire = wire;
+    StableTestPatchU64Value(overLimitWire, 2U, 16777217ULL);
+    StableTestPatchU64Value(overLimitWire, 8U, 67108868ULL);
+    StableTestRechecksum(overLimitWire);
+    WisteriaCheckpoint rejectedWireCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            overLimitWire.data(),
+            overLimitWire.size(),
+            &rejectedWireCheckpoint
+        ) == WISTERIA_STATUS_INVALID_CHECKPOINT,
+        "stable deserialize accepted an over-limit wire frame"
+    );
+
+    std::vector<std::uint8_t> maxWire = wire;
+    const std::uint64_t maxFrame =
+        std::numeric_limits<std::uint64_t>::max();
+    StableTestPatchU64Value(maxWire, 2U, maxFrame);
+    StableTestPatchU64Value(maxWire, 8U, maxFrame - 3U);
+    StableTestRechecksum(maxWire);
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            maxWire.data(),
+            maxWire.size(),
+            &rejectedWireCheckpoint
+        ) == WISTERIA_STATUS_INVALID_CHECKPOINT,
+        "stable deserialize accepted UINT64_MAX wire frame"
+    );
+
+    // P1-3: output structs must declare struct_size/version before the
+    // library writes into them.
+    WisteriaStableContextInfoV1 badContextInfo;
+    memset(&badContextInfo, 0, sizeof(badContextInfo));
+    Require(
+        wisteria_stable_context_info(context, &badContextInfo) ==
+            WISTERIA_STATUS_INVALID_ARGUMENT,
+        "context_info accepted an undeclared output struct"
+    );
+    WisteriaRuntimeCapabilitiesV1 badCapabilities;
+    memset(&badCapabilities, 0, sizeof(badCapabilities));
+    Require(
+        wisteria_stable_entity_capabilities(
+            context,
+            entityB,
+            &badCapabilities
+        ) == WISTERIA_STATUS_INVALID_ARGUMENT,
+        "capabilities accepted an undeclared output struct"
+    );
+    WisteriaCheckpointInfoV1 badCheckpointInfo;
+    memset(&badCheckpointInfo, 0, sizeof(badCheckpointInfo));
+    Require(
+        wisteria_stable_checkpoint_info(
+            context,
+            checkpointFromWire,
+            &badCheckpointInfo
+        ) == WISTERIA_STATUS_INVALID_ARGUMENT,
+        "checkpoint_info accepted an undeclared output struct"
+    );
+
+    // P1-4: reserved input fields must be zero.
+    WisteriaRuntimeCreationOptionsV1 reservedOptions = options;
+    reservedOptions.reserved = 1U;
+    WisteriaEntity reservedEntity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &reservedOptions,
+            PathUtf8(modelPath).c_str(),
+            &reservedEntity
+        ) == WISTERIA_STATUS_INVALID_ARGUMENT,
+        "nonzero options.reserved was accepted"
+    );
+    reservedOptions = options;
+    reservedOptions.reserved2[0] = 1U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &reservedOptions,
+            PathUtf8(modelPath).c_str(),
+            &reservedEntity
+        ) == WISTERIA_STATUS_INVALID_ARGUMENT,
+        "nonzero options.reserved2 was accepted"
+    );
+
     Require(
         wisteria_stable_checkpoint_destroy(context, checkpoint) ==
             WISTERIA_STATUS_OK &&
@@ -4389,6 +4562,10 @@ void TestStableRuntimeAbiE2E()
             wisteria_stable_checkpoint_destroy(
                 context,
                 invalidAssetCheckpoint
+            ) == WISTERIA_STATUS_OK &&
+            wisteria_stable_checkpoint_destroy(
+                context,
+                boundaryCheckpoint
             ) == WISTERIA_STATUS_OK &&
             wisteria_stable_entity_destroy(context, entityB) ==
                 WISTERIA_STATUS_OK &&

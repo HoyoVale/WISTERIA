@@ -39,6 +39,15 @@ constexpr std::uint64_t kStructuralFrameLimit =
 // Saba VMDAnimation::Evaluate(float) exact integer domain (contract §2D).
 constexpr std::uint64_t kSabaExactFrameLimit = 16777216ULL;
 
+// The Stable v1 surface advertises max_deterministic_motion_frame = 2^24
+// (Saba float exact domain). Every exact-timeline entry and every stored
+// checkpoint must respect this bound even though the core structural guard
+// is wider (UINT64_MAX / 4).
+bool StableFrameWithinExactDomain(std::uint64_t frame) noexcept
+{
+    return frame <= kSabaExactFrameLimit;
+}
+
 std::uint32_t MapTimelineStatus(TimelineStatus status) noexcept
 {
     switch (status)
@@ -176,6 +185,14 @@ std::uint32_t wisteria_stable_context_info(
     {
         if (info == nullptr)
             return StableInvalidArgument(&ctx, "info must not be null");
+        if (info->struct_version != 1U ||
+            info->struct_size < sizeof(*info))
+        {
+            return StableInvalidArgument(
+                &ctx,
+                "unsupported context info struct version/size"
+            );
+        }
         info->struct_size = sizeof(*info);
         info->struct_version = 1U;
         info->abi_version = WISTERIA_STABLE_RUNTIME_ABI_VERSION;
@@ -217,6 +234,23 @@ std::uint32_t wisteria_stable_entity_create(
                 &ctx,
                 "physics_enabled must be 0 or 1"
             );
+        }
+        if (options->reserved != 0U)
+        {
+            return StableInvalidArgument(
+                &ctx,
+                "reserved fields must be zero"
+            );
+        }
+        for (const std::uint32_t value : options->reserved2)
+        {
+            if (value != 0U)
+            {
+                return StableInvalidArgument(
+                    &ctx,
+                    "reserved fields must be zero"
+                );
+            }
         }
         if (options->fixed_time_step <= 0.0f ||
             options->max_sub_steps <= 0 ||
@@ -260,17 +294,17 @@ std::uint32_t wisteria_stable_entity_create(
             );
         }
 
-        ModelAsset asset(model_path_utf8);
+        auto asset = std::make_unique<ModelAsset>(model_path_utf8);
         ModelSourceDescriptor descriptor;
         descriptor.sourcePath = modelPath;
         descriptor.backend = ModelBackendKind::SabaMmd;
-        asset.SetSourceDescriptor(descriptor);
+        asset->SetSourceDescriptor(descriptor);
 
         std::unique_ptr<IModelRuntimeDriver> runtime;
         try
         {
             runtime = ctx.stable->backends.CreateRuntime(
-                asset,
+                *asset,
                 coreOptions
             );
         }
@@ -289,6 +323,7 @@ std::uint32_t wisteria_stable_entity_create(
 
         auto entry = std::make_unique<StableEntityEntry>();
         entry->runtime = std::move(runtime);
+        entry->asset = std::move(asset);
         const WisteriaEntity handle =
             static_cast<WisteriaEntity>(AllocateOpaqueHandle());
         ctx.stable->entities.emplace(handle, std::move(entry));
@@ -328,6 +363,14 @@ std::uint32_t wisteria_stable_entity_capabilities(
             return StableInvalidArgument(
                 &ctx,
                 "capabilities must not be null"
+            );
+        }
+        if (capabilities->struct_version != 1U ||
+            capabilities->struct_size < sizeof(*capabilities))
+        {
+            return StableInvalidArgument(
+                &ctx,
+                "unsupported capabilities struct version/size"
             );
         }
         MmdRuntimeModel* mmd = RequireStableMmd(ctx, entity);
@@ -458,6 +501,14 @@ std::uint32_t wisteria_stable_entity_step_exact(
         MmdRuntimeModel* mmd = RequireStableMmd(ctx, entity);
         if (mmd == nullptr)
             return WISTERIA_STATUS_NOT_FOUND;
+        if (!StableFrameWithinExactDomain(frame))
+        {
+            TrySetError(
+                &ctx,
+                "frame exceeds the advertised exact deterministic domain"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
         auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(mmd);
         if (stepper == nullptr)
             return WISTERIA_STATUS_UNSUPPORTED_REPLAY_PROFILE;
@@ -478,6 +529,14 @@ std::uint32_t wisteria_stable_entity_replay_exact(
         MmdRuntimeModel* mmd = RequireStableMmd(ctx, entity);
         if (mmd == nullptr)
             return WISTERIA_STATUS_NOT_FOUND;
+        if (!StableFrameWithinExactDomain(target))
+        {
+            TrySetError(
+                &ctx,
+                "target exceeds the advertised exact deterministic domain"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
         mmd->SetMotionLooping(false);
         return MapTimelineStatus(
             mmd->EvaluateTick(target, SeekPolicy::ReplayFromStart, {})
@@ -570,6 +629,14 @@ std::uint32_t wisteria_stable_checkpoint_restore(
         if (mmd == nullptr)
             return WISTERIA_STATUS_NOT_FOUND;
         const FrameCheckpoint& value = checkpointIterator->second;
+        if (!StableFrameWithinExactDomain(value.frame))
+        {
+            TrySetError(
+                &ctx,
+                "checkpoint frame exceeds the exact deterministic domain"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
         return MapTimelineStatus(
             mmd->ReplayFromCheckpoint(value, value.frame)
         );
@@ -609,6 +676,14 @@ std::uint32_t wisteria_stable_checkpoint_info(
                 "info must not be null"
             );
         }
+        if (info->struct_version != 1U ||
+            info->struct_size < sizeof(*info))
+        {
+            return StableInvalidArgument(
+                &ctx,
+                "unsupported checkpoint info struct version/size"
+            );
+        }
         const auto iterator = ctx.stable->checkpoints.find(checkpoint);
         if (iterator == ctx.stable->checkpoints.end())
         {
@@ -628,7 +703,9 @@ std::uint32_t wisteria_stable_checkpoint_info(
         info->reserved = 0U;
         info->build_compatibility_id = CurrentBuildCompatibilityId();
         info->payload_size =
-            static_cast<std::uint64_t>(wire.size());
+            static_cast<std::uint64_t>(
+                wire.size() - CheckpointWireHeaderSize
+            );
         info->frame = value.frame;
         info->physics_tick = value.physics.physicsTick;
         for (std::uint32_t& reserved : info->reserved2)
@@ -716,6 +793,14 @@ std::uint32_t wisteria_stable_checkpoint_deserialize(
         );
         if (status != TimelineStatus::Ok)
             return MapTimelineStatus(status);
+        if (!StableFrameWithinExactDomain(decoded.frame))
+        {
+            TrySetError(
+                &ctx,
+                "wire checkpoint frame exceeds the exact deterministic domain"
+            );
+            return WISTERIA_STATUS_INVALID_CHECKPOINT;
+        }
         const WisteriaCheckpoint handle =
             static_cast<WisteriaCheckpoint>(AllocateOpaqueHandle());
         ctx.stable->checkpoints.emplace(handle, std::move(decoded));
