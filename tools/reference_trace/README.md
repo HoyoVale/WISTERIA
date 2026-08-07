@@ -36,8 +36,9 @@ cd tools/reference_trace
 npm install              # 使用 package-lock.json（精确版本）
 
 npm run spike -- <model.pmx>          # 加载验证
-npm run trace -- <model.pmx> <out.csv> [ticks] [sampleInterval]
+npm run trace -- <model.pmx> <out.csv> [motionFrames] [sampleInterval] [vmdPath] [environmentMode]
 npm run calibrate                     # 时钟校准
+npm run coordinate                    # 坐标归一化 golden test
 ```
 
 等价的手工命令：
@@ -47,7 +48,7 @@ npx esbuild spike_load.mjs --bundle --platform=node --format=esm --outfile=bundl
 node bundle.mjs "<model.pmx>"
 
 npx esbuild trace.mjs --bundle --platform=node --format=cjs --outfile=bundle_trace.cjs
-node bundle_trace.cjs "<model.pmx>" "<out.csv>" 300 4
+node bundle_trace.cjs "<model.pmx>" "<out.csv>" 300 1
 ```
 
 要点（踩坑记录）：
@@ -67,6 +68,12 @@ node bundle_trace.cjs "<model.pmx>" "<out.csv>" 300 4
   用 `worldTransformMatrices × bone.getAbsoluteInverseBindMatrix()` 手动蒙皮。
 - 坐标约定：saba 与 babylon-mmd 的 **Z 轴相反**，逐项对比时按
   ReferenceCoordinateNormalization v1 归一化（见 Phase 0B 契约 §5）。
+- 动画时钟：`model.beforePhysics(frameTime)` 接收**绝对 30fps 帧号**
+  （babylon-mmd runtime 传入 `elapsedFrameTime`）。trace 因此按
+  motionFrame 循环：`beforePhysics(N)` + 4 个 120Hz tick，
+  与 WISTERIA 确定性时钟一致。
+- 逐刚体读取使用 pinned 版本的内部 API（`model._physicsModel._impostors`
+  + `impostor.physicsBody`），版本由 package-lock.json 锁定。
 
 ## 统一时钟与 CSV 输出
 
@@ -83,8 +90,30 @@ motionFrame 1 = physicsTick 4   = 0.033s
 motionFrame N = physicsTick 4N  = N/30 s
 ```
 
-默认每 4 个 tick 采样一行（即每 motionFrame 一行），并额外输出
-motionFrame 0 的 bind-pose 行。
+默认每个 motionFrame 采样一行（sampleInterval=1，单位是 motionFrame），
+并额外输出 motionFrame 0 的 bind-pose 行。
+
+### 三个输出文件
+
+```text
+<out>.csv            聚合网格 bounds + max displacement（每 motionFrame 一行）
+<out>.bodies.csv     逐刚体：sourceRigidBodyIndex（PMX index）、
+                     world transform（列主序 9 浮点）、线/角速度
+<out>.env.json       环境头：environmentMode / executionProfile /
+                     gravity / fixedTimeStep / groundPolicy /
+                     sourceRepositoryCommit / package version+integrity /
+                     model/motion hash / availability
+```
+
+bodies.csv 只输出能权威读取的字段；`env.json.availability` 记录
+`interpolationTransformAvailable=false`、
+`motionStateAvailable=false`、`jointMetricsAvailable=false`、
+`contactTopologyAvailable=false`（当前参考适配器不伪造这些字段，
+对照时按 NOT_COMPARABLE 处理）。
+
+VMD 路径：第 6 个参数传入 `.vmd` 文件，harness 用 `VmdLoader` 加载并
+绑定到模型（`createRuntimeAnimation` + `setRuntimeAnimation`），随后按
+motionFrame 语义采样动画并执行物理。
 
 ## 时钟校准（synthetic fixture）
 

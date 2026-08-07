@@ -1,3 +1,20 @@
+// R1.3B Phase 0B: babylon-mmd reference trace exporter.
+//
+// Clock semantics (contract §4.1): the loop advances one motionFrame at a
+// time. motionFrame 0 is a prepared boundary (0 physics ticks); every N>=1
+// samples the animation at the absolute 30fps frame N (babylon-mmd
+// beforePhysics takes the absolute frame number) and executes exactly 4
+// fixed 120Hz physics ticks.
+//
+// Outputs:
+//   <out>.csv           aggregate mesh bounds per sampled motionFrame
+//   <out>.bodies.csv    per-rigid-body world transform + velocities,
+//                       keyed by sourceRigidBodyIndex (PMX index)
+//   <out>.env.json      environment/identity header (contract §4.3)
+//
+// All reference-side coordinates are normalized to the WISTERIA canonical
+// coordinate (ReferenceCoordinateNormalization v1, contract §5).
+
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
@@ -5,17 +22,62 @@ import "@babylonjs/core/Physics/physicsEngineComponent.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
 import { PhysicsImpostor } from "@babylonjs/core/Physics/v1/physicsImpostor.js";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import Ammo from "ammojs-typed";
+import {
+  normalizePosition,
+  normalizeLinearVelocity,
+  normalizeAngularVelocity,
+  normalizeRotationBasis
+} from "./coordinate_normalization_lib.mjs";
+
+// Pinned source commit (see README "冻结身份").
+const PINNED_SOURCE_COMMIT = "3f523d392c176d5c9c9f9264f622d0631c1d298e";
+
+const sha256Hex = (bytes) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+const readPinnedIdentity = () => {
+  const packageJson = JSON.parse(
+    readFileSync(`${process.cwd()}/package.json`, "utf8")
+  );
+  const lock = JSON.parse(
+    readFileSync(`${process.cwd()}/package-lock.json`, "utf8")
+  );
+  const integrity = (name) =>
+    lock.packages[`node_modules/${name}`]?.integrity ?? null;
+  return {
+    referencePackageName: "babylon-mmd",
+    referencePackageVersion: packageJson.dependencies["babylon-mmd"],
+    referencePackageIntegrity: integrity("babylon-mmd"),
+    corePackageName: "@babylonjs/core",
+    corePackageVersion: packageJson.dependencies["@babylonjs/core"],
+    corePackageIntegrity: integrity("@babylonjs/core"),
+    physicsPackageName: "ammojs-typed",
+    physicsPackageVersion: packageJson.dependencies["ammojs-typed"],
+    physicsPackageIntegrity: integrity("ammojs-typed")
+  };
+};
 
 async function main() {
   const pmxPath = process.argv[2];
+  if (!pmxPath) {
+    console.error(
+      "usage: node bundle_trace.cjs <model.pmx> [out.csv] [motionFrames] " +
+        "[sampleInterval] [vmdPath] [environmentMode]"
+    );
+    process.exit(2);
+  }
   const outPath = process.argv[3] ?? "reference_trace.csv";
-  const totalFrames = Number(process.argv[4] ?? 300);
-  // Default to one row per motion frame (4 ticks); tick-based sampling can
-  // be requested explicitly with a different interval.
-  const sampleInterval = Number(process.argv[5] ?? 4);
+  const totalMotionFrames = Number(process.argv[4] ?? 300);
+  const sampleInterval = Number(process.argv[5] ?? 1);
+  const vmdPath = process.argv[6] ?? null;
+  const environmentMode = process.argv[7] ?? "NormalizedComparison";
   const dt = 1.0 / 120.0;
-  const bytes = readFileSync(pmxPath);
+
+  const pmxBytes = readFileSync(pmxPath);
+  const modelHash = sha256Hex(pmxBytes);
+  const identity = readPinnedIdentity();
 
   const engine = new NullEngine();
   const scene = new Scene(engine);
@@ -30,7 +92,9 @@ async function main() {
   scene.enablePhysics(new Vector3(0, -98.0, 0), physicsPlugin);
 
   // MMD always has a floor at y=0 (saba adds a static plane); babylon-mmd
-  // does not, so without this the dynamic bodies fall forever.
+  // does not, so without this the dynamic bodies fall forever. This is a
+  // NormalizedComparison ground policy; the native absence is studied under
+  // NativeCompatibilityAudit.
   const ground = MeshBuilder.CreateGround(
     "mmdGround",
     { width: 200, height: 200 },
@@ -79,7 +143,7 @@ async function main() {
   const state = await new Promise((resolve, reject) => {
     plugin.loadFile(
       scene,
-      new Uint8Array(bytes),
+      new Uint8Array(pmxBytes),
       "",
       (data) => resolve(data),
       undefined,
@@ -91,41 +155,9 @@ async function main() {
   const result = await plugin.importMeshAsync("", scene, state, "");
   const meshes = result.meshes.filter((m) => m.geometry);
 
-  // Rigid body inventory: mode distribution + mass stats (PMX fields).
-  {
-    const rigidBodies = state.arrayBuffer
-      ? null
-      : null;
-    const parsedObject = await plugin._parseFileAsync(state.arrayBuffer);
-    console.log("rigid body count:", parsedObject.rigidBodies?.length);
-    const modes = [0, 0, 0];
-    let dynamicMassMin = Infinity;
-    let dynamicMassMax = -Infinity;
-    let dynamicCount = 0;
-    for (const rb of parsedObject.rigidBodies) {
-      if (rb.physicsMode === undefined && rb.mode === undefined) {
-        console.log("sample rigid body keys:", Object.keys(rb));
-        break;
-      }
-      const mode = rb.physicsMode ?? rb.mode;
-      modes[mode] = (modes[mode] ?? 0) + 1;
-      if (mode === 1 || mode === 2) {
-        dynamicCount++;
-        dynamicMassMin = Math.min(dynamicMassMin, rb.mass);
-        dynamicMassMax = Math.max(dynamicMassMax, rb.mass);
-      }
-    }
-    console.log(
-      "rigid body modes (0=follow,1=physics,2=physics+merge):",
-      modes.join("/"),
-      "dynamic count:",
-      dynamicCount,
-      "dynamic mass range:",
-      dynamicMassMin.toFixed(2),
-      "-",
-      dynamicMassMax.toFixed(2)
-    );
-  }
+  const parsedObject = await plugin._parseFileAsync(state.arrayBuffer);
+  const rigidBodyCount = parsedObject.rigidBodies?.length ?? 0;
+  console.log("rigid body count:", rigidBodyCount);
 
   // Bind-pose reference (read before any stepping).
   const bind = meshes.map(
@@ -139,8 +171,6 @@ async function main() {
       weights: buffers.matricesWeights.getData()
     };
   });
-  // worldTransformMatrices are GLOBAL bone matrices; the shader multiplies
-  // them by each bone's inverted bind matrix. Reproduce that here.
   const skeleton = withMeta.metadata.skeleton;
   const inverseBindMatrices = skeleton.bones.map(
     (bone) => bone.getAbsoluteInverseBindMatrix().m
@@ -174,10 +204,32 @@ async function main() {
     { buildPhysics: process.env.NO_PHYSICS ? false : true }
   );
 
-  const physicsEngine = scene.getPhysicsEngine();
+  let motionHash = null;
+  if (vmdPath) {
+    const { VmdLoader } = await import("babylon-mmd/esm/Loader/vmdLoader.js");
+    const vmdBytes = readFileSync(vmdPath);
+    motionHash = sha256Hex(vmdBytes);
+    const loader = new VmdLoader(scene);
+    const animation = await loader.loadFromBufferAsync(
+      "motion",
+      vmdBytes.buffer.slice(
+        vmdBytes.byteOffset,
+        vmdBytes.byteOffset + vmdBytes.byteLength
+      )
+    );
+    const handle = model.createRuntimeAnimation(animation);
+    model.setRuntimeAnimation(handle);
+    console.log("vmd loaded:", vmdPath);
+  }
 
-  // GPU skinning stays on the shader, so skinned positions must be computed
-  // on the CPU here: weighted bone matrices x bind position.
+  const physicsEngine = scene.getPhysicsEngine();
+  const physicsModel = model._physicsModel;
+  const impostors = physicsModel?._impostors ?? [];
+  let unmappedRigidBodyCount = 0;
+  for (let i = 0; i < impostors.length; ++i) {
+    if (impostors[i] === null) ++unmappedRigidBodyCount;
+  }
+
   const skinMesh = (meshIndex, matrices) => {
     const bindPositions = bind[meshIndex];
     const { indices, weights } = skinBones[meshIndex];
@@ -193,12 +245,12 @@ async function main() {
         if (w <= 0) continue;
         const bi = Math.floor(indices[i * 4 + b] + 0.5);
         const base = bi * 16;
-      const world = matrices.subarray(base, base + 16);
-      const inv = inverseBindMatrices[bi];
-      const skinned = mulMatrixPoint(world, inv, vx, vy, vz);
-      ox += skinned.x * w;
-      oy += skinned.y * w;
-      oz += skinned.z * w;
+        const world = matrices.subarray(base, base + 16);
+        const inv = inverseBindMatrices[bi];
+        const skinned = mulMatrixPoint(world, inv, vx, vy, vz);
+        ox += skinned.x * w;
+        oy += skinned.y * w;
+        oz += skinned.z * w;
       }
       out[i * 3] = ox;
       out[i * 3 + 1] = oy;
@@ -240,37 +292,139 @@ async function main() {
     return maxD;
   };
 
-  let csv =
+  // Per-rigid-body row, normalized to the WISTERIA canonical coordinate.
+  const readBodyRow = (index) => {
+    const impostor = impostors[index];
+    if (impostor === null || impostor === undefined) return null;
+    const body = impostor.physicsBody;
+    if (body === null || body === undefined) return null;
+    const transform = body.getWorldTransform();
+    const origin = transform.getOrigin();
+    const position = normalizePosition([origin.x(), origin.y(), origin.z()]);
+    const basis = transform.getBasis();
+    const row0 = basis.getRow(0);
+    const row1 = basis.getRow(1);
+    const row2 = basis.getRow(2);
+    const basisColMajor = [
+      row0.x(), row1.x(), row2.x(),
+      row0.y(), row1.y(), row2.y(),
+      row0.z(), row1.z(), row2.z()
+    ];
+    const rotation = normalizeRotationBasis(basisColMajor);
+    const linear = body.getLinearVelocity();
+    const angular = body.getAngularVelocity();
+    const linearVelocity = normalizeLinearVelocity([
+      linear.x(),
+      linear.y(),
+      linear.z()
+    ]);
+    const angularVelocity = normalizeAngularVelocity([
+      angular.x(),
+      angular.y(),
+      angular.z()
+    ]);
+    return [
+      position[0], position[1], position[2],
+      ...rotation,
+      linearVelocity[0], linearVelocity[1], linearVelocity[2],
+      angularVelocity[0], angularVelocity[1], angularVelocity[2]
+    ];
+  };
+
+  const boundsHeader =
     "motionFrame,physicsTick,simulatedSeconds," +
     "min_x,min_y,min_z,max_x,max_y,max_z,max_displacement\n";
+  const bodiesHeader =
+    "motionFrame,physicsTick,simulatedSeconds,sourceRigidBodyIndex," +
+    "posX,posY,posZ," +
+    "rot00,rot01,rot02,rot10,rot11,rot12,rot20,rot21,rot22," +
+    "linVelX,linVelY,linVelZ,angVelX,angVelY,angVelZ\n";
+  let csv = boundsHeader;
+  let bodiesCsv = bodiesHeader;
+  let boundsRows = 0;
 
-  // motionFrame 0 is a prepared boundary (no physics step): emit the
-  // bind-pose row so the WISTERIA comparison point at tick 0 exists.
-  {
-    const bounds = aggregate(bind);
-    csv += `0,0,0.000000,${bounds.minX},${bounds.minY},${bounds.minZ},` +
-      `${bounds.maxX},${bounds.maxY},${bounds.maxZ},0\n`;
-  }
-
-  for (let frame = 0; frame < totalFrames; ++frame) {
-    model.beforePhysics(dt);
-    physicsEngine._step(dt);
-    model.afterPhysics();
-    if ((frame + 1) % sampleInterval !== 0) continue;
-    const matrices = model.worldTransformMatrices;
-    const positions = meshes.map((_, index) => skinMesh(index, matrices));
+  const emitFrame = (motionFrame, physicsTick, positions) => {
     const bounds = aggregate(positions);
     const displacement = maxDisplacement(positions, bind);
-    const physicsTick = frame + 1;
-    const motionFrame = Math.floor(physicsTick / 4);
+    // Z-reflection normalization for the aggregate bounds.
+    const minZ = -bounds.maxZ;
+    const maxZ = -bounds.minZ;
     const simulatedSeconds = physicsTick / 120;
     csv +=
       `${motionFrame},${physicsTick},${simulatedSeconds.toFixed(6)},` +
-      `${bounds.minX},${bounds.minY},${bounds.minZ},` +
-      `${bounds.maxX},${bounds.maxY},${bounds.maxZ},${displacement}\n`;
+      `${bounds.minX},${bounds.minY},${minZ},` +
+      `${bounds.maxX},${bounds.maxY},${maxZ},${displacement}\n`;
+    ++boundsRows;
+    for (let i = 0; i < impostors.length; ++i) {
+      const row = readBodyRow(i);
+      if (row === null) continue;
+      bodiesCsv +=
+        `${motionFrame},${physicsTick},${simulatedSeconds.toFixed(6)},${i},` +
+        `${row.join(",")}\n`;
+    }
+  };
+
+  // motionFrame 0: prepared boundary, no physics step.
+  emitFrame(0, 0, bind);
+
+  for (let motionFrame = 1; motionFrame <= totalMotionFrames; ++motionFrame) {
+    // Exactly 4 fixed 120Hz ticks per motion frame (contract §4.1).
+    // beforePhysics takes the absolute 30fps frame number.
+    for (let tick = 0; tick < 4; ++tick) {
+      model.beforePhysics(motionFrame);
+      physicsEngine._step(dt);
+      model.afterPhysics();
+    }
+    if (motionFrame % sampleInterval === 0) {
+      const matrices = model.worldTransformMatrices;
+      const positions = meshes.map((_, index) => skinMesh(index, matrices));
+      emitFrame(motionFrame, motionFrame * 4, positions);
+    }
   }
+
   writeFileSync(outPath, csv);
-  console.log("wrote", outPath, "rows:", 1 + totalFrames / sampleInterval);
+  writeFileSync(`${outPath}.bodies.csv`, bodiesCsv);
+  const env = {
+    environmentMode,
+    executionProfile: "reference-continuous-120hz-v1",
+    gravity: [0, -98, 0],
+    fixedTimeStep: 1 / 120,
+    groundPolicy: "synthetic-y0-plane",
+    sourceRepositoryCommit: PINNED_SOURCE_COMMIT,
+    referencePackageName: identity.referencePackageName,
+    referencePackageVersion: identity.referencePackageVersion,
+    referencePackageIntegrity: identity.referencePackageIntegrity,
+    corePackageName: identity.corePackageName,
+    corePackageVersion: identity.corePackageVersion,
+    physicsPackageName: identity.physicsPackageName,
+    physicsPackageVersion: identity.physicsPackageVersion,
+    physicsPackageIntegrity: identity.physicsPackageIntegrity,
+    physicsBackendVersion: "ammo.js via ammojs-typed",
+    modelHash: `sha256-${modelHash}`,
+    motionHash: motionHash === null ? null : `sha256-${motionHash}`,
+    totalMotionFrames,
+    sampleInterval,
+    rigidBodyCount,
+    unmappedRigidBodyCount,
+    availability: {
+      worldTransformAvailable: true,
+      interpolationTransformAvailable: false,
+      motionStateAvailable: false,
+      linearVelocityAvailable: true,
+      angularVelocityAvailable: true,
+      jointMetricsAvailable: false,
+      contactTopologyAvailable: false
+    }
+  };
+  writeFileSync(`${outPath}.env.json`, JSON.stringify(env, null, 2) + "\n");
+  console.log(
+    "wrote",
+    outPath,
+    "bounds rows:",
+    boundsRows,
+    "env:",
+    `${outPath}.env.json`
+  );
   process.exit(0);
 }
 
