@@ -256,34 +256,36 @@ void ComputeJointTraceError(
     btVector3 linearUpper;
     sixDof->getLinearLowerLimit(linearLower);
     sixDof->getLinearUpperLimit(linearUpper);
-    float linearViolation = 0.0f;
+    btVector3 linearExcess(0.0f, 0.0f, 0.0f);
     for (int axis = 0; axis < 3; ++axis)
     {
         const float value = sixDof->getRelativePivotPosition(axis);
         if (value > linearUpper[axis])
-            linearViolation += value - linearUpper[axis];
+            linearExcess[axis] = value - linearUpper[axis];
         else if (value < linearLower[axis])
-            linearViolation += linearLower[axis] - value;
+            linearExcess[axis] = linearLower[axis] - value;
     }
-    output.linearViolation = linearViolation;
+    // Contract §6.3: violation is the Euclidean norm of the per-axis excess,
+    // not an L1 sum.
+    output.linearViolation = linearExcess.length();
 
     float rawSquared = 0.0f;
-    float angularViolation = 0.0f;
     btVector3 angularLower;
     btVector3 angularUpper;
     sixDof->getAngularLowerLimit(angularLower);
     sixDof->getAngularUpperLimit(angularUpper);
+    btVector3 angularExcess(0.0f, 0.0f, 0.0f);
     for (int axis = 0; axis < 3; ++axis)
     {
         const float angle = sixDof->getAngle(axis);
         rawSquared += angle * angle;
         if (angle > angularUpper[axis])
-            angularViolation += angle - angularUpper[axis];
+            angularExcess[axis] = angle - angularUpper[axis];
         else if (angle < angularLower[axis])
-            angularViolation += angularLower[axis] - angle;
+            angularExcess[axis] = angularLower[axis] - angle;
     }
     output.rawAngularErrorDeg = glm::degrees(std::sqrt(rawSquared));
-    output.angularViolationDeg = glm::degrees(angularViolation);
+    output.angularViolationDeg = glm::degrees(angularExcess.length());
 }
 
 std::uint32_t ResolveTraceBodyIndex(
@@ -602,6 +604,15 @@ struct SabaMmdRuntimeModel::Impl
         this->physicsConfiguration =
             BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
         this->physicsConfiguration.runtime = physicsSettings_;
+        // A legacy constructor override that diverges from SabaBaseline must
+        // not keep claiming the direct MMD_RAW identity.
+        if (ComputeEffectiveConfigurationFingerprint(
+                this->physicsConfiguration) !=
+            ComputeEffectiveConfigurationFingerprint(
+                BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)))
+        {
+            this->physicsConfiguration.identity.originPreset = "mmd-raw";
+        }
     }
 };
 
@@ -633,6 +644,22 @@ void SabaMmdRuntimeModel::SetPhysicsSettings(
     // Low-level compatibility entry: every change must synchronize into the
     // authoritative configuration (R1.3 contract §4).
     this->impl->physicsConfiguration.runtime = settings;
+    // Keep the profile identity honest: a low-level settings override that
+    // diverges from the preset must stop claiming a direct preset label.
+    if (this->impl->physicsConfiguration.identity.originPreset.empty() &&
+        ComputeEffectiveConfigurationFingerprint(
+            this->impl->physicsConfiguration) !=
+            ComputeEffectiveConfigurationFingerprint(
+                BuildPresetConfiguration(
+                    this->impl->physicsConfiguration.identity.preset
+                )))
+    {
+        this->impl->physicsConfiguration.identity.originPreset =
+            ToPresetNameLower(
+                this->impl->physicsConfiguration.identity.preset
+            );
+    }
+    this->InvalidateDeterministicBoundary();
     if (this->impl->model != nullptr)
     {
         if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
@@ -883,6 +910,7 @@ void SabaMmdRuntimeModel::ResetMmdPhysics()
 {
     if (this->impl->model != nullptr)
         this->impl->model->ResetPhysics();
+    this->InvalidateDeterministicBoundary();
 }
 
 void SabaMmdRuntimeModel::ApplyPhysicsActivation()
@@ -1082,6 +1110,10 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
         updateEnd - updateStart
     ).count();
     ++this->impl->profileFrameCount;
+    // The interactive real-time path is never a canonical boundary; it must
+    // also disarm the deterministic stepping machine so a later
+    // StepMotionFrameExact cannot continue from real-time history.
+    this->InvalidateDeterministicBoundary();
 }
 
 void SabaMmdRuntimeModel::Reset()
@@ -1089,11 +1121,16 @@ void SabaMmdRuntimeModel::Reset()
     this->impl->vmdFrame = 0.0;
     if (this->impl->model != nullptr)
         this->impl->model->ResetPhysics();
+    this->InvalidateDeterministicBoundary();
+    this->impl->poisoned = false;
+    this->impl->faultInjectionPhase = 0;
+}
+
+void SabaMmdRuntimeModel::InvalidateDeterministicBoundary() noexcept
+{
     this->impl->lastBoundaryCanonical = false;
     this->impl->deterministicPrepared = false;
     this->impl->expectedNextFrame = 0U;
-    this->impl->poisoned = false;
-    this->impl->faultInjectionPhase = 0;
 }
 
 TimelineStatus SabaMmdRuntimeModel::ValidateReplayConfig(
@@ -2746,6 +2783,7 @@ bool SabaMmdRuntimeModel::LoadMotion(
     this->impl->vmdFrame = 0.0;
     this->impl->motionPaused = false;
     ++this->impl->morphRevision;
+    this->InvalidateDeterministicBoundary();
     return true;
 }
 
@@ -2759,6 +2797,7 @@ void SabaMmdRuntimeModel::ClearMotion()
     this->impl->vmdFrame = 0.0;
     this->impl->motionPaused = false;
     ++this->impl->morphRevision;
+    this->InvalidateDeterministicBoundary();
 }
 
 bool SabaMmdRuntimeModel::HasMotion() const noexcept
@@ -2769,6 +2808,7 @@ bool SabaMmdRuntimeModel::HasMotion() const noexcept
 void SabaMmdRuntimeModel::SetMotionLooping(bool looping)
 {
     this->impl->motionLooping = looping;
+    this->InvalidateDeterministicBoundary();
 }
 
 bool SabaMmdRuntimeModel::IsMotionLooping() const noexcept
@@ -2779,11 +2819,13 @@ bool SabaMmdRuntimeModel::IsMotionLooping() const noexcept
 void SabaMmdRuntimeModel::PauseMotion()
 {
     this->impl->motionPaused = true;
+    this->InvalidateDeterministicBoundary();
 }
 
 void SabaMmdRuntimeModel::ResumeMotion()
 {
     this->impl->motionPaused = false;
+    this->InvalidateDeterministicBoundary();
 }
 
 bool SabaMmdRuntimeModel::IsMotionPaused() const noexcept
@@ -2797,6 +2839,7 @@ void SabaMmdRuntimeModel::RestartMotion(bool resetPhysics)
     if (resetPhysics && this->impl->model != nullptr)
         this->impl->model->ResetPhysics();
     ++this->impl->morphRevision;
+    this->InvalidateDeterministicBoundary();
 }
 
 double SabaMmdRuntimeModel::MotionFrame() const noexcept
@@ -2808,6 +2851,7 @@ void SabaMmdRuntimeModel::SetMotionFrame(double frame)
 {
     this->impl->vmdFrame = std::max(0.0, frame);
     ++this->impl->morphRevision;
+    this->InvalidateDeterministicBoundary();
 }
 
 double SabaMmdRuntimeModel::MotionMaxFrame() const noexcept
@@ -2942,6 +2986,7 @@ bool SabaMmdRuntimeModel::SetMorphWeight(
         return false;
     morph->SetWeight(weight);
     ++this->impl->morphRevision;
+    this->InvalidateDeterministicBoundary();
     return true;
 }
 
@@ -2961,17 +3006,20 @@ bool SabaMmdRuntimeModel::SetMorphOverride(
     this->impl->userMorphOverrides[std::string(name)] = weight;
     morph->SetWeight(weight);
     ++this->impl->morphRevision;
+    this->InvalidateDeterministicBoundary();
     return true;
 }
 
 void SabaMmdRuntimeModel::ClearMorphOverride(std::string_view name)
 {
     this->impl->userMorphOverrides.erase(std::string(name));
+    this->InvalidateDeterministicBoundary();
 }
 
 void SabaMmdRuntimeModel::ClearAllMorphOverrides()
 {
     this->impl->userMorphOverrides.clear();
+    this->InvalidateDeterministicBoundary();
 }
 
 std::optional<float> SabaMmdRuntimeModel::MorphWeight(
@@ -3064,6 +3112,7 @@ void SabaMmdRuntimeModel::SetMmdIkEnabled(BoneIndex bone, bool enabled)
         this->impl->sabaBoneNames[bone],
         enabled
     );
+    this->InvalidateDeterministicBoundary();
 }
 
 BoneIndex SabaMmdRuntimeModel::FindBoneIndex(const std::string& name) const

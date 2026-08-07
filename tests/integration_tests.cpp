@@ -6687,12 +6687,16 @@ void TestR12BInvalidSnapshotRejections()
     const auto runRejected = [&](const PhysicsSnapshot& candidate,
                                  TimelineStatus expected)
     {
+        // SetMotionFrame is a non-deterministic mutator (R1.3 Final
+        // Validation 2) and invalidates the canonical flag; establish the
+        // restore precondition before capturing the baseline so the
+        // before/after comparison only measures world state.
+        RequireRestoreAnimationFrame(*runtime, 0.0);
         PhysicsSnapshot before;
         Require(
             observation->CaptureState(before) == TimelineStatus::Ok,
             "R1.2B rejection baseline capture failed"
         );
-        RequireRestoreAnimationFrame(*runtime, 0.0);
         const TimelineStatus status = restore->RestoreState(candidate);
         Require(
             status == expected,
@@ -8527,6 +8531,21 @@ void TestR13TraceReproducibleAndSchema()
         );
         Require(!frame.bodies.empty(), "trace has no rigid bodies");
         Require(!frame.bones.empty(), "trace has no bones");
+        for (const MmdPhysicsTraceJoint& joint : frame.joints)
+        {
+            Require(
+                joint.linearViolation >= 0.0f &&
+                    joint.linearViolation <=
+                        joint.rawLinearError + 1.0e-3f,
+                "joint linear violation exceeds its raw error norm"
+            );
+            Require(
+                joint.angularViolationDeg >= 0.0f &&
+                    joint.angularViolationDeg <=
+                        joint.rawAngularErrorDeg + 1.0e-3f,
+                "joint angular violation exceeds its raw error norm"
+            );
+        }
         Require(
             IsSortedTrace(frame),
             "trace arrays are not stably sorted"
@@ -8945,6 +8964,13 @@ void TestR13MmdPhysicsConfigurationRuntime()
             TimelineStatus::InvalidState,
         "foreign backend identity was accepted"
     );
+    MmdPhysicsConfiguration mutated = raw;
+    mutated.runtime.gravity.y = -9.8f;
+    Require(
+        runtime.SetMmdPhysicsConfiguration(mutated) ==
+            TimelineStatus::InvalidState,
+        "mutated MMD_RAW configuration was accepted"
+    );
     MmdPhysicsConfiguration readBack;
     Require(
         runtime.GetMmdPhysicsConfiguration(readBack),
@@ -9042,11 +9068,23 @@ void TestR13MmdPhysicsConfigurationRuntime()
         );
     }
 
-    // Phase 0A forbids switching effective behaviour of a live runtime.
-    MmdPhysicsConfiguration changed = community;
-    changed.runtime.gravity.y = -9.8f;
+    // Phase 0A forbids switching effective behaviour of a live runtime; the
+    // candidate must be a valid custom config so rejection comes from the
+    // live-switch rule, not from configuration validation.
+    MmdPhysicsDiagnosticOverrides liveOverrides;
+    liveOverrides.linkedBodyCollision =
+        MmdLinkedBodyCollisionMode::DisableConstraintLinkedPairs;
+    MmdPhysicsConfiguration liveSwitch;
     Require(
-        runtime.SetMmdPhysicsConfiguration(changed) ==
+        DeriveDiagnosticConfiguration(
+            community,
+            liveOverrides,
+            liveSwitch
+        ) == TimelineStatus::Ok,
+        "deriving the live-switch candidate failed"
+    );
+    Require(
+        runtime.SetMmdPhysicsConfiguration(liveSwitch) ==
             TimelineStatus::UnsupportedReplayProfile,
         "live behaviour switch was accepted"
     );
@@ -9058,6 +9096,23 @@ void TestR13MmdPhysicsConfigurationRuntime()
         runtime.SetMmdPhysicsConfiguration(anonymous) ==
             TimelineStatus::InvalidState,
         "anonymous configuration was accepted by the runtime"
+    );
+
+    // Legacy constructor overrides must not claim a direct preset identity.
+    SabaPhysicsSettings legacySettings;
+    legacySettings.fixedTimeStep = 1.0f / 60.0f;
+    legacySettings.maxSubSteps = 4;
+    legacySettings.gravity = glm::vec3(0.0f, -99.0f, 0.0f);
+    SabaMmdRuntimeModel legacy(modelPath, {}, legacySettings);
+    MmdPhysicsConfiguration legacyConfig;
+    Require(
+        legacy.GetMmdPhysicsConfiguration(legacyConfig),
+        "legacy runtime config read failed"
+    );
+    Require(
+        FormatConfigurationIdentity(legacyConfig) ==
+            "custom-from-mmd-raw-v1",
+        "legacy custom settings kept the direct MMD_RAW identity"
     );
 }
 
@@ -9120,6 +9175,63 @@ void TestR13TraceCanonicalGate()
             canonical.physicsTick == 4U,
         "post-step trace is not the canonical frame 1"
     );
+
+    // PrepareFrameZero -> ordinary Update must invalidate every
+    // deterministic surface: trace, checkpoint and direct stepping.
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed before the invalidation check"
+    );
+    runtime.Update(1.0f / 30.0f);
+    Require(
+        !runtime.CapturePhysicsTraceFrame(canonical),
+        "trace accepted after Update following a canonical frame"
+    );
+    FrameCheckpoint checkpoint;
+    Require(
+        runtime.CreateCheckpoint(checkpoint) != TimelineStatus::Ok,
+        "checkpoint accepted after Update following a canonical frame"
+    );
+    Require(
+        stepper->StepMotionFrameExact(2U, {}) != TimelineStatus::Ok,
+        "direct step accepted after Update following a canonical frame"
+    );
+
+    // Every non-deterministic mutator must invalidate the canonical
+    // boundary.
+    const auto expectInvalidated = [&](
+        const char* label,
+        const auto& mutate)
+    {
+        Require(
+            stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+            "PrepareFrameZero failed before a mutator check"
+        );
+        MmdPhysicsTraceFrame trace;
+        Require(
+            runtime.CapturePhysicsTraceFrame(trace),
+            "canonical capture failed before a mutator check"
+        );
+        mutate();
+        Require(
+            !runtime.CapturePhysicsTraceFrame(trace),
+            std::string(label) + " did not invalidate the canonical boundary"
+        );
+    };
+    expectInvalidated("SetMotionFrame", [&]() { runtime.SetMotionFrame(3.0); });
+    expectInvalidated(
+        "SetMmdIkEnabled",
+        [&]() { runtime.SetMmdIkEnabled(0U, false); }
+    );
+    expectInvalidated(
+        "SetPhysicsSettings",
+        [&]() { runtime.SetPhysicsSettings(SabaPhysicsSettings{}); }
+    );
+    expectInvalidated(
+        "ResetMmdPhysics",
+        [&]() { runtime.ResetMmdPhysics(); }
+    );
+    expectInvalidated("PauseMotion", [&]() { runtime.PauseMotion(); });
 }
 
 }

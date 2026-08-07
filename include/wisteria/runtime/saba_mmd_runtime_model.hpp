@@ -189,6 +189,11 @@ private:
     // R1.3 A/B: applies linked-body collision and Mode 2 writeback modes
     // from the authoritative configuration to the live Saba world.
     void ApplyR13PhysicsProfile();
+    // R1.3 Final Validation 2: every non-deterministic state mutation must
+    // invalidate the canonical boundary and the deterministic stepping
+    // machine so trace/checkpoint/step surfaces never accept real-time
+    // history as canonical evidence.
+    void InvalidateDeterministicBoundary() noexcept;
     void ApplyMmdIkOverrides() noexcept;
     void SyncPoseFromSaba();
     // R1.2A deterministic helpers. They own the exact evaluation order; the

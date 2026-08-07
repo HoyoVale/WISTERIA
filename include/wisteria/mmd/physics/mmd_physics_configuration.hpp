@@ -127,6 +127,9 @@ bool ValidateConfiguration(
 
 std::string_view ToPresetName(MmdPhysicsPreset preset) noexcept;
 
+// Lowercase hyphenated preset label ("mmd-raw"), used for origin identities.
+std::string ToPresetNameLower(MmdPhysicsPreset preset);
+
 // Stable trace/log identity: "mmd-raw-v1" for direct presets and
 // "custom-from-mmd-raw-v1" for derived diagnostic configurations.
 std::string FormatConfigurationIdentity(

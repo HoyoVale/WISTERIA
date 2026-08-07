@@ -33,31 +33,6 @@ bool IsFinite(float value) noexcept
     return std::isfinite(value) != 0;
 }
 
-bool IsRecognizedOrigin(std::string_view origin) noexcept
-{
-    return origin == "mmd-raw" ||
-        origin == "mmd-community" ||
-        origin == "wisteria-adaptive";
-}
-
-std::string ToPresetNameLower(MmdPhysicsPreset preset)
-{
-    std::string name(ToPresetName(preset));
-    std::transform(
-        name.begin(),
-        name.end(),
-        name.begin(),
-        [](unsigned char character)
-        {
-            return static_cast<char>(std::tolower(character));
-        }
-    );
-    // Contract trace identities use hyphens ("mmd-raw-v1"), while the
-    // display names use underscores ("MMD_RAW").
-    std::replace(name.begin(), name.end(), '_', '-');
-    return name;
-}
-
 // FNV-1a64 streaming helper; explicit little-endian byte writes keep the
 // fingerprint stable across hosts of the same build (R1.2B convention).
 struct ConfigurationHasher
@@ -115,6 +90,24 @@ std::string_view ToPresetName(MmdPhysicsPreset preset) noexcept
     return "UNKNOWN";
 }
 
+std::string ToPresetNameLower(MmdPhysicsPreset preset)
+{
+    std::string name(ToPresetName(preset));
+    std::transform(
+        name.begin(),
+        name.end(),
+        name.begin(),
+        [](unsigned char character)
+        {
+            return static_cast<char>(std::tolower(character));
+        }
+    );
+    // Contract trace identities use hyphens ("mmd-raw-v1"), while the
+    // display names use underscores ("MMD_RAW").
+    std::replace(name.begin(), name.end(), '_', '-');
+    return name;
+}
+
 MmdPhysicsConfiguration BuildPresetConfiguration(MmdPhysicsPreset preset)
 {
     MmdPhysicsConfiguration configuration;
@@ -168,12 +161,7 @@ bool ValidateConfiguration(
     if (identity.backend.empty() ||
         identity.baseline.empty() ||
         !IsKnownPreset(identity.preset) ||
-        identity.profileRevision == 0U)
-    {
-        return false;
-    }
-    if (!identity.originPreset.empty() &&
-        !IsRecognizedOrigin(identity.originPreset))
+        identity.profileRevision != 1U)
     {
         return false;
     }
@@ -208,6 +196,34 @@ bool ValidateConfiguration(
         config.adaptive.localChainEnhancementsEnabled)
     {
         return false;
+    }
+    // A direct preset label may only represent the exact frozen preset:
+    // any behaviour deviation must carry a custom identity. Phase 0A has
+    // exactly one known profile revision.
+    const MmdPhysicsConfiguration preset =
+        BuildPresetConfiguration(identity.preset);
+    if (identity.originPreset.empty())
+    {
+        if (ComputeEffectiveConfigurationFingerprint(config) !=
+            ComputeEffectiveConfigurationFingerprint(preset))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        if (identity.originPreset != ToPresetNameLower(identity.preset))
+            return false;
+        // Derived/custom configurations may only deviate from the preset in
+        // the two A/B switches; runtime, gravity scale and adaptive slots
+        // stay frozen to the preset values.
+        if (runtime.fixedTimeStep != preset.runtime.fixedTimeStep ||
+            runtime.maxSubSteps != preset.runtime.maxSubSteps ||
+            runtime.gravity != preset.runtime.gravity ||
+            runtime.enabled != preset.runtime.enabled)
+        {
+            return false;
+        }
     }
     // FullTransformDiagnostic must not enter a direct preset profile.
     if (identity.originPreset.empty() &&

@@ -22,6 +22,11 @@
 > Hash 有效行为、不 Hash Preset 标签；`DisableConstraintLinkedPairs`
 > 公式冻结；Trace 增加 interpolation/motion-state 变换与 `hasMotion`；
 > §11 三个 legacy 文档标记已完成。
+>
+> Final Validation 2 契约同步（2026-08-07）：`MmdPhysicsDiagnosticOverrides`
+> 移除死字段 `trace`（`MmdPhysicsTraceOptions` 保留为 Phase 0B 工具层）；
+> 明确允许 effective-equivalent 的 metadata-only 标签切换（不改 Bullet）；
+> 所有非确定性 mutator 必须使 deterministic canonical/prepared 状态失效。
 
 ## 0. 阶段定位
 
@@ -222,7 +227,6 @@ struct MmdPhysicsDiagnosticOverrides
 {
     std::optional<MmdLinkedBodyCollisionMode> linkedBodyCollision;
     std::optional<MmdMode2WritebackMode> mode2;
-    MmdPhysicsTraceOptions trace;   // 只记录，不改变行为
 };
 
 MmdPhysicsConfiguration BuildPresetConfiguration(MmdPhysicsPreset preset);
@@ -265,7 +269,12 @@ adaptive              = 全部 false
   当前 Configuration、重新计算 effective fingerprint，并使已有
   deterministic canonical/prepared 状态失效；
 - Phase 0A 只在 Initialize 前应用 Profile；运行后切换 Profile
-  暂不支持（三个 Preset 分别创建 Runtime 做 from-start 实验）。
+  暂不支持（三个 Preset 分别创建 Runtime 做 from-start 实验）；
+  **唯一例外**：effective fingerprint 完全相同的 metadata-only
+  标签切换（如 RAW → COMMUNITY）只更新 identity，不得触碰 Bullet；
+- 所有改变 motion/physics/Morph/IK 状态的非确定性入口必须使
+  deterministic canonical/prepared 状态失效（统一
+  InvalidateDeterministicBoundary），防止实时历史被当作 canonical 证据。
 ```
 
 ### Preset 语义
@@ -640,6 +649,8 @@ enum class MmdMode2WritebackMode
 struct MmdPhysicsTraceOptions
 {
     // 只记录平移增量，不改变物理行为。
+    // Phase 0A 不随配置传递（DiagnosticOverrides 无此字段）；
+    // 留待 Phase 0B Trace 工具层使用。
     bool recordMode2TranslationDelta = false;
 };
 ```

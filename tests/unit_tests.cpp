@@ -2381,6 +2381,41 @@ void TestMmdPhysicsConfigurationValidation()
         !ValidateConfiguration(adaptiveOn),
         "unimplemented chain enhancement flag was accepted"
     );
+
+    // A direct preset label may only represent the exact frozen preset;
+    // behaviour mutations must carry a custom identity.
+    MmdPhysicsConfiguration mutatedPreset =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    mutatedPreset.runtime.gravity.y = -9.8f;
+    Require(
+        !ValidateConfiguration(mutatedPreset),
+        "mutated MMD_RAW gravity was accepted under the raw label"
+    );
+    mutatedPreset = BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    mutatedPreset.compatibility.linkedBodyCollision =
+        MmdLinkedBodyCollisionMode::DisableConstraintLinkedPairs;
+    Require(
+        !ValidateConfiguration(mutatedPreset),
+        "direct preset with a linked-body override was accepted"
+    );
+
+    MmdPhysicsConfiguration badRevision =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    badRevision.identity.profileRevision = 999U;
+    Require(
+        !ValidateConfiguration(badRevision),
+        "unknown profile revision was accepted"
+    );
+
+    // A forged custom identity must still keep preset runtime values.
+    MmdPhysicsConfiguration forgedDerived =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    forgedDerived.identity.originPreset = "mmd-raw";
+    forgedDerived.runtime.gravity.y = -9.8f;
+    Require(
+        !ValidateConfiguration(forgedDerived),
+        "custom identity with mutated runtime was accepted"
+    );
 }
 
 void TestMmdPhysicsConfigurationDerivation()
@@ -2810,6 +2845,63 @@ void TestMmdPhysicsAudit()
             nanAudit.boneLength.available &&
             NearlyEqual(nanAudit.boneLength.median, 1.0f),
         "audit did not separate valid samples from non-finite ones"
+    );
+
+    // Non-finite inputs outside the ranges must also poison result.finite.
+    MmdPhysicsAuditBounds nanBounds;
+    nanBounds.available = true;
+    nanBounds.max.y = std::numeric_limits<float>::quiet_NaN();
+    const MmdPhysicsAuditResult nanBoundsAudit = RunMmdPhysicsAudit(
+        asset,
+        std::span<const Bone>{},
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw),
+        nanBounds
+    );
+    Require(
+        !nanBoundsAudit.finite,
+        "non-finite model bounds did not poison the audit result"
+    );
+
+    MmdPhysicsConfiguration nanGravityConfig =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    nanGravityConfig.runtime.gravity.z =
+        std::numeric_limits<float>::quiet_NaN();
+    const MmdPhysicsAuditResult nanGravityAudit = RunMmdPhysicsAudit(
+        asset,
+        std::span<const Bone>{},
+        nanGravityConfig
+    );
+    Require(
+        !nanGravityAudit.finite && !nanGravityAudit.gravityAvailable,
+        "non-finite gravity did not poison the audit result"
+    );
+
+    MmdPhysicsConfiguration nanStepConfig =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    nanStepConfig.runtime.fixedTimeStep =
+        std::numeric_limits<float>::quiet_NaN();
+    const MmdPhysicsAuditResult nanStepAudit = RunMmdPhysicsAudit(
+        asset,
+        std::span<const Bone>{},
+        nanStepConfig
+    );
+    Require(
+        !nanStepAudit.finite,
+        "non-finite fixedTimeStep did not poison the audit result"
+    );
+
+    MmdPhysicsAuditOptions nanMargin;
+    nanMargin.collisionMargin = std::numeric_limits<float>::quiet_NaN();
+    const MmdPhysicsAuditResult nanMarginAudit = RunMmdPhysicsAudit(
+        asset,
+        std::span<const Bone>{},
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw),
+        {},
+        nanMargin
+    );
+    Require(
+        !nanMarginAudit.finite,
+        "non-finite collision margin did not poison the audit result"
     );
 }
 

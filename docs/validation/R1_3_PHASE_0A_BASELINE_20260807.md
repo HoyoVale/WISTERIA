@@ -148,3 +148,61 @@ Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
 **Phase 0A 完成（2026-08-07）**：Windows/Linux × CORE/FULL_ASSETS
 四套矩阵全部 CTest 5/5；Final Validation Fix 六项全部闭合。
 下一阶段：Phase 0B 社区实现对照（单独契约）。
+
+## 7. Final Validation 2（评审轮 4，2026-08-07）
+
+源码级复查发现状态机与身份模型仍可被绕穿，三项 P0 + 两项 P1 已修复：
+
+```text
+P0-1 canonical 状态机统一失效
+  - 新增 SabaMmdRuntimeModel::InvalidateDeterministicBoundary()
+    （lastBoundaryCanonical / deterministicPrepared / expectedNextFrame）
+  - Update()（实时路径）与全部非确定性 mutator 调用它：
+    SetPhysicsSettings / SetMmdPhysicsSettings、LoadMotion / ClearMotion /
+    SetMotionLooping / Pause / Resume / RestartMotion / SetMotionFrame、
+    SetMorphWeight / SetMorphOverride / ClearMorphOverride /
+    ClearAllMorphOverrides、SetMmdIkEnabled、ResetMmdPhysics
+  - 唯一例外：effective-equivalent metadata-only 标签切换不失效
+  - 测试：PrepareFrameZero → Update → Trace / Checkpoint / Step 全部拒绝；
+    每个 mutator 逐一验证 canonical 失效
+
+P0-2 直接 Preset 身份不可伪造
+  - ValidateConfiguration：originPreset 为空 → 行为必须逐字段等于
+    BuildPresetConfiguration(preset)（指纹相等 + profileRevision==1）
+  - originPreset 非空 → 必须等于 preset 小写名，且 runtime/adaptive/
+    gravityScale 保持 preset 值（只允许 linkedBody / mode2 A/B 偏差）
+  - 低层构造函数与 SetPhysicsSettings 的越界设置自动转为
+    custom-from-<preset> 身份，不再冒充 MMD_RAW
+  - 测试：篡改 gravity / linkedBody 的 MMD_RAW、profileRevision=999、
+    伪造 custom 运行时均被拒绝；legacy 构造自定义设置报 custom 身份
+
+P0-3 Trace / Checkpoint 不可被实时历史污染
+  - 与 P0-1 同源：canonical 门禁现在覆盖 Update 与全部 mutator
+
+P1-1 审计 finite 全量传播
+  - modelBounds / gravity / fixedTimeStep / collisionMargin 的非有限值
+    都会使 MmdPhysicsAuditResult.finite=false，不再只表现为 available=false
+  - 测试覆盖四条 NaN 注入路径
+
+P1-2 joint violation 改为 Euclidean norm
+  - linearViolation = ||per-axis excess||，angularViolationDeg 同理，
+    与契约 §6.3 一致（原来是 L1 求和）
+  - Trace schema 测试增加 violation <= raw error norm 一致性断言
+```
+
+契约文档同步（Frozen contract 与实现一致）：
+
+```text
+- MmdPhysicsDiagnosticOverrides 移除 trace 字段
+  （MmdPhysicsTraceOptions 保留为 Phase 0B 工具层）
+- §4 原则补充 metadata-only 标签切换语义与统一失效规则
+```
+
+修复后四套矩阵复跑（2026-08-07）：
+
+```text
+Windows CORE          CTest 5/5
+Windows FULL_ASSETS   CTest 5/5
+Linux CORE            CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+Linux FULL_ASSETS     CTest 5/5（LIBGL_ALWAYS_SOFTWARE=1）
+```

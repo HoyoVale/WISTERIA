@@ -100,13 +100,16 @@ MmdPhysicsAuditResult RunMmdPhysicsAudit(
 )
 {
     MmdPhysicsAuditResult result;
-    if (modelBounds.available &&
+    const bool boundsFinite =
         IsFinite(modelBounds.min.x) &&
         IsFinite(modelBounds.min.y) &&
         IsFinite(modelBounds.min.z) &&
         IsFinite(modelBounds.max.x) &&
         IsFinite(modelBounds.max.y) &&
-        IsFinite(modelBounds.max.z))
+        IsFinite(modelBounds.max.z);
+    if (!boundsFinite)
+        result.finite = false;
+    if (modelBounds.available && boundsFinite)
     {
         result.modelBounds = modelBounds;
         const float height = modelBounds.max.y - modelBounds.min.y;
@@ -155,11 +158,14 @@ MmdPhysicsAuditResult RunMmdPhysicsAudit(
 
     const glm::vec3 gravity = configuration.runtime.gravity;
     const float gravityScale = configuration.compatibility.gravityScale;
-    if (IsFinite(gravity.x) &&
+    const bool gravityFinite =
+        IsFinite(gravity.x) &&
         IsFinite(gravity.y) &&
         IsFinite(gravity.z) &&
-        IsFinite(gravityScale) &&
-        gravityScale > 0.0f)
+        IsFinite(gravityScale);
+    if (!gravityFinite)
+        result.finite = false;
+    if (gravityFinite && gravityScale > 0.0f)
     {
         result.gravityAvailable = true;
         result.gravityMagnitude =
@@ -177,6 +183,10 @@ MmdPhysicsAuditResult RunMmdPhysicsAudit(
     {
         result.fixedTimeStep = configuration.runtime.fixedTimeStep;
     }
+    else
+    {
+        result.finite = false;
+    }
 
     if (IsFinite(options.collisionMargin) &&
         options.collisionMargin > Epsilon &&
@@ -187,7 +197,11 @@ MmdPhysicsAuditResult RunMmdPhysicsAudit(
         result.shapeMarginPerMedianBodySize =
             options.collisionMargin / result.rigidBodySize.median;
     }
-    result.finite =
+    else if (!IsFinite(options.collisionMargin))
+    {
+        result.finite = false;
+    }
+    result.finite = result.finite &&
         result.boneLength.finite &&
         result.rigidBodySize.finite &&
         result.jointLinearRange.finite &&
