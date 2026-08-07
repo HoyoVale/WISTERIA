@@ -4,6 +4,7 @@
 #include "wisteria/mmd/physics/mmd_physics_audit.hpp"
 #include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 #include "wisteria/mmd/physics/mmd_physics_trace.hpp"
+#include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/runtime/model_backend.hpp"
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
@@ -9797,6 +9798,97 @@ void TestR14RuntimeCreationFailureTransaction()
     );
 }
 
+void TestR14CheckpointWireRoundTrip()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+
+    auto source = CreateDeterministicRuntime(modelPath);
+    const FrameCheckpoint checkpoint =
+        CreateCheckpointAt(*source, 30U);
+
+    const std::vector<std::uint8_t> bytes =
+        SerializeCheckpoint(checkpoint);
+    Require(
+        bytes.size() > CheckpointWireHeaderSize,
+        "R1.4 wire serialization produced a degenerate payload"
+    );
+
+    FrameCheckpoint decoded;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            {},
+            decoded
+        ) == TimelineStatus::Ok,
+        "R1.4 wire deserialize failed on a valid checkpoint"
+    );
+
+    auto diverged = CreateDeterministicRuntime(modelPath);
+    CaptureCanonicalAt(*diverged, 90U);
+    auto* divergedMmd = dynamic_cast<MmdRuntimeModel*>(diverged.get());
+    auto* divergedStepper = dynamic_cast<IDeterministicFrameStepper*>(
+        diverged.get()
+    );
+    auto* divergedObservation =
+        dynamic_cast<IDeterministicPhysicsObservation*>(diverged.get());
+    Require(
+        divergedMmd != nullptr && divergedStepper != nullptr &&
+            divergedObservation != nullptr,
+        "R1.4 wire round trip lost runtime surfaces"
+    );
+    Require(
+        divergedMmd->ReplayFromCheckpoint(decoded, 30U) ==
+            TimelineStatus::Ok,
+        "R1.4 wire-restored checkpoint replay failed"
+    );
+    PhysicsSnapshot restored;
+    Require(
+        divergedObservation->CaptureState(restored) == TimelineStatus::Ok,
+        "R1.4 wire-restored state capture failed"
+    );
+    Require(
+        SnapshotsEqualExceptFollowBoneActivation(
+            decoded.physics,
+            restored
+        ),
+        "R1.4 wire-restored physics diverged from the checkpoint"
+    );
+    Require(
+        divergedStepper->StepMotionFrameExact(31U, {}) ==
+            TimelineStatus::Ok,
+        "R1.4 wire restore did not prepare the next frame"
+    );
+
+    // Corrupted wire bytes must never reach the restore path.
+    std::vector<std::uint8_t> corrupted = bytes;
+    corrupted[corrupted.size() / 2U] ^= 0x80U;
+    FrameCheckpoint ignored;
+    Require(
+        DeserializeCheckpoint(
+            corrupted.data(),
+            corrupted.size(),
+            {},
+            ignored
+        ) == TimelineStatus::InvalidCheckpoint,
+        "R1.4 wire accepted corrupted bytes"
+    );
+
+    // Build-compatibility mismatch is rejected before restore.
+    CheckpointSerializationOptions foreignBuild;
+    foreignBuild.buildCompatibilityId = 0xDEADBEEFULL;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            foreignBuild,
+            ignored
+        ) == TimelineStatus::InvalidCheckpoint,
+        "R1.4 wire accepted a foreign build identity"
+    );
+}
+
 }
 
 int main()
@@ -10135,6 +10227,10 @@ int main()
     failures += !RunTest(
         "R1.4 runtime creation failure transaction",
         TestR14RuntimeCreationFailureTransaction
+    );
+    failures += !RunTest(
+        "R1.4 checkpoint wire round trip",
+        TestR14CheckpointWireRoundTrip
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",

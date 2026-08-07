@@ -179,6 +179,7 @@ set(WISTERIA_RUNTIME_SOURCES
     src/runtime/model_backend.cpp
     src/runtime/model_instance.cpp
     src/runtime/saba_mmd_runtime_model.cpp
+    src/runtime/checkpoint_serialization.cpp
 )
 
 set(WISTERIA_PLATFORM_SOURCES

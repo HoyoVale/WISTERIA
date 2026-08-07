@@ -4,6 +4,7 @@
 #include "wisteria/mmd/mmd_determinism.hpp"
 #include "wisteria/mmd/physics/mmd_physics_audit.hpp"
 #include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
+#include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "trace_jsonl.hpp"
 
 #include <btBulletDynamicsCommon.h>
@@ -2932,6 +2933,623 @@ void TestMmdPhysicsAudit()
     );
 }
 
+bool TransformsEqualForWire(
+    const RigidTransformSnapshot& left,
+    const RigidTransformSnapshot& right
+)
+{
+    return left.position == right.position &&
+        left.rotationBasis == right.rotationBasis;
+}
+
+bool BodiesEqualForWire(
+    const RigidBodySnapshot& left,
+    const RigidBodySnapshot& right
+)
+{
+    return left.index == right.index &&
+        left.mode == right.mode &&
+        left.definitionMass == right.definitionMass &&
+        TransformsEqualForWire(
+            left.worldTransform,
+            right.worldTransform
+        ) &&
+        TransformsEqualForWire(
+            left.interpolationTransform,
+            right.interpolationTransform
+        ) &&
+        left.linearVelocity == right.linearVelocity &&
+        left.angularVelocity == right.angularVelocity &&
+        left.interpolationLinearVelocity ==
+            right.interpolationLinearVelocity &&
+        left.interpolationAngularVelocity ==
+            right.interpolationAngularVelocity &&
+        left.totalForce == right.totalForce &&
+        left.totalTorque == right.totalTorque &&
+        left.activationState == right.activationState &&
+        left.deactivationTime == right.deactivationTime;
+}
+
+bool PhysicsSnapshotsEqualForWire(
+    const PhysicsSnapshot& left,
+    const PhysicsSnapshot& right
+)
+{
+    if (left.schemaVersion != right.schemaVersion ||
+        left.layoutFingerprint != right.layoutFingerprint ||
+        left.physicsConfigurationFingerprint !=
+            right.physicsConfigurationFingerprint ||
+        left.motionFrame != right.motionFrame ||
+        left.physicsTick != right.physicsTick ||
+        left.jointCount != right.jointCount ||
+        left.canonical != right.canonical ||
+        left.rigidBodies.size() != right.rigidBodies.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.rigidBodies.size(); ++index)
+    {
+        if (!BodiesEqualForWire(
+                left.rigidBodies[index],
+                right.rigidBodies[index]
+            ))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool OverridesEqualForWire(
+    const UserOverrideState& left,
+    const UserOverrideState& right
+)
+{
+    if (left.physicsEnabled != right.physicsEnabled ||
+        left.loopMotion != right.loopMotion ||
+        left.morphOverrides.size() != right.morphOverrides.size() ||
+        left.ikOverrides.size() != right.ikOverrides.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0U;
+         index < left.morphOverrides.size();
+         ++index)
+    {
+        if (left.morphOverrides[index] != right.morphOverrides[index])
+            return false;
+    }
+    for (std::size_t index = 0U;
+         index < left.ikOverrides.size();
+         ++index)
+    {
+        if (left.ikOverrides[index] != right.ikOverrides[index])
+            return false;
+    }
+    return true;
+}
+
+bool ReplayConfigsEqualForWire(
+    const ReplayConfig& left,
+    const ReplayConfig& right
+)
+{
+    return left.motionFps == right.motionFps &&
+        left.physicsHz == right.physicsHz &&
+        left.warmupFrames == right.warmupFrames &&
+        left.loopMotion == right.loopMotion;
+}
+
+bool AssetIdentitiesEqualForWire(
+    const AssetIdentity& left,
+    const AssetIdentity& right
+)
+{
+    return left.pmxFileHash == right.pmxFileHash &&
+        left.vmdFileHash == right.vmdFileHash &&
+        left.hasMotion == right.hasMotion &&
+        left.layoutFingerprint == right.layoutFingerprint &&
+        left.physicsConfigurationFingerprint ==
+            right.physicsConfigurationFingerprint;
+}
+
+bool DeterminismHashesEqualForWire(
+    const DeterminismHashes& left,
+    const DeterminismHashes& right
+)
+{
+    return left.exactHash == right.exactHash &&
+        left.canonicalHash == right.canonicalHash &&
+        left.valid == right.valid;
+}
+
+bool CheckpointsEqualForWire(
+    const FrameCheckpoint& left,
+    const FrameCheckpoint& right
+)
+{
+    return left.frame == right.frame &&
+        PhysicsSnapshotsEqualForWire(left.physics, right.physics) &&
+        OverridesEqualForWire(left.overrides, right.overrides) &&
+        ReplayConfigsEqualForWire(left.config, right.config) &&
+        left.fingerprint.schemaVersion == right.fingerprint.schemaVersion &&
+        left.fingerprint.frame == right.fingerprint.frame &&
+        AssetIdentitiesEqualForWire(
+            left.fingerprint.asset,
+            right.fingerprint.asset
+        ) &&
+        ReplayConfigsEqualForWire(
+            left.fingerprint.config,
+            right.fingerprint.config
+        ) &&
+        OverridesEqualForWire(
+            left.fingerprint.overrides,
+            right.fingerprint.overrides
+        ) &&
+        DeterminismHashesEqualForWire(
+            left.fingerprint.state.pose,
+            right.fingerprint.state.pose
+        ) &&
+        DeterminismHashesEqualForWire(
+            left.fingerprint.state.physics,
+            right.fingerprint.state.physics
+        ) &&
+        DeterminismHashesEqualForWire(
+            left.fingerprint.state.vertex,
+            right.fingerprint.state.vertex
+        );
+}
+
+FrameCheckpoint MakeSerializableCheckpoint()
+{
+    FrameCheckpoint checkpoint;
+    checkpoint.frame = 120U;
+    checkpoint.config.motionFps = 30U;
+    checkpoint.config.physicsHz = 120U;
+    checkpoint.config.warmupFrames = 0U;
+    checkpoint.config.loopMotion = false;
+
+    checkpoint.overrides.physicsEnabled = true;
+    checkpoint.overrides.loopMotion = false;
+    checkpoint.overrides.morphOverrides = {
+        {"blink", 0.5f},
+        {"mouth", 0.25f}
+    };
+    checkpoint.overrides.ikOverrides = {
+        {"legL", true},
+        {"legR", false}
+    };
+
+    checkpoint.fingerprint.schemaVersion = 1U;
+    checkpoint.fingerprint.frame = checkpoint.frame;
+    checkpoint.fingerprint.asset.pmxFileHash = 0x1122334455667788ULL;
+    checkpoint.fingerprint.asset.vmdFileHash = 0x8877665544332211ULL;
+    checkpoint.fingerprint.asset.hasMotion = true;
+    checkpoint.fingerprint.asset.layoutFingerprint = 0xAABBCCDD00112233ULL;
+    checkpoint.fingerprint.asset.physicsConfigurationFingerprint =
+        0x5566778899AABBCCULL;
+    checkpoint.fingerprint.config = checkpoint.config;
+    checkpoint.fingerprint.overrides = checkpoint.overrides;
+    checkpoint.fingerprint.state.pose.exactHash = 0x1111111111111111ULL;
+    checkpoint.fingerprint.state.pose.canonicalHash = 0x2222222222222222ULL;
+    checkpoint.fingerprint.state.pose.valid = true;
+    checkpoint.fingerprint.state.physics.exactHash = 0x3333333333333333ULL;
+    checkpoint.fingerprint.state.physics.canonicalHash = 0x4444444444444444ULL;
+    checkpoint.fingerprint.state.physics.valid = true;
+    checkpoint.fingerprint.state.vertex.exactHash = 0x5555555555555555ULL;
+    checkpoint.fingerprint.state.vertex.canonicalHash = 0x6666666666666666ULL;
+    checkpoint.fingerprint.state.vertex.valid = true;
+
+    checkpoint.physics.schemaVersion = 2U;
+    checkpoint.physics.layoutFingerprint =
+        checkpoint.fingerprint.asset.layoutFingerprint;
+    checkpoint.physics.physicsConfigurationFingerprint =
+        checkpoint.fingerprint.asset.physicsConfigurationFingerprint;
+    checkpoint.physics.motionFrame = checkpoint.frame;
+    checkpoint.physics.physicsTick = checkpoint.frame * 4U;
+    checkpoint.physics.jointCount = 3U;
+    checkpoint.physics.canonical = true;
+
+    RigidBodySnapshot bodyA;
+    bodyA.index = 0U;
+    bodyA.mode = PmxRigidBodyMode::Physics;
+    bodyA.definitionMass = 2.5f;
+    bodyA.worldTransform.position = glm::vec3(1.0f, 2.0f, 3.0f);
+    bodyA.worldTransform.rotationBasis = {
+        1.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 1.0f
+    };
+    bodyA.interpolationTransform.position = glm::vec3(0.5f, -1.0f, 2.0f);
+    bodyA.interpolationTransform.rotationBasis = {
+        0.0f, 1.0f, 0.0f,
+        -1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f
+    };
+    bodyA.linearVelocity = glm::vec3(0.1f, -0.2f, 0.3f);
+    bodyA.angularVelocity = glm::vec3(0.01f, 0.02f, -0.03f);
+    bodyA.interpolationLinearVelocity = glm::vec3(1.0f, 0.0f, 0.0f);
+    bodyA.interpolationAngularVelocity = glm::vec3(0.0f, 1.0f, 0.0f);
+    bodyA.totalForce = glm::vec3(-9.8f, 0.0f, 0.0f);
+    bodyA.totalTorque = glm::vec3(0.0f, 0.0f, 0.5f);
+    bodyA.activationState = 1;
+    bodyA.deactivationTime = 0.25f;
+    checkpoint.physics.rigidBodies.push_back(bodyA);
+
+    RigidBodySnapshot bodyB = bodyA;
+    bodyB.index = 1U;
+    bodyB.mode = PmxRigidBodyMode::FollowBone;
+    bodyB.definitionMass = 0.0f;
+    bodyB.worldTransform.position = glm::vec3(0.0f, 10.0f, 0.0f);
+    bodyB.interpolationTransform.position = bodyB.worldTransform.position;
+    bodyB.linearVelocity = glm::vec3(0.0f);
+    bodyB.angularVelocity = glm::vec3(0.0f);
+    bodyB.interpolationLinearVelocity = glm::vec3(0.0f);
+    bodyB.interpolationAngularVelocity = glm::vec3(0.0f);
+    bodyB.totalForce = glm::vec3(0.0f);
+    bodyB.totalTorque = glm::vec3(0.0f);
+    bodyB.activationState = 0;
+    bodyB.deactivationTime = 0.0f;
+    checkpoint.physics.rigidBodies.push_back(bodyB);
+    return checkpoint;
+}
+
+constexpr std::uint64_t kTestFnvOffsetBasis = 14695981039346656037ULL;
+constexpr std::uint64_t kTestFnvPrime = 1099511628211ULL;
+
+std::uint64_t TestFnv1a64(const std::vector<std::uint8_t>& bytes)
+{
+    std::uint64_t state = kTestFnvOffsetBasis;
+    for (const std::uint8_t byte : bytes)
+    {
+        state ^= byte;
+        state *= kTestFnvPrime;
+    }
+    return state;
+}
+
+void WriteU32Le(
+    std::vector<std::uint8_t>& bytes,
+    std::size_t offset,
+    std::uint32_t value
+)
+{
+    for (int shift = 0; shift < 32; shift += 8)
+    {
+        bytes[offset + static_cast<std::size_t>(shift / 8)] =
+            static_cast<std::uint8_t>((value >> shift) & 0xFFU);
+    }
+}
+
+void WriteU64Le(
+    std::vector<std::uint8_t>& bytes,
+    std::size_t offset,
+    std::uint64_t value
+)
+{
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        bytes[offset + static_cast<std::size_t>(shift / 8)] =
+            static_cast<std::uint8_t>((value >> shift) & 0xFFU);
+    }
+}
+
+void RecomputeCheckpointChecksum(std::vector<std::uint8_t>& bytes)
+{
+    const std::size_t checksumOffset =
+        static_cast<std::size_t>(CheckpointWireHeaderSize) - 8U;
+    std::fill(
+        bytes.begin() + static_cast<std::ptrdiff_t>(checksumOffset),
+        bytes.begin() + static_cast<std::ptrdiff_t>(checksumOffset + 8U),
+        0U
+    );
+    const std::uint64_t checksum = TestFnv1a64(bytes);
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        bytes[checksumOffset + static_cast<std::size_t>(shift / 8)] =
+            static_cast<std::uint8_t>((checksum >> shift) & 0xFFU);
+    }
+}
+
+std::size_t TopLevelAssetIdentityOffset(
+    const FrameCheckpoint& checkpoint
+)
+{
+    std::size_t cursor =
+        static_cast<std::size_t>(CheckpointWireHeaderSize);
+    cursor += 4U + 8U + 8U;  // payload schema + frame + physicsTick
+    cursor += 4U + 4U + 4U + 1U;  // replay config
+    cursor += 1U + 1U + 4U;  // overrides: enabled + loop + morph count
+    for (const auto& entry : checkpoint.overrides.morphOverrides)
+        cursor += 4U + entry.first.size() + 4U;
+    cursor += 4U;  // ik count
+    for (const auto& entry : checkpoint.overrides.ikOverrides)
+        cursor += 4U + entry.first.size() + 1U;
+    return cursor;
+}
+
+std::size_t BodyCountFieldOffset(const FrameCheckpoint& checkpoint)
+{
+    std::size_t cursor =
+        static_cast<std::size_t>(CheckpointWireHeaderSize);
+    cursor += 4U + 8U + 8U;  // payload schema + frame + physicsTick
+    cursor += 4U + 4U + 4U + 1U;  // replay config
+    cursor += 1U + 1U + 4U;  // overrides: enabled + loop + morph count
+    for (const auto& entry : checkpoint.overrides.morphOverrides)
+        cursor += 4U + entry.first.size() + 4U;
+    cursor += 4U;  // ik count
+    for (const auto& entry : checkpoint.overrides.ikOverrides)
+        cursor += 4U + entry.first.size() + 1U;
+    cursor += 8U + 8U + 1U + 8U + 8U;  // asset identity
+    cursor += 4U + 8U;  // fingerprint schema + frame
+    cursor += 8U + 8U + 1U + 8U + 8U;  // fingerprint asset
+    cursor += 4U + 4U + 4U + 1U;  // fingerprint config
+    cursor += 1U + 1U + 4U;  // fingerprint overrides header
+    for (const auto& entry : checkpoint.overrides.morphOverrides)
+        cursor += 4U + entry.first.size() + 4U;
+    cursor += 4U;  // fingerprint ik count
+    for (const auto& entry : checkpoint.overrides.ikOverrides)
+        cursor += 4U + entry.first.size() + 1U;
+    cursor += 17U + 17U + 17U;  // pose + physics + vertex hashes
+    cursor += 4U + 8U + 8U + 8U + 8U + 4U + 1U;  // physics snapshot header
+    return cursor;
+}
+
+void TestCheckpointWireCodec()
+{
+    Require(
+        CheckpointWireHeaderSize == 48U,
+        "checkpoint wire header size drifted from 48"
+    );
+    const FrameCheckpoint valid = MakeSerializableCheckpoint();
+    const std::vector<std::uint8_t> bytes = SerializeCheckpoint(valid);
+    Require(
+        bytes.size() > CheckpointWireHeaderSize,
+        "serialized checkpoint is smaller than the wire header"
+    );
+
+    FrameCheckpoint decoded;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            {},
+            decoded
+        ) == TimelineStatus::Ok,
+        "valid checkpoint round trip failed"
+    );
+    Require(
+        CheckpointsEqualForWire(valid, decoded),
+        "round trip changed checkpoint fields"
+    );
+
+    // Tampered payload byte is rejected and output is left untouched.
+    std::vector<std::uint8_t> tampered = bytes;
+    tampered[bytes.size() / 2U] ^= 0x01U;
+    FrameCheckpoint untouched = decoded;
+    Require(
+        DeserializeCheckpoint(
+            tampered.data(),
+            tampered.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "tampered checkpoint was accepted"
+    );
+    Require(
+        CheckpointsEqualForWire(untouched, decoded),
+        "failed deserialize modified the output"
+    );
+
+    // Build-compatibility mismatch.
+    CheckpointSerializationOptions otherBuild;
+    otherBuild.buildCompatibilityId = 2U;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            otherBuild,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "build-compatibility mismatch was accepted"
+    );
+
+    // Truncation.
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size() - 1U,
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "truncated checkpoint was accepted"
+    );
+
+    // Untrusted-input limits: max payload bytes.
+    CheckpointSerializationOptions tinyPayload;
+    tinyPayload.maxPayloadBytes =
+        bytes.size() - CheckpointWireHeaderSize - 1U;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            tinyPayload,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "over-limit payload was accepted"
+    );
+
+    // Untrusted-input limits: max morph / IK / string sizes.
+    CheckpointSerializationOptions tinyMorphCount;
+    tinyMorphCount.maxMorphOverrideCount = 1U;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            tinyMorphCount,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "over-limit morph override count was accepted"
+    );
+    CheckpointSerializationOptions tinyString;
+    tinyString.maxStringBytes = 4U;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            tinyString,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "over-limit override name was accepted"
+    );
+
+    // Untrusted-input limits: max rigid body count.
+    CheckpointSerializationOptions tinyBodyCount;
+    tinyBodyCount.maxRigidBodyCount = 1U;
+    Require(
+        DeserializeCheckpoint(
+            bytes.data(),
+            bytes.size(),
+            tinyBodyCount,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "over-limit body count was accepted"
+    );
+
+    // Absurd body count with a valid checksum still fails structurally
+    // before any unbounded allocation.
+    std::vector<std::uint8_t> hugeCount = bytes;
+    WriteU32Le(
+        hugeCount,
+        BodyCountFieldOffset(valid),
+        0xFFFFFFF0U
+    );
+    RecomputeCheckpointChecksum(hugeCount);
+    CheckpointSerializationOptions unlimited;
+    unlimited.maxRigidBodyCount =
+        std::numeric_limits<std::uint64_t>::max();
+    Require(
+        DeserializeCheckpoint(
+            hugeCount.data(),
+            hugeCount.size(),
+            unlimited,
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "absurd body count was accepted"
+    );
+
+    // Duplicate-field tamper detection: the top-level physicsTick must
+    // match the physics-snapshot copy even with a recomputed checksum.
+    std::vector<std::uint8_t> tickTampered = bytes;
+    WriteU64Le(
+        tickTampered,
+        static_cast<std::size_t>(CheckpointWireHeaderSize) + 4U + 8U,
+        valid.physics.physicsTick + 1U
+    );
+    RecomputeCheckpointChecksum(tickTampered);
+    Require(
+        DeserializeCheckpoint(
+            tickTampered.data(),
+            tickTampered.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "tampered top-level physicsTick was accepted"
+    );
+
+    // Duplicate-field tamper detection: the top-level asset identity must
+    // match the fingerprint copy.
+    std::vector<std::uint8_t> assetTampered = bytes;
+    WriteU64Le(
+        assetTampered,
+        TopLevelAssetIdentityOffset(valid) + 8U + 8U + 1U,
+        valid.fingerprint.asset.layoutFingerprint ^ 0x12345678ULL
+    );
+    RecomputeCheckpointChecksum(assetTampered);
+    Require(
+        DeserializeCheckpoint(
+            assetTampered.data(),
+            assetTampered.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "tampered top-level asset identity was accepted"
+    );
+
+    // NaN float payload is rejected by the codec.
+    FrameCheckpoint nanBody = valid;
+    nanBody.physics.rigidBodies[0U].linearVelocity.x =
+        std::numeric_limits<float>::quiet_NaN();
+    const std::vector<std::uint8_t> nanBytes =
+        SerializeCheckpoint(nanBody);
+    Require(
+        DeserializeCheckpoint(
+            nanBytes.data(),
+            nanBytes.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "NaN physics payload was accepted"
+    );
+
+    // Non-finite override weight is rejected by the codec.
+    FrameCheckpoint nanMorph = valid;
+    nanMorph.overrides.morphOverrides[0U].second =
+        std::numeric_limits<float>::quiet_NaN();
+    const std::vector<std::uint8_t> nanMorphBytes =
+        SerializeCheckpoint(nanMorph);
+    Require(
+        DeserializeCheckpoint(
+            nanMorphBytes.data(),
+            nanMorphBytes.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "NaN morph weight was accepted"
+    );
+
+    // Structurally inconsistent duplicate fields are rejected.
+    FrameCheckpoint inconsistent = valid;
+    inconsistent.frame = 121U;
+    const std::vector<std::uint8_t> inconsistentBytes =
+        SerializeCheckpoint(inconsistent);
+    Require(
+        DeserializeCheckpoint(
+            inconsistentBytes.data(),
+            inconsistentBytes.size(),
+            {},
+            decoded
+        ) == TimelineStatus::InvalidCheckpoint,
+        "structurally inconsistent checkpoint was accepted"
+    );
+
+    // Null / short inputs.
+    Require(
+        DeserializeCheckpoint(nullptr, 0U, {}, decoded) ==
+            TimelineStatus::InvalidCheckpoint,
+        "empty input was accepted"
+    );
+    Require(
+        DeserializeCheckpoint(bytes.data(), 0U, {}, decoded) ==
+            TimelineStatus::InvalidCheckpoint,
+        "zero-length input was accepted"
+    );
+
+    // Zero build compatibility id is invalid on serialize.
+    CheckpointSerializationOptions zeroBuild;
+    zeroBuild.buildCompatibilityId = 0U;
+    bool threw = false;
+    try
+    {
+        (void)SerializeCheckpoint(valid, zeroBuild);
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    Require(threw, "zero buildCompatibilityId did not throw");
+}
+
 int main()
 {
     int failures = 0;
@@ -2986,6 +3604,10 @@ int main()
     failures += !RunTest(
         "Determinism hash validation",
         TestDeterminismHashValidation
+    );
+    failures += !RunTest(
+        "Checkpoint wire codec",
+        TestCheckpointWireCodec
     );
     failures += !RunTest(
         "Bullet linked-body collision disable",
