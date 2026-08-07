@@ -45,6 +45,15 @@ public:
     void SetMmdPhysicsSettings(
         const MmdPhysicsRuntimeSettings& settings
     ) override;
+    TimelineStatus SetMmdPhysicsConfiguration(
+        const MmdPhysicsConfiguration& configuration
+    ) override;
+    bool GetMmdPhysicsConfiguration(
+        MmdPhysicsConfiguration& output
+    ) const override;
+    bool CapturePhysicsTraceFrame(
+        MmdPhysicsTraceFrame& output
+    ) const override;
     void ResetMmdPhysics() override;
 
     bool Initialize() override;
@@ -177,6 +186,9 @@ private:
     // Applies saba's per-body activation to match enabled (called at
     // Initialize and on SetPhysicsSettings).
     void ApplyPhysicsActivation();
+    // R1.3 A/B: applies linked-body collision and Mode 2 writeback modes
+    // from the authoritative configuration to the live Saba world.
+    void ApplyR13PhysicsProfile();
     void ApplyMmdIkOverrides() noexcept;
     void SyncPoseFromSaba();
     // R1.2A deterministic helpers. They own the exact evaluation order; the

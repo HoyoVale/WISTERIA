@@ -5,6 +5,8 @@
 #include "wisteria/runtime/checkpoint.hpp"
 #include "wisteria/animation/bone.hpp"
 #include "wisteria/animation/morph.hpp"
+#include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
+#include "wisteria/mmd/physics/mmd_physics_trace.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -15,14 +17,6 @@
 namespace wisteria
 {
 class PhysicsInstance;
-
-struct MmdPhysicsRuntimeSettings
-{
-    float fixedTimeStep = 1.0f / 120.0f;
-    int maxSubSteps = 10;
-    glm::vec3 gravity{0.0f, -98.0f, 0.0f};
-    bool enabled = true;
-};
 
 // Neutral MMD light sample (Scene-level track output). Uses the WISTERIA
 // MMD coordinate convention: color is clamped to [0,1]; position already
@@ -112,6 +106,32 @@ public:
     virtual void SetMmdPhysicsSettings(
         const MmdPhysicsRuntimeSettings& settings
     ) = 0;
+    // R1.3 Phase 0A: authoritative configuration. Apply before
+    // Initialize(); runtime profile switching is not supported in Phase 0A.
+    virtual TimelineStatus SetMmdPhysicsConfiguration(
+        const MmdPhysicsConfiguration& configuration
+    )
+    {
+        (void)configuration;
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+    virtual bool GetMmdPhysicsConfiguration(
+        MmdPhysicsConfiguration& output
+    ) const
+    {
+        (void)output;
+        return false;
+    }
+    // R1.3 Phase 0A: read-only trace observation at the current canonical
+    // boundary. The runtime fills neutral data only; JSONL I/O and diffing
+    // live in tools/trace. Backends without trace support return false.
+    virtual bool CapturePhysicsTraceFrame(
+        MmdPhysicsTraceFrame& output
+    ) const
+    {
+        (void)output;
+        return false;
+    }
     virtual void ResetMmdPhysics() = 0;
     virtual PhysicsInstance* GetMmdPhysics() noexcept = 0;
 

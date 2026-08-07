@@ -12,6 +12,13 @@ mmd/physics/             PMX/MMD 运行时适配
 MmdPhysicsRuntimePolicy  可注入的 WISTERIA 自适应策略
 ```
 
+> **状态声明（2026-08-07）**：以下 `MmdPhysicsInstance + 共享
+> PhysicsWorld + MmdPhysicsRuntimePolicy` 描述属于 **Legacy
+> WISTERIA-owned physics path**，目前不参与 `SabaMmdRuntimeModel`
+> 主运行链；保留为历史架构与未来通用 `PhysicsInstance` 参考。
+> 当前活动 MMD 物理后端为 `ModelBackendRegistry → SabaMmdBackend →
+> SabaMmdRuntimeModel`（Saba 自有 Bullet world）。
+
 详细审计与后续社区兼容路线：
 
 - `docs/architecture/PHYSICS_LAYER_AUDIT.md`
@@ -19,7 +26,10 @@ MmdPhysicsRuntimePolicy  可注入的 WISTERIA 自适应策略
 - `docs/architecture/MMD_PHYSICS_COMMUNITY_ADOPTION_PLAN.md`
 - `docs/architecture/REFACTOR_MIGRATION.md`
 
-本轮只重构边界，不改变默认人物物理行为。默认策略仍为 `wisteria-adaptive-v1`；社区兼容 preset 将在轨迹对照和单位审计完成后单独实现。
+当前活动人物物理配置为 `MmdPhysicsRuntimeSettings`（fixed step
+1/120、max substeps 10、gravity -98）。R1.3 Phase 0A 契约已冻结
+（`docs/architecture/R1_3_MMD_COMPAT_CONTRACT.md`），默认档
+`MMD_RAW`；社区兼容 preset 将在轨迹对照和单位审计完成后单独实现。
 
 ## 运行
 

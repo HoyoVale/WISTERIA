@@ -1,0 +1,112 @@
+# R1.3 Phase 0A 实现基线（2026-08-07）
+
+> R1.3 契约（Phase 0A Contract Frozen，2026-08-07）后的实现验收基线。
+> 契约：`docs/architecture/R1_3_MMD_COMPAT_CONTRACT.md`（v2 + 冻结闭合）。
+> 本文件记录 Phase 0A 第一批实现（契约 §12 第 4–9 步）与验证结果。
+
+## 1. 代码基线
+
+- 分支 `wisteria2`，提交由用户管理；本文件记录未提交改动。
+- 新增中立配置层：`include/wisteria/mmd/physics/mmd_physics_configuration.hpp`
+  + `src/mmd/physics/mmd_physics_configuration.cpp`
+- 新增单位审计：`include/wisteria/mmd/physics/mmd_physics_audit.hpp`
+  + `src/mmd/physics/mmd_physics_audit.cpp`
+- 新增 Trace 数据结构：`include/wisteria/mmd/physics/mmd_physics_trace.hpp`
+- 新增 Trace 工具层（Runtime 不做 I/O）：
+  `tools/trace/trace_jsonl.hpp/.cpp`、`tools/trace/trace_diff_main.cpp`
+- Runtime 接入：`MmdRuntimeModel` 增加
+  `SetMmdPhysicsConfiguration / GetMmdPhysicsConfiguration /
+  CapturePhysicsTraceFrame`；`SabaMmdRuntimeModel` 实现并持有唯一权威配置，
+  配置指纹升级 v2（只 Hash 有效行为，不 Hash Preset 标签）。
+- Vendored Saba 窄接口：`MMDPhysics::SetLinkedBodyCollisionMode /
+  ApplyLinkedBodyCollisionMode`，`MMDRigidBody::SetMode2PreserveTranslation`。
+
+## 2. 实现事实
+
+### 配置层（§4）
+
+- `BuildPresetConfiguration` 是普通运行唯一入口；Phase 0A 三个 Preset 全部
+  展开为 SabaBaseline（fixed step 1/120、max substeps 10、gravity -98、
+  PmxMaskOnly、PreserveAnimatedTranslation、adaptive 全关），默认档
+  `MMD_RAW`。
+- `ValidateConfiguration` 拒绝匿名身份、非法数值、Reserved 模式，以及
+  直接 Preset 中的诊断模式（FullTransformDiagnostic）。
+- `DeriveDiagnosticConfiguration` 只能从 Preset 派生并携带
+  `originPreset` 身份；Reserved 枚举（ForceEnableLinkedPairsDiagnostic、
+  StrictBoneLength）一律拒绝。
+- `ComputeEffectiveConfigurationFingerprint`（v2）：Hash backend/baseline
+  behaviour、gravity、fixed step、substeps、linked collision、Mode 2、
+  adaptive 标志；**不 Hash Preset 显示名/originPreset/profileRevision**。
+
+### Runtime 接入（§5）
+
+- `SetMmdPhysicsConfiguration` 在 Initialize 前应用；Initialize 后
+  行为切换返回 `UnsupportedReplayProfile`（标签级切换仍允许）。
+- 低层 `SetMmdPhysicsSettings` 的修改同步回权威配置。
+- 指纹 v1 中硬编码的 linked-body/compatibility 标记已替换为配置贡献。
+
+### Trace（§6）
+
+- `CapturePhysicsTraceFrame` 只读捕获当前 canonical 边界：body
+  world/interpolation/motion-state 三个变换、速度、骨骼局部/全局矩阵、
+  joint raw/violation 误差（6DOF 约束公式）、contactPairs（ground 使用
+  `UINT32_MAX` 哨兵）、三个 state hash、身份与时间线字段。
+- JSONL writer/parser 与差分 CLI 在 `tools/trace`；差分工具能定位人为注入
+  +0.001 的第一分叉（frame/body/positionError）。
+- 修复：旋转误差先归一化列向量，避免非正交基自比产生假分叉。
+
+### 单位审计（§7）
+
+- 空集合合法（available=false/count=0）；负关节下限、零角度限制、零长度
+  辅助骨均合法；modelHeight <= epsilon 与 medianBodySize <= epsilon 时
+  相关比率 available=false，禁止除零。
+
+### A/B 开关（§8）
+
+- `DisableConstraintLinkedPairs`：PMX mask 永远是基础过滤，附加
+  `!isConstraintLinked(A, B)`；通过约束 remove + add(disable=true) 应用，
+  ground 不受影响。
+- `FullTransformDiagnostic`：`DynamicAndBoneMergeMotionState` 增加
+  preserve-translation 开关；关闭时完整回写物理平移+旋转。
+
+## 3. 实现发现
+
+- **CORE 夹具 pmx_physics 的 root 骨标记为“物理后变形”**：物理写回后
+  `UpdateNodeAnimation(true)` 会用动画重新覆盖 local，因此 Mode 2 写回
+  无法通过引擎 Pose 在该夹具上观察（基线旋转同样不可见）。写回生效断言
+  使用 FULL_ASSETS 生产模型验证。
+- Trace 的 bones 记录的是引擎发布的 Pose（与 R1.2C Pose hash 一致），
+  不是 Saba 节点在物理写回瞬间的原始 global。
+
+## 4. 测试结果
+
+### 四套矩阵（Phase 0A Complete，2026-08-07）
+
+```text
+Windows CORE          CTest 5/5，unit 27/27，
+                      integration 全 PASS（含全部 R1.3 用例）
+Windows FULL_ASSETS   CTest 5/5，integration 含
+                      R1.2C IK restore 回归 + R1.3 Mode 2 writeback pose
+Linux CORE            CTest 5/5（WSL g++ 11.4 + llvmpipe）
+Linux FULL_ASSETS     CTest 5/5，integration 101.75s
+```
+
+### Linux 说明
+
+```text
+WSLg 默认的 Mesa D3D12 渲染器与 LLVM 冲突
+（"Option 'spirv-expand-step' registered more than once"）会使
+integration 在 GL 初始化处 abort。门禁以
+LIBGL_ALWAYS_SOFTWARE=1（llvmpipe）运行，与 R1.2 基线一致。
+```
+
+## 5. 未完成 / 后续
+
+- Linux 门禁须以 `LIBGL_ALWAYS_SOFTWARE=1` 运行（WSLg D3D12/LLVM 冲突）。
+- Trace joint 误差目前覆盖 6DOF 族约束（Saba 全部关节均为此类）。
+- `ForceEnableLinkedPairsDiagnostic`、`StrictBoneLength` 按契约保持
+  Reserved，未实现。
+- 跨 Profile Checkpoint 实验入口按契约 Phase 0A 不实现。
+
+**Phase 0A 完成（2026-08-07）**：Windows/Linux × CORE/FULL_ASSETS
+四套矩阵全部 CTest 5/5。下一阶段：Phase 0B 社区实现对照（单独契约）。

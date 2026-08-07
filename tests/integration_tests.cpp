@@ -1,8 +1,12 @@
 #include "test_support.hpp"
 #include "test_fixtures.hpp"
 #include "wisteria/mmd/mmd_determinism.hpp"
+#include "wisteria/mmd/physics/mmd_physics_audit.hpp"
+#include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
+#include "wisteria/mmd/physics/mmd_physics_trace.hpp"
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
+#include "trace_jsonl.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -8345,6 +8349,570 @@ void TestSabaImporterMorphTargets()
     );
 }
 
+namespace
+{
+std::unique_ptr<SabaMmdRuntimeModel> CreateConfiguredRuntime(
+    const std::filesystem::path& modelPath,
+    const MmdPhysicsConfiguration& configuration
+)
+{
+    auto runtime = std::make_unique<SabaMmdRuntimeModel>(modelPath);
+    Require(
+        runtime->SetMmdPhysicsConfiguration(configuration) ==
+            TimelineStatus::Ok,
+        "pre-initialize R1.3 configuration apply failed"
+    );
+    Require(
+        runtime->Initialize(),
+        "configured R1.3 runtime failed to initialize"
+    );
+    return runtime;
+}
+
+std::vector<MmdPhysicsTraceFrame> CaptureTraceFrames(
+    SabaMmdRuntimeModel& runtime,
+    MotionFrameIndex target
+)
+{
+    std::vector<MmdPhysicsTraceFrame> frames;
+    frames.reserve(static_cast<std::size_t>(target) + 1U);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(&runtime);
+    Require(stepper != nullptr, "runtime lost the deterministic stepper");
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed during trace capture"
+    );
+    for (MotionFrameIndex frame = 0U; frame <= target; ++frame)
+    {
+        MmdPhysicsTraceFrame trace;
+        Require(
+            runtime.CapturePhysicsTraceFrame(trace),
+            "CapturePhysicsTraceFrame failed"
+        );
+        frames.push_back(std::move(trace));
+        if (frame < target)
+        {
+            Require(
+                stepper->StepMotionFrameExact(frame + 1U, {}) ==
+                    TimelineStatus::Ok,
+                "StepMotionFrameExact failed during trace capture"
+            );
+        }
+    }
+    return frames;
+}
+
+bool IsSortedTrace(const MmdPhysicsTraceFrame& frame)
+{
+    for (std::size_t index = 1U; index < frame.bodies.size(); ++index)
+    {
+        if (frame.bodies[index].index < frame.bodies[index - 1U].index)
+            return false;
+    }
+    for (std::size_t index = 1U; index < frame.bones.size(); ++index)
+    {
+        if (frame.bones[index].index < frame.bones[index - 1U].index)
+            return false;
+    }
+    for (std::size_t index = 1U; index < frame.joints.size(); ++index)
+    {
+        if (frame.joints[index].index < frame.joints[index - 1U].index)
+            return false;
+    }
+    for (std::size_t index = 1U; index < frame.contactPairs.size(); ++index)
+    {
+        const MmdPhysicsTraceContactPair& previous =
+            frame.contactPairs[index - 1U];
+        const MmdPhysicsTraceContactPair& current =
+            frame.contactPairs[index];
+        if (current.bodyA < previous.bodyA ||
+            (current.bodyA == previous.bodyA &&
+             current.bodyB < previous.bodyB))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string TraceLines(const std::vector<MmdPhysicsTraceFrame>& frames)
+{
+    std::ostringstream output;
+    for (const MmdPhysicsTraceFrame& frame : frames)
+    {
+        Require(
+            wisteria::trace::WriteTraceFrameJson(frame, output),
+            "WriteTraceFrameJson failed"
+        );
+    }
+    return output.str();
+}
+}  // namespace
+
+void TestR13TraceReproducibleAndSchema()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const MmdPhysicsConfiguration raw =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+
+    auto first = CreateConfiguredRuntime(modelPath, raw);
+    auto second = CreateConfiguredRuntime(modelPath, raw);
+    constexpr MotionFrameIndex Target = 120U;
+    const std::vector<MmdPhysicsTraceFrame> framesA =
+        CaptureTraceFrames(*first, Target);
+    const std::vector<MmdPhysicsTraceFrame> framesB =
+        CaptureTraceFrames(*second, Target);
+    Require(
+        framesA.size() == static_cast<std::size_t>(Target) + 1U,
+        "trace frame count mismatch"
+    );
+
+    const std::string linesA = TraceLines(framesA);
+    const std::string linesB = TraceLines(framesB);
+    Require(linesA == linesB, "two from-start traces diverged");
+
+    std::istringstream parser(linesA);
+    std::string line;
+    MotionFrameIndex expectedFrame = 0U;
+    std::size_t parsed = 0U;
+    while (std::getline(parser, line))
+    {
+        if (line.empty())
+            continue;
+        MmdPhysicsTraceFrame frame;
+        Require(
+            wisteria::trace::ReadTraceFrameJson(line, frame),
+            "trace JSONL line failed to parse"
+        );
+        Require(
+            frame.traceSchemaVersion == MmdPhysicsTraceSchemaVersion,
+            "trace schema version mismatch"
+        );
+        Require(
+            frame.backendIdentity == "saba-mmd",
+            "trace backend identity mismatch"
+        );
+        Require(
+            frame.presetIdentity == "mmd-raw-v1",
+            "trace preset identity mismatch"
+        );
+        Require(
+            frame.effectiveConfigurationHash.size() == 16U,
+            "effective configuration hash is not 16 hex chars"
+        );
+        Require(
+            frame.executionProfile == "deterministic-cold-step-v1",
+            "trace execution profile mismatch"
+        );
+        Require(frame.hasMotion == false, "CORE fixture unexpectedly has VMD");
+        Require(frame.motionHash == "0000000000000000", "empty motion hash mismatch");
+        Require(frame.frame == expectedFrame, "trace frame order mismatch");
+        Require(
+            frame.physicsTick == expectedFrame * 4U,
+            "trace physicsTick mismatch"
+        );
+        Require(frame.canonical, "trace frame is not canonical");
+        Require(
+            frame.poseHash.valid &&
+                frame.physicsHash.valid &&
+                frame.vertexHash.valid,
+            "trace state hashes are not valid"
+        );
+        Require(
+            frame.poseHash.hex.size() == 16U &&
+                frame.physicsHash.hex.size() == 16U &&
+                frame.vertexHash.hex.size() == 16U,
+            "trace state hash length mismatch"
+        );
+        Require(!frame.bodies.empty(), "trace has no rigid bodies");
+        Require(!frame.bones.empty(), "trace has no bones");
+        Require(
+            IsSortedTrace(frame),
+            "trace arrays are not stably sorted"
+        );
+        bool motionStateRead = false;
+        for (const MmdPhysicsTraceBody& body : frame.bodies)
+            motionStateRead = motionStateRead || body.motionStateAvailable;
+        Require(motionStateRead, "no body exposed a motion-state transform");
+        ++expectedFrame;
+        ++parsed;
+    }
+    Require(
+        parsed == static_cast<std::size_t>(Target) + 1U,
+        "trace JSONL parsed line count mismatch"
+    );
+}
+
+void TestR13TraceDiffLocatesInjection()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateConfiguredRuntime(
+        modelPath,
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)
+    );
+    const std::vector<MmdPhysicsTraceFrame> frames =
+        CaptureTraceFrames(*runtime, 150U);
+    const std::string linesA = TraceLines(frames);
+
+    std::istringstream left(linesA);
+    std::istringstream right(linesA);
+    const wisteria::trace::TraceDiffResult identical =
+        wisteria::trace::DiffTraceStreams(left, right);
+    Require(
+        identical.identical,
+        "identical traces were reported as divergent"
+    );
+
+    std::istringstream source(linesA);
+    std::ostringstream injected;
+    std::string line;
+    while (std::getline(source, line))
+    {
+        if (line.empty())
+            continue;
+        MmdPhysicsTraceFrame frame;
+        Require(
+            wisteria::trace::ReadTraceFrameJson(line, frame),
+            "trace line failed to parse during injection"
+        );
+        if (frame.frame == 150U && !frame.bodies.empty())
+        {
+            frame.bodies[0U].worldTransform.position.x += 0.001f;
+            Require(
+                wisteria::trace::WriteTraceFrameJson(frame, injected),
+                "injected trace line failed to write"
+            );
+        }
+        else
+        {
+            injected << line << '\n';
+        }
+    }
+
+    std::istringstream leftInjected(linesA);
+    std::istringstream rightInjected(injected.str());
+    const wisteria::trace::TraceDiffResult result =
+        wisteria::trace::DiffTraceStreams(leftInjected, rightInjected);
+    Require(!result.identical, "injected trace was reported identical");
+    Require(result.firstFound, "diff tool did not locate a first divergence");
+    Require(
+        result.firstFrame == 150U && result.firstBody == 0U,
+        "diff tool located the wrong first divergence"
+    );
+    Require(
+        std::abs(result.firstPositionError - 0.001f) < 1.0e-4f,
+        "diff tool reported the wrong position error"
+    );
+    const std::string formatted = wisteria::trace::FormatTraceDiff(result);
+    Require(
+        formatted.find("First divergence: frame=150 body=0") !=
+            std::string::npos,
+        "formatted diff misses the first divergence"
+    );
+}
+
+void TestR13ThreePresetsThreeHundredFrames()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    constexpr MotionFrameIndex Target = 300U;
+
+    const MmdPhysicsPreset presets[] = {
+        MmdPhysicsPreset::MmdRaw,
+        MmdPhysicsPreset::MmdCommunity,
+        MmdPhysicsPreset::WisteriaAdaptive
+    };
+    std::vector<MmdPhysicsTraceFrame> frames;
+    std::vector<std::string> identities;
+    std::vector<std::string> hashes;
+    for (const MmdPhysicsPreset preset : presets)
+    {
+        auto runtime = CreateConfiguredRuntime(
+            modelPath,
+            BuildPresetConfiguration(preset)
+        );
+        const std::vector<MmdPhysicsTraceFrame> trace =
+            CaptureTraceFrames(*runtime, Target);
+        frames.push_back(trace.back());
+        identities.push_back(trace.back().presetIdentity);
+        hashes.push_back(trace.back().effectiveConfigurationHash);
+    }
+
+    Require(
+        identities[0] == "mmd-raw-v1" &&
+            identities[1] == "mmd-community-v1" &&
+            identities[2] == "wisteria-adaptive-v1",
+        "preset trace identities mismatch"
+    );
+    // Phase 0A: behaviour-identical presets share one effective hash and one
+    // physics result.
+    Require(
+        hashes[0] == hashes[1] && hashes[1] == hashes[2],
+        "behaviour-identical presets produced different effective hashes"
+    );
+    Require(
+        frames[0].physicsHash.hex == frames[1].physicsHash.hex &&
+            frames[1].physicsHash.hex == frames[2].physicsHash.hex,
+        "behaviour-identical presets produced different physics results"
+    );
+    for (const MmdPhysicsTraceFrame& frame : frames)
+    {
+        Require(frame.canonical, "preset trace frame is not canonical");
+        Require(
+            frame.frame == Target &&
+                frame.physicsTick == Target * 4U,
+            "preset trace frame timeline mismatch"
+        );
+    }
+}
+
+void TestR13LinkedBodyAbSmoke()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const MmdPhysicsConfiguration raw =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+
+    MmdPhysicsDiagnosticOverrides overrides;
+    overrides.linkedBodyCollision =
+        MmdLinkedBodyCollisionMode::DisableConstraintLinkedPairs;
+    MmdPhysicsConfiguration linked;
+    Require(
+        DeriveDiagnosticConfiguration(raw, overrides, linked) ==
+            TimelineStatus::Ok,
+        "deriving DisableConstraintLinkedPairs failed"
+    );
+
+    auto first = CreateConfiguredRuntime(modelPath, linked);
+    auto second = CreateConfiguredRuntime(modelPath, linked);
+    const std::vector<MmdPhysicsTraceFrame> traceA =
+        CaptureTraceFrames(*first, 300U);
+    const std::vector<MmdPhysicsTraceFrame> traceB =
+        CaptureTraceFrames(*second, 300U);
+    Require(
+        traceA.back().canonical && traceB.back().canonical,
+        "linked-body A/B replay did not reach a canonical boundary"
+    );
+    Require(
+        traceA.back().physicsHash.hex == traceB.back().physicsHash.hex,
+        "linked-body mode replay is not deterministic"
+    );
+    Require(
+        traceA.back().effectiveConfigurationHash !=
+            FormatTraceHex(
+                ComputeEffectiveConfigurationFingerprint(raw)
+            ),
+        "linked-body override did not change the effective hash"
+    );
+}
+
+void TestR13Mode2AbSmoke()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const MmdPhysicsConfiguration raw =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+
+    MmdPhysicsDiagnosticOverrides overrides;
+    overrides.mode2 = MmdMode2WritebackMode::FullTransformDiagnostic;
+    MmdPhysicsConfiguration diagnostic;
+    Require(
+        DeriveDiagnosticConfiguration(raw, overrides, diagnostic) ==
+            TimelineStatus::Ok,
+        "deriving FullTransformDiagnostic failed"
+    );
+
+    // CORE smoke: both modes replay deterministically and the effective
+    // configuration hash changes. The pmx_physics root bone is marked
+    // deform-after-physics, so the writeback cannot be observed through the
+    // engine pose on this fixture; the pose-level assertion runs under
+    // FULL_ASSETS where Mode 2 bodies drive visible skeleton translation.
+    auto baseline = CreateConfiguredRuntime(modelPath, raw);
+    auto full = CreateConfiguredRuntime(modelPath, diagnostic);
+    const std::vector<MmdPhysicsTraceFrame> baselineTrace =
+        CaptureTraceFrames(*baseline, 300U);
+    const std::vector<MmdPhysicsTraceFrame> fullTrace =
+        CaptureTraceFrames(*full, 300U);
+    Require(
+        fullTrace.back().canonical,
+        "Mode 2 diagnostic replay did not reach a canonical boundary"
+    );
+    Require(
+        baselineTrace.back().physicsHash.hex ==
+            fullTrace.back().physicsHash.hex,
+        "Mode 2 writeback mode changed the simulated physics state"
+    );
+    Require(
+        fullTrace.back().effectiveConfigurationHash !=
+            FormatTraceHex(
+                ComputeEffectiveConfigurationFingerprint(raw)
+            ),
+        "Mode 2 override did not change the effective hash"
+    );
+}
+
+void TestR13Mode2WritebackPose()
+{
+    RequireFullAssetsTier();
+    const MmdPhysicsConfiguration raw =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    MmdPhysicsDiagnosticOverrides overrides;
+    overrides.mode2 = MmdMode2WritebackMode::FullTransformDiagnostic;
+    MmdPhysicsConfiguration diagnostic;
+    Require(
+        DeriveDiagnosticConfiguration(raw, overrides, diagnostic) ==
+            TimelineStatus::Ok,
+        "deriving FullTransformDiagnostic failed"
+    );
+    const std::filesystem::path productionPath =
+        FixturePath("production-pmx-yeshiguang");
+    RequireFullAsset("production-pmx-yeshiguang");
+    auto productionBaseline = CreateConfiguredRuntime(productionPath, raw);
+    auto productionFull = CreateConfiguredRuntime(productionPath, diagnostic);
+    const std::vector<MmdPhysicsTraceFrame> productionBaselineTrace =
+        CaptureTraceFrames(*productionBaseline, 300U);
+    const std::vector<MmdPhysicsTraceFrame> productionFullTrace =
+        CaptureTraceFrames(*productionFull, 300U);
+    float maxBoneDiff = 0.0f;
+    const std::size_t sharedBones = std::min(
+        productionBaselineTrace.back().bones.size(),
+        productionFullTrace.back().bones.size()
+    );
+    for (std::size_t index = 0U; index < sharedBones; ++index)
+    {
+        for (std::size_t element = 0U; element < 16U; ++element)
+        {
+            maxBoneDiff = std::max(
+                maxBoneDiff,
+                std::abs(
+                    productionBaselineTrace.back()
+                        .bones[index]
+                        .globalMatrix[element] -
+                    productionFullTrace.back()
+                        .bones[index]
+                        .globalMatrix[element]
+                )
+            );
+        }
+    }
+    Require(
+        maxBoneDiff > 1.0e-4f,
+        "FullTransformDiagnostic did not change the production skeleton pose"
+    );
+}
+
+void TestR13UnitAuditOnFixture()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.mmdPhysics.has_value() && imported.skeleton.has_value(),
+        "pmx-physics fixture import lost physics or skeleton data"
+    );
+
+    const MmdPhysicsAuditResult audit = RunMmdPhysicsAudit(
+        *imported.mmdPhysics,
+        imported.skeleton->Bones(),
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)
+    );
+    Require(
+        audit.rigidBodySize.available &&
+            audit.rigidBodySize.count ==
+                imported.mmdPhysics->RigidBodyCount() &&
+            audit.jointLinearRange.available &&
+            audit.jointLinearRange.count ==
+                imported.mmdPhysics->JointCount(),
+        "fixture audit lost rigid-body or joint ranges"
+    );
+    Require(
+        std::isfinite(audit.gravityMagnitude) &&
+            std::isfinite(audit.fixedTimeStep) &&
+            std::isfinite(audit.rigidBodySize.median) &&
+            std::isfinite(audit.jointLinearRange.median) &&
+            std::isfinite(audit.jointAngularRangeDeg.median),
+        "fixture audit produced non-finite values"
+    );
+    Require(
+        audit.gravityAvailable &&
+            NearlyEqual(audit.gravityMagnitude, 98.0f) &&
+            NearlyEqual(audit.fixedTimeStep, 1.0f / 120.0f),
+        "fixture audit gravity or timestep mismatch"
+    );
+    // No model bounds supplied: height-derived metrics must stay unavailable
+    // instead of dividing by zero.
+    Require(
+        !audit.modelHeightAvailable &&
+            !audit.gravityPerModelHeightAvailable &&
+            !audit.shapeMarginRatioAvailable,
+        "fixture audit reported ratios without required inputs"
+    );
+}
+
+void TestR13MmdPhysicsConfigurationRuntime()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+
+    // Phase 0A: apply the authoritative configuration before Initialize().
+    SabaMmdRuntimeModel runtime(modelPath);
+    const MmdPhysicsConfiguration raw =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    Require(
+        runtime.SetMmdPhysicsConfiguration(raw) == TimelineStatus::Ok,
+        "pre-initialize MMD_RAW configuration apply failed"
+    );
+    MmdPhysicsConfiguration readBack;
+    Require(
+        runtime.GetMmdPhysicsConfiguration(readBack),
+        "GetMmdPhysicsConfiguration failed"
+    );
+    Require(
+        FormatConfigurationIdentity(readBack) == "mmd-raw-v1",
+        "read-back configuration identity mismatch"
+    );
+    Require(
+        runtime.Initialize(),
+        "Saba runtime failed to initialize with R1.3 configuration"
+    );
+
+    // Label-only switch (behaviour-identical) after Initialize stays valid.
+    const MmdPhysicsConfiguration community =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdCommunity);
+    Require(
+        runtime.SetMmdPhysicsConfiguration(community) == TimelineStatus::Ok,
+        "label-only profile switch was rejected"
+    );
+    Require(
+        runtime.GetMmdPhysicsConfiguration(readBack),
+        "GetMmdPhysicsConfiguration failed after label switch"
+    );
+    Require(
+        FormatConfigurationIdentity(readBack) == "mmd-community-v1",
+        "label switch identity mismatch"
+    );
+
+    // Phase 0A forbids switching effective behaviour of a live runtime.
+    MmdPhysicsConfiguration changed = community;
+    changed.runtime.gravity.y = -9.8f;
+    Require(
+        runtime.SetMmdPhysicsConfiguration(changed) ==
+            TimelineStatus::UnsupportedReplayProfile,
+        "live behaviour switch was accepted"
+    );
+
+    // Anonymous configurations are rejected at the runtime entry too.
+    MmdPhysicsConfiguration anonymous;
+    anonymous.identity.backend.clear();
+    Require(
+        runtime.SetMmdPhysicsConfiguration(anonymous) ==
+            TimelineStatus::InvalidState,
+        "anonymous configuration was accepted by the runtime"
+    );
+}
+
 }
 
 int main()
@@ -8663,6 +9231,38 @@ int main()
     failures += !RunTest(
         "R1.2C IK override restore when available",
         TestR12CIkOverrideRestoreWhenAvailable
+    );
+    failures += !RunTest(
+        "R1.3 config apply on Saba runtime",
+        TestR13MmdPhysicsConfigurationRuntime
+    );
+    failures += !RunTest(
+        "R1.3 trace reproducible and schema",
+        TestR13TraceReproducibleAndSchema
+    );
+    failures += !RunTest(
+        "R1.3 trace diff locates injection",
+        TestR13TraceDiffLocatesInjection
+    );
+    failures += !RunTest(
+        "R1.3 three presets 300 frames",
+        TestR13ThreePresetsThreeHundredFrames
+    );
+    failures += !RunTest(
+        "R1.3 linked-body A/B smoke",
+        TestR13LinkedBodyAbSmoke
+    );
+    failures += !RunTest(
+        "R1.3 Mode 2 A/B smoke",
+        TestR13Mode2AbSmoke
+    );
+    failures += !RunTest(
+        "R1.3 Mode 2 writeback pose",
+        TestR13Mode2WritebackPose
+    );
+    failures += !RunTest(
+        "R1.3 unit audit on fixture",
+        TestR13UnitAuditOnFixture
     );
     failures += !RunTest(
         "R1 project MMD instance",

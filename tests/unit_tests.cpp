@@ -2,6 +2,9 @@
 
 #include <glm/gtc/constants.hpp>
 #include "wisteria/mmd/mmd_determinism.hpp"
+#include "wisteria/mmd/physics/mmd_physics_audit.hpp"
+#include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
+#include "trace_jsonl.hpp"
 
 #include <limits>
 
@@ -2078,6 +2081,540 @@ void TestMaterialShadowFlags()
     );
 }
 
+void TestMmdPhysicsConfigurationPresets()
+{
+    const MmdPhysicsConfiguration raw =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    const MmdPhysicsConfiguration community =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdCommunity);
+    const MmdPhysicsConfiguration adaptive =
+        BuildPresetConfiguration(MmdPhysicsPreset::WisteriaAdaptive);
+
+    Require(
+        ValidateConfiguration(raw),
+        "MMD_RAW preset configuration is invalid"
+    );
+    Require(
+        ValidateConfiguration(community),
+        "MMD_COMMUNITY preset configuration is invalid"
+    );
+    Require(
+        ValidateConfiguration(adaptive),
+        "WISTERIA_ADAPTIVE preset configuration is invalid"
+    );
+    Require(
+        FormatConfigurationIdentity(raw) == "mmd-raw-v1",
+        "MMD_RAW identity mismatch"
+    );
+    Require(
+        FormatConfigurationIdentity(community) == "mmd-community-v1",
+        "MMD_COMMUNITY identity mismatch"
+    );
+    Require(
+        FormatConfigurationIdentity(adaptive) == "wisteria-adaptive-v1",
+        "WISTERIA_ADAPTIVE identity mismatch"
+    );
+
+    // SabaBaseline v1 defaults.
+    Require(
+        NearlyEqual(raw.runtime.fixedTimeStep, 1.0f / 120.0f),
+        "preset fixedTimeStep is not 1/120"
+    );
+    Require(raw.runtime.maxSubSteps == 10, "preset maxSubSteps is not 10");
+    Require(
+        NearlyEqual(raw.runtime.gravity, glm::vec3(0.0f, -98.0f, 0.0f)),
+        "preset gravity is not -98"
+    );
+    Require(raw.runtime.enabled, "preset physics must be enabled");
+    Require(
+        raw.compatibility.linkedBodyCollision ==
+            MmdLinkedBodyCollisionMode::PmxMaskOnly,
+        "preset linked-body mode is not PmxMaskOnly"
+    );
+    Require(
+        raw.compatibility.mode2 ==
+            MmdMode2WritebackMode::PreserveAnimatedTranslation,
+        "preset Mode 2 mode is not PreserveAnimatedTranslation"
+    );
+    Require(
+        !raw.adaptive.recoveryEnabled &&
+            !raw.adaptive.adaptiveCcdEnabled &&
+            !raw.adaptive.adaptiveMarginEnabled &&
+            !raw.adaptive.localChainEnhancementsEnabled,
+        "Phase 0A adaptive policy must be fully disabled"
+    );
+
+    // Phase 0A: all presets are behaviour-identical, so the effective
+    // fingerprint must not change with the display label (R1.3 §5).
+    const std::uint64_t rawHash =
+        ComputeEffectiveConfigurationFingerprint(raw);
+    Require(
+        rawHash == ComputeEffectiveConfigurationFingerprint(community),
+        "preset label changed the effective configuration hash"
+    );
+    Require(
+        rawHash == ComputeEffectiveConfigurationFingerprint(adaptive),
+        "preset label changed the effective configuration hash"
+    );
+}
+
+void TestMmdPhysicsConfigurationValidation()
+{
+    MmdPhysicsConfiguration anonymous;
+    anonymous.identity.backend.clear();
+    anonymous.identity.baseline.clear();
+    Require(
+        !ValidateConfiguration(anonymous),
+        "anonymous configuration was accepted"
+    );
+
+    MmdPhysicsConfiguration zeroStep =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    zeroStep.runtime.fixedTimeStep = 0.0f;
+    Require(
+        !ValidateConfiguration(zeroStep),
+        "zero fixedTimeStep was accepted"
+    );
+
+    MmdPhysicsConfiguration nanGravity =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    nanGravity.runtime.gravity.y = std::numeric_limits<float>::quiet_NaN();
+    Require(
+        !ValidateConfiguration(nanGravity),
+        "NaN gravity was accepted"
+    );
+
+    MmdPhysicsConfiguration reservedLinked =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    reservedLinked.compatibility.linkedBodyCollision =
+        MmdLinkedBodyCollisionMode::ForceEnableLinkedPairsDiagnostic;
+    Require(
+        !ValidateConfiguration(reservedLinked),
+        "Reserved linked-body diagnostic mode was accepted"
+    );
+
+    MmdPhysicsConfiguration reservedMode2 =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    reservedMode2.compatibility.mode2 =
+        MmdMode2WritebackMode::StrictBoneLength;
+    Require(
+        !ValidateConfiguration(reservedMode2),
+        "Reserved StrictBoneLength mode was accepted"
+    );
+
+    MmdPhysicsConfiguration directDiagnostic =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    directDiagnostic.compatibility.mode2 =
+        MmdMode2WritebackMode::FullTransformDiagnostic;
+    Require(
+        !ValidateConfiguration(directDiagnostic),
+        "diagnostic Mode 2 accepted in a direct preset profile"
+    );
+
+    MmdPhysicsConfiguration badOrigin =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    badOrigin.identity.originPreset = "not-a-preset";
+    Require(
+        !ValidateConfiguration(badOrigin),
+        "unknown originPreset was accepted"
+    );
+}
+
+void TestMmdPhysicsConfigurationDerivation()
+{
+    const MmdPhysicsConfiguration base =
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+    const std::uint64_t baseHash =
+        ComputeEffectiveConfigurationFingerprint(base);
+
+    MmdPhysicsDiagnosticOverrides linkedOverrides;
+    linkedOverrides.linkedBodyCollision =
+        MmdLinkedBodyCollisionMode::DisableConstraintLinkedPairs;
+    MmdPhysicsConfiguration derived;
+    Require(
+        DeriveDiagnosticConfiguration(base, linkedOverrides, derived) ==
+            TimelineStatus::Ok,
+        "deriving DisableConstraintLinkedPairs failed"
+    );
+    Require(
+        derived.compatibility.linkedBodyCollision ==
+            MmdLinkedBodyCollisionMode::DisableConstraintLinkedPairs,
+        "linked-body override was not applied"
+    );
+    Require(
+        derived.compatibility.mode2 == base.compatibility.mode2,
+        "unrelated compatibility field changed during derivation"
+    );
+    Require(
+        derived.identity.originPreset == "mmd-raw",
+        "derived originPreset mismatch"
+    );
+    Require(
+        FormatConfigurationIdentity(derived) == "custom-from-mmd-raw-v1",
+        "derived identity mismatch"
+    );
+    Require(
+        ValidateConfiguration(derived),
+        "derived diagnostic configuration is invalid"
+    );
+    Require(
+        ComputeEffectiveConfigurationFingerprint(derived) != baseHash,
+        "behaviour override did not change the effective hash"
+    );
+
+    MmdPhysicsDiagnosticOverrides mode2Overrides;
+    mode2Overrides.mode2 = MmdMode2WritebackMode::FullTransformDiagnostic;
+    MmdPhysicsConfiguration mode2Derived;
+    Require(
+        DeriveDiagnosticConfiguration(base, mode2Overrides, mode2Derived) ==
+            TimelineStatus::Ok,
+        "deriving FullTransformDiagnostic failed"
+    );
+    Require(
+        ValidateConfiguration(mode2Derived),
+        "Mode 2 diagnostic derived configuration is invalid"
+    );
+
+    MmdPhysicsDiagnosticOverrides reservedOverrides;
+    reservedOverrides.linkedBodyCollision =
+        MmdLinkedBodyCollisionMode::ForceEnableLinkedPairsDiagnostic;
+    MmdPhysicsConfiguration untouched = base;
+    Require(
+        DeriveDiagnosticConfiguration(base, reservedOverrides, untouched) ==
+            TimelineStatus::InvalidState,
+        "Reserved linked-body diagnostic derivation was accepted"
+    );
+    Require(
+        untouched.identity.originPreset.empty(),
+        "failed derivation modified the output configuration"
+    );
+
+    MmdPhysicsConfiguration invalidBase;
+    invalidBase.identity.backend.clear();
+    MmdPhysicsDiagnosticOverrides emptyOverrides;
+    Require(
+        DeriveDiagnosticConfiguration(
+            invalidBase,
+            emptyOverrides,
+            untouched
+        ) == TimelineStatus::InvalidState,
+        "derivation from an invalid base was accepted"
+    );
+
+    Require(
+        ComputeEffectiveConfigurationFingerprint(base) == baseHash,
+        "derivation mutated the base configuration"
+    );
+}
+
+void TestMmdPhysicsTraceJsonlRoundTrip()
+{
+    MmdPhysicsTraceFrame frame;
+    frame.presetIdentity = "mmd-raw-v1";
+    frame.effectiveConfigurationHash =
+        FormatTraceHex(0x0123456789ABCDEFULL);
+    frame.modelHash = FormatTraceHex(0x1111ULL);
+    frame.motionHash = FormatTraceHex(0x2222ULL);
+    frame.hasMotion = false;
+    frame.frame = 7U;
+    frame.physicsTick = 28U;
+    frame.canonical = true;
+    frame.poseHash.hex = "0123456789abcdef";
+    frame.poseHash.valid = true;
+    frame.physicsHash.hex = "fedcba9876543210";
+    frame.physicsHash.valid = true;
+    frame.vertexHash.hex = "0000000000000001";
+    frame.vertexHash.valid = true;
+
+    MmdPhysicsTraceBody body;
+    body.index = 0U;
+    body.mode = PmxRigidBodyMode::PhysicsWithBone;
+    body.worldTransform.position = glm::vec3(1.0f, 2.0f, 3.0f);
+    body.worldTransform.rotationBasis = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    body.interpolationWorldTransform.position =
+        glm::vec3(0.5f, 2.0f, 3.0f);
+    body.motionStateTransform.position = glm::vec3(1.0f, 2.0f, 3.0f);
+    body.motionStateAvailable = true;
+    body.linearVelocity = glm::vec3(0.1f, -0.2f, 0.3f);
+    body.angularVelocity = glm::vec3(0.0f, 0.5f, 0.0f);
+    frame.bodies.push_back(body);
+
+    MmdPhysicsTraceBone bone;
+    bone.index = 3U;
+    bone.globalMatrix[12] = 42.0f;
+    frame.bones.push_back(bone);
+
+    MmdPhysicsTraceJoint joint;
+    joint.index = 1U;
+    joint.rawLinearError = 0.02f;
+    joint.linearViolation = 0.0f;
+    joint.rawAngularErrorDeg = 1.3f;
+    joint.angularViolationDeg = 0.0f;
+    frame.joints.push_back(joint);
+
+    MmdPhysicsTraceContactPair pair;
+    pair.bodyA = 4U;
+    pair.bodyB = 2U;
+    pair.pointCount = 2;
+    pair.maxPenetration = -0.015f;
+    pair.normalImpulse = 1.72f;
+    frame.contactPairs.push_back(pair);
+    frame.events.push_back("reset");
+
+    std::ostringstream output;
+    Require(
+        wisteria::trace::WriteTraceFrameJson(frame, output),
+        "trace JSONL write failed"
+    );
+    MmdPhysicsTraceFrame read;
+    Require(
+        wisteria::trace::ReadTraceFrameJson(output.str(), read),
+        "trace JSONL parse failed"
+    );
+    Require(
+        read.traceSchemaVersion == frame.traceSchemaVersion &&
+            read.backendIdentity == frame.backendIdentity &&
+            read.presetIdentity == frame.presetIdentity &&
+            read.effectiveConfigurationHash ==
+                frame.effectiveConfigurationHash &&
+            read.executionProfile == frame.executionProfile &&
+            read.modelHash == frame.modelHash &&
+            read.motionHash == frame.motionHash &&
+            read.hasMotion == frame.hasMotion &&
+            read.frame == frame.frame &&
+            read.physicsTick == frame.physicsTick &&
+            read.canonical == frame.canonical,
+        "trace scalar fields did not round-trip"
+    );
+    Require(
+        read.poseHash.hex == frame.poseHash.hex &&
+            read.poseHash.valid == frame.poseHash.valid &&
+            read.physicsHash.hex == frame.physicsHash.hex &&
+            read.physicsHash.valid == frame.physicsHash.valid &&
+            read.vertexHash.hex == frame.vertexHash.hex &&
+            read.vertexHash.valid == frame.vertexHash.valid,
+        "trace state hashes did not round-trip"
+    );
+    Require(
+        read.bodies.size() == 1U && read.bones.size() == 1U &&
+            read.joints.size() == 1U &&
+            read.contactPairs.size() == 1U &&
+            read.events.size() == 1U,
+        "trace array sizes did not round-trip"
+    );
+    Require(
+        read.bodies[0].index == 0U &&
+            read.bodies[0].mode == PmxRigidBodyMode::PhysicsWithBone &&
+            NearlyEqual(read.bodies[0].worldTransform.position, body.worldTransform.position) &&
+            read.bodies[0].worldTransform.rotationBasis ==
+                body.worldTransform.rotationBasis &&
+            NearlyEqual(
+                read.bodies[0].interpolationWorldTransform.position,
+                body.interpolationWorldTransform.position
+            ) &&
+            NearlyEqual(
+                read.bodies[0].motionStateTransform.position,
+                body.motionStateTransform.position
+            ) &&
+            read.bodies[0].motionStateAvailable &&
+            NearlyEqual(read.bodies[0].linearVelocity, body.linearVelocity) &&
+            NearlyEqual(
+                read.bodies[0].angularVelocity,
+                body.angularVelocity
+            ),
+        "trace body fields did not round-trip"
+    );
+    Require(
+        read.bones[0].index == 3U &&
+            NearlyEqual(read.bones[0].globalMatrix[12], 42.0f),
+        "trace bone fields did not round-trip"
+    );
+    Require(
+        read.joints[0].index == 1U &&
+            NearlyEqual(read.joints[0].rawLinearError, 0.02f) &&
+            NearlyEqual(read.joints[0].rawAngularErrorDeg, 1.3f),
+        "trace joint fields did not round-trip"
+    );
+    Require(
+        read.contactPairs[0].bodyA == 4U &&
+            read.contactPairs[0].bodyB == 2U &&
+            read.contactPairs[0].pointCount == 2 &&
+            NearlyEqual(
+                read.contactPairs[0].maxPenetration,
+                -0.015f
+            ) &&
+            NearlyEqual(read.contactPairs[0].normalImpulse, 1.72f),
+        "trace contact fields did not round-trip"
+    );
+    Require(read.events[0] == "reset", "trace events did not round-trip");
+}
+
+void TestMmdPhysicsAudit()
+{
+    std::vector<MmdRigidBodyDefinition> bodies;
+    MmdRigidBodyDefinition sphere;
+    sphere.name = "sphere";
+    sphere.shape = MmdRigidBodyShape::Sphere;
+    sphere.size = glm::vec3(0.5f, 0.0f, 0.0f);
+    bodies.push_back(sphere);
+    MmdRigidBodyDefinition box;
+    box.name = "box";
+    box.shape = MmdRigidBodyShape::Box;
+    box.size = glm::vec3(1.0f, 2.0f, 0.5f);
+    bodies.push_back(box);
+    MmdRigidBodyDefinition capsule;
+    capsule.name = "capsule";
+    capsule.shape = MmdRigidBodyShape::Capsule;
+    capsule.size = glm::vec3(0.25f, 1.0f, 0.0f);
+    bodies.push_back(capsule);
+
+    std::vector<MmdJointDefinition> joints;
+    MmdJointDefinition jointA;
+    jointA.name = "joint-a";
+    jointA.bodyA = 0U;
+    jointA.bodyB = 1U;
+    jointA.linearLower = glm::vec3(0.0f);
+    jointA.linearUpper = glm::vec3(1.0f, 0.0f, 0.0f);
+    joints.push_back(jointA);
+    MmdJointDefinition jointB;
+    jointB.name = "joint-b";
+    jointB.bodyA = 1U;
+    jointB.bodyB = 2U;
+    jointB.linearLower = glm::vec3(-2.0f, -1.0f, -0.5f);
+    jointB.linearUpper = glm::vec3(2.0f, 1.0f, 0.5f);
+    jointB.angularLower = glm::vec3(-1.0f, 0.0f, 0.0f);
+    jointB.angularUpper = glm::vec3(1.0f, 0.0f, 0.0f);
+    joints.push_back(jointB);
+    MmdJointDefinition jointZero;
+    jointZero.name = "joint-zero";
+    jointZero.bodyA = 0U;
+    jointZero.bodyB = 2U;
+    joints.push_back(jointZero);
+    MmdPhysicsAsset asset(std::move(bodies), std::move(joints));
+
+    std::vector<Bone> bones(4U);
+    bones[0].name = "root";
+    bones[1].name = "child1";
+    bones[1].parentIndex = 0U;
+    bones[1].bindLocalMatrix =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    bones[2].name = "child2";
+    bones[2].parentIndex = 1U;
+    bones[2].bindLocalMatrix =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f));
+    bones[3].name = "child3";
+    bones[3].parentIndex = 0U;
+    bones[3].bindLocalMatrix =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f));
+
+    MmdPhysicsAuditBounds bounds;
+    bounds.available = true;
+    bounds.min = glm::vec3(0.0f);
+    bounds.max = glm::vec3(1.0f);
+    MmdPhysicsAuditOptions options;
+    options.collisionMargin = 0.05f;
+
+    const MmdPhysicsAuditResult audit = RunMmdPhysicsAudit(
+        asset,
+        bones,
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw),
+        bounds,
+        options
+    );
+    Require(
+        audit.modelHeightAvailable &&
+            NearlyEqual(audit.modelHeight, 1.0f),
+        "audit model height mismatch"
+    );
+    Require(
+        audit.boneLength.available &&
+            audit.boneLength.count == 3U &&
+            audit.boneLength.zeroCount == 1U &&
+            NearlyEqual(audit.boneLength.minPositive, 1.0f) &&
+            NearlyEqual(audit.boneLength.median, 1.0f) &&
+            NearlyEqual(audit.boneLength.max, 2.0f),
+        "audit bone length statistics mismatch"
+    );
+    Require(
+        audit.rigidBodySize.available &&
+            audit.rigidBodySize.count == 3U &&
+            NearlyEqual(audit.rigidBodySize.minPositive, 1.0f) &&
+            NearlyEqual(audit.rigidBodySize.median, 1.5f) &&
+            NearlyEqual(audit.rigidBodySize.max, 2.0f),
+        "audit rigid body size statistics mismatch"
+    );
+    Require(
+        audit.jointLinearRange.available &&
+            audit.jointLinearRange.count == 3U &&
+            audit.jointLinearRange.zeroCount == 1U &&
+            NearlyEqual(audit.jointLinearRange.minPositive, 1.0f),
+        "audit joint linear range mismatch"
+    );
+    Require(
+        audit.jointAngularRangeDeg.available &&
+            audit.jointAngularRangeDeg.count == 3U &&
+            audit.jointAngularRangeDeg.zeroCount == 2U &&
+            NearlyEqual(
+                audit.jointAngularRangeDeg.minPositive,
+                glm::degrees(2.0f)
+            ),
+        "audit joint angular range mismatch"
+    );
+    Require(
+        audit.gravityAvailable &&
+            NearlyEqual(audit.gravityMagnitude, 98.0f) &&
+            audit.gravityPerModelHeightAvailable &&
+            NearlyEqual(audit.gravityPerModelHeight, 98.0f),
+        "audit gravity metrics mismatch"
+    );
+    Require(
+        NearlyEqual(audit.fixedTimeStep, 1.0f / 120.0f),
+        "audit fixedTimeStep mismatch"
+    );
+    Require(
+        audit.shapeMarginRatioAvailable &&
+            NearlyEqual(
+                audit.shapeMarginPerMedianBodySize,
+                0.05f / 1.5f
+            ),
+        "audit shape margin ratio mismatch"
+    );
+
+    // Degenerate model height: no division by zero, ratio stays unavailable.
+    MmdPhysicsAuditBounds degenerate = bounds;
+    degenerate.max = degenerate.min;
+    const MmdPhysicsAuditResult degenerateAudit = RunMmdPhysicsAudit(
+        asset,
+        bones,
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw),
+        degenerate,
+        options
+    );
+    Require(
+        !degenerateAudit.modelHeightAvailable &&
+            !degenerateAudit.gravityPerModelHeightAvailable,
+        "degenerate model height produced a ratio"
+    );
+
+    const MmdPhysicsAsset empty(
+        std::vector<MmdRigidBodyDefinition>{},
+        std::vector<MmdJointDefinition>{}
+    );
+    const MmdPhysicsAuditResult emptyAudit = RunMmdPhysicsAudit(
+        empty,
+        std::span<const Bone>{},
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)
+    );
+    Require(
+        !emptyAudit.boneLength.available &&
+            !emptyAudit.rigidBodySize.available &&
+            !emptyAudit.jointLinearRange.available &&
+            !emptyAudit.jointAngularRangeDeg.available &&
+            !emptyAudit.shapeMarginRatioAvailable,
+        "empty audit reported unavailable data as available"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -2132,6 +2669,26 @@ int main()
     failures += !RunTest(
         "Determinism hash validation",
         TestDeterminismHashValidation
+    );
+    failures += !RunTest(
+        "MMD physics configuration presets",
+        TestMmdPhysicsConfigurationPresets
+    );
+    failures += !RunTest(
+        "MMD physics configuration validation",
+        TestMmdPhysicsConfigurationValidation
+    );
+    failures += !RunTest(
+        "MMD physics configuration derivation",
+        TestMmdPhysicsConfigurationDerivation
+    );
+    failures += !RunTest(
+        "MMD physics trace JSONL round trip",
+        TestMmdPhysicsTraceJsonlRoundTrip
+    );
+    failures += !RunTest(
+        "MMD physics unit audit",
+        TestMmdPhysicsAudit
     );
     failures += !RunTest("Morph runtime", TestMorphRuntime);
     failures += !RunTest(

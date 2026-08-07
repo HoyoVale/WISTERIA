@@ -37,6 +37,14 @@ namespace saba
 
 	class MMDMotionState;
 
+	// R1.3 linked-body collision A/B (default keeps the Saba baseline:
+	// PMX mask only, no Bullet linked-body disable).
+	enum class MMDLinkedBodyCollisionMode
+	{
+		PmxMaskOnly,
+		DisableConstraintLinkedPairs,
+	};
+
 	class MMDRigidBody
 	{
 	public:
@@ -71,6 +79,11 @@ namespace saba
 		void SetActivation(bool activation);
 		void ResetTransform();
 		void Reset(MMDPhysics* physics);
+		// R1.3 Mode 2 A/B: false makes the merged motion state write the
+		// full physics transform (diagnostic); true preserves the animated
+		// translation (Saba baseline).
+		void SetMode2PreserveTranslation(bool preserve);
+		bool GetMode2PreserveTranslation() const;
 
 		void ReflectGlobalTransform();
 		void CalcLocalTransform();
@@ -99,6 +112,7 @@ namespace saba
 		glm::mat4	m_offsetMat;
 		int32_t		m_boneIndex;
 		float		m_definitionMass;
+		bool		m_mode2PreserveTranslation = true;
 
 		std::string					m_name;
 	};
@@ -162,6 +176,12 @@ namespace saba
 		void RemoveRigidBody(MMDRigidBody* mmdRB);
 		void AddJoint(MMDJoint* mmdJoint);
 		void RemoveJoint(MMDJoint* mmdJoint);
+		// R1.3 linked-body collision A/B.
+		void SetLinkedBodyCollisionMode(MMDLinkedBodyCollisionMode mode);
+		MMDLinkedBodyCollisionMode GetLinkedBodyCollisionMode() const;
+		// Re-applies the policy to every world constraint (remove + add with
+		// the Bullet disable flag). No-op before Create().
+		void ApplyLinkedBodyCollisionMode();
 
 		btDiscreteDynamicsWorld* GetDynamicsWorld() const;
 
@@ -178,6 +198,8 @@ namespace saba
 
 		double	m_fps;
 		int		m_maxSubStepCount;
+		MMDLinkedBodyCollisionMode	m_linkedBodyCollisionMode =
+			MMDLinkedBodyCollisionMode::PmxMaskOnly;
 	};
 
 }

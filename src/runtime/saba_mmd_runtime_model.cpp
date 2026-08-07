@@ -4,6 +4,7 @@
 #include "wisteria/animation/pose.hpp"
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/mmd/mmd_determinism.hpp"
+#include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 #include "wisteria/physics/physics_instance.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/light.hpp"
@@ -138,6 +139,21 @@ struct FnvHasher
         U32(static_cast<std::uint32_t>(value));
     }
 
+    void U64(std::uint64_t value)
+    {
+        U32(static_cast<std::uint32_t>(value & 0xFFFFFFFFULL));
+        U32(static_cast<std::uint32_t>(value >> 32U));
+    }
+
+    void String(std::string_view text)
+    {
+        U32(static_cast<std::uint32_t>(text.size()));
+        for (std::size_t index = 0U; index < text.size(); ++index)
+        {
+            Byte(static_cast<std::uint8_t>(text[index]));
+        }
+    }
+
     void F32(float value)
     {
         std::uint32_t bits = 0U;
@@ -198,6 +214,89 @@ void FillTransformSnapshot(
         output.rotationBasis[static_cast<std::size_t>(column) * 3U + 2U] =
             static_cast<float>(col.z());
     }
+}
+
+void FillTraceTransform(
+    MmdPhysicsTraceTransform& output,
+    const btTransform& transform
+)
+{
+    output.position = ToGlmVec3(transform.getOrigin());
+    const btMatrix3x3& basis = transform.getBasis();
+    for (int column = 0; column < 3; ++column)
+    {
+        const btVector3 col = basis.getColumn(column);
+        output.rotationBasis[static_cast<std::size_t>(column) * 3U + 0U] =
+            static_cast<float>(col.x());
+        output.rotationBasis[static_cast<std::size_t>(column) * 3U + 1U] =
+            static_cast<float>(col.y());
+        output.rotationBasis[static_cast<std::size_t>(column) * 3U + 2U] =
+            static_cast<float>(col.z());
+    }
+}
+
+// R1.3 §6.3: raw error is the constraint-frame difference; violation is the
+// excess beyond the allowed linear/angular limits.
+void ComputeJointTraceError(
+    btTypedConstraint* constraint,
+    MmdPhysicsTraceJoint& output
+)
+{
+    if (constraint == nullptr)
+        return;
+    auto* sixDof = dynamic_cast<btGeneric6DofConstraint*>(constraint);
+    if (sixDof == nullptr)
+        return;
+
+    const btVector3 pivot =
+        sixDof->getCalculatedTransformA().getOrigin() -
+        sixDof->getCalculatedTransformB().getOrigin();
+    output.rawLinearError = pivot.length();
+    btVector3 linearLower;
+    btVector3 linearUpper;
+    sixDof->getLinearLowerLimit(linearLower);
+    sixDof->getLinearUpperLimit(linearUpper);
+    float linearViolation = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float value = sixDof->getRelativePivotPosition(axis);
+        if (value > linearUpper[axis])
+            linearViolation += value - linearUpper[axis];
+        else if (value < linearLower[axis])
+            linearViolation += linearLower[axis] - value;
+    }
+    output.linearViolation = linearViolation;
+
+    float rawSquared = 0.0f;
+    float angularViolation = 0.0f;
+    btVector3 angularLower;
+    btVector3 angularUpper;
+    sixDof->getAngularLowerLimit(angularLower);
+    sixDof->getAngularUpperLimit(angularUpper);
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float angle = sixDof->getAngle(axis);
+        rawSquared += angle * angle;
+        if (angle > angularUpper[axis])
+            angularViolation += angle - angularUpper[axis];
+        else if (angle < angularLower[axis])
+            angularViolation += angularLower[axis] - angle;
+    }
+    output.rawAngularErrorDeg = glm::degrees(std::sqrt(rawSquared));
+    output.angularViolationDeg = glm::degrees(angularViolation);
+}
+
+std::uint32_t ResolveTraceBodyIndex(
+    const btCollisionObject* object,
+    const std::vector<saba::MMDPhysicsManager::RigidBodyPtr>* rigidBodies
+)
+{
+    for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
+    {
+        if ((*rigidBodies)[index]->GetRigidBody() == object)
+            return static_cast<std::uint32_t>(index);
+    }
+    return MmdPhysicsTraceGroundBodyIndex;
 }
 
 void FillBulletTransform(
@@ -438,6 +537,9 @@ struct SabaMmdRuntimeModel::Impl
     std::filesystem::path modelPath;
     std::filesystem::path vmdPath;
     SabaPhysicsSettings physicsSettings;
+    // R1.3 Phase 0A: single authoritative configuration. The low-level
+    // physicsSettings copy below is kept in sync through SetPhysicsSettings.
+    MmdPhysicsConfiguration physicsConfiguration;
     std::shared_ptr<saba::PMXModel> model;
     std::unique_ptr<saba::VMDAnimation> vmdAnimation;
     saba::VMDFile vmdFile;
@@ -497,6 +599,9 @@ struct SabaMmdRuntimeModel::Impl
           vmdPath(std::move(vmdPath_)),
           physicsSettings(physicsSettings_)
     {
+        this->physicsConfiguration =
+            BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw);
+        this->physicsConfiguration.runtime = physicsSettings_;
     }
 };
 
@@ -525,6 +630,9 @@ void SabaMmdRuntimeModel::SetPhysicsSettings(
 )
 {
     this->impl->physicsSettings = settings;
+    // Low-level compatibility entry: every change must synchronize into the
+    // authoritative configuration (R1.3 contract §4).
+    this->impl->physicsConfiguration.runtime = settings;
     if (this->impl->model != nullptr)
     {
         if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
@@ -549,6 +657,209 @@ void SabaMmdRuntimeModel::SetMmdPhysicsSettings(
     this->SetPhysicsSettings(settings);
 }
 
+TimelineStatus SabaMmdRuntimeModel::SetMmdPhysicsConfiguration(
+    const MmdPhysicsConfiguration& configuration
+)
+{
+    if (!ValidateConfiguration(configuration))
+        return TimelineStatus::InvalidState;
+    if (this->impl->model != nullptr)
+    {
+        // Phase 0A: profiles apply before Initialize only; switching the
+        // effective behaviour of a live runtime is unsupported. Label-only
+        // changes (identical behaviour hash) remain accepted.
+        const std::uint64_t previous = ComputeEffectiveConfigurationFingerprint(
+            this->impl->physicsConfiguration
+        );
+        const std::uint64_t next = ComputeEffectiveConfigurationFingerprint(
+            configuration
+        );
+        if (previous != next)
+            return TimelineStatus::UnsupportedReplayProfile;
+    }
+    this->impl->physicsConfiguration = configuration;
+    this->SetPhysicsSettings(configuration.runtime);
+    this->ApplyR13PhysicsProfile();
+    return TimelineStatus::Ok;
+}
+
+bool SabaMmdRuntimeModel::GetMmdPhysicsConfiguration(
+    MmdPhysicsConfiguration& output
+) const
+{
+    output = this->impl->physicsConfiguration;
+    return true;
+}
+
+bool SabaMmdRuntimeModel::CapturePhysicsTraceFrame(
+    MmdPhysicsTraceFrame& output
+) const
+{
+    if (this->impl->model == nullptr)
+        return false;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return false;
+
+    output = MmdPhysicsTraceFrame{};
+    output.presetIdentity = FormatConfigurationIdentity(
+        this->impl->physicsConfiguration
+    );
+    output.effectiveConfigurationHash = FormatTraceHex(
+        ComputeEffectiveConfigurationFingerprint(
+            this->impl->physicsConfiguration
+        )
+    );
+    output.modelHash = FormatTraceHex(this->impl->pmxFileHash);
+    output.motionHash = FormatTraceHex(this->impl->vmdFileHash);
+    output.hasMotion = this->impl->hasMotion;
+    output.frame = this->impl->lastMotionFrame;
+    output.physicsTick = this->impl->lastPhysicsTick;
+    output.canonical = this->impl->lastBoundaryCanonical;
+
+    FrameStateHashes hashes;
+    if (this->BuildFrameStateHashes(hashes) == TimelineStatus::Ok)
+    {
+        output.poseHash.hex = FormatTraceHex(hashes.pose.exactHash);
+        output.poseHash.valid = hashes.pose.valid;
+        output.physicsHash.hex = FormatTraceHex(hashes.physics.exactHash);
+        output.physicsHash.valid = hashes.physics.valid;
+        output.vertexHash.hex = FormatTraceHex(hashes.vertex.exactHash);
+        output.vertexHash.valid = hashes.vertex.valid;
+    }
+
+    auto* rigidBodies = manager->GetRigidBodys();
+    output.bodies.reserve(rigidBodies->size());
+    for (std::size_t index = 0U; index < rigidBodies->size(); ++index)
+    {
+        btRigidBody* body = (*rigidBodies)[index]->GetRigidBody();
+        if (body == nullptr)
+            continue;
+        MmdPhysicsTraceBody traceBody;
+        traceBody.index = static_cast<std::uint32_t>(index);
+        traceBody.mode = static_cast<PmxRigidBodyMode>(
+            (*rigidBodies)[index]->GetRigidBodyType()
+        );
+        FillTraceTransform(
+            traceBody.worldTransform,
+            body->getCenterOfMassTransform()
+        );
+        FillTraceTransform(
+            traceBody.interpolationWorldTransform,
+            body->getInterpolationWorldTransform()
+        );
+        if (btMotionState* motionState = body->getMotionState())
+        {
+            btTransform stateTransform;
+            motionState->getWorldTransform(stateTransform);
+            FillTraceTransform(
+                traceBody.motionStateTransform,
+                stateTransform
+            );
+            traceBody.motionStateAvailable = true;
+        }
+        traceBody.linearVelocity = ToGlmVec3(body->getLinearVelocity());
+        traceBody.angularVelocity = ToGlmVec3(body->getAngularVelocity());
+        output.bodies.push_back(std::move(traceBody));
+    }
+
+    const Pose& pose = this->GetPose();
+    const std::span<const glm::mat4> localMatrices = pose.LocalMatrices();
+    const std::span<const glm::mat4> globalMatrices = pose.GlobalMatrices();
+    const std::size_t boneCount = std::min(
+        localMatrices.size(),
+        globalMatrices.size()
+    );
+    output.bones.reserve(boneCount);
+    for (std::size_t index = 0U; index < boneCount; ++index)
+    {
+        MmdPhysicsTraceBone traceBone;
+        traceBone.index = static_cast<BoneIndex>(index);
+        for (int column = 0; column < 4; ++column)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                traceBone.localMatrix[
+                    static_cast<std::size_t>(column) * 4U +
+                    static_cast<std::size_t>(row)
+                ] = localMatrices[index][column][row];
+                traceBone.globalMatrix[
+                    static_cast<std::size_t>(column) * 4U +
+                    static_cast<std::size_t>(row)
+                ] = globalMatrices[index][column][row];
+            }
+        }
+        output.bones.push_back(std::move(traceBone));
+    }
+
+    auto* joints = manager->GetJoints();
+    output.joints.reserve(joints->size());
+    for (std::size_t index = 0U; index < joints->size(); ++index)
+    {
+        MmdPhysicsTraceJoint traceJoint;
+        traceJoint.index = static_cast<std::uint32_t>(index);
+        ComputeJointTraceError(
+            (*joints)[index]->GetConstraint(),
+            traceJoint
+        );
+        output.joints.push_back(std::move(traceJoint));
+    }
+
+    if (btDiscreteDynamicsWorld* world =
+            manager->GetMMDPhysics()->GetDynamicsWorld())
+    {
+        btDispatcher* dispatcher = world->getDispatcher();
+        for (int manifoldIndex = 0;
+             manifoldIndex < dispatcher->getNumManifolds();
+             ++manifoldIndex)
+        {
+            btPersistentManifold* manifold =
+                dispatcher->getManifoldByIndexInternal(manifoldIndex);
+            if (manifold == nullptr)
+                continue;
+            MmdPhysicsTraceContactPair pair;
+            pair.bodyA = ResolveTraceBodyIndex(
+                manifold->getBody0(),
+                rigidBodies
+            );
+            pair.bodyB = ResolveTraceBodyIndex(
+                manifold->getBody1(),
+                rigidBodies
+            );
+            pair.pointCount = manifold->getNumContacts();
+            float maxPenetration = 0.0f;
+            float impulse = 0.0f;
+            for (int pointIndex = 0;
+                 pointIndex < pair.pointCount;
+                 ++pointIndex)
+            {
+                const btManifoldPoint& point =
+                    manifold->getContactPoint(pointIndex);
+                if (point.getDistance() < maxPenetration)
+                    maxPenetration = point.getDistance();
+                impulse += point.m_appliedImpulse;
+            }
+            pair.maxPenetration = maxPenetration;
+            pair.normalImpulse = impulse;
+            if (pair.bodyA > pair.bodyB)
+                std::swap(pair.bodyA, pair.bodyB);
+            output.contactPairs.push_back(std::move(pair));
+        }
+        std::sort(
+            output.contactPairs.begin(),
+            output.contactPairs.end(),
+            [](const MmdPhysicsTraceContactPair& left,
+               const MmdPhysicsTraceContactPair& right)
+            {
+                if (left.bodyA != right.bodyA)
+                    return left.bodyA < right.bodyA;
+                return left.bodyB < right.bodyB;
+            }
+        );
+    }
+    return true;
+}
+
 void SabaMmdRuntimeModel::ResetMmdPhysics()
 {
     if (this->impl->model != nullptr)
@@ -565,6 +876,34 @@ void SabaMmdRuntimeModel::ApplyPhysicsActivation()
     const bool enabled = this->impl->physicsSettings.enabled;
     for (auto& rigidBody : *manager->GetRigidBodys())
         rigidBody->SetActivation(enabled);
+}
+
+void SabaMmdRuntimeModel::ApplyR13PhysicsProfile()
+{
+    if (this->impl->model == nullptr)
+        return;
+    saba::MMDPhysicsManager* manager = this->impl->model->GetPhysicsManager();
+    if (manager == nullptr || manager->GetMMDPhysics() == nullptr)
+        return;
+
+    saba::MMDPhysics* physics = manager->GetMMDPhysics();
+    physics->SetLinkedBodyCollisionMode(
+        this->impl->physicsConfiguration.compatibility.linkedBodyCollision ==
+                MmdLinkedBodyCollisionMode::DisableConstraintLinkedPairs
+            ? saba::MMDLinkedBodyCollisionMode::DisableConstraintLinkedPairs
+            : saba::MMDLinkedBodyCollisionMode::PmxMaskOnly
+    );
+    physics->ApplyLinkedBodyCollisionMode();
+
+    const bool preserveAnimatedTranslation =
+        this->impl->physicsConfiguration.compatibility.mode2 ==
+        MmdMode2WritebackMode::PreserveAnimatedTranslation;
+    auto* rigidBodies = manager->GetRigidBodys();
+    for (auto& body : *rigidBodies)
+    {
+        if (body->GetRigidBodyType() == 2)
+            body->SetMode2PreserveTranslation(preserveAnimatedTranslation);
+    }
 }
 
 bool SabaMmdRuntimeModel::Initialize()
@@ -653,6 +992,7 @@ bool SabaMmdRuntimeModel::Initialize()
     }
     this->impl->ownedPhysics =
         std::make_unique<SabaOwnedPhysicsInstance>();
+    this->ApplyR13PhysicsProfile();
 
     if (!this->impl->vmdPath.empty())
     {
@@ -2210,6 +2550,12 @@ void SabaMmdRuntimeModel::ComputeConfigurationFingerprint(
     hasher.U32(1U);                // physics ABI version
     hasher.U32(1U);                // broadphase: btDbvtBroadphase
     hasher.U32(1U);                // solver: btSequentialImpulseConstraintSolver
+    // R1.3 fingerprint v2: effective configuration behaviour. Preset labels
+    // are deliberately excluded (RAW/COMMUNITY/ADAPTIVE share one hash while
+    // their Phase 0A behaviour is identical).
+    hasher.U64(ComputeEffectiveConfigurationFingerprint(
+        this->impl->physicsConfiguration
+    ));
     if (this->impl->model == nullptr)
     {
         fingerprint = hasher.state;
@@ -2277,10 +2623,10 @@ void SabaMmdRuntimeModel::ComputeConfigurationFingerprint(
         HashShapeDimensions(hasher, shape);
     }
 
-    // Instance policies (Saba path constants; contract requires them hashed).
-    hasher.U32(0U);  // linked-body collision policy (none)
+    // SabaBaseline constants that currently have no switches. Linked-body
+    // collision and Mode 2 behaviour now enter through the v2 configuration
+    // hash above instead of hardcoded markers.
     hasher.U32(1U);  // deactivation policy (Saba DISABLE_DEACTIVATION default)
-    hasher.U32(1U);  // compatibility profile (saba-compatible)
     hasher.U32(1U);  // physics-layout conversion version
     hasher.F32(1.0f);  // model scale
     fingerprint = hasher.state;

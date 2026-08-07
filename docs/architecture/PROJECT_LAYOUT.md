@@ -1,5 +1,12 @@
 # WISTERIA 工程目录与依赖规则
 
+> **状态声明（2026-08-07）**：本文部分依赖规则以旧
+> `MmdPhysicsInstance + PhysicsWorld + RuntimePolicy` 物理链为参照，
+> 该路线为 **Legacy WISTERIA-owned physics path**，目前不参与
+> `SabaMmdRuntimeModel` 主运行链；保留为历史架构与未来通用
+> `PhysicsInstance` 参考。活动 MMD 后端与 R1.3 Phase 0A 契约见
+> [R1_3_MMD_COMPAT_CONTRACT.md](R1_3_MMD_COMPAT_CONTRACT.md)。
+
 ## 目录职责
 
 | 模块 | 职责 | 允许依赖 |

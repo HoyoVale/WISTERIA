@@ -377,6 +377,38 @@ namespace saba
 		}
 	}
 
+	void MMDPhysics::SetLinkedBodyCollisionMode(MMDLinkedBodyCollisionMode mode)
+	{
+		m_linkedBodyCollisionMode = mode;
+	}
+
+	MMDLinkedBodyCollisionMode MMDPhysics::GetLinkedBodyCollisionMode() const
+	{
+		return m_linkedBodyCollisionMode;
+	}
+
+	void MMDPhysics::ApplyLinkedBodyCollisionMode()
+	{
+		if (m_world == nullptr)
+		{
+			return;
+		}
+		const bool disable =
+			m_linkedBodyCollisionMode ==
+			MMDLinkedBodyCollisionMode::DisableConstraintLinkedPairs;
+		std::vector<btTypedConstraint*> constraints;
+		constraints.reserve(m_world->getNumConstraints());
+		for (int index = 0; index < m_world->getNumConstraints(); ++index)
+		{
+			constraints.push_back(m_world->getConstraint(index));
+		}
+		for (btTypedConstraint* constraint : constraints)
+		{
+			m_world->removeConstraint(constraint);
+			m_world->addConstraint(constraint, disable);
+		}
+	}
+
 	btDiscreteDynamicsWorld * MMDPhysics::GetDynamicsWorld() const
 	{
 		return m_world.get();
@@ -483,13 +515,24 @@ namespace saba
 	class DynamicAndBoneMergeMotionState : public MMDMotionState
 	{
 	public:
-		DynamicAndBoneMergeMotionState(MMDNode* node, const glm::mat4& offset, bool override = true)
+		DynamicAndBoneMergeMotionState(
+			MMDNode* node,
+			const glm::mat4& offset,
+			bool override = true,
+			bool preserveAnimatedTranslation = true
+		)
 			: m_node(node)
 			, m_offset(offset)
 			, m_override(override)
+			, m_preserveAnimatedTranslation(preserveAnimatedTranslation)
 		{
 			m_invOffset = glm::inverse(offset);
 			Reset();
+		}
+
+		void SetPreserveAnimatedTranslation(bool preserve)
+		{
+			m_preserveAnimatedTranslation = preserve;
 		}
 
 		void getWorldTransform(btTransform& worldTransform) const override
@@ -514,7 +557,10 @@ namespace saba
 			m_transform.getOpenGLMatrix(&world[0][0]);
 			glm::mat4 btGlobal = InvZ(world) * m_invOffset;
 			glm::mat4 global = m_node->GetGlobalTransform();
-			btGlobal[3] = global[3];
+			if (m_preserveAnimatedTranslation)
+			{
+				btGlobal[3] = global[3];
+			}
 
 			if (m_override)
 			{
@@ -534,6 +580,7 @@ namespace saba
 		glm::mat4	m_invOffset;
 		btTransform	m_transform;
 		bool		m_override;
+		bool		m_preserveAnimatedTranslation;
 
 	};
 
@@ -695,7 +742,12 @@ namespace saba
 		}
 		else if (pmdRigidBody.m_rigidBodyType == PMDRigidBodyOperation::DynamicAdjustBone)
 		{
-			m_activeMotionState = std::make_unique<DynamicAndBoneMergeMotionState>(kinematicNode, m_offsetMat, overrideNode);
+			m_activeMotionState = std::make_unique<DynamicAndBoneMergeMotionState>(
+				kinematicNode,
+				m_offsetMat,
+				overrideNode,
+				m_mode2PreserveTranslation
+			);
 			m_kinematicMotionState = std::make_unique<KinematicMotionState>(kinematicNode, m_offsetMat);
 			motionState = m_activeMotionState.get();
 		}
@@ -811,7 +863,12 @@ namespace saba
 				}
 				else if (pmxRigidBody.m_op == PMXRigidbody::Operation::DynamicAndBoneMerge)
 				{
-					m_activeMotionState = std::make_unique<DynamicAndBoneMergeMotionState>(kinematicNode, m_offsetMat);
+					m_activeMotionState = std::make_unique<DynamicAndBoneMergeMotionState>(
+						kinematicNode,
+						m_offsetMat,
+						true,
+						m_mode2PreserveTranslation
+					);
 					m_kinematicMotionState = std::make_unique<KinematicMotionState>(kinematicNode, m_offsetMat);
 					MMDMotionState = m_activeMotionState.get();
 				}
@@ -1210,6 +1267,22 @@ namespace saba
 	btTypedConstraint * MMDJoint::GetConstraint() const
 	{
 		return m_constraint.get();
+	}
+
+	void MMDRigidBody::SetMode2PreserveTranslation(bool preserve)
+	{
+		m_mode2PreserveTranslation = preserve;
+		auto* merge = dynamic_cast<DynamicAndBoneMergeMotionState*>(
+			m_activeMotionState.get());
+		if (merge != nullptr)
+		{
+			merge->SetPreserveAnimatedTranslation(preserve);
+		}
+	}
+
+	bool MMDRigidBody::GetMode2PreserveTranslation() const
+	{
+		return m_mode2PreserveTranslation;
 	}
 
 	void MMDJoint::ResetConstraintImpulses()

@@ -3,6 +3,13 @@
 基线：`WISTERIA(11)`  
 目标：冻结已经可靠的底层抽象，把 MMD 兼容行为、实验性适配和模型特例从底层 Bullet 封装中隔离出来。
 
+> **状态声明（2026-08-07）**：本文描述的是 **Legacy WISTERIA-owned
+> physics path**（`MmdPhysicsInstance` + `PhysicsWorld` +
+> `MmdPhysicsRuntimePolicy`），目前不参与 `SabaMmdRuntimeModel`
+> 主运行链；保留为历史架构与未来通用 `PhysicsInstance` 参考。
+> 活动 MMD 后端与 R1.3 Phase 0A 契约见
+> [R1_3_MMD_COMPAT_CONTRACT.md](R1_3_MMD_COMPAT_CONTRACT.md)。
+
 ## 1. 审计结论
 
 当前工程不需要重写物理底座。可长期保留的主链已经形成：

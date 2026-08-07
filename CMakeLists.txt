@@ -251,7 +251,9 @@ set(WISTERIA_MMD_SOURCES
     src/mmd/mmd_camera_conversion.cpp
     src/mmd/mmd_light_conversion.cpp
     src/mmd/vmd_importer.cpp
+    src/mmd/physics/mmd_physics_audit.cpp
     src/mmd/physics/mmd_physics_asset.cpp
+    src/mmd/physics/mmd_physics_configuration.cpp
 )
 
 set(WISTERIA_SCENE_SOURCES
@@ -364,6 +366,23 @@ endif()
 add_executable(wisteria src/main.cpp)
 target_link_libraries(wisteria PRIVATE wisteria_platform)
 
+# R1.3 trace tooling: JSONL writer/parser and the minimal diff CLI. The
+# runtime never performs trace I/O (contract §6.4); tooling lives here.
+add_library(wisteria_trace_tooling STATIC
+    tools/trace/trace_jsonl.cpp
+)
+target_include_directories(wisteria_trace_tooling PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/trace
+)
+target_link_libraries(wisteria_trace_tooling PUBLIC wisteria_core)
+
+add_executable(wisteria_trace_diff
+    tools/trace/trace_diff_main.cpp
+)
+target_link_libraries(wisteria_trace_diff PRIVATE wisteria_trace_tooling)
+
 # automated tests
 include(CTest)
 
@@ -379,7 +398,10 @@ if(BUILD_TESTING)
     # regression below. Each tier builds and runs independently.
     foreach(TIER unit runtime integration)
         add_executable(wisteria_${TIER}_tests tests/${TIER}_tests.cpp)
-        target_link_libraries(wisteria_${TIER}_tests PRIVATE wisteria_platform)
+        target_link_libraries(wisteria_${TIER}_tests PRIVATE
+            wisteria_platform
+            wisteria_trace_tooling
+        )
         target_compile_definitions(wisteria_${TIER}_tests PRIVATE
             WISTERIA_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets"
             WISTERIA_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
