@@ -469,4 +469,14 @@ if(BUILD_TESTING)
     set_tests_properties(wisteria.render-fbo PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+
+    # R1.4 Phase 0A: pure-C layout/constant smoke for the Stable Runtime
+    # C ABI v1 subset. Compiled with a C compiler only; static assertions
+    # guard opaque-handle width, versioned struct headers and fixed numeric
+    # constants against ABI drift.
+    add_executable(wisteria_abi_c_smoke tests/native_abi_c_smoke.c)
+    target_include_directories(wisteria_abi_c_smoke PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    add_test(NAME wisteria.abi-c-smoke COMMAND wisteria_abi_c_smoke)
 endif()
