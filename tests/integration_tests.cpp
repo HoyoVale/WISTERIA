@@ -9555,6 +9555,77 @@ void TestR13TraceCanonicalGate()
     expectInvalidated("ClearMotion", [&]() { runtime.ClearMotion(); });
 }
 
+void TestR14FrameDomainGuard()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    auto runtime = CreateConfiguredRuntime(
+        modelPath,
+        BuildPresetConfiguration(MmdPhysicsPreset::MmdRaw)
+    );
+    auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime.get());
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(runtime.get());
+    Require(
+        mmd != nullptr && stepper != nullptr,
+        "R1.4 frame-domain guard test lost runtime surfaces"
+    );
+
+    const MotionFrameIndex maxFrame =
+        std::numeric_limits<MotionFrameIndex>::max();
+    Require(
+        mmd->EvaluateTick(maxFrame, SeekPolicy::ReplayFromStart, {}) ==
+            TimelineStatus::InvalidState,
+        "ReplayFromStart accepted UINT64_MAX"
+    );
+    Require(
+        mmd->EvaluateTick(
+            maxFrame / 4U + 1U,
+            SeekPolicy::ReplayFromStart,
+            {}
+        ) == TimelineStatus::InvalidState,
+        "ReplayFromStart accepted an overflowing frame"
+    );
+    Require(
+        mmd->EvaluateTick(maxFrame, SeekPolicy::ResetAtTarget, {}) ==
+            TimelineStatus::InvalidState,
+        "ResetAtTarget accepted UINT64_MAX"
+    );
+
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed in the frame-domain guard test"
+    );
+    Require(
+        stepper->StepMotionFrameExact(maxFrame, {}) ==
+            TimelineStatus::InvalidState,
+        "StepMotionFrameExact accepted UINT64_MAX"
+    );
+    Require(
+        stepper->StepMotionFrameExact(maxFrame / 4U + 1U, {}) ==
+            TimelineStatus::InvalidState,
+        "StepMotionFrameExact accepted an overflowing frame"
+    );
+
+    // Guard rejections must not corrupt the deterministic stepping machine.
+    Require(
+        stepper->StepMotionFrameExact(1U, {}) == TimelineStatus::Ok,
+        "valid step failed after guard rejections"
+    );
+    Require(
+        stepper->StepMotionFrameExact(2U, {}) == TimelineStatus::Ok,
+        "second valid step failed after guard rejections"
+    );
+    MmdPhysicsTraceFrame trace;
+    Require(
+        runtime->CapturePhysicsTraceFrame(trace),
+        "trace capture failed after the frame-domain guard test"
+    );
+    Require(
+        trace.frame == 2U && trace.physicsTick == 8U,
+        "physicsTick mismatch after the frame-domain guard test"
+    );
+}
+
 }
 
 int main()
@@ -9881,6 +9952,10 @@ int main()
     failures += !RunTest(
         "R1.3 trace canonical gate",
         TestR13TraceCanonicalGate
+    );
+    failures += !RunTest(
+        "R1.4 frame domain guard",
+        TestR14FrameDomainGuard
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",

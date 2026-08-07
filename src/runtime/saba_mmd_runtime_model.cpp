@@ -1144,6 +1144,21 @@ void SabaMmdRuntimeModel::InvalidateDeterministicBoundary() noexcept
     this->impl->expectedNextFrame = 0U;
 }
 
+TimelineStatus SabaMmdRuntimeModel::ValidateDeterministicFrameDomain(
+    MotionFrameIndex target
+) const noexcept
+{
+    // R1.4 Entry Guard: physicsTick = frame * 4 must never overflow, and
+    // ++frame inside replay loops must never wrap from UINT64_MAX.
+    if (target == std::numeric_limits<MotionFrameIndex>::max() ||
+        target >
+            std::numeric_limits<MotionFrameIndex>::max() / 4U)
+    {
+        return TimelineStatus::InvalidState;
+    }
+    return TimelineStatus::Ok;
+}
+
 TimelineStatus SabaMmdRuntimeModel::ValidateReplayConfig(
     const ReplayConfig& config
 )
@@ -1405,6 +1420,15 @@ TimelineStatus SabaMmdRuntimeModel::EvaluateTick(
     if (profileStatus != TimelineStatus::Ok)
         return profileStatus;
 
+    if (policy == SeekPolicy::ResetAtTarget ||
+        policy == SeekPolicy::ReplayFromStart)
+    {
+        const TimelineStatus domainStatus =
+            this->ValidateDeterministicFrameDomain(target);
+        if (domainStatus != TimelineStatus::Ok)
+            return domainStatus;
+    }
+
     switch (policy)
     {
     case SeekPolicy::PreserveState:
@@ -1475,6 +1499,10 @@ TimelineStatus SabaMmdRuntimeModel::StepMotionFrameExact(
 {
     if (this->impl->poisoned)
         return TimelineStatus::Poisoned;
+    const TimelineStatus domainStatus =
+        this->ValidateDeterministicFrameDomain(frame);
+    if (domainStatus != TimelineStatus::Ok)
+        return domainStatus;
     if (!this->impl->deterministicPrepared)
         return TimelineStatus::InvalidState;
     if (frame != this->impl->expectedNextFrame)
@@ -2465,7 +2493,8 @@ TimelineStatus SabaMmdRuntimeModel::ReplayFromCheckpoint(
     if (validation != TimelineStatus::Ok)
         return validation;
     if (target < checkpoint.frame ||
-        target == std::numeric_limits<MotionFrameIndex>::max())
+        this->ValidateDeterministicFrameDomain(target) !=
+            TimelineStatus::Ok)
     {
         return TimelineStatus::InvalidState;
     }
