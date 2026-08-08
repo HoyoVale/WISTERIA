@@ -701,6 +701,8 @@ int main()
             readbackTarget.Resize(4, 4);
             readbackTarget.Clear(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
 
+            GLint initialViewport[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_VIEWPORT, initialViewport);
             glViewport(1, 2, 3, 4);
 
             GLuint pixelPackBuffer = 0U;
@@ -709,6 +711,9 @@ int main()
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             glReadBuffer(GL_BACK);
             glPixelStorei(GL_PACK_ALIGNMENT, 8);
+            glPixelStorei(GL_PACK_ROW_LENGTH, 7);
+            glPixelStorei(GL_PACK_SKIP_PIXELS, 2);
+            glPixelStorei(GL_PACK_SKIP_ROWS, 1);
 
             GLint expectedReadFramebuffer = 0;
             GLint expectedReadBuffer = GL_BACK;
@@ -784,6 +789,15 @@ int main()
 
             glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
             glDeleteBuffers(1, &pixelPackBuffer);
+            glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+            glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+            glViewport(
+                initialViewport[0],
+                initialViewport[1],
+                initialViewport[2],
+                initialViewport[3]
+            );
         }
 
         // R1.6 Phase 0B: top-left orientation contract (top red, bottom
@@ -887,18 +901,22 @@ int main()
                         static_cast<std::size_t>(TestWidth) * TestHeight * 4U,
                 "Offscreen static readback dimensions are wrong"
             );
-            bool anyNonZero = false;
-            for (const std::uint8_t channel : frame.pixels)
+            bool anyRgbNonZero = false;
+            for (std::size_t index = 0U;
+                 index + 2U < frame.pixels.size();
+                 index += 4U)
             {
-                if (channel != 0U)
+                if (frame.pixels[index] != 0U ||
+                    frame.pixels[index + 1U] != 0U ||
+                    frame.pixels[index + 2U] != 0U)
                 {
-                    anyNonZero = true;
+                    anyRgbNonZero = true;
                     break;
                 }
             }
             Require(
-                anyNonZero,
-                "Offscreen static render returned an all-zero frame"
+                anyRgbNonZero,
+                "Static offscreen render contains no rendered RGB content"
             );
             const Rgba8Frame repeated = ReadbackRgba8(target);
             Require(
@@ -956,18 +974,22 @@ int main()
                     static_cast<std::size_t>(TestWidth) * TestHeight * 4U,
                 "Generic offscreen readback dimensions are wrong"
             );
-            bool anyNonZero = false;
-            for (const std::uint8_t channel : firstFrame.pixels)
+            bool anyRgbNonZero = false;
+            for (std::size_t index = 0U;
+                 index + 2U < firstFrame.pixels.size();
+                 index += 4U)
             {
-                if (channel != 0U)
+                if (firstFrame.pixels[index] != 0U ||
+                    firstFrame.pixels[index + 1U] != 0U ||
+                    firstFrame.pixels[index + 2U] != 0U)
                 {
-                    anyNonZero = true;
+                    anyRgbNonZero = true;
                     break;
                 }
             }
             Require(
-                anyNonZero,
-                "Generic offscreen render returned an all-zero frame"
+                anyRgbNonZero,
+                "Generic offscreen render contains no rendered RGB content"
             );
 
             scene.Update(0.5f);

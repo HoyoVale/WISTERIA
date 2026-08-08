@@ -125,11 +125,24 @@ Render 只写 SceneFramebuffer（GL_COLOR_ATTACHMENT0），
 阴影/OIT/地面阴影等中间 pass 使用内部 FBO/纹理
 ```
 
-结论：**除 viewport 外**，当前 `RenderStateScope` 已覆盖上述受管
-GL state；`SceneFramebuffer::Bind()` 会设置 `glViewport`，而
-`RenderState` 尚未保存/恢复 viewport（P1-4）。Phase 0B 将 viewport
-纳入 guard 后，冻结为 self-contained。调用者只需保证 owning GL
-context current + 合法 target。
+结论：viewport 纳入 guard（P1-4）后，冻结为：
+
+```text
+RenderStateScope guarantees preservation of the explicitly tracked
+WISTERIA frame-boundary state set：
+  active texture / viewport / draw-read FBO / draw buffer /
+  blend / depth / scissor / stencil / rasterizer discard /
+  cull face / color mask / tracked texture units
+
+It does not promise preservation of arbitrary external OpenGL state
+not listed by this contract：
+  例如 depth func、stencil func/op/mask、cull face 朝向等精细状态
+  （ground-shadow pass 会修改其中一部分）
+```
+
+即：**对 WISTERIA 显式追踪的 frame-boundary state set 是
+self-contained**，不是任意外部 OpenGL caller 的全量 state sandbox。
+调用者仍需保证 owning GL context current + 合法 target。
 
 ### 3.2 `SceneFramebuffer` 能否作为 v1 offscreen target
 
@@ -231,6 +244,17 @@ ReleaseAll 在 Shutdown 用 shared resource context 执行
 
 缺口：`MakeContextCurrent` 之后**没有自动
 `GraphicsDevice::FlushPendingDeletes()`**（目前只在 ReleaseAll 调用）。
+
+已知债务（不阻塞 0B）：
+
+```text
+GraphicsDevice 的 share-group identity 目前用一个注册 context token
+（第一个窗口）近似；multi-window 共享 context 下，第二个窗口
+ContextIsCurrent() 为 false，FlushPendingDeletes 不会执行。
+R1.6 v1 合法环境是 single hidden GLFW context，不受影响。
+该债务列入 R1.7 Headless Context Provider / platform lifetime，
+在开放 Stable Render C Portal 前必须解决。
+```
 
 ### 3.6 四个 GL lifetime P1 的最小修复位置
 

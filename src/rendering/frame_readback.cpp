@@ -20,6 +20,33 @@ struct ReadbackState
     GLint packSkipRows = 0;
 };
 
+ReadbackState CaptureReadbackState();
+void RestoreReadbackState(const ReadbackState& state);
+
+// RAII: restores the captured readback-related GL state on destruction,
+// including exception unwinding. The GL state is only mutated while this
+// guard is alive, so a throwing allocation or future diagnostic cannot leak
+// a modified read framebuffer / read buffer / pack state.
+class ReadbackStateScope
+{
+public:
+    ReadbackStateScope()
+        : state(CaptureReadbackState())
+    {
+    }
+
+    ~ReadbackStateScope()
+    {
+        RestoreReadbackState(this->state);
+    }
+
+    ReadbackStateScope(const ReadbackStateScope&) = delete;
+    ReadbackStateScope& operator=(const ReadbackStateScope&) = delete;
+
+private:
+    ReadbackState state;
+};
+
 ReadbackState CaptureReadbackState()
 {
     ReadbackState state;
@@ -76,29 +103,32 @@ Rgba8Frame ReadbackRgba8(const SceneFramebuffer& target)
         );
     }
 
-    const ReadbackState previousState = CaptureReadbackState();
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, target.Id());
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-
+    // Allocate the CPU buffer before touching any GL state so a throwing
+    // allocation can never leave the readback state modified.
     Rgba8Frame frame;
     frame.width = width;
     frame.height = height;
     frame.pixels.resize(static_cast<std::size_t>(byteCount));
-    glReadPixels(
-        0,
-        0,
-        static_cast<GLsizei>(width),
-        static_cast<GLsizei>(height),
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        frame.pixels.data()
-    );
-    RestoreReadbackState(previousState);
+
+    {
+        ReadbackStateScope stateGuard;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, target.Id());
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+        glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+        glReadPixels(
+            0,
+            0,
+            static_cast<GLsizei>(width),
+            static_cast<GLsizei>(height),
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            frame.pixels.data()
+        );
+    }
 
     // Canonical contract: top-left origin, top -> bottom rows. OpenGL
     // returns bottom-left, so flip the rows.
