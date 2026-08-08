@@ -1,7 +1,11 @@
 # R1.6 — Deterministic Offline Output Pipeline Final Closure（2026-08-09）
 
-> 状态：**FROZEN / IMPLEMENTED / VALIDATED / CLOSED（待最终盖章）**。
+> 状态：**FROZEN / IMPLEMENTED / VALIDATED / CLOSED**（ChatGPT 2026-08-09 最终盖章）。
 > 基线：R1.6 Phase 0A–0E CLOSED（`2ce1f59`）。
+> 盖章：ChatGPT 直接解包审查 `r16_phase0e_microguard_review.zip`，确认 Micro Guard
+> 四项 counterexample 全部闭合、无范围偷跑；四套矩阵 8/8、9/9、8/8、9/9 作为
+> 最终 closure evidence。英文官方正文见
+> `docs/validation/R1_6_FINAL_CLOSURE_OFFICIAL_20260809.md`。
 
 ## 1. 一句话
 
