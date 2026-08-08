@@ -64,12 +64,32 @@ void WisteriaGenericRuntimeDriver::Update(float deltaTime)
 
 void WisteriaGenericRuntimeDriver::Reset()
 {
+    // Frozen B semantics (R1.5 Final Closure): Reset restores the runtime's
+    // default startup playback state on the SAME objects.
+    //   - default clip exists: AnimationClipAt(0), t=0, playing
+    //   - no clip: bind pose, stopped
+    //   - morph-only: initial zero weights
+    // Reset never reallocates Pose/MorphState/Animator, so previously
+    // published pointers stay valid.
     if (this->animator != nullptr)
+    {
+        // Animator::Stop(true) already returns Pose and MorphState to their
+        // initial values; do not reset them a second time (that would bump
+        // the Pose revision unnecessarily).
         this->animator->Stop(true);
-    if (this->pose != nullptr)
-        this->pose->ResetToBindPose();
-    if (this->morphState != nullptr)
-        this->morphState->Reset();
+        if (this->asset != nullptr &&
+            this->asset->AnimationClipCount() > 0U)
+        {
+            this->animator->Play(this->asset->AnimationClipAt(0U));
+        }
+    }
+    else
+    {
+        if (this->pose != nullptr)
+            this->pose->ResetToBindPose();
+        if (this->morphState != nullptr)
+            this->morphState->Reset();
+    }
     this->pendingRootMotion = {};
 }
 

@@ -11074,6 +11074,125 @@ void TestWisteriaGenericMultiInstance()
     );
 }
 
+void TestWisteriaGenericReset()
+{
+    // Animated asset: Reset restores default startup playback state.
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("phase0e::reset", modelPath);
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric,
+        "Reset fixture lost its natural Generic classification"
+    );
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    ModelInstance instance(model, registry.CreateRuntime(model));
+    IModelRuntimeDriver* runtime = instance.TryGetRuntime();
+    Animator* animatorBefore = runtime->TryGetAnimator();
+    Pose* poseBefore = runtime->TryGetPose();
+    Require(
+        animatorBefore != nullptr && poseBefore != nullptr,
+        "Reset fixture runtime lost Pose/Animator"
+    );
+    Require(
+        animatorBefore->CurrentClip() == &model.AnimationClipAt(0) &&
+            animatorBefore->IsPlaying() &&
+            NearlyEqual(animatorBefore->Time(), 0.0f),
+        "Fresh generic runtime did not start default playback"
+    );
+
+    instance.Update(0.5f);
+    Require(
+        NearlyEqual(animatorBefore->Time(), 0.5f),
+        "Generic animator did not advance before Reset"
+    );
+
+    instance.Reset();
+    Require(
+        runtime->TryGetAnimator() == animatorBefore &&
+            runtime->TryGetPose() == poseBefore,
+        "Reset reallocated runtime-owned objects"
+    );
+    Require(
+        animatorBefore->CurrentClip() == &model.AnimationClipAt(0) &&
+            animatorBefore->IsPlaying() &&
+            NearlyEqual(animatorBefore->Time(), 0.0f),
+        "Reset did not restore default startup playback"
+    );
+    Require(
+        runtime->ConsumeRootMotion().IsIdentity(),
+        "Reset left pending root motion behind"
+    );
+
+    // Reset invalidates the ModelInstance snapshot; Update(0) revives it.
+    const ModelFrameSnapshot& invalid =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        !invalid.metadata.valid,
+        "Snapshot remained valid after Reset"
+    );
+    instance.Update(0.0f);
+    const ModelFrameSnapshot& valid =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        valid.metadata.valid && valid.pose.captured,
+        "Snapshot did not revive after Reset + Update(0)"
+    );
+
+    // Reset pose equals a freshly created runtime after Update(0).
+    ModelInstance fresh(model, registry.CreateRuntime(model));
+    fresh.Update(0.0f);
+    const ModelFrameSnapshot& freshSnapshot =
+        fresh.CaptureSnapshot(CaptureMask::All);
+    Require(
+        valid.pose.localTransforms.size() ==
+            freshSnapshot.pose.localTransforms.size(),
+        "Reset pose bone count diverged from fresh runtime"
+    );
+    for (std::size_t bone = 0U;
+        bone < valid.pose.localTransforms.size();
+        ++bone)
+    {
+        Require(
+            NearlyEqual(
+                valid.pose.localTransforms[bone],
+                freshSnapshot.pose.localTransforms[bone]
+            ),
+            "Reset pose diverged from a fresh runtime"
+        );
+    }
+
+    // Morph-only: Reset returns weights to initial zero.
+    ModelAsset morphOnly("phase0e::morphOnlyReset");
+    morphOnly.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    MorphDefinition blink;
+    blink.name = "blink";
+    blink.category = MorphCategory::Other;
+    blink.kind = MorphKind::Vertex;
+    std::vector<MorphDefinition> definitions;
+    definitions.push_back(blink);
+    morphOnly.SetMorphs(std::move(definitions));
+    ModelInstance morphInstance(
+        morphOnly,
+        registry.CreateRuntime(morphOnly)
+    );
+    IModelRuntimeDriver* morphRuntime = morphInstance.TryGetRuntime();
+    Require(
+        morphRuntime->SetMorphWeight("blink", 0.8f),
+        "Morph-only Reset fixture write failed"
+    );
+    morphInstance.Reset();
+    const std::optional<float> resetWeight =
+        morphRuntime->MorphWeight("blink");
+    Require(
+        resetWeight.has_value() && NearlyEqual(*resetWeight, 0.0f),
+        "Morph-only Reset did not return weights to zero"
+    );
+}
+
 void TestStaticModelClassification()
 {
     const std::filesystem::path modelPath = FixturePath("box-glb");
@@ -11485,6 +11604,10 @@ int main()
     failures += !RunTest(
         "R1.5 generic multi-instance independence",
         TestWisteriaGenericMultiInstance
+    );
+    failures += !RunTest(
+        "R1.5 generic reset semantics",
+        TestWisteriaGenericReset
     );
     failures += !RunTest(
         "R1.5 static model classification",

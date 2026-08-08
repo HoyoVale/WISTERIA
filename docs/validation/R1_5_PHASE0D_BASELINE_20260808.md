@@ -24,7 +24,9 @@ PMX                         → SabaMmd
 
 导入完成后 `model->SetBackendKind(backendKind)`，
 `ModelAsset::backendKind` 成为唯一权威；`ModelSourceDescriptor.backend`
-仍写入（描述 source），但不再参与 Runtime 选择。
+仍写入，但身份是 **legacy informational metadata / compatibility
+residue**——真正 source identity 是 `sourcePath`，该字段不再参与
+Runtime 选择。
 
 ### BackendKind 权威收口（审查步骤 3）
 

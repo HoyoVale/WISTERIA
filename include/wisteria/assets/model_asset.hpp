@@ -48,9 +48,10 @@ public:
     bool HasSourceDescriptor() const noexcept;
     const ModelSourceDescriptor* TryGetSourceDescriptor() const noexcept;
     const ModelSourceDescriptor& GetSourceDescriptor() const;
-    // R1.5 Phase 0B: explicit backend identity is the authority. Once set it
-    // wins over the legacy sourceDescriptor->backend classification; without
-    // it BackendKind() keeps the pre-R1.5 fallback for compatibility.
+    // R1.5 Phase 0D: explicit backend identity is the sole authority.
+    // ModelSourceDescriptor describes the source only; its legacy backend
+    // field is informational compatibility residue and never participates
+    // in runtime selection.
     void SetBackendKind(ModelBackendKind kind);
     bool HasExplicitBackendKind() const noexcept;
     ModelBackendKind BackendKind() const noexcept;
