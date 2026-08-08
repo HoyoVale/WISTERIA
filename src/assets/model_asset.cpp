@@ -67,13 +67,11 @@ bool ModelAsset::HasExplicitBackendKind() const noexcept
 
 ModelBackendKind ModelAsset::BackendKind() const noexcept
 {
-    // R1.5 Phase 0B: explicit backend identity is the single authority.
-    // The sourceDescriptor->backend fallback is legacy-only and stays in
-    // place until Phase 0C removes the parasitic classification.
-    if (this->backendKind.has_value())
-        return *this->backendKind;
-    return this->sourceDescriptor.has_value()
-        ? this->sourceDescriptor->backend
+    // R1.5 Phase 0D: backend identity is exclusively the explicit
+    // backendKind. ModelSourceDescriptor describes the source only and has
+    // no authority over runtime selection.
+    return this->backendKind.has_value()
+        ? *this->backendKind
         : ModelBackendKind::Static;
 }
 

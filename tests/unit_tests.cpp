@@ -384,6 +384,7 @@ void TestAnimationSamplingAndAnimator()
     );
 
     ModelAsset model("animatedModel");
+    model.SetBackendKind(ModelBackendKind::WisteriaGeneric);
     model.SetSkeleton(std::move(skeleton));
     AnimationClip& firstClip = model.AddAnimationClip(AnimationClip(
         "turnAndMove",

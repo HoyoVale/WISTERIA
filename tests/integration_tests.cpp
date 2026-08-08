@@ -66,12 +66,23 @@ void TestAnimatedModelImporter()
     ResourceManager resources;
     ModelAsset& model = resources.LoadModel("animatedTriangle", modelPath);
     Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric,
+        "Animated glTF was not classified as WisteriaGeneric"
+    );
+    Require(
         model.AnimationClipCount() == 1 &&
         model.FindAnimationClip("moveRoot") != nullptr,
         "ResourceManager lost imported animation data"
     );
     Scene scene;
     Entity& entity = scene.InstantiateModel(model);
+    Require(
+        entity.HasModelInstance() &&
+            entity.GetModelInstance().HasRuntime() &&
+            entity.GetModelInstance().TryGetRuntime()->BackendName() ==
+                "wisteria-generic",
+        "Scene did not route animated glTF through the Generic runtime"
+    );
     scene.Update(0.25f);
     Require(
         NearlyEqual(entity.GetPose().LocalMatrix(*rootBone)[3].x, 0.5f),
@@ -10438,6 +10449,7 @@ void TestR14RuntimeCreationOptions()
     descriptor.sourcePath = modelPath;
     descriptor.backend = ModelBackendKind::SabaMmd;
     asset.SetSourceDescriptor(descriptor);
+    asset.SetBackendKind(ModelBackendKind::SabaMmd);
 
     ModelBackendRegistry registry;
     RegisterDefaultModelBackends(registry);
@@ -10539,6 +10551,7 @@ void TestR14RuntimeCreationFailureTransaction()
     descriptor.sourcePath = modelPath;
     descriptor.backend = ModelBackendKind::SabaMmd;
     asset.SetSourceDescriptor(descriptor);
+    asset.SetBackendKind(ModelBackendKind::SabaMmd);
 
     ModelBackendRegistry registry;
     RegisterDefaultModelBackends(registry);
@@ -10699,10 +10712,9 @@ void TestWisteriaGenericAnimatedTriangleEquivalence()
         "phase0c::animatedTriangle",
         modelPath
     );
-    model.SetBackendKind(ModelBackendKind::WisteriaGeneric);
     Require(
         model.BackendKind() == ModelBackendKind::WisteriaGeneric,
-        "Phase 0C fixture lost its explicit generic identity"
+        "Animated glTF did not receive natural WisteriaGeneric classification"
     );
     // Pre-R1.5 baseline: Entity owns Pose + Animator.
     Entity legacyEntity;
@@ -11007,7 +11019,10 @@ void TestWisteriaGenericMultiInstance()
     RequireCoreAsset("animated-triangle-gltf");
     ResourceManager resources;
     ModelAsset& model = resources.LoadModel("phase0c::multi", modelPath);
-    model.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric,
+        "Animated glTF did not receive natural WisteriaGeneric classification"
+    );
 
     ModelBackendRegistry registry;
     RegisterDefaultModelBackends(registry);
@@ -11057,6 +11072,43 @@ void TestWisteriaGenericMultiInstance()
         ),
         "Generic animator time is shared across instances"
     );
+}
+
+void TestStaticModelClassification()
+{
+    const std::filesystem::path modelPath = FixturePath("box-glb");
+    RequireCoreAsset("box-glb");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("phase0d::box", modelPath);
+    Require(
+        model.BackendKind() == ModelBackendKind::Static,
+        "Static GLB was not classified as Static"
+    );
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    Require(
+        entity.HasModelInstance() &&
+            !entity.GetModelInstance().HasRuntime(),
+        "Static GLB unexpectedly received a runtime"
+    );
+    Require(
+        entity.RenderPartCount() == model.PartCount(),
+        "Static GLB lost render parts"
+    );
+    Require(
+        !entity.HasPose() && !entity.HasAnimator() &&
+            !entity.HasMorphState(),
+        "Static GLB fabricated dynamic state"
+    );
+    for (std::size_t index = 0U; index < model.PartCount(); ++index)
+    {
+        Require(
+            entity.RenderParts()[index].MorphMaterialIndex() ==
+                model.Parts()[index].MorphMaterialIndex(),
+            "Static GLB rewrote render-part material morph semantics"
+        );
+    }
 }
 
 }
@@ -11433,6 +11485,10 @@ int main()
     failures += !RunTest(
         "R1.5 generic multi-instance independence",
         TestWisteriaGenericMultiInstance
+    );
+    failures += !RunTest(
+        "R1.5 static model classification",
+        TestStaticModelClassification
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",

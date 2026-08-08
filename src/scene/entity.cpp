@@ -439,8 +439,11 @@ void Entity::PostPhysicsUpdate()
 
 void Entity::SolveAfterPhysicsPose()
 {
-    if (this->animator != nullptr)
-        this->animator->SolveAfterPhysics();
+    // R1.5 Phase 0D: route through TryGetAnimator so a runtime-owned Generic
+    // Animator participates in the after-physics pass; standalone Entities
+    // still reach their legacy Animator, Saba keeps returning nullptr.
+    if (Animator* animator = this->TryGetAnimator())
+        animator->SolveAfterPhysics();
 }
 
 void Entity::ResetPhysicsToCurrentPose()

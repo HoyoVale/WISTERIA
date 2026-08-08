@@ -309,6 +309,7 @@ std::uint32_t wisteria_stable_entity_create(
         descriptor.sourcePath = modelPath;
         descriptor.backend = ModelBackendKind::SabaMmd;
         asset->SetSourceDescriptor(descriptor);
+        asset->SetBackendKind(ModelBackendKind::SabaMmd);
 
         std::unique_ptr<IModelRuntimeDriver> runtime;
         try

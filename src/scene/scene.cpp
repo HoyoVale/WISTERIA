@@ -405,23 +405,7 @@ Entity& Scene::InstantiateModel(
     );
     ModelInstance& instanceReference = *instance;
     Entity& entity = this->CreateEntity(transform);
-    const bool backendDriven = instanceReference.HasRuntime();
     entity.SetModelInstance(std::move(instance));
-
-    // Static/generic imported models continue to use WISTERIA's Animator and
-    // GPU morph path. Backend-driven models own their evaluation state and
-    // expose its results through the ModelInstance contract instead.
-    if (!backendDriven)
-    {
-        if (model.HasMorphs())
-            entity.SetMorphSet(model.GetMorphSet());
-        if (model.HasSkeleton())
-        {
-            entity.SetSkeleton(model.GetSkeleton());
-            if (model.AnimationClipCount() > 0)
-                entity.GetAnimator().Play(model.AnimationClipAt(0));
-        }
-    }
 
     for (const RenderPart& part : model.Parts())
     {
@@ -429,7 +413,10 @@ Entity& Scene::InstantiateModel(
             instanceReference.ResolveMesh(part.GetMesh()),
             part.GetMaterial(),
             part.LocalTransform(),
-            backendDriven ? std::nullopt : part.MorphMaterialIndex()
+            // R1.5 Phase 0D: asset semantics are never rewritten. A backend
+            // without a WISTERIA MorphState naturally evaluates the base
+            // material (EvaluateMaterialMorphs(part, nullptr)).
+            part.MorphMaterialIndex()
         );
     }
     return entity;

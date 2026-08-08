@@ -368,12 +368,25 @@ ModelAsset& ResourceManager::LoadModel(
         throw std::invalid_argument("Model resource already exists: " + name);
 
     const std::string extension = LowerExtension(normalizedModelPath);
-    const ModelBackendKind backendKind = extension == ".pmx"
-        ? ModelBackendKind::SabaMmd
-        : ModelBackendKind::Static;
-    ImportedModelData imported = backendKind == ModelBackendKind::SabaMmd
+    const bool isPmx = extension == ".pmx";
+    ImportedModelData imported = isPmx
         ? SabaMmdImporter().Import(normalizedModelPath)
         : ModelImporter().Import(normalizedModelPath);
+    // R1.5 Phase 0D: backend identity is decided by the imported result, not
+    // by file extension. PMX always means MMD; any other asset with a
+    // Skeleton, Morphs or AnimationClip needs the Wisteria generic runtime;
+    // everything else is a true static model with no runtime.
+    ModelBackendKind backendKind = ModelBackendKind::Static;
+    if (isPmx)
+    {
+        backendKind = ModelBackendKind::SabaMmd;
+    }
+    else if (imported.skeleton.has_value() ||
+        !imported.morphs.empty() ||
+        !imported.animations.empty())
+    {
+        backendKind = ModelBackendKind::WisteriaGeneric;
+    }
 
     std::vector<std::string> textureNames;
     std::vector<std::string> materialNames;
@@ -619,6 +632,7 @@ ModelAsset& ResourceManager::LoadModel(
         normalizedModelPath,
         backendKind
     });
+    model->SetBackendKind(backendKind);
     if (imported.skeleton.has_value())
         model->SetSkeleton(std::move(*imported.skeleton));
     if (imported.mmdPhysics.has_value())
