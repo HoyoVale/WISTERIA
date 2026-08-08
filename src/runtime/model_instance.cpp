@@ -133,7 +133,10 @@ void ModelInstance::UploadDynamicVertices(Mesh& mesh)
     if (this->runtime == nullptr)
         return;
     const ModelVertexFrame frame = this->lastView.geometry;
-    if (frame.positions.empty() || frame.normals.empty())
+    // Frozen geometry semantics (R1.5 §5.4): both spans empty means no
+    // runtime-owned deformed geometry; one empty span is an invalid frame
+    // and must be rejected exactly like CaptureGeometry rejects it.
+    if (frame.positions.empty() && frame.normals.empty())
         return;
     if (frame.positions.size() != frame.normals.size())
         throw std::logic_error("Runtime vertex frame is inconsistent");

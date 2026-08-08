@@ -402,7 +402,6 @@ void TestProceduralVertexCanary()
     );
 
     ModelBackendRegistry registry;
-    RegisterDefaultModelBackends(registry);
     registry.Register(std::make_unique<ProceduralTestBackend>());
 
     std::unique_ptr<IModelRuntimeDriver> runtime =
@@ -495,6 +494,20 @@ void TestProceduralVertexCanary()
         std::make_unique<ModelInstance>(model, registry.CreateRuntime(model))
     );
     entity.Update(0.5f);
+    const ModelFrameSnapshot& entitySnapshot =
+        entity.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(
+        entitySnapshot.metadata.valid,
+        "Entity-chain snapshot is not valid"
+    );
+    Require(
+        entitySnapshot.geometry.captured,
+        "Entity-chain snapshot lost geometry"
+    );
+    Require(
+        !entitySnapshot.pose.captured,
+        "Entity-chain snapshot fabricated a Pose"
+    );
     Require(!entity.HasPose(), "Entity reported a Pose for vertex canary");
     Require(
         entity.TryGetPose() == nullptr,
@@ -515,7 +528,6 @@ void TestProceduralOneBoneCanary()
     ModelAsset model("procedural-one-bone-canary");
     ConfigureProceduralCanary(model);
     ModelBackendRegistry registry;
-    RegisterDefaultModelBackends(registry);
     registry.Register(std::make_unique<ProceduralTestBackend>());
 
     ModelInstance instance(model, registry.CreateRuntime(model));
@@ -596,6 +608,24 @@ void TestProceduralOneBoneCanary()
         "Entity fabricated morph state"
     );
     entity.Update(0.5f);
+    const ModelFrameSnapshot& entitySnapshot =
+        entity.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(
+        entitySnapshot.metadata.valid,
+        "Entity-chain snapshot is not valid"
+    );
+    Require(
+        entitySnapshot.pose.captured,
+        "Entity-chain snapshot lost the Pose"
+    );
+    Require(
+        entitySnapshot.pose.localTransforms.size() == 1U,
+        "Entity-chain Pose snapshot has the wrong bone count"
+    );
+    Require(
+        !entitySnapshot.geometry.captured,
+        "Entity-chain snapshot fabricated geometry"
+    );
     Require(
         entity.GetPose().BoneCount() == 1U,
         "Entity Pose forwarding broke the one-bone runtime"
@@ -607,7 +637,6 @@ void TestProceduralRootMotionExactlyOnce()
     ModelAsset model("procedural-root-motion-canary");
     ConfigureProceduralCanary(model);
     ModelBackendRegistry registry;
-    RegisterDefaultModelBackends(registry);
     registry.Register(std::make_unique<ProceduralTestBackend>());
 
     ModelInstance instance(model, registry.CreateRuntime(model));
@@ -643,6 +672,123 @@ void TestProceduralRootMotionExactlyOnce()
     Require(
         NearlyEqual(entity.GetTransform().Position().x, 0.25f),
         "Entity applied root motion more than once"
+    );
+}
+
+void TestProceduralMalformedGeometryRejected()
+{
+    ModelAsset model("procedural-malformed-canary");
+    ConfigureProceduralCanary(model);
+    ModelBackendRegistry registry;
+    registry.Register(std::make_unique<ProceduralTestBackend>());
+
+    ModelInstance instance(model, registry.CreateRuntime(model));
+    instance.Update(0.0f);
+
+    bool captureRejected = false;
+    try
+    {
+        (void)instance.CaptureSnapshot(CaptureMask::All);
+    }
+    catch (const std::logic_error&)
+    {
+        captureRejected = true;
+    }
+    Require(
+        captureRejected,
+        "CaptureSnapshot accepted a one-empty geometry frame"
+    );
+
+    Mesh mesh(DefaultModelData{});
+    bool uploadRejected = false;
+    try
+    {
+        instance.UploadDynamicVertices(mesh);
+    }
+    catch (const std::logic_error&)
+    {
+        uploadRejected = true;
+    }
+    Require(
+        uploadRejected,
+        "UploadDynamicVertices accepted a one-empty geometry frame"
+    );
+}
+
+void TestRuntimeSuppressesLegacyState()
+{
+    ModelAsset model("procedural-vertex-canary");
+    ConfigureProceduralCanary(model);
+    ModelBackendRegistry registry;
+    registry.Register(std::make_unique<ProceduralTestBackend>());
+
+    Bone root;
+    root.name = "root";
+    root.parentIndex = InvalidBoneIndex;
+    std::vector<Bone> bones;
+    bones.push_back(root);
+    Skeleton skeleton(std::move(bones));
+
+    MorphDefinition blink;
+    blink.name = "blink";
+    blink.category = MorphCategory::Other;
+    blink.kind = MorphKind::Vertex;
+    std::vector<MorphDefinition> definitions;
+    definitions.push_back(blink);
+    MorphSet morphSet(std::move(definitions));
+
+    Entity entity;
+    entity.SetSkeleton(skeleton);
+    entity.SetMorphSet(morphSet);
+    Require(
+        entity.TryGetPose() != nullptr &&
+            entity.TryGetAnimator() != nullptr &&
+            entity.TryGetMorphState() != nullptr,
+        "Legacy state was not installed before the runtime"
+    );
+
+    entity.SetModelInstance(
+        std::make_unique<ModelInstance>(model, registry.CreateRuntime(model))
+    );
+    Require(
+        entity.TryGetPose() == nullptr,
+        "Runtime-backed Entity leaked legacy Pose"
+    );
+    Require(
+        entity.TryGetAnimator() == nullptr,
+        "Runtime-backed Entity leaked legacy Animator"
+    );
+    Require(
+        entity.TryGetMorphState() == nullptr,
+        "Runtime-backed Entity leaked legacy MorphState"
+    );
+
+    bool animatorRejected = false;
+    try
+    {
+        (void)entity.GetAnimator();
+    }
+    catch (const std::logic_error&)
+    {
+        animatorRejected = true;
+    }
+    Require(
+        animatorRejected,
+        "GetAnimator() did not reject suppressed legacy state"
+    );
+
+    bool morphRejected = false;
+    try
+    {
+        (void)entity.GetMorphState();
+    }
+    catch (const std::logic_error&)
+    {
+        morphRejected = true;
+    }
+    Require(
+        morphRejected,
+        "GetMorphState() did not reject suppressed legacy state"
     );
 }
 
@@ -889,6 +1035,14 @@ int main()
     failures += !RunTest(
         "R1.5 procedural root motion exactly once",
         TestProceduralRootMotionExactlyOnce
+    );
+    failures += !RunTest(
+        "R1.5 procedural malformed geometry rejected",
+        TestProceduralMalformedGeometryRejected
+    );
+    failures += !RunTest(
+        "R1.5 runtime suppresses legacy state",
+        TestRuntimeSuppressesLegacyState
     );
     failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
     failures += !RunTest("Input frame transitions", TestInputFrameTransitions);

@@ -14,6 +14,7 @@
 //   procedural-vertex-canary       vertex-only, no Pose/Morph/Animator
 //   procedural-one-bone-canary     1-bone Pose + Animator, no geometry
 //   procedural-root-motion-canary  root-motion delta, no Pose/geometry
+//   procedural-malformed-canary    3 positions / 0 normals (invalid frame)
 
 #include "test_support.hpp"
 
@@ -298,6 +299,73 @@ private:
     std::size_t consumeCount = 0U;
 };
 
+class ProceduralMalformedGeometryRuntime final : public IModelRuntimeDriver
+{
+public:
+    bool Initialize() override
+    {
+        return true;
+    }
+
+    void Update(float) override
+    {
+    }
+
+    void Reset() override
+    {
+    }
+
+    Pose* TryGetPose() noexcept override
+    {
+        return nullptr;
+    }
+
+    const Pose* TryGetPose() const noexcept override
+    {
+        return nullptr;
+    }
+
+    bool NeedsDynamicVertexUpload() const noexcept override
+    {
+        return true;
+    }
+
+    ModelVertexFrame VertexFrame() const noexcept override
+    {
+        return ModelVertexFrame{
+            std::span<const glm::vec3>(
+                this->positions.data(),
+                this->positions.size()
+            ),
+            std::span<const glm::vec3>(
+                this->normals.data(),
+                this->normals.size()
+            ),
+            this->revision
+        };
+    }
+
+    PhysicsInstance* TryGetPhysicsInstance() noexcept override
+    {
+        return nullptr;
+    }
+
+    const PhysicsInstance* TryGetPhysicsInstance() const noexcept override
+    {
+        return nullptr;
+    }
+
+    std::string_view BackendName() const noexcept override
+    {
+        return "procedural-canary";
+    }
+
+private:
+    std::array<glm::vec3, 3> positions{};
+    std::vector<glm::vec3> normals;  // intentionally empty: malformed frame
+    std::uint64_t revision = 1U;
+};
+
 class ProceduralTestBackend final : public IModelBackend
 {
 public:
@@ -323,6 +391,8 @@ public:
             return std::make_unique<ProceduralOneBoneRuntime>();
         if (asset.Name() == "procedural-root-motion-canary")
             return std::make_unique<ProceduralRootMotionRuntime>();
+        if (asset.Name() == "procedural-malformed-canary")
+            return std::make_unique<ProceduralMalformedGeometryRuntime>();
         throw std::invalid_argument(
             "ProceduralTestBackend has no canary for asset: " +
             asset.Name()

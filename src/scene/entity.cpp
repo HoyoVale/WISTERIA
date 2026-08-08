@@ -253,10 +253,7 @@ Animator* Entity::TryGetAnimator() noexcept
         IModelRuntimeDriver* runtime =
             this->modelInstance->TryGetRuntime();
         if (runtime != nullptr)
-        {
-            if (Animator* animator = runtime->TryGetAnimator())
-                return animator;
-        }
+            return runtime->TryGetAnimator();
     }
     return this->animator.get();
 }
@@ -268,10 +265,7 @@ const Animator* Entity::TryGetAnimator() const noexcept
         const IModelRuntimeDriver* runtime =
             this->modelInstance->TryGetRuntime();
         if (runtime != nullptr)
-        {
-            if (const Animator* animator = runtime->TryGetAnimator())
-                return animator;
-        }
+            return runtime->TryGetAnimator();
     }
     return this->animator.get();
 }
@@ -304,10 +298,7 @@ MorphState* Entity::TryGetMorphState() noexcept
         IModelRuntimeDriver* runtime =
             this->modelInstance->TryGetRuntime();
         if (runtime != nullptr)
-        {
-            if (MorphState* morphState = runtime->TryGetMorphState())
-                return morphState;
-        }
+            return runtime->TryGetMorphState();
     }
     return this->morphState.get();
 }
@@ -319,10 +310,7 @@ const MorphState* Entity::TryGetMorphState() const noexcept
         const IModelRuntimeDriver* runtime =
             this->modelInstance->TryGetRuntime();
         if (runtime != nullptr)
-        {
-            if (const MorphState* morphState = runtime->TryGetMorphState())
-                return morphState;
-        }
+            return runtime->TryGetMorphState();
     }
     return this->morphState.get();
 }

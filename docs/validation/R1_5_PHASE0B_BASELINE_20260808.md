@@ -68,12 +68,14 @@ Canary 变体选择走 `ModelAsset::Name()` 约定（test-only 捷径），
 
 ## 3. 验收结果（2026-08-08，Windows/MSVC Release）
 
-新增 runtime 测试三项全部 [PASS]：
+新增 runtime 测试五项全部 [PASS]：
 
 ```text
 R1.5 procedural vertex canary
 R1.5 procedural one-bone canary
 R1.5 procedural root motion exactly once
+R1.5 procedural malformed geometry rejected
+R1.5 runtime suppresses legacy state
 ```
 
 四套矩阵（CTest 8/8）全绿：
@@ -88,6 +90,41 @@ wisteria.abi-c-smoke           Passed
 wisteria.checkpoint-cross-process        Passed
 wisteria.stable-checkpoint-cross-process Passed
 ```
+
+## 3.1 Final Guard（2026-08-08 第二轮审查闭合）
+
+外部实现审查发现并修复三项：
+
+1. **`UploadDynamicVertices()` 与冻结 geometry 契约对齐**：
+   单侧空 span 不再静默 return，改为与 `CaptureGeometry()` 一致的
+   `std::logic_error`；新增 `procedural-malformed-canary`
+   （positions=3 / normals=0），两条消费路径都断言拒绝。
+2. **Runtime-backed Entity 不再泄漏 legacy Animator/MorphState**：
+   `TryGetAnimator() / TryGetMorphState()` 与 `TryGetPose()` 一致——
+   只要存在 Runtime，其 `nullptr` 就是权威答案，不得回退到 standalone
+   legacy state；新增反向测试（先 SetSkeleton + SetMorphSet，再挂
+   vertex-only runtime，三个 channel 必须全为 null）。
+3. **Canary registry 隔离**：canary 测试不再调用
+   `RegisterDefaultModelBackends()`，只注册 `ProceduralTestBackend`，
+   避免 Phase 0C 加入正式 Generic backend 后 duplicate-kind 崩溃。
+
+测试加固：vertex / one-bone canary 的 Entity 段改为**同一实例**完整链
+（Registry → Runtime → ModelInstance → Entity.Update →
+ModelInstance.CaptureSnapshot），并保留 Animator/Pose pointer identity
+断言。
+
+四套矩阵（Windows CORE / Windows FULL / Linux CORE / Linux FULL）全绿：
+
+```text
+Windows CORE (MSVC Release)          8/8 Passed
+Windows FULL (MSVC RelWithDebInfo)   9/9 Passed（含 FULL 跨进程 E2E）
+Linux CORE (GCC RelWithDebInfo)      8/8 Passed
+Linux FULL (GCC RelWithDebInfo)      9/9 Passed（含 FULL 跨进程 E2E）
+```
+
+Linux 矩阵在 WSLg 上使用 README 记录的软件渲染退路
+（`LIBGL_ALWAYS_SOFTWARE=1`）；原生 Mesa D3D12 存在已知 LLVM 双注册
+崩溃，与本次改动无关。
 
 ## 4. 明确的边界（Phase 0B 不做）
 
