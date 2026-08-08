@@ -4,6 +4,8 @@
 #include "wisteria/rendering/bmp_writer.hpp"
 #include "wisteria/vendor/stb_image.h"
 
+#include <fstream>
+
 namespace
 {
 void TestMeshDynamicUpload()

@@ -35,6 +35,9 @@ struct OfflineFrameSequenceConfig
         SequenceOverwritePolicy::Reject;
     bool writePng = true;
     bool writeRaw = false;  // optional persisted .rgba
+    // Host-provided identity for the scene/presentation composition that the
+    // deterministic runtime cannot prove (lights, environment, entity set).
+    std::string scenePresentationIdentity;
 };
 
 // Deterministic batch frame-sequence orchestration (R1.6 Phase 0E).
@@ -105,7 +108,7 @@ private:
     void WriteSessionRecord();
     std::optional<FrameRecord> FindFrameRecord(
         MotionFrameIndex frame
-    ) const;
+    );
     std::optional<FrameRecord> ReadLastCommittedRecord();
     void AppendFrameRecord(const FrameRecord& record);
 
@@ -115,6 +118,7 @@ private:
     ModelInstance* modelInstance = nullptr;
     OfflineFrameSequenceConfig config;
     std::optional<MotionFrameIndex> lastCommitted;
+    std::string lastCommittedCheckpointSlot;
     bool failed = false;
     bool sessionRecordWritten = false;
 };

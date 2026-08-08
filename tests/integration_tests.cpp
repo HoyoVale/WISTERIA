@@ -11774,6 +11774,7 @@ void TestPublishCurrentRuntimeFrame()
     instance.PublishCurrentRuntimeFrame();
     const std::uint64_t revision0 =
         instance.LastRenderFrameView().geometry.revision;
+    const std::uint64_t serial0 = instance.LastFrameView().updateSerial;
     Require(
         instance.LastRenderFrameView().pose ==
             instance.LastFrameView().pose,
@@ -11786,6 +11787,10 @@ void TestPublishCurrentRuntimeFrame()
         instance.LastRenderFrameView().geometry.revision == revision0,
         "Publish advanced state without a runtime mutation"
     );
+    Require(
+        instance.LastFrameView().updateSerial == serial0,
+        "Publish advanced updateSerial without a runtime Update"
+    );
 
     Require(
         stepper->StepMotionFrameExact(1U, {}) == TimelineStatus::Ok,
@@ -11795,6 +11800,10 @@ void TestPublishCurrentRuntimeFrame()
     Require(
         instance.LastRenderFrameView().geometry.revision != revision0,
         "Publish did not reflect the exact step result"
+    );
+    Require(
+        instance.LastFrameView().updateSerial == serial0,
+        "Exact-step publish advanced updateSerial"
     );
 }
 

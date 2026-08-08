@@ -112,3 +112,44 @@ raw 落盘 optional（默认关闭）
 
 R1.6 整体 Closure：0A–0E 全部完成后写 Final Closure，随后转入
 横向方向（Stable C Portal / MMD Advanced / 更多 Backend）。
+
+## 7. Final Guard（2026-08-09 第二轮审查闭合）
+
+```text
+A. Presentation：同帧 camera sample 决定是否重建 projection
+   （perspective true/nullopt → Camera FOV + width/height 重建；
+    perspective false → 保留 fallback）
+B. Durable transaction：temp 写入 → _commit/fsync → 原子 replace
+   （Windows MoveFileEx REPLACE+WRITE_THROUGH / POSIX rename + dir fsync）
+C. JSONL crash-tail：读取前截掉最后一个 '\n' 之后的所有 bytes；
+   完整行 parse 失败 = fail-stop
+D. committed-record authority：先查 record → 校验 artifacts 存在 + file
+   hash 匹配 → 再应用 policy；VerifySkip 仅 rgbaHash 相同 + artifacts
+   完整才 skip；orphan（无 record 有文件）Reject/VerifySkip=error、
+   Overwrite=恢复
+E. A/B：next slot = opposite(last committed slot)；新 session 选 A；
+   禁止 frame parity 推导；Overwrite 旧帧不刷新 checkpoint
+   （否则会破坏更新的 committed 帧依赖的槽——本轮实测发现的 bug）
+F. Session identity：hash camera/projection/clearColor/width/height +
+   scenePresentationIdentity；constructor 校验
+   modelInstance.TryGetMmdRuntime() == &runtime
+G. fail-stop 全覆盖：RenderRange/Resume 最外层 catch(...) → failed=true
+H. Resume：即使无新帧也先读/校验/restore checkpoint；
+   frame domain 冻结 frame <= 2^24
+I. PublishCurrentRuntimeFrame 不再递增 updateSerial
+```
+
+测试新增：
+
+```text
+RenderRange(2,3) pre-roll == from-start 参考帧
+crash tail JSONL → Resume 截断并继续
+committed frame4(A) → 非顺序 RenderRange(6) 必须落 B（A 不被破坏）
+VerifySkip：篡改 PNG / 删除 PNG 必须拒绝；恢复后通过
+orphan artifact：Reject/VerifySkip 拒绝、Overwrite 恢复
+FOV 45 vs 60 → 离屏像素不同（projection 随 Camera 重建）
+publish updateSerial 不随重复 publish / exact-step publish 变化
+```
+
+测试中发现 pmx-physics 在无 IBL 场景渲染全黑，序列场景增加静态
+Box.glb 使像素断言有效。

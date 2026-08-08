@@ -1291,6 +1291,16 @@ int main()
                 instance.TryGetRuntime()
             );
             Require(runtime != nullptr, "Sequence test lost the MMD runtime");
+            // A visible static box makes the offline frames meaningful
+            // (the pmx-physics fixture itself renders black without IBL).
+            const std::filesystem::path boxPath =
+                std::filesystem::path("tests") / "assets" / "models" /
+                "Box.glb";
+            ModelAsset& boxModel = resources.LoadModel(
+                "r16::sequenceBox",
+                boxPath
+            );
+            scene.InstantiateModel(boxModel);
 
             OfflineRenderRequest baseRequest;
             baseRequest.width = TestWidth;
@@ -1468,6 +1478,283 @@ int main()
                 "VerifySkip rewrote an identical artifact"
             );
 
+            // start > 0 sequential pre-roll: RenderRange(2,3) must equal the
+            // reference frames 2..3 rendered from-start.
+            const std::filesystem::path dirC =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_c";
+            std::filesystem::remove_all(dirC, ignored);
+            OfflineFrameSequenceConfig configC = configA;
+            configC.outputDirectory = dirC;
+            OfflineFrameSequence preroll(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configC
+            );
+            preroll.RenderRange(2U, 3U);
+            Require(
+                !preroll.Failed(),
+                "Sequential pre-roll failed"
+            );
+            Require(
+                readFile(dirC / "00000002.png") ==
+                        readFile(dirB / "00000002.png") &&
+                    readFile(dirC / "00000003.png") ==
+                        readFile(dirB / "00000003.png"),
+                "Pre-rolled frames differ from the from-start reference"
+            );
+
+            // Crash tail recovery: append a partial JSONL record, then resume
+            // must truncate it and continue committing.
+            {
+                std::ofstream tail(dirA / "manifest.jsonl", std::ios::app);
+                Require(tail.is_open(), "Cannot append crash tail");
+                tail << "{\"type\":\"frame\",\"frameIndex\":4";
+                tail.close();
+            }
+            OfflineFrameSequence crashResume(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configA
+            );
+            crashResume.Resume(4U);
+            Require(
+                !crashResume.Failed() &&
+                    crashResume.LastCommittedFrame().value_or(99U) == 4U,
+                "Resume did not recover from a partial JSONL tail"
+            );
+            Require(
+                std::filesystem::is_regular_file(
+                    dirA / "00000004.png"
+                ),
+                "Resume after crash tail did not commit frame 4"
+            );
+
+            // A/B alternation: after committed frame 4 (slot A), the next
+            // committed frame must use slot B, and slot A must still hold
+            // frame 4's checkpoint.
+            OfflineFrameSequence alternate(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configA
+            );
+            alternate.RenderRange(6U, 6U);
+            Require(
+                !alternate.Failed() &&
+                    alternate.LastCommittedFrame().value_or(99U) == 6U,
+                "Non-sequential RenderRange failed"
+            );
+            {
+                std::ifstream manifest(dirA / "manifest.jsonl");
+                std::string line;
+                bool frame6OnB = false;
+                while (std::getline(manifest, line))
+                {
+                    if (line.find("\"frameIndex\":6") != std::string::npos &&
+                        line.find("\"checkpointSlot\":\"B\"") !=
+                            std::string::npos)
+                    {
+                        frame6OnB = true;
+                    }
+                }
+                Require(
+                    frame6OnB,
+                    "Frame 6 did not alternate to checkpoint slot B"
+                );
+            }
+            Require(
+                std::filesystem::is_regular_file(
+                    dirA / "checkpoint-A.bin"
+                ),
+                "Slot A was disturbed by the non-sequential commit"
+            );
+
+            // VerifySkip integrity: corrupted/deleted artifacts must be
+            // rejected even when the RGBA hash matches.
+            {
+                const std::vector<std::uint8_t> goodFrame0 =
+                    readFile(dirB / "00000000.png");
+                auto corruptFrame0 = goodFrame0;
+                corruptFrame0[corruptFrame0.size() / 2U] ^= 0xFFU;
+                {
+                    std::ofstream corrupt(
+                        dirA / "00000000.png",
+                        std::ios::binary
+                    );
+                    corrupt.write(
+                        reinterpret_cast<const char*>(
+                            corruptFrame0.data()
+                        ),
+                        static_cast<std::streamsize>(
+                            corruptFrame0.size()
+                        )
+                    );
+                }
+                OfflineFrameSequence verifyCorrupt(
+                    scene,
+                    renderer,
+                    *runtime,
+                    instance,
+                    configVerify
+                );
+                bool corruptRejected = false;
+                try
+                {
+                    verifyCorrupt.RenderRange(0U, 0U);
+                }
+                catch (const std::exception&)
+                {
+                    corruptRejected = true;
+                }
+                Require(
+                    corruptRejected && verifyCorrupt.Failed(),
+                    "VerifySkip accepted a corrupted committed artifact"
+                );
+
+                std::filesystem::remove(dirA / "00000000.png", ignored);
+                OfflineFrameSequence verifyMissing(
+                    scene,
+                    renderer,
+                    *runtime,
+                    instance,
+                    configVerify
+                );
+                bool missingRejected = false;
+                try
+                {
+                    verifyMissing.RenderRange(0U, 0U);
+                }
+                catch (const std::exception&)
+                {
+                    missingRejected = true;
+                }
+                Require(
+                    missingRejected && verifyMissing.Failed(),
+                    "VerifySkip accepted a missing committed artifact"
+                );
+
+                // Restore the artifact: VerifySkip must pass again.
+                {
+                    std::ofstream restore(
+                        dirA / "00000000.png",
+                        std::ios::binary
+                    );
+                    restore.write(
+                        reinterpret_cast<const char*>(goodFrame0.data()),
+                        static_cast<std::streamsize>(goodFrame0.size())
+                    );
+                }
+                OfflineFrameSequence verifyRestored(
+                    scene,
+                    renderer,
+                    *runtime,
+                    instance,
+                    configVerify
+                );
+                verifyRestored.RenderRange(0U, 0U);
+                Require(
+                    !verifyRestored.Failed(),
+                    "VerifySkip failed after the artifact was restored"
+                );
+            }
+
+            // Orphan artifact without a committed record: Reject/VerifySkip
+            // fail, Overwrite recovers.
+            const std::filesystem::path dirE =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_e";
+            std::filesystem::remove_all(dirE, ignored);
+            std::filesystem::create_directories(dirE, ignored);
+            {
+                const std::vector<std::uint8_t> orphan =
+                    readFile(dirB / "00000000.png");
+                std::ofstream orphanFile(
+                    dirE / "00000000.png",
+                    std::ios::binary
+                );
+                orphanFile.write(
+                    reinterpret_cast<const char*>(orphan.data()),
+                    static_cast<std::streamsize>(orphan.size())
+                );
+            }
+            OfflineFrameSequenceConfig configE = configA;
+            configE.outputDirectory = dirE;
+            OfflineFrameSequence orphanReject(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configE
+            );
+            bool orphanRejected = false;
+            try
+            {
+                orphanReject.RenderRange(0U, 0U);
+            }
+            catch (const std::exception&)
+            {
+                orphanRejected = true;
+            }
+            Require(
+                orphanRejected && orphanReject.Failed(),
+                "Reject accepted an orphan artifact"
+            );
+            configE.overwritePolicy = SequenceOverwritePolicy::Overwrite;
+            OfflineFrameSequence orphanOverwrite(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configE
+            );
+            orphanOverwrite.RenderRange(0U, 0U);
+            Require(
+                !orphanOverwrite.Failed() &&
+                    orphanOverwrite.LastCommittedFrame().value_or(99U) == 0U,
+                "Overwrite did not recover an orphan artifact"
+            );
+
+            // FOV presentation authority: changing the camera FOV must change
+            // the offline output (projection is rebuilt from the camera).
+            const std::filesystem::path dirF =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_f";
+            std::filesystem::remove_all(dirF, ignored);
+            OfflineFrameSequenceConfig configF = configA;
+            configF.outputDirectory = dirF;
+            configF.renderRequest.camera = Camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 60.0f
+            });
+            OfflineFrameSequence fovSequence(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configF
+            );
+            fovSequence.RenderRange(0U, 0U);
+            Require(
+                !fovSequence.Failed(),
+                "FOV sequence failed"
+            );
+            Require(
+                readFile(dirF / "00000000.png") !=
+                    readFile(dirB / "00000000.png"),
+                "Camera FOV did not reach the offline projection"
+            );
+
+            std::filesystem::remove_all(dirC, ignored);
+            std::filesystem::remove_all(dirE, ignored);
+            std::filesystem::remove_all(dirF, ignored);
             std::filesystem::remove_all(dirA, ignored);
             std::filesystem::remove_all(dirB, ignored);
         }

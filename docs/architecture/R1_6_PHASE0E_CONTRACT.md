@@ -330,3 +330,51 @@ RGBA8 resume == from-start
 不扩 ModelFrameSnapshot
 不支持多 deterministic driver 同步（v1）
 ```
+
+## 17. Final Contract Addendum（2026-08-09，Final Guard 闭合）
+
+```text
+A. Presentation projection refresh：
+   同帧 CameraTrackSample perspective == true/nullopt 且应用成功后，
+   request.projection 必须由更新后的 Camera FOV + width/height 重建；
+   perspective == false 保留 fallback projection。
+
+B. Durable transaction：
+   temp 写入 → OS durable flush（Windows _commit / POSIX fsync）→
+   atomic replace（Windows MoveFileEx REPLACE_EXISTING+WRITE_THROUGH /
+   POSIX rename）；JSONL append 同样 durable flush。
+   禁止 remove-then-rename 的非原子窗口。
+
+C. JSONL crash-tail 恢复：
+   读取前 binary 扫描最后一个完整 '\n'，截掉其后所有 bytes；
+   完整行 parse 失败 = 错误（fail-stop）；
+   仅尾部非 newline 片段可作为 crash residue 删除。
+
+D. committed-record authority：
+   policy 判断先查 committed record，再校验其声明的 artifacts
+   存在且 file hash 匹配；缺失/篡改 = 错误。
+   VerifySkip：rgbaHash 相同 + artifacts 完整才 skip；
+   缺失/篡改即使 rgbaHash 相同也拒绝。
+   orphan（artifact 存在但无 committed record）：
+     Reject/VerifySkip = error；Overwrite = 可恢复并重写。
+
+E. Checkpoint A/B：
+   next slot = opposite(last committed checkpointSlot)；
+   新 session 无 committed record 时选 A；禁止 frame parity 推导。
+
+F. Session identity：
+   hash 已知 presentation 输入（camera param / projection / clearColor /
+   width / height）+ host 提供的 scenePresentationIdentity；
+   constructor 必须验证 modelInstance.TryGetMmdRuntime() == &runtime。
+
+G. Fail-stop 全覆盖：
+   RenderRange / Resume 最外层 catch(...) → failed=true → rethrow。
+
+H. Resume 边界：
+   即使 lastRecord.frame >= end，也必须先读、校验、restore checkpoint；
+   frame domain 冻结：frame <= 2^24（float(frame) 逐整数精确）。
+
+I. Publication：
+   PublishCurrentRuntimeFrame 不增加 updateSerial；
+   updateSerial 只由 runtime Update publication 推进。
+```
