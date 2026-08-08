@@ -11428,6 +11428,21 @@ void TestSabaDeterministicRenderViewPublication()
     runtime->Update(0.0f);
     const ModelRenderFrameView realtimeView =
         runtime->ProduceRenderFrameView();
+    // The render view is a zero-copy transient view: it becomes invalid as
+    // soon as the runtime mutates. Copy every channel before stepping so the
+    // comparison below never reads the already-mutated internal buffers.
+    const std::vector<glm::vec2> realtimeUvs(
+        realtimeView.uvs.begin(),
+        realtimeView.uvs.end()
+    );
+    const std::vector<MaterialRuntimeOverride> realtimeMaterials(
+        realtimeView.materials.begin(),
+        realtimeView.materials.end()
+    );
+    const std::vector<glm::vec3> realtimePositions(
+        realtimeView.geometry.positions.begin(),
+        realtimeView.geometry.positions.end()
+    );
     Require(
         stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
         "PrepareFrameZero failed for the render-view publication test"
@@ -11435,31 +11450,51 @@ void TestSabaDeterministicRenderViewPublication()
     const ModelRenderFrameView exactView =
         runtime->ProduceRenderFrameView();
     Require(
-        exactView.materials.size() == realtimeView.materials.size() &&
+        exactView.materials.size() == realtimeMaterials.size() &&
             exactView.materials.size() == model.PartCount(),
         "Deterministic publication lost material slots"
     );
     Require(
-        exactView.uvs.size() == realtimeView.uvs.size() &&
+        exactView.uvs.size() == realtimeUvs.size() &&
             exactView.uvs.size() == exactView.geometry.positions.size(),
         "Deterministic publication lost the dynamic UV channel"
     );
-    bool same = true;
+    Require(
+        exactView.geometry.positions.size() == realtimePositions.size(),
+        "Deterministic publication lost geometry"
+    );
+    for (std::size_t index = 0U; index < realtimeUvs.size(); ++index)
+    {
+        Require(
+            exactView.uvs[index] == realtimeUvs[index],
+            "Deterministic UV publication diverged from real-time"
+        );
+    }
     for (std::size_t index = 0U;
-         index < exactView.materials.size();
+         index < realtimeMaterials.size();
          ++index)
     {
-        if (exactView.materials[index].diffuse !=
-                realtimeView.materials[index].diffuse)
-        {
-            same = false;
-            break;
-        }
+        const MaterialRuntimeOverride& exact =
+            exactView.materials[index];
+        const MaterialRuntimeOverride& realtime =
+            realtimeMaterials[index];
+        Require(
+            exact.diffuse == realtime.diffuse &&
+                exact.specular == realtime.specular &&
+                exact.shininess == realtime.shininess &&
+                exact.ambient == realtime.ambient &&
+                exact.edgeColor == realtime.edgeColor &&
+                exact.edgeSize == realtime.edgeSize &&
+                exact.textureMultiply == realtime.textureMultiply &&
+                exact.textureAdd == realtime.textureAdd &&
+                exact.sphereTextureMultiply ==
+                    realtime.sphereTextureMultiply &&
+                exact.sphereTextureAdd == realtime.sphereTextureAdd &&
+                exact.toonTextureMultiply == realtime.toonTextureMultiply &&
+                exact.toonTextureAdd == realtime.toonTextureAdd,
+            "Deterministic material publication diverged from real-time"
+        );
     }
-    Require(
-        same,
-        "Deterministic and real-time publication disagree on materials"
-    );
 }
 
 }

@@ -1067,6 +1067,10 @@ bool SabaMmdRuntimeModel::Initialize()
         }
     }
     this->impl->materialOverrides.resize(materialCount);
+    // Initial publication: the model is already evaluated, so the material
+    // slots must carry real Saba material state immediately after
+    // Initialize, not defaults until the first Update.
+    this->SyncRenderStateFromSaba();
 
     if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
     {
@@ -1148,6 +1152,7 @@ void SabaMmdRuntimeModel::Update(float deltaTime)
     this->impl->model->EndAnimation();
     this->impl->model->Update();
     this->SyncPoseFromSaba();
+    this->SyncRenderStateFromSaba();
     ++this->impl->vertexRevision;
     const auto updateEnd = std::chrono::steady_clock::now();
     this->impl->updateMilliseconds += std::chrono::duration<double, std::milli>(
@@ -1421,6 +1426,7 @@ TimelineStatus SabaMmdRuntimeModel::StepFrameExact(
     this->impl->model->EndAnimation();
     this->impl->model->Update();
     this->SyncPoseFromSaba();
+    this->SyncRenderStateFromSaba();
     this->SyncFollowBoneBoundaryTransforms();
     ++this->impl->vertexRevision;
     this->impl->lastExecutedSubsteps =
@@ -2104,6 +2110,7 @@ TimelineStatus SabaMmdRuntimeModel::RestorePhases(
     this->impl->model->UpdateNodeAnimation(true);
     this->impl->model->Update();
     this->SyncPoseFromSaba();
+    this->SyncRenderStateFromSaba();
     this->SyncFollowBoneBoundaryTransforms();
     ++this->impl->vertexRevision;
     throwIfInjected(6);
@@ -2144,6 +2151,7 @@ void SabaMmdRuntimeModel::PublishAfterPhysicsPose()
     this->impl->model->EndAnimation();
     this->impl->model->Update();
     this->SyncPoseFromSaba();
+    this->SyncRenderStateFromSaba();
     this->SyncFollowBoneBoundaryTransforms();
 }
 
@@ -3300,10 +3308,6 @@ void SabaMmdRuntimeModel::SyncPoseFromSaba()
         );
     }
     this->impl->pose->SetLocalMatrices(localMatrices);
-    // Every pose publication path (Update / exact step / restore / replay)
-    // funnels through here; keep the renderer-facing material state in sync
-    // at the same boundary.
-    this->SyncRenderStateFromSaba();
 }
 
 void SabaMmdRuntimeModel::SyncRenderStateFromSaba()

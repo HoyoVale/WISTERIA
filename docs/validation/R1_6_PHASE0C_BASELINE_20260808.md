@@ -151,6 +151,28 @@ Generic 不伪造动态 UV/material 通道；Generic 材质 morph 继续走
 MaterialMorphValues（multiply 语义，add=0），未重构
 ```
 
+## 5.1 Final Guard（2026-08-08 第二轮审查闭合）
+
+```text
+1. deterministic publication 测试遵守 transient lifetime：
+   PrepareFrameZero（mutation）前把 uvs/materials/positions 复制为
+   vector；比较时不再读取已失效的 span；
+   material 全字段（diffuse/specular/shininess/ambient/edge/
+   texture-sphere-toon 的 Mul+Add）逐项断言
+2. Saba 发布与 Pose 解耦：
+   SyncPoseFromSaba 不再隐式调用 SyncRenderStateFromSaba；
+   Update / exact step / restore / PublishAfterPhysicsPose 每个
+   publication boundary 显式成对调用；
+   Initialize 在 materialOverrides.resize 后立即首次同步
+   （Initialize 完成后 materials 就是真实 Saba 终态，不是默认值）
+3. ResolveMaterialState nullopt fallback：
+   MorphMaterialIndex == nullopt（用户 AddRenderPart 的 part）→
+   走 MorphState/base 路径，不 throw；
+   仅 non-null 且 OOB → logic_error；
+   render smoke 增加 Saba entity + nullopt extra part 回归
+   （Render 不抛）
+```
+
 ## 6. 下一步
 
 Phase 0D：Explicit Presentation Authority（Camera/Light 应用，MMD

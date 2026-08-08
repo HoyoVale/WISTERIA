@@ -100,28 +100,34 @@ MaterialMorphValues ResolveMaterialState(
     {
         const std::optional<std::uint32_t> slot =
             part.MorphMaterialIndex();
-        if (!slot.has_value() || *slot >= frame.materials.size())
+        if (slot.has_value())
         {
-            throw std::logic_error(
-                "RenderPart has no valid runtime material slot"
-            );
+            if (*slot >= frame.materials.size())
+            {
+                throw std::logic_error(
+                    "RenderPart runtime material slot is out of range"
+                );
+            }
+            const MaterialRuntimeOverride& override =
+                frame.materials[*slot];
+            MaterialMorphValues values;
+            values.diffuse = override.diffuse;
+            values.specular = override.specular;
+            values.shininess = override.shininess;
+            values.ambient = override.ambient;
+            values.edgeColor = override.edgeColor;
+            values.edgeSize = override.edgeSize;
+            values.textureFactor = override.textureMultiply;
+            values.textureAdd = override.textureAdd;
+            values.sphereTextureFactor = override.sphereTextureMultiply;
+            values.sphereTextureAdd = override.sphereTextureAdd;
+            values.toonTextureFactor = override.toonTextureMultiply;
+            values.toonTextureAdd = override.toonTextureAdd;
+            return values;
         }
-        const MaterialRuntimeOverride& override =
-            frame.materials[*slot];
-        MaterialMorphValues values;
-        values.diffuse = override.diffuse;
-        values.specular = override.specular;
-        values.shininess = override.shininess;
-        values.ambient = override.ambient;
-        values.edgeColor = override.edgeColor;
-        values.edgeSize = override.edgeSize;
-        values.textureFactor = override.textureMultiply;
-        values.textureAdd = override.textureAdd;
-        values.sphereTextureFactor = override.sphereTextureMultiply;
-        values.sphereTextureAdd = override.sphereTextureAdd;
-        values.toonTextureFactor = override.toonTextureMultiply;
-        values.toonTextureAdd = override.toonTextureAdd;
-        return values;
+        // MorphMaterialIndex == nullopt means this part is not connected to
+        // a runtime material slot (e.g. a user-added RenderPart); fall back
+        // to the MorphState / base material path.
     }
     return EvaluateMaterialMorphs(part, frame.morphState);
 }

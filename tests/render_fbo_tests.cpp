@@ -1030,6 +1030,25 @@ int main()
                 .Intensity = 1.0f
             });
             Entity& entity = scene.InstantiateModel(pmxModel);
+            // Regression: a user-added RenderPart without a runtime material
+            // slot must resolve through the base-material fallback instead of
+            // throwing during Render.
+            DefaultModelData extraData;
+            extraData.layout = {{"position", 3, FLOAT}};
+            extraData.vertices = {
+                0.0f, 0.0f, 0.0f,
+                1.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f
+            };
+            extraData.indices = {0U, 1U, 2U};
+            Mesh extraMesh(std::move(extraData));
+            Material extraMaterial(MaterialData{});
+            entity.AddRenderPart(
+                extraMesh,
+                extraMaterial,
+                glm::mat4(1.0f),
+                std::nullopt
+            );
             const glm::vec3 boundsCenter =
                 entity.RenderParts()[0].GetMesh().LocalBoundsCenter();
             Camera camera(CameraParam{
