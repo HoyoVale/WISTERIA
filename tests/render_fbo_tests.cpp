@@ -18,6 +18,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -1300,7 +1301,7 @@ int main()
                 "r16::sequenceBox",
                 boxPath
             );
-            scene.InstantiateModel(boxModel);
+            Entity& boxEntity = scene.InstantiateModel(boxModel);
 
             OfflineRenderRequest baseRequest;
             baseRequest.width = TestWidth;
@@ -1720,43 +1721,289 @@ int main()
                 "Overwrite did not recover an orphan artifact"
             );
 
-            // FOV presentation authority: changing the camera FOV must change
-            // the offline output (projection is rebuilt from the camera).
+            // No camera track: a host custom projection must stay untouched,
+            // even when the base camera FOV differs.
+            const glm::mat4 customProjection = glm::perspective(
+                glm::radians(50.0f),
+                1.0f,
+                0.05f,
+                250.0f
+            );
             const std::filesystem::path dirF =
                 std::filesystem::temp_directory_path() /
                 "wisteria_seq_f";
+            const std::filesystem::path dirG =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_g";
             std::filesystem::remove_all(dirF, ignored);
+            std::filesystem::remove_all(dirG, ignored);
             OfflineFrameSequenceConfig configF = configA;
             configF.outputDirectory = dirF;
-            configF.renderRequest.camera = Camera(CameraParam{
+            configF.renderRequest.projection = customProjection;
+            OfflineFrameSequenceConfig configG = configF;
+            configG.outputDirectory = dirG;
+            configG.renderRequest.camera = Camera(CameraParam{
                 .Position = {0.0f, 3.0f, 3.0f},
                 .Target = {0.0f, 0.0f, 0.0f},
                 .Up = {0.0f, 1.0f, 0.0f},
                 .VerticalFovDegrees = 60.0f
             });
-            OfflineFrameSequence fovSequence(
+            OfflineFrameSequence noTrackFovA(
                 scene,
                 renderer,
                 *runtime,
                 instance,
                 configF
             );
-            fovSequence.RenderRange(0U, 0U);
+            OfflineFrameSequence noTrackFovB(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configG
+            );
+            noTrackFovA.RenderRange(0U, 0U);
+            noTrackFovB.RenderRange(0U, 0U);
             Require(
-                !fovSequence.Failed(),
-                "FOV sequence failed"
+                !noTrackFovA.Failed() && !noTrackFovB.Failed(),
+                "No-track FOV sequence failed"
             );
             Require(
-                readFile(dirF / "00000000.png") !=
+                readFile(dirF / "00000000.png") ==
+                    readFile(dirG / "00000000.png"),
+                "Projection was rebuilt without an applied camera track"
+            );
+
+            // Cursor regression: historical Overwrite/VerifySkip must never
+            // regress the committed cursor or the A/B slot.
+            OfflineFrameSequenceConfig configCursor = configA;
+            configCursor.overwritePolicy =
+                SequenceOverwritePolicy::Overwrite;
+            OfflineFrameSequence cursorSession(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configCursor
+            );
+            cursorSession.RenderRange(4U, 4U);
+            Require(
+                !cursorSession.Failed(),
+                "Historical overwrite failed"
+            );
+            Require(
+                cursorSession.LastCommittedFrame().value_or(99U) == 6U,
+                "Historical overwrite regressed the committed cursor"
+            );
+            const std::vector<std::uint8_t> checkpointB6 =
+                readFile(dirA / "checkpoint-B.bin");
+            cursorSession.RenderRange(7U, 7U);
+            Require(
+                !cursorSession.Failed() &&
+                    cursorSession.LastCommittedFrame().value_or(99U) == 7U,
+                "Commit after historical overwrite failed"
+            );
+            {
+                std::ifstream manifest(dirA / "manifest.jsonl");
+                std::string line;
+                bool frame7OnA = false;
+                while (std::getline(manifest, line))
+                {
+                    if (line.find("\"frameIndex\":7") !=
+                            std::string::npos &&
+                        line.find("\"checkpointSlot\":\"A\"") !=
+                            std::string::npos)
+                    {
+                        frame7OnA = true;
+                    }
+                }
+                Require(
+                    frame7OnA,
+                    "Frame 7 did not alternate to checkpoint slot A"
+                );
+            }
+            Require(
+                readFile(dirA / "checkpoint-B.bin") == checkpointB6,
+                "Slot B was destroyed before the frame-7 manifest commit"
+            );
+
+            // Session identity is path-independent: a copied output directory
+            // must resume and must not duplicate the session record.
+            const std::filesystem::path dirA2 =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_a2";
+            std::filesystem::remove_all(dirA2, ignored);
+            std::filesystem::create_directories(dirA2, ignored);
+            for (const auto& entry :
+                std::filesystem::directory_iterator(dirA))
+            {
+                std::filesystem::copy(
+                    entry.path(),
+                    dirA2 / entry.path().filename(),
+                    std::filesystem::copy_options::overwrite_existing,
+                    ignored
+                );
+            }
+            OfflineFrameSequenceConfig configA2 = configA;
+            configA2.outputDirectory = dirA2;
+            OfflineFrameSequence resumeCopy(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configA2
+            );
+            resumeCopy.Resume(6U);
+            Require(
+                !resumeCopy.Failed() &&
+                    resumeCopy.LastCommittedFrame().value_or(99U) == 7U,
+                "Copied directory resume failed"
+            );
+            {
+                std::ifstream manifest(dirA2 / "manifest.jsonl");
+                const std::string content{
+                    std::istreambuf_iterator<char>(manifest),
+                    std::istreambuf_iterator<char>()
+                };
+                std::size_t sessionCount = 0U;
+                std::size_t position = 0U;
+                while ((position = content.find(
+                        "\"type\":\"session\"",
+                        position
+                    )) != std::string::npos)
+                {
+                    ++sessionCount;
+                    position += 16U;
+                }
+                Require(
+                    sessionCount == 1U,
+                    "Manifest duplicated the session record"
+                );
+            }
+
+            // Overwrite of a committed frame must fail when the re-rendered
+            // RGBA diverges from the committed record.
+            boxEntity.GetTransform().SetPosition(
+                glm::vec3(2.0f, 0.0f, 0.0f)
+            );
+            OfflineFrameSequence mismatchedOverwrite(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configCursor
+            );
+            bool mismatchRejected = false;
+            try
+            {
+                mismatchedOverwrite.RenderRange(4U, 4U);
+            }
+            catch (const std::exception&)
+            {
+                mismatchRejected = true;
+            }
+            Require(
+                mismatchRejected && mismatchedOverwrite.Failed(),
+                "Overwrite accepted a deterministic RGBA mismatch"
+            );
+            boxEntity.GetTransform().SetPosition(glm::vec3(0.0f));
+
+            // Applied camera-track FOV must reach the projection.
+            const std::filesystem::path cameraVmd =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_camera.vmd";
+            {
+                std::vector<std::uint8_t> bytes;
+                const auto appendValue =
+                    [&bytes]<typename T>(const T& value)
+                {
+                    const std::size_t offset = bytes.size();
+                    bytes.resize(offset + sizeof(T));
+                    std::memcpy(bytes.data() + offset, &value, sizeof(T));
+                };
+                const auto appendFixed =
+                    [&bytes](
+                        std::string_view value,
+                        std::size_t size
+                    )
+                {
+                    const std::size_t begin = bytes.size();
+                    bytes.resize(begin + size, 0U);
+                    const std::size_t copySize =
+                        std::min(value.size(), size);
+                    std::memcpy(
+                        bytes.data() + begin,
+                        value.data(),
+                        copySize
+                    );
+                };
+                appendFixed("Vocaloid Motion Data 0002", 30U);
+                appendFixed("testModel", 20U);
+                appendValue(std::uint32_t{0U});  // bones
+                appendValue(std::uint32_t{0U});  // morphs
+                appendValue(std::uint32_t{1U});  // cameras
+                appendValue(std::uint32_t{0U});  // frame
+                appendValue(8.0f);               // distance
+                appendValue(0.0f);
+                appendValue(0.0f);
+                appendValue(0.0f);               // interest
+                appendValue(0.0f);
+                appendValue(0.0f);
+                appendValue(0.0f);               // rotation
+                const std::array<std::uint8_t, 24> interpolation{};
+                bytes.insert(
+                    bytes.end(),
+                    interpolation.begin(),
+                    interpolation.end()
+                );
+                appendValue(std::uint32_t{30U}); // view angle (degrees)
+                appendValue(std::uint8_t{1U});   // perspective
+                appendValue(std::uint32_t{0U});  // lights
+                std::ofstream out(cameraVmd, std::ios::binary);
+                Require(out.is_open(), "Cannot write camera VMD");
+                out.write(
+                    reinterpret_cast<const char*>(bytes.data()),
+                    static_cast<std::streamsize>(bytes.size())
+                );
+                out.close();
+            }
+            Require(
+                runtime->LoadCameraMotion(cameraVmd),
+                "Sequence runtime rejected the camera VMD"
+            );
+            const std::filesystem::path dirT =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_t";
+            std::filesystem::remove_all(dirT, ignored);
+            OfflineFrameSequenceConfig configT = configA;
+            configT.outputDirectory = dirT;
+            OfflineFrameSequence trackFov(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configT
+            );
+            trackFov.RenderRange(0U, 0U);
+            Require(
+                !trackFov.Failed(),
+                "Camera-track sequence failed"
+            );
+            Require(
+                readFile(dirT / "00000000.png") !=
                     readFile(dirB / "00000000.png"),
-                "Camera FOV did not reach the offline projection"
+                "Applied camera-track FOV did not reach the projection"
             );
 
             std::filesystem::remove_all(dirC, ignored);
             std::filesystem::remove_all(dirE, ignored);
             std::filesystem::remove_all(dirF, ignored);
+            std::filesystem::remove_all(dirG, ignored);
+            std::filesystem::remove_all(dirT, ignored);
             std::filesystem::remove_all(dirA, ignored);
+            std::filesystem::remove_all(dirA2, ignored);
             std::filesystem::remove_all(dirB, ignored);
+            std::filesystem::remove(cameraVmd, ignored);
         }
     }
     catch (const std::exception& error)

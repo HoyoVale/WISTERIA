@@ -50,13 +50,14 @@ std::uint64_t HashString(std::string_view text)
 
 inline constexpr MotionFrameIndex kMaxSequenceFrame = 1U << 24;
 
-void FlushDurably(FILE* file)
+bool FlushDurably(FILE* file)
 {
-    std::fflush(file);
+    if (std::fflush(file) != 0)
+        return false;
 #if defined(_WIN32)
-    _commit(_fileno(file));
+    return _commit(_fileno(file)) == 0;
 #else
-    fsync(fileno(file));
+    return fsync(fileno(file)) == 0;
 #endif
 }
 
@@ -81,8 +82,10 @@ bool AtomicReplace(
     const int directory = ::open(finalPath.parent_path().c_str(), O_RDONLY);
     if (directory >= 0)
     {
-        fsync(directory);
+        const bool synced = fsync(directory) == 0;
         ::close(directory);
+        if (!synced)
+            return false;
     }
     return true;
 #endif
@@ -103,20 +106,20 @@ bool AppendDurable(
         record.size(),
         file
     ) == record.size() && std::fputc('\n', file) != EOF;
-    if (ok)
-        FlushDurably(file);
+    const bool durable = ok && FlushDurably(file);
     const bool closed = std::fclose(file) == 0;
-    return ok && closed;
+    return durable && closed;
 }
 
-// Removes a partial trailing JSONL record after a crash: everything after
-// the last complete '\n' is discarded. Complete-line parse failures are NOT
-// treated as residue and are reported by the callers.
-void TruncateJsonlTail(const std::filesystem::path& path)
+// Removes a partial trailing JSONL record after a crash by truncating the
+// file IN PLACE after the last complete '\n'. Never rewrites the file
+// (a rewrite would create a zero-length crash window that could lose the
+// entire committed history). Returns false when truncation/sync fails.
+bool TruncateJsonlTail(const std::filesystem::path& path)
 {
     std::ifstream input(path, std::ios::binary);
     if (!input)
-        return;
+        return true;  // missing manifest is handled by callers
     const std::vector<std::uint8_t> bytes{
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>()
@@ -134,16 +137,22 @@ void TruncateJsonlTail(const std::filesystem::path& path)
     const std::size_t keep =
         lastNewline == std::string::npos ? 0U : lastNewline + 1U;
     if (keep == bytes.size())
-        return;
-    FILE* output = std::fopen(path.string().c_str(), "wb");
-    if (output == nullptr)
-        return;
-    if (keep > 0U)
-    {
-        (void)std::fwrite(bytes.data(), 1, keep, output);
-    }
-    FlushDurably(output);
-    std::fclose(output);
+        return true;
+    FILE* file = std::fopen(path.string().c_str(), "rb+");
+    if (file == nullptr)
+        return false;
+    bool truncated = false;
+#if defined(_WIN32)
+    truncated = _chsize_s(
+        _fileno(file),
+        static_cast<__int64>(keep)
+    ) == 0 && _commit(_fileno(file)) == 0;
+#else
+    truncated = ftruncate(fileno(file), static_cast<off_t>(keep)) == 0 &&
+        fsync(fileno(file)) == 0;
+#endif
+    const bool closed = std::fclose(file) == 0;
+    return truncated && closed;
 }
 }
 
@@ -217,7 +226,6 @@ std::string OfflineFrameSequence::SessionIdentity() const
             reinterpret_cast<const std::uint8_t*>(text.data()) + text.size()
         );
     };
-    foldString(this->config.outputDirectory.string());
     const std::uint64_t build = CurrentBuildCompatibilityId();
     fold(&build, sizeof(build));
     fold(&this->config.renderRequest.width, sizeof(std::uint32_t));
@@ -324,6 +332,7 @@ void OfflineFrameSequence::RenderRange(
                 this->ReadLastCommittedRecord();
             if (existing.has_value())
             {
+                this->lastCommitted = existing->frame;
                 this->lastCommittedCheckpointSlot =
                     existing->checkpointSlot;
             }
@@ -462,29 +471,25 @@ void OfflineFrameSequence::ApplyPresentation(
     // rebuilt from the applied FOV (perspective) or kept at fallback.
     const std::optional<CameraTrackSample> cameraSample =
         this->runtime->SampleCameraMotion(static_cast<float>(frame));
-    const bool perspective = cameraSample.has_value()
-        ? cameraSample->perspective.value_or(true)
-        : true;
-    ApplyMmdCameraFrame(
+    const bool cameraApplied = ApplyMmdCameraFrame(
         *this->runtime,
         static_cast<float>(frame),
         request.camera,
         this->config.renderRequest.camera.GetParam()
     );
-    if (perspective)
+    // Only an actually applied perspective camera sample may rebuild the
+    // projection; a host-provided custom projection stays untouched when no
+    // camera track exists.
+    if (cameraApplied &&
+        cameraSample.has_value() &&
+        cameraSample->perspective.value_or(true))
     {
-        const CameraParam& param = request.camera.GetParam();
         const float aspect =
             request.width > 0U && request.height > 0U
             ? static_cast<float>(request.width) /
                 static_cast<float>(request.height)
             : 1.0f;
-        request.projection = glm::perspective(
-            glm::radians(param.VerticalFovDegrees),
-            aspect,
-            param.NearClip,
-            param.FarClip
-        );
+        request.projection = request.camera.GetProjection(aspect);
     }
     if (!this->scene->DirectionalLights().empty())
     {
@@ -524,10 +529,9 @@ void OfflineFrameSequence::WriteArtifactAtomic(
         bytes.size(),
         file
     ) == bytes.size();
-    if (written)
-        FlushDurably(file);
+    const bool durable = written && FlushDurably(file);
     const bool closed = std::fclose(file) == 0;
-    if (!written || !closed)
+    if (!written || !durable || !closed)
     {
         this->Fail("cannot write temporary artifact: " +
             temporary.string());
@@ -594,7 +598,11 @@ void OfflineFrameSequence::AppendFrameRecord(const FrameRecord& record)
 std::optional<OfflineFrameSequence::FrameRecord>
 OfflineFrameSequence::FindFrameRecord(MotionFrameIndex frame)
 {
-    TruncateJsonlTail(this->ManifestPath());
+    if (!TruncateJsonlTail(this->ManifestPath()))
+    {
+        this->Fail("cannot truncate manifest crash tail");
+        return std::nullopt;
+    }
     std::ifstream stream(this->ManifestPath());
     if (!stream)
         return std::nullopt;
@@ -638,7 +646,11 @@ OfflineFrameSequence::FindFrameRecord(MotionFrameIndex frame)
 std::optional<OfflineFrameSequence::FrameRecord>
 OfflineFrameSequence::ReadLastCommittedRecord()
 {
-    TruncateJsonlTail(this->ManifestPath());
+    if (!TruncateJsonlTail(this->ManifestPath()))
+    {
+        this->Fail("cannot truncate manifest crash tail");
+        return std::nullopt;
+    }
     std::ifstream stream(this->ManifestPath());
     if (!stream)
         return std::nullopt;
@@ -663,6 +675,7 @@ OfflineFrameSequence::ReadLastCommittedRecord()
         if (type == "session")
         {
             sawSession = true;
+            this->sessionRecordWritten = true;
             const std::string identity = entry.value(
                 "sessionIdentity",
                 ""
@@ -731,6 +744,14 @@ OfflineFrameSequence::RenderAndPersist(MotionFrameIndex frame)
     // before applying any policy.
     const std::optional<FrameRecord> committed =
         this->FindFrameRecord(frame);
+    if (committed.has_value() &&
+        this->config.overwritePolicy == SequenceOverwritePolicy::Overwrite &&
+        committed->rgbaHash != rgbaHash)
+    {
+        this->Fail("Overwrite rgba hash mismatch for committed frame " +
+            std::to_string(frame));
+        return {};
+    }
     bool committedArtifactsIntact = true;
     if (committed.has_value())
     {
@@ -766,9 +787,8 @@ OfflineFrameSequence::RenderAndPersist(MotionFrameIndex frame)
                     std::to_string(frame));
                 return {};
             }
-            this->lastCommitted = frame;
-            this->lastCommittedCheckpointSlot =
-                committed->checkpointSlot;
+            // Historical frames never move the committed cursor; only new
+            // manifest commits (or the manifest tail) may do that.
             return *committed;
         }
     }
@@ -867,8 +887,6 @@ OfflineFrameSequence::RenderAndPersist(MotionFrameIndex frame)
 
     if (rewriteOnly)
     {
-        this->lastCommitted = frame;
-        this->lastCommittedCheckpointSlot = record.checkpointSlot;
         return record;
     }
 

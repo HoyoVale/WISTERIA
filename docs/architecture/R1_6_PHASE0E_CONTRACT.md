@@ -377,4 +377,24 @@ H. Resume 边界：
 I. Publication：
    PublishCurrentRuntimeFrame 不增加 updateSerial；
    updateSerial 只由 runtime Update publication 推进。
+
+### Final Closure Guard（2026-08-09 二轮闭合）
+
+```text
+1. Projection 仅在 cameraApplied && cameraSample 存在 &&
+   perspective true/nullopt 时重建；无 track 时 host custom
+   projection 原样保留。
+2. JSONL tail 恢复 = in-place truncate（_chsize_s/ftruncate +
+   durable sync），禁止 rewrite（避免 0 字节 crash 窗口）。
+3. fflush/_commit/fsync/directory fsync 全部检查返回值；
+   任一失败 → Fail() → fail-stop。
+4. lastCommitted 定义 = manifest tail cursor：
+   historical Overwrite/VerifySkip 不得修改 cursor/slot；
+   RenderRange 入口从 manifest 同时初始化 frame + slot。
+5. 读取已有合法 manifest 后 sessionRecordWritten = true
+   （session record 永不重复）。
+6. SessionIdentity 不含 outputDirectory（存储位置不是
+   presentation 输入；目录可复制后 Resume）。
+7. committed Overwrite：new rgbaHash != committed.rgbaHash
+   → deterministic mismatch → fail-stop。
 ```

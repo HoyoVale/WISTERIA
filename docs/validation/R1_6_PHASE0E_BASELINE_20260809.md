@@ -153,3 +153,28 @@ publish updateSerial 不随重复 publish / exact-step publish 变化
 
 测试中发现 pmx-physics 在无 IBL 场景渲染全黑，序列场景增加静态
 Box.glb 使像素断言有效。
+
+## 8. Final Closure Guard（2026-08-09 二轮闭合）
+
+```text
+1. ApplyPresentation：只有 cameraApplied && cameraSample 存在 &&
+   perspective true/nullopt 才重建 projection；无 track 时 custom
+   projection 原样保留（回归：FOV45/60 + 同一 custom projection →
+   输出逐字节一致）
+2. TruncateJsonlTail 改为 in-place truncate（_chsize_s/ftruncate +
+   durable sync），不再 rewrite 整个文件
+3. FlushDurably/AtomicReplace 检查 fflush/_commit/fsync/目录 fsync
+   返回值，失败 → fail-stop
+4. historical Overwrite/VerifySkip 不再修改 lastCommitted/slot；
+   RenderRange 入口同时初始化 frame + slot；
+   回归：frame6(B) 后 Overwrite(4) → cursor 仍 6；RenderRange(7)
+   → slot A，B 在新 commit 前不被破坏
+5. 读取已有 manifest 后 sessionRecordWritten=true；
+   回归：复制目录后 Resume 成功且 session record 数量 == 1
+6. SessionIdentity 移除 outputDirectory；
+   回归：复制输出目录后 Resume 通过（路径无关）
+7. committed Overwrite rgbaHash 不同 → fail-stop；
+   回归：移动场景物体后 Overwrite(4) 拒绝
+8. camera-track FOV 生效回归：加载 perspective 相机 VMD（FOV 30）
+   后输出 != 无 track 基线
+```
