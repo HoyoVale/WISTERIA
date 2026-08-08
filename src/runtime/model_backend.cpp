@@ -1,6 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/runtime/model_backend.hpp"
 #include "wisteria/runtime/saba_mmd_runtime_model.hpp"
+#include "wisteria/runtime/wisteria_generic_runtime_driver.hpp"
 #include "wisteria/mmd/physics/mmd_physics_configuration.hpp"
 
 #include <stdexcept>
@@ -88,6 +89,37 @@ public:
         return runtime;
     }
 };
+
+class WisteriaGenericBackend final : public IModelBackend
+{
+public:
+    ModelBackendKind Kind() const noexcept override
+    {
+        return ModelBackendKind::WisteriaGeneric;
+    }
+
+    std::string_view Name() const noexcept override
+    {
+        return "wisteria-generic";
+    }
+
+    std::unique_ptr<IModelRuntimeDriver> CreateRuntime(
+        const ModelAsset& asset,
+        const RuntimeCreationOptions& options
+    ) const override
+    {
+        (void)options;
+        auto runtime =
+            std::make_unique<WisteriaGenericRuntimeDriver>(asset);
+        if (!runtime->Initialize())
+        {
+            throw std::runtime_error(
+                "Wisteria generic runtime failed to initialize"
+            );
+        }
+        return runtime;
+    }
+};
 }
 
 void ModelBackendRegistry::Register(std::unique_ptr<IModelBackend> backend)
@@ -130,5 +162,6 @@ std::unique_ptr<IModelRuntimeDriver> ModelBackendRegistry::CreateRuntime(
 void RegisterDefaultModelBackends(ModelBackendRegistry& registry)
 {
     registry.Register(std::make_unique<SabaMmdBackend>());
+    registry.Register(std::make_unique<WisteriaGenericBackend>());
 }
 }  // namespace wisteria

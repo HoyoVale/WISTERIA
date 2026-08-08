@@ -10689,6 +10689,376 @@ void TestR14CheckpointWireRoundTrip()
     );
 }
 
+void TestWisteriaGenericAnimatedTriangleEquivalence()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "phase0c::animatedTriangle",
+        modelPath
+    );
+    model.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric,
+        "Phase 0C fixture lost its explicit generic identity"
+    );
+    // Pre-R1.5 baseline: Entity owns Pose + Animator.
+    Entity legacyEntity;
+    legacyEntity.SetSkeleton(model.GetSkeleton());
+    legacyEntity.GetAnimator().Play(model.AnimationClipAt(0));
+    Animator& legacyAnimator = legacyEntity.GetAnimator();
+
+    // R1.5 path: Registry -> Runtime -> ModelInstance -> Entity.
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    Require(
+        registry.Find(ModelBackendKind::WisteriaGeneric) != nullptr,
+        "Default registry does not expose the generic backend"
+    );
+    Entity runtimeEntity;
+    runtimeEntity.SetModelInstance(
+        std::make_unique<ModelInstance>(
+            model,
+            registry.CreateRuntime(model)
+        )
+    );
+    IModelRuntimeDriver* runtime =
+        runtimeEntity.TryGetModelInstance()->TryGetRuntime();
+    Require(runtime != nullptr, "Generic runtime was not created");
+    Require(
+        runtime->BackendName() == "wisteria-generic",
+        "Generic runtime backend name mismatch"
+    );
+    Require(
+        runtimeEntity.TryGetPose() == runtime->TryGetPose() &&
+            runtimeEntity.TryGetPose() != nullptr,
+        "Runtime Pose is not forwarded through Entity"
+    );
+    Require(
+        runtimeEntity.TryGetAnimator() == runtime->TryGetAnimator() &&
+            runtimeEntity.TryGetAnimator() != nullptr,
+        "Runtime Animator is not forwarded through Entity"
+    );
+    Animator& runtimeAnimator = *runtimeEntity.TryGetAnimator();
+    Require(
+        runtimeAnimator.CurrentClip() == &model.AnimationClipAt(0) &&
+            runtimeAnimator.IsPlaying(),
+        "Generic runtime did not inherit default clip playback"
+    );
+
+    float previousTime = 0.0f;
+    float maximumTranslationX = 0.0f;
+    const float samples[] = {0.0f, 0.25f, 0.5f, 1.0f};
+    for (const float sample : samples)
+    {
+        const float deltaTime = sample - previousTime;
+        previousTime = sample;
+        legacyEntity.Update(deltaTime);
+        runtimeEntity.Update(deltaTime);
+
+        Require(
+            NearlyEqual(legacyAnimator.Time(), runtimeAnimator.Time()),
+            "Animator time diverged between legacy and generic paths"
+        );
+        Require(
+            legacyEntity.GetPose().BoneCount() ==
+                runtimeEntity.GetPose().BoneCount(),
+            "Pose bone count diverged between legacy and generic paths"
+        );
+        const std::span<const glm::mat4> legacyLocal =
+            legacyEntity.GetPose().LocalMatrices();
+        const std::span<const glm::mat4> runtimeLocal =
+            runtimeEntity.GetPose().LocalMatrices();
+        for (std::size_t bone = 0U; bone < legacyLocal.size(); ++bone)
+        {
+            maximumTranslationX = std::max(
+                maximumTranslationX,
+                std::abs(runtimeLocal[bone][3].x)
+            );
+            Require(
+                NearlyEqual(legacyLocal[bone], runtimeLocal[bone]),
+                "Pose local matrix diverged at an equivalence sample"
+            );
+        }
+
+        const ModelFrameSnapshot& snapshot =
+            runtimeEntity.GetModelInstance().CaptureSnapshot(
+                CaptureMask::All
+            );
+        Require(
+            snapshot.metadata.valid && snapshot.pose.captured,
+            "Generic snapshot did not capture the Pose"
+        );
+        Require(
+            snapshot.pose.localTransforms.size() == legacyLocal.size(),
+            "Snapshot pose count diverged"
+        );
+        for (std::size_t bone = 0U; bone < legacyLocal.size(); ++bone)
+        {
+            Require(
+                NearlyEqual(
+                    snapshot.pose.localTransforms[bone],
+                    legacyLocal[bone]
+                ),
+                "Snapshot Pose diverged from the legacy path"
+            );
+        }
+    }
+    Require(
+        NearlyEqual(maximumTranslationX, 1.0f),
+        "Generic runtime never received the imported motion"
+    );
+}
+
+void TestWisteriaGenericMorphRuntime()
+{
+    ModelAsset morphModel("phase0c::morph");
+    morphModel.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    Bone root;
+    root.name = "rootBone";
+    root.parentIndex = InvalidBoneIndex;
+    std::vector<Bone> bones;
+    bones.push_back(root);
+    morphModel.SetSkeleton(Skeleton(std::move(bones)));
+    MorphDefinition blink;
+    blink.name = "blink";
+    blink.category = MorphCategory::Other;
+    blink.kind = MorphKind::Vertex;
+    std::vector<MorphDefinition> definitions;
+    definitions.push_back(blink);
+    morphModel.SetMorphs(std::move(definitions));
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    Entity entity;
+    entity.SetModelInstance(
+        std::make_unique<ModelInstance>(
+            morphModel,
+            registry.CreateRuntime(morphModel)
+        )
+    );
+    IModelRuntimeDriver* runtime =
+        entity.TryGetModelInstance()->TryGetRuntime();
+    Require(runtime != nullptr, "Generic morph runtime was not created");
+    Require(
+        runtime->TryGetPose() != nullptr &&
+            runtime->TryGetAnimator() != nullptr,
+        "Skeleton-backed generic runtime lost Pose/Animator"
+    );
+    Require(
+        runtime->TryGetMorphState() != nullptr,
+        "Generic runtime lost its owned MorphState"
+    );
+    Require(
+        entity.TryGetMorphState() == runtime->TryGetMorphState(),
+        "Entity did not forward the runtime MorphState"
+    );
+    Require(runtime->MorphCount() == 1U, "Neutral morph count mismatch");
+    MorphDescriptor descriptor;
+    Require(
+        runtime->DescribeMorph(0U, descriptor) &&
+            descriptor.name == "blink" &&
+            descriptor.kind == MorphKind::Vertex,
+        "Neutral morph descriptor mismatch"
+    );
+    const std::optional<float> initialWeight =
+        runtime->MorphWeight("blink");
+    Require(
+        initialWeight.has_value() && NearlyEqual(*initialWeight, 0.0f),
+        "Neutral morph read mismatch"
+    );
+    const std::uint64_t revisionBefore = runtime->MorphRevision();
+    Require(
+        runtime->SetMorphWeight("blink", 0.5f),
+        "Neutral morph write failed"
+    );
+    const std::optional<float> writtenWeight =
+        runtime->MorphWeight("blink");
+    Require(
+        writtenWeight.has_value() && NearlyEqual(*writtenWeight, 0.5f),
+        "Neutral morph write was not readable"
+    );
+    Require(
+        runtime->MorphRevision() > revisionBefore,
+        "Neutral morph write did not advance the revision"
+    );
+    MorphRuntimeState state;
+    Require(
+        runtime->ReadMorphState(0U, state) &&
+            NearlyEqual(state.rawWeight, 0.5f) &&
+            state.effectiveWeight.has_value() &&
+            NearlyEqual(*state.effectiveWeight, 0.5f),
+        "Neutral morph state bridge mismatch"
+    );
+    Require(
+        !runtime->SetMorphWeight("missing", 1.0f) &&
+            !runtime->MorphWeight("missing").has_value(),
+        "Unknown morph name leaked through the neutral bridge"
+    );
+
+    entity.Update(0.0f);
+    const ModelFrameSnapshot& snapshot =
+        entity.GetModelInstance().CaptureSnapshot(CaptureMask::All);
+    Require(snapshot.morphs.captured, "Morph snapshot was not captured");
+    Require(
+        snapshot.morphs.entries.size() == 1U &&
+            snapshot.morphs.entries[0].name == "blink" &&
+            NearlyEqual(snapshot.morphs.entries[0].rawWeight, 0.5f),
+        "Morph snapshot entry mismatch"
+    );
+
+    // Multi-instance morph isolation through the same neutral bridge.
+    ModelInstance firstMorph(morphModel, registry.CreateRuntime(morphModel));
+    ModelInstance secondMorph(morphModel, registry.CreateRuntime(morphModel));
+    Require(
+        firstMorph.TryGetRuntime()->SetMorphWeight("blink", 0.75f),
+        "First morph instance write failed"
+    );
+    const std::optional<float> firstWeight =
+        firstMorph.TryGetRuntime()->MorphWeight("blink");
+    const std::optional<float> secondWeight =
+        secondMorph.TryGetRuntime()->MorphWeight("blink");
+    Require(
+        firstWeight.has_value() &&
+            NearlyEqual(*firstWeight, 0.75f) &&
+            secondWeight.has_value() &&
+            NearlyEqual(*secondWeight, 0.0f),
+        "Morph instances share mutable state"
+    );
+
+    // Morph-only asset: MorphState without Pose/Animator.
+    ModelAsset morphOnly("phase0c::morphOnly");
+    morphOnly.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    std::vector<MorphDefinition> morphOnlyDefinitions;
+    morphOnlyDefinitions.push_back(blink);
+    morphOnly.SetMorphs(std::move(morphOnlyDefinitions));
+    IModelRuntimeDriver* morphOnlyRuntime =
+        registry.CreateRuntime(morphOnly).release();
+    Require(
+        morphOnlyRuntime != nullptr,
+        "Morph-only runtime was not created"
+    );
+    Require(
+        morphOnlyRuntime->TryGetMorphState() != nullptr &&
+            morphOnlyRuntime->TryGetPose() == nullptr &&
+            morphOnlyRuntime->TryGetAnimator() == nullptr,
+        "Morph-only runtime violated the existence rules"
+    );
+    delete morphOnlyRuntime;
+}
+
+void TestWisteriaGenericRootMotionEquivalence()
+{
+    ModelAsset rootModel("phase0c::rootMotion");
+    rootModel.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    Bone root;
+    root.name = "rootBone";
+    root.parentIndex = InvalidBoneIndex;
+    std::vector<Bone> bones;
+    bones.push_back(root);
+    rootModel.SetSkeleton(Skeleton(std::move(bones)));
+    std::vector<VectorKeyframe> translations;
+    translations.push_back({0.0f, glm::vec3(0.0f)});
+    translations.push_back({1.0f, glm::vec3(1.0f, 0.0f, 0.0f)});
+    std::vector<AnimationTrack> tracks;
+    tracks.emplace_back(0U, std::move(translations));
+    rootModel.AddAnimationClip(
+        AnimationClip("move", 1.0f, std::move(tracks))
+    );
+
+    Entity legacyEntity;
+    legacyEntity.SetSkeleton(rootModel.GetSkeleton());
+    legacyEntity.GetAnimator().Play(rootModel.AnimationClipAt(0));
+    legacyEntity.GetAnimator().SetRootMotionBone(0U);
+    legacyEntity.GetAnimator().SetRootMotionEnabled(true);
+    legacyEntity.Update(0.5f);
+    const float legacyX = legacyEntity.GetTransform().Position().x;
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    Entity runtimeEntity;
+    runtimeEntity.SetModelInstance(
+        std::make_unique<ModelInstance>(
+            rootModel,
+            registry.CreateRuntime(rootModel)
+        )
+    );
+    runtimeEntity.TryGetAnimator()->SetRootMotionBone(0U);
+    runtimeEntity.TryGetAnimator()->SetRootMotionEnabled(true);
+    runtimeEntity.Update(0.5f);
+    const float runtimeX = runtimeEntity.GetTransform().Position().x;
+    Require(
+        NearlyEqual(legacyX, runtimeX) && NearlyEqual(runtimeX, 0.5f),
+        "Runtime root motion diverged from the legacy path"
+    );
+    runtimeEntity.Update(0.0f);
+    Require(
+        NearlyEqual(runtimeEntity.GetTransform().Position().x, runtimeX),
+        "Runtime root motion was applied more than once"
+    );
+}
+
+void TestWisteriaGenericMultiInstance()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel("phase0c::multi", modelPath);
+    model.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    ModelInstance first(model, registry.CreateRuntime(model));
+    ModelInstance second(model, registry.CreateRuntime(model));
+    Require(
+        first.TryGetRuntime() != second.TryGetRuntime(),
+        "Instances share one runtime object"
+    );
+    first.Update(0.5f);
+    second.Update(0.25f);
+
+    const ModelFrameSnapshot& firstSnapshot =
+        first.CaptureSnapshot(CaptureMask::All);
+    const ModelFrameSnapshot& secondSnapshot =
+        second.CaptureSnapshot(CaptureMask::All);
+    Require(
+        firstSnapshot.pose.localTransforms.size() ==
+            secondSnapshot.pose.localTransforms.size() &&
+            firstSnapshot.pose.localTransforms.size() > 0U,
+        "Generic pose snapshot bone count mismatch"
+    );
+    bool anyBoneDiffers = false;
+    for (std::size_t bone = 0U;
+        bone < firstSnapshot.pose.localTransforms.size();
+        ++bone)
+    {
+        if (firstSnapshot.pose.localTransforms[bone] !=
+            secondSnapshot.pose.localTransforms[bone])
+        {
+            anyBoneDiffers = true;
+            break;
+        }
+    }
+    Require(
+        anyBoneDiffers,
+        "Generic pose instances share mutable state"
+    );
+    Require(
+        NearlyEqual(
+            first.TryGetRuntime()->TryGetAnimator()->Time(),
+            0.5f
+        ) &&
+        NearlyEqual(
+            second.TryGetRuntime()->TryGetAnimator()->Time(),
+            0.25f
+        ),
+        "Generic animator time is shared across instances"
+    );
+}
+
 }
 
 int main()
@@ -11047,6 +11417,22 @@ int main()
     failures += !RunTest(
         "R1.4 checkpoint wire round trip",
         TestR14CheckpointWireRoundTrip
+    );
+    failures += !RunTest(
+        "R1.5 generic animated triangle equivalence",
+        TestWisteriaGenericAnimatedTriangleEquivalence
+    );
+    failures += !RunTest(
+        "R1.5 generic morph runtime",
+        TestWisteriaGenericMorphRuntime
+    );
+    failures += !RunTest(
+        "R1.5 generic root motion equivalence",
+        TestWisteriaGenericRootMotionEquivalence
+    );
+    failures += !RunTest(
+        "R1.5 generic multi-instance independence",
+        TestWisteriaGenericMultiInstance
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",
