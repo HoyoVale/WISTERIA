@@ -87,6 +87,9 @@ btBroadphaseProxy* btSimpleBroadphase::createProxy(const btVector3& aabbMin, con
 
 	int newHandleIndex = allocHandle();
 	btSimpleBroadphaseProxy* proxy = new (&m_pHandles[newHandleIndex]) btSimpleBroadphaseProxy(aabbMin, aabbMax, shapeType, userPtr, collisionFilterGroup, collisionFilterMask);
+	// WISTERIA deterministic hardening: explicitly bind the unique id to the
+	// canonical handle so it never depends on stale slot storage contents.
+	proxy->m_uniqueId = newHandleIndex + 2;
 
 	return proxy;
 }

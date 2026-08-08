@@ -113,7 +113,7 @@ MmdPhysicsConfiguration BuildPresetConfiguration(MmdPhysicsPreset preset)
     MmdPhysicsConfiguration configuration;
     configuration.identity.preset = preset;
     configuration.identity.profileRevision = 1U;
-    // Phase 0A: every preset equals SabaBaseline v1. Struct defaults already
+    // Phase 0A: every preset equals SabaBaseline v2. Struct defaults already
     // encode runtime.fixedTimeStep=1/120, maxSubSteps=10, gravity=-98,
     // PmxMaskOnly, PreserveAnimatedTranslation and all-adaptive-disabled.
     return configuration;

@@ -34,7 +34,9 @@ inline constexpr std::uint32_t MmdPhysicsConfigurationFingerprintVersion = 2U;
 struct MmdPhysicsProfileIdentity
 {
     std::string backend = "saba-mmd";
-    std::string baseline = "saba-baseline-v1";
+    // R1.2C canonicalization integrity revision (aa662dd): SimpleBroadphase
+    // + canonical collision-world rebuild. v1 (2808dab, DBVT) is historical.
+    std::string baseline = "saba-baseline-v2";
     MmdPhysicsPreset preset = MmdPhysicsPreset::MmdRaw;
     std::uint32_t profileRevision = 1U;
     // Non-empty for DeriveDiagnosticConfiguration outputs, legacy constructor

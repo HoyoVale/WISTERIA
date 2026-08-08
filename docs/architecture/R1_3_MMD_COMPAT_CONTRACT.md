@@ -102,8 +102,11 @@ struct MmdPhysicsRuntimeSettings
 
 ### 2.1 SabaBaseline
 
-**SabaBaseline v1 = 当前提交 `2808dab`（R1.2C）的真实物理行为，零行为
-变化。** 它包含：
+### 2.1 SabaBaseline
+
+**SabaBaseline v1（历史） = 提交 `2808dab`（R1.2C）的真实物理行为，
+零行为变化。** 底层为 `btDbvtBroadphase`；R1.3 Phase 0A 冻结时以此为
+基准。它包含：
 
 ```text
 - Saba 的 shape 构造、坐标转换、ground、激活策略、joint 构造；
@@ -117,6 +120,23 @@ struct MmdPhysicsRuntimeSettings
   （Saba 以 addConstraint(constraint) 添加关节，不启用
   disableCollisionsBetweenLinkedBodies）。
 ```
+
+**SabaBaseline v2（当前） = 提交 `aa662dd`（R1.2C canonicalization
+integrity revision）的真实物理行为。** 底层改为：
+
+```text
+- btSimpleBroadphase（无历史 pair 枚举，handle free-list canonical
+  resetPool）；
+- Cold Canonical Boundary 每 step 起点做确定性命中世界重建；
+- manifold / collision-algorithm 池 free-list canonical 重置；
+- FollowBone activation 按 snapshot 逐字恢复。
+```
+
+MMD_RAW v1 与 MMD_COMMUNITY v1 在 SabaBaseline v2 上仍保持行为一致
+（relative compatibility 规则未变：LB-01 PmxMaskOnly、M2-01
+PreserveAnimatedTranslation 均不变）。**不产生 COMMUNITY profileRevision
+bump**：backend substrate revision ≠ COMMUNITY profile revision。
+过去的 Trace 数字属于历史 baseline（v1/DBVT），不重写历史。
 
 ### 2.2 旧路线状态
 
@@ -173,7 +193,7 @@ enum class MmdPhysicsPreset
 struct MmdPhysicsProfileIdentity
 {
     std::string backend = "saba-mmd";
-    std::string baseline = "saba-baseline-v1";
+    std::string baseline = "saba-baseline-v2";  // v1 = 2808dab (historical)
     MmdPhysicsPreset preset;
     std::uint32_t profileRevision = 1;
 };
@@ -305,7 +325,7 @@ adaptive              = 全部 false
 ```text
 preset=MMD_RAW
 backend=saba-mmd
-baseline=saba-baseline-v1
+baseline=saba-baseline-v2
 compatibility=mmd-raw-v1
 adaptive=disabled
 linkedCollision=PmxMaskOnly
@@ -337,7 +357,7 @@ draft v1 中“linked collision 与 Mode 2 进入配置指纹”与“Phase 0A �
   preset=MMD_COMMUNITY
   originPreset=MMD_RAW
   profileRevision=1
-  baseline=saba-baseline-v1
+  baseline=saba-baseline-v2
 
 Physics configuration fingerprint（只 Hash 能真正改变计算结果
 的有效行为）：
@@ -372,7 +392,7 @@ physics configuration fingerprint version：1 → 2
 
 Hash：
 - backend behaviour ABI/version（saba-mmd）
-- baseline behaviour revision（saba-baseline-v1）
+- baseline behaviour revision（saba-baseline-v2）
 - effective gravity
 - fixed step / max substeps
 - linked collision effective behaviour

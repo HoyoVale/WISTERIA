@@ -130,7 +130,19 @@ R1.2C equivalence matrix（E1–E11）只在 `pmx-physics` + 最小生成 VMD �
    （wire payload revision 保持 1，schema 未变）；
 7. FULL Stable cross-process 保持 `--require-n1`；
 8. R1.3 focused regression（RAW==COMMUNITY、linked-body A/B、
-   Mode2 A/B、trace/export smoke）由既有集成测试覆盖并在四矩阵重跑；
-   realtime 性能：四矩阵 FULL 集成耗时与修复前同量级
-   （Windows FULL ≈ 88s / Linux FULL ≈ 100s），
-   简单 broadphase 未使 realtime 路径显著恶化。
+   Mode2 A/B、trace/export smoke）由既有集成测试覆盖并在四矩阵重跑。
+
+## 性能记录（非 blocker）
+
+Correctness matrices 保持全绿。FULL integration wall-clock 增加约
+30–40%（SimpleBroadphase 的 O(n²) pair 枚举 + 每步世界重建）：
+
+```text
+Windows FULL:  ~88s → ~114s  (~30% increase)
+Linux FULL:    ~100s → ~139s (~39% increase)
+```
+
+CTest wall-clock 本身不构成 realtime frame benchmark；因此不声明
+“realtime 路径未显著恶化”。canonical broadphase 的性能优化
+（deterministic broadphase ≠ 必然是 brute-force broadphase）列为
+非阻塞的后续工作（R1.5/性能），不再为性能改动已稳定的 R1.2C。

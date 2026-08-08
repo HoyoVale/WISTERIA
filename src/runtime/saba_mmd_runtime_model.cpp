@@ -698,7 +698,7 @@ TimelineStatus SabaMmdRuntimeModel::SetMmdPhysicsConfiguration(
     // The Saba backend only accepts its own identity; arbitrary non-empty
     // strings must not pass through the runtime gate.
     if (configuration.identity.backend != "saba-mmd" ||
-        configuration.identity.baseline != "saba-baseline-v1")
+        configuration.identity.baseline != "saba-baseline-v2")
     {
         return TimelineStatus::InvalidState;
     }
