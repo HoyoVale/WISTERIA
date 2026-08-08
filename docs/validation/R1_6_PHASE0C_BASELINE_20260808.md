@@ -177,3 +177,25 @@ MaterialMorphValues（multiply 语义，add=0），未重构
 
 Phase 0D：Explicit Presentation Authority（Camera/Light 应用，MMD
 adapter 在 orchestration 层）+ 离屏输出链消费 `LastRenderFrameView`。
+
+## 7. Post-closure fix（2026-08-09，人工检查发现）
+
+**症状**：Phase 0C 关闭后，demo 渲染的模型贴图垂直翻转。
+
+**根因**：Saba `PMXModel::Load` 把 PMX UV 翻成 V-up
+（`uv.y = 1.0f - raw.y`），而 WISTERIA 的 UV 约定是 raw PMX V-down
+（配合 unflipped stb_image 上传）。0C 之前动态上传只覆盖
+positions/normals，UV 一直用导入器静态值（V-down），所以正确；
+0C 之后每帧用 Saba `GetUpdateUVs()`（V-up）覆盖 UV → 整模型贴图
+垂直翻转。
+
+**修复**：`SabaMmdRuntimeModel::Impl` 增加 `renderUvs` buffer；
+`SyncRenderStateFromSaba()`（所有 publication path）把
+`GetUpdateUVs()` 翻回 V-down（`uv.y = 1.0f - uv.y`）；
+`ProduceRenderFrameView()` 返回该 buffer 的 span。
+
+**回归**：`TestSabaRenderFrameViewBridge` 新增约定断言——无 UV morph
+时 render-view UV 必须逐顶点等于导入器静态 UV。
+
+**验证**：demo frame 1 修复后像素哈希
+`0xd232f77654e4a947` == 静态 UV（无动态上传）捕获哈希，逐字节一致。

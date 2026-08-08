@@ -1155,6 +1155,88 @@ int main()
                 anyRgbNonZero,
                 "OfflineRenderRequest returned an empty frame"
             );
+
+            // Hostile caller GL state: RenderOffline must restore the
+            // explicitly tracked boundary state after its internal Clear.
+            Framebuffer callerFramebuffer;
+            callerFramebuffer.Create();
+            glBindFramebuffer(
+                GL_DRAW_FRAMEBUFFER,
+                callerFramebuffer.Id()
+            );
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            glViewport(1, 2, 3, 4);
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(0, 0, TestWidth, TestHeight);
+            glColorMask(GL_FALSE, GL_TRUE, GL_TRUE, GL_FALSE);
+            glDepthMask(GL_FALSE);
+            glStencilMask(0x33);
+            glClearColor(0.1f, 0.2f, 0.3f, 0.9f);
+
+            (void)RenderOffline(scene, request, renderer);
+
+            GLint actualDrawFramebuffer = 0;
+            GLint actualReadFramebuffer = 0;
+            GLint actualViewport[4] = {0, 0, 0, 0};
+            GLboolean actualScissor = GL_FALSE;
+            GLboolean actualColorMask[4] = {GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE};
+            GLboolean actualDepthMask = GL_TRUE;
+            GLint actualStencilFront = 0;
+            GLint actualStencilBack = 0;
+            GLfloat actualClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            glGetIntegerv(
+                GL_DRAW_FRAMEBUFFER_BINDING,
+                &actualDrawFramebuffer
+            );
+            glGetIntegerv(
+                GL_READ_FRAMEBUFFER_BINDING,
+                &actualReadFramebuffer
+            );
+            glGetIntegerv(GL_VIEWPORT, actualViewport);
+            actualScissor = glIsEnabled(GL_SCISSOR_TEST);
+            glGetBooleanv(GL_COLOR_WRITEMASK, actualColorMask);
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &actualDepthMask);
+            glGetIntegerv(GL_STENCIL_WRITEMASK, &actualStencilFront);
+            glGetIntegerv(
+                GL_STENCIL_BACK_WRITEMASK,
+                &actualStencilBack
+            );
+            glGetFloatv(GL_COLOR_CLEAR_VALUE, actualClearColor);
+            const bool clearColorRestored =
+                std::abs(actualClearColor[0] - 0.1f) < 0.001f &&
+                std::abs(actualClearColor[1] - 0.2f) < 0.001f &&
+                std::abs(actualClearColor[2] - 0.3f) < 0.001f &&
+                std::abs(actualClearColor[3] - 0.9f) < 0.001f;
+            Require(
+                actualDrawFramebuffer ==
+                    static_cast<GLint>(callerFramebuffer.Id()) &&
+                    actualReadFramebuffer == 0 &&
+                    actualViewport[0] == 1 &&
+                    actualViewport[1] == 2 &&
+                    actualViewport[2] == 3 &&
+                    actualViewport[3] == 4 &&
+                    actualScissor == GL_TRUE &&
+                    actualColorMask[0] == GL_FALSE &&
+                    actualColorMask[1] == GL_TRUE &&
+                    actualColorMask[2] == GL_TRUE &&
+                    actualColorMask[3] == GL_FALSE &&
+                    actualDepthMask == GL_FALSE &&
+                    actualStencilFront == 0x33 &&
+                    actualStencilBack == 0x33 &&
+                    clearColorRestored,
+                "RenderOffline leaked caller GL state"
+            );
+
+            // Test hygiene: restore defaults for subsequent state.
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glStencilMask(0xFF);
+            glDepthMask(GL_TRUE);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDisable(GL_SCISSOR_TEST);
+            glViewport(0, 0, TestWidth, TestHeight);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            callerFramebuffer.Release();
         }
     }
     catch (const std::exception& error)

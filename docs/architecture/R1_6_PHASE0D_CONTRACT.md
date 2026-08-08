@@ -1,6 +1,6 @@
 # R1.6 Phase 0D — Explicit Presentation Authority 契约
 
-> 状态：**DRAFT（2026-08-09，待契约级审查）**。
+> 状态：**CONTRACT FROZEN（2026-08-09，契约级审查闭合）**。
 > 基线：R1.6 Phase 0A–0C CLOSED（`a066935`）。
 > 说明：工作区已含按用户指示完成的 0D 首次实现（`offline_render` +
 > `mmd_presentation`，四矩阵全绿）；本契约按实际源码审计并与实现对齐，
@@ -37,7 +37,10 @@ CameraTrackSample.perspective 是 optional：
 v1：MMD 相机只映射到 perspective host camera。
   perspective == true / nullopt：
     Position/Target/Up 来自 look-at；
-    FOV 来自 sample.viewAngle（在合法域时）
+    sample.viewAngle 成为 host FOV candidate；
+    Camera validation（finite 且 1 < FOV < 179）决定是否合法——
+    非法 sample 明确失败（Camera::SetParam 抛 invalid_argument），
+    不静默 fallback
   perspective == false（orthographic）：
     仍应用 look-at pose；Projection 保持 fallback
     （FOV/clip 由 fallback 决定）
@@ -60,6 +63,7 @@ ToLightData：
   Color = clamp(sample.color, [0,1])
   Direction = -normalize(sample.position)
     （sample.position 已含 VMD z-flip）
+    near-zero position → (0,-1,0) fallback
   Intensity 等来自 fallback
 ApplyMmdLightFrame 应用到 host 提供的 DirectionalLight
 Scene 支持 point / directional / spot 三类灯；MMD 只有平行光语义
@@ -88,7 +92,8 @@ WindowManager::RenderWindow：
   （window presentation policy）
 RenderOffline / OfflineRenderRequest：显式 camera + projection
   （offline presentation authority）
-Scene 不持有 ActiveCamera
+Scene::ActiveCamera 是现存 legacy/compatibility surface，
+但不是 R1.6 presentation authority；0D 不新增、不读取、不依赖它
 demo_scene 手工应用 VMD camera/light（历史唯一路径）
 ```
 
@@ -104,7 +109,8 @@ demo_scene 手工应用 VMD camera/light（历史唯一路径）
                 ApplyMmdLightFrame，再以同一 camera/light 调用
                 Render / RenderOffline
 
-不引入 Scene::ActiveCamera / 全局 current camera。
+不把 Scene::ActiveCamera 当作 0D authority；不引入全局 current camera；
+不为 0D 删除 Scene::ActiveCamera（避免无谓重开 Scene API）。
 Renderer 不读 VMD、不 dynamic_cast Saba、不推进 timeline。
 demo 是 adapter 的既有消费方；新路径与 demo 并存，
 不迁移 demo（避免无谓回归）。

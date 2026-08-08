@@ -1,8 +1,10 @@
 # R1.6 Phase 0D — Explicit Presentation Authority 实现基线（2026-08-09）
 
 > 状态：**COMPLETED（四矩阵全绿）**。
-> 契约：`docs/architecture/R1_6_OFFLINE_OUTPUT_CONTRACT.md`
-> （CONTRACT FROZEN，Phase 0D 方向）。
+> Parent contract：`docs/architecture/R1_6_OFFLINE_OUTPUT_CONTRACT.md`
+> （CONTRACT FROZEN）。
+> Phase contract：`docs/architecture/R1_6_PHASE0D_CONTRACT.md`
+> （CONTRACT FROZEN，2026-08-09）。
 
 ## 1. 一句话
 
@@ -120,6 +122,28 @@ Linux 矩阵使用 README 记录的 WSLg 软件渲染退路
 不改 Renderer（显式 Camera/Projection 入口已存在）
 不做 Headless context provider（R1.7）
 不把 Scene 依赖塞进 mmd 模块（Scene 接线由 host 负责）
+```
+
+## 5.1 Final Guard（2026-08-09 第二轮审查闭合）
+
+```text
+1. RenderOffline Clear GL-state RAII：
+   内部 Clear 由 OfflineClearStateGuard 包裹，保存/恢复
+   draw/read FBO、viewport、scissor enable、color mask、
+   depth mask、front/back stencil mask、clear color；
+   Renderer/Readback 各自 scope 不变
+   → render_fbo_tests 增加 hostile-state 验证
+2. OpaqueOnly：clearColor.a 必须 finite 且 == 1.0，否则
+   invalid_argument（API 无法制造透明背景）
+3. 尺寸：uint32 → int 前检查 <= INT_MAX
+4. 契约三处措辞修正：
+   Scene::ActiveCamera = legacy surface，非 0D authority
+   （存在但不读取/不依赖/不删除）
+   invalid FOV = 明确失败（Camera validation），不静默 fallback
+   light near-zero position → (0,-1,0) fallback
+5. orthographic conversion 回归：
+   perspective=false 时 look-at 应用、FOV 保留 fallback
+6. baseline 指向正式 0D contract
 ```
 
 ## 6. 下一步

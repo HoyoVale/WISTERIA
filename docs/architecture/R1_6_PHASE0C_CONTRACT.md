@@ -83,6 +83,17 @@ PMXModel::GetUpdateUVs() / m_updateUVs
   每顶点一个 glm::vec2，与 GetUpdatePositions/Normals 同长度同序
 ```
 
+**UV 坐标约定（冻结，2026-08-09 post-closure fix）**：
+
+```text
+WISTERIA render-view UV 约定 = raw PMX V-down
+  （匹配 unflipped stb_image 上传路径；Saba 导入器静态 UV 即此约定）
+Saba 内部是 V-up（PMXModel::Load 执行 uv.y = 1.0f - raw.y）
+Saba adapter 发布动态 UV 时必须翻回 V-down：
+  uv.y = 1.0f - GetUpdateUVs().y
+否则 0C 动态上传会把整模型贴图垂直翻转
+```
+
 WISTERIA 的 `ModelVertexFrame` 只携带 positions/normals，UV 通道
 未接（0B 审计已确认）。
 

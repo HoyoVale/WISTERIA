@@ -565,6 +565,11 @@ struct SabaMmdRuntimeModel::Impl
     // R1.6 Phase 0C: evaluated per-slot material terminal state, kept in
     // sync on every publication path through SyncRenderStateFromSaba.
     std::vector<MaterialRuntimeOverride> materialOverrides;
+    // R1.6 Phase 0C fix: Saba stores UVs V-up (it flips PMX V on load), while
+    // WISTERIA's convention is the raw PMX V-down UV (matching the unflipped
+    // stb_image upload path). renderUvs holds the WISTERIA-convention copy so
+    // the transient render view can expose zero-copy spans.
+    std::vector<glm::vec2> renderUvs;
     const ModelAsset* asset = nullptr;
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
     // Engine-level named morph overrides, re-applied after every VMD
@@ -1067,6 +1072,7 @@ bool SabaMmdRuntimeModel::Initialize()
         }
     }
     this->impl->materialOverrides.resize(materialCount);
+    this->impl->renderUvs.resize(this->impl->model->GetVertexCount());
     // Initial publication: the model is already evaluated, so the material
     // slots must carry real Saba material state immediately after
     // Initialize, not defaults until the first Update.
@@ -3030,11 +3036,12 @@ ModelRenderFrameView SabaMmdRuntimeModel::ProduceRenderFrameView() const
 {
     ModelRenderFrameView view;
     view.geometry = this->VertexFrame();
-    if (this->impl->model != nullptr)
+    if (!this->impl->renderUvs.empty())
     {
-        const std::size_t count = this->impl->model->GetVertexCount();
-        if (const glm::vec2* uvs = this->impl->model->GetUpdateUVs())
-            view.uvs = std::span<const glm::vec2>(uvs, count);
+        view.uvs = std::span<const glm::vec2>(
+            this->impl->renderUvs.data(),
+            this->impl->renderUvs.size()
+        );
     }
     if (!this->impl->materialOverrides.empty())
     {
@@ -3338,6 +3345,22 @@ void SabaMmdRuntimeModel::SyncRenderStateFromSaba()
         output.sphereTextureAdd = source.m_spTextureAddFactor;
         output.toonTextureMultiply = source.m_toonTextureMulFactor;
         output.toonTextureAdd = source.m_toonTextureAddFactor;
+    }
+    // WISTERIA UV convention: raw PMX V-down. Saba flips V on load
+    // (GetUpdateUVs is V-up), so convert back here.
+    if (this->impl->renderUvs.size() == this->impl->model->GetVertexCount())
+    {
+        const glm::vec2* uvs = this->impl->model->GetUpdateUVs();
+        if (uvs != nullptr)
+        {
+            for (std::size_t index = 0U;
+                 index < this->impl->renderUvs.size();
+                 ++index)
+            {
+                this->impl->renderUvs[index] =
+                    glm::vec2(uvs[index].x, 1.0f - uvs[index].y);
+            }
+        }
     }
 }
 

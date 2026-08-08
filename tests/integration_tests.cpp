@@ -2534,6 +2534,34 @@ void TestMmdCameraConversionMatchesSaba()
             "WISTERIA MMD camera conversion changed FOV"
         );
     }
+
+    // R1.6 Phase 0D: an orthographic MMD camera applies the look-at pose but
+    // keeps the fallback projection (v1 host camera is perspective-only).
+    {
+        CameraTrackSample sample;
+        sample.interest = glm::vec3(1.0f, 2.0f, 3.0f);
+        sample.rotation = glm::vec3(10.0f, 20.0f, 0.0f);
+        sample.distance = 40.0f;
+        sample.viewAngle = 20.0f;
+        sample.perspective = false;
+        CameraParam fallback;
+        fallback.VerticalFovDegrees = 55.0f;
+        const CameraParam result = ToCameraParam(sample, fallback);
+        Require(
+            NearlyEqual(result.VerticalFovDegrees, 55.0f),
+            "Orthographic MMD camera must keep the fallback FOV"
+        );
+        saba::MMDCamera mmdCamera;
+        mmdCamera.m_interest = sample.interest;
+        mmdCamera.m_rotate = glm::radians(sample.rotation);
+        mmdCamera.m_distance = sample.distance;
+        const saba::MMDLookAtCamera sabaLook(mmdCamera);
+        Require(
+            NearlyEqual(result.Position, sabaLook.m_eye) &&
+                NearlyEqual(result.Target, sabaLook.m_center),
+            "Orthographic MMD camera lost the look-at pose"
+        );
+    }
 }
 
 #if defined(WISTERIA_TEST_NATIVE_ABI)
@@ -11264,6 +11292,49 @@ void TestSabaRenderFrameViewBridge()
             view.materials.size() == model.PartCount(),
         "Saba material override slots do not match the asset parts"
     );
+    // Convention regression (post-0C fix): without UV morphs the dynamic
+    // render-view UVs must equal the imported static WISTERIA UVs (raw PMX
+    // V-down). Saba stores V-up internally, so the adapter must convert.
+    {
+        const ImportedModelData imported =
+            ModelImporter().Import(modelPath);
+        Require(
+            imported.meshes.size() == 1U,
+            "extended-morph fixture has an unexpected mesh count"
+        );
+        const ImportedMeshData& mesh = imported.meshes[0];
+        std::size_t stride = 0U;
+        std::size_t texCoordOffset = 0U;
+        bool foundTexCoord = false;
+        for (const Layout& attribute : mesh.data.layout)
+        {
+            if (attribute.name == "texCoord")
+            {
+                texCoordOffset = stride;
+                foundTexCoord = true;
+            }
+            stride += attribute.size;
+        }
+        Require(
+            foundTexCoord && stride > 0U &&
+                mesh.data.vertices.size() >= view.uvs.size() * stride,
+            "Imported static UV layout is unavailable"
+        );
+        for (std::size_t vertex = 0U; vertex < view.uvs.size(); ++vertex)
+        {
+            const float staticU = mesh.data.vertices[
+                vertex * stride + texCoordOffset
+            ];
+            const float staticV = mesh.data.vertices[
+                vertex * stride + texCoordOffset + 1U
+            ];
+            Require(
+                NearlyEqual(view.uvs[vertex].x, staticU) &&
+                    NearlyEqual(view.uvs[vertex].y, staticV),
+                "Saba dynamic UV convention diverged from WISTERIA static UVs"
+            );
+        }
+    }
 
     const std::vector<glm::vec2> baseUvs(
         view.uvs.begin(),
