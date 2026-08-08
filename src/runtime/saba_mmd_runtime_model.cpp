@@ -562,6 +562,9 @@ struct SabaMmdRuntimeModel::Impl
     std::unique_ptr<Pose> pose;
     std::uint64_t vertexRevision = 0U;
     std::uint64_t morphRevision = 0U;
+    // R1.6 Phase 0C: evaluated per-slot material terminal state, kept in
+    // sync on every publication path through SyncRenderStateFromSaba.
+    std::vector<MaterialRuntimeOverride> materialOverrides;
     const ModelAsset* asset = nullptr;
     std::unordered_map<BoneIndex, bool> mmdIkOverrides;
     // Engine-level named morph overrides, re-applied after every VMD
@@ -1034,6 +1037,36 @@ bool SabaMmdRuntimeModel::Initialize()
     this->impl->skeleton = std::make_unique<Skeleton>(this->impl->bones);
     this->impl->pose = std::make_unique<Pose>(*this->impl->skeleton);
     this->SyncPoseFromSaba();
+
+    // R1.6 Phase 0C: validate the Saba importer's material slot invariant
+    // now that the model is loaded and the material count is authoritative.
+    // Runtime material slots must align with asset render parts; a mismatch
+    // fails honestly instead of misaligning material overrides later.
+    const std::size_t materialCount = this->impl->model->GetMaterialCount();
+    if (this->impl->asset != nullptr &&
+        this->impl->asset->PartCount() > 0U &&
+        this->impl->asset->PartCount() != materialCount)
+    {
+        this->impl->model.reset();
+        return false;
+    }
+    if (this->impl->asset != nullptr)
+    {
+        for (std::size_t partIndex = 0U;
+             partIndex < this->impl->asset->PartCount();
+             ++partIndex)
+        {
+            const std::optional<std::uint32_t> slot =
+                this->impl->asset->Parts()[partIndex].MorphMaterialIndex();
+            if (!slot.has_value() ||
+                static_cast<std::size_t>(*slot) != partIndex)
+            {
+                this->impl->model.reset();
+                return false;
+            }
+        }
+    }
+    this->impl->materialOverrides.resize(materialCount);
 
     if (saba::MMDPhysics* physics = this->impl->model->GetMMDPhysics())
     {
@@ -2985,6 +3018,30 @@ ModelVertexFrame SabaMmdRuntimeModel::VertexFrame() const noexcept
     };
 }
 
+ModelRenderFrameView SabaMmdRuntimeModel::ProduceRenderFrameView() const
+{
+    ModelRenderFrameView view;
+    view.geometry = this->VertexFrame();
+    if (this->impl->model != nullptr)
+    {
+        const std::size_t count = this->impl->model->GetVertexCount();
+        if (const glm::vec2* uvs = this->impl->model->GetUpdateUVs())
+            view.uvs = std::span<const glm::vec2>(uvs, count);
+    }
+    if (!this->impl->materialOverrides.empty())
+    {
+        view.materials = std::span<const MaterialRuntimeOverride>(
+            this->impl->materialOverrides.data(),
+            this->impl->materialOverrides.size()
+        );
+    }
+    view.pose = this->TryGetPose();
+    // Saba manages morphs internally; the neutral MorphState channel stays
+    // absent (material morphs arrive through MaterialRuntimeOverride).
+    view.morphState = nullptr;
+    return view;
+}
+
 SabaMmdRuntimeModel::ProfileSnapshot SabaMmdRuntimeModel::Profile() const
 {
     ProfileSnapshot snapshot;
@@ -3243,6 +3300,41 @@ void SabaMmdRuntimeModel::SyncPoseFromSaba()
         );
     }
     this->impl->pose->SetLocalMatrices(localMatrices);
+    // Every pose publication path (Update / exact step / restore / replay)
+    // funnels through here; keep the renderer-facing material state in sync
+    // at the same boundary.
+    this->SyncRenderStateFromSaba();
+}
+
+void SabaMmdRuntimeModel::SyncRenderStateFromSaba()
+{
+    if (this->impl->model == nullptr)
+        return;
+    const saba::MMDMaterial* materials = this->impl->model->GetMaterials();
+    const std::size_t count = this->impl->model->GetMaterialCount();
+    if (materials == nullptr ||
+        this->impl->materialOverrides.size() != count)
+    {
+        return;
+    }
+    for (std::size_t index = 0U; index < count; ++index)
+    {
+        MaterialRuntimeOverride& output =
+            this->impl->materialOverrides[index];
+        const saba::MMDMaterial& source = materials[index];
+        output.diffuse = glm::vec4(source.m_diffuse, source.m_alpha);
+        output.specular = source.m_specular;
+        output.shininess = source.m_specularPower;
+        output.ambient = source.m_ambient;
+        output.edgeColor = source.m_edgeColor;
+        output.edgeSize = source.m_edgeSize;
+        output.textureMultiply = source.m_textureMulFactor;
+        output.textureAdd = source.m_textureAddFactor;
+        output.sphereTextureMultiply = source.m_spTextureMulFactor;
+        output.sphereTextureAdd = source.m_spTextureAddFactor;
+        output.toonTextureMultiply = source.m_toonTextureMulFactor;
+        output.toonTextureAdd = source.m_toonTextureAddFactor;
+    }
 }
 
 bool SabaMmdRuntimeModel::LoadCameraMotion(

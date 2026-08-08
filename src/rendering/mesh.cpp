@@ -353,11 +353,13 @@ std::vector<float> Mesh::RebuildInterleavedVertices(
     std::span<const Layout> layout,
     std::span<const glm::vec3> positions,
     std::span<const glm::vec3> normals,
-    std::size_t vertexCount
+    std::size_t vertexCount,
+    std::span<const glm::vec2> uvs
 )
 {
     if (positions.size() != vertexCount ||
-        normals.size() != vertexCount)
+        normals.size() != vertexCount ||
+        (!uvs.empty() && uvs.size() != vertexCount))
     {
         throw std::invalid_argument(
             "Dynamic vertex upload size does not match the mesh"
@@ -367,8 +369,10 @@ std::vector<float> Mesh::RebuildInterleavedVertices(
     std::size_t stride = 0U;
     std::size_t positionOffset = 0U;
     std::size_t normalOffset = 0U;
+    std::size_t texCoordOffset = 0U;
     bool foundPosition = false;
     bool foundNormal = false;
+    bool foundTexCoord = false;
     for (const Layout& attribute : layout)
     {
         if (attribute.name == "position")
@@ -381,12 +385,23 @@ std::vector<float> Mesh::RebuildInterleavedVertices(
             normalOffset = stride;
             foundNormal = true;
         }
+        else if (attribute.name == "texCoord")
+        {
+            texCoordOffset = stride;
+            foundTexCoord = true;
+        }
         stride += attribute.size;
     }
     if (!foundPosition || !foundNormal)
     {
         throw std::invalid_argument(
             "Dynamic vertex upload requires position and normal attributes"
+        );
+    }
+    if (!uvs.empty() && !foundTexCoord)
+    {
+        throw std::invalid_argument(
+            "Dynamic UV upload requires a texCoord attribute"
         );
     }
     if (positionOffset + 3U > stride ||
@@ -422,13 +437,21 @@ std::vector<float> Mesh::RebuildInterleavedVertices(
             normals[vertexIndex].y;
         updatedVertices[base + normalOffset + 2U] =
             normals[vertexIndex].z;
+        if (!uvs.empty())
+        {
+            updatedVertices[base + texCoordOffset + 0U] =
+                uvs[vertexIndex].x;
+            updatedVertices[base + texCoordOffset + 1U] =
+                uvs[vertexIndex].y;
+        }
     }
     return updatedVertices;
 }
 
-void Mesh::UploadDynamicVertices(
+void Mesh::UploadDynamicFrame(
     std::span<const glm::vec3> positions,
-    std::span<const glm::vec3> normals
+    std::span<const glm::vec3> normals,
+    std::span<const glm::vec2> uvs
 )
 {
     std::vector<float> updatedVertices = RebuildInterleavedVertices(
@@ -436,7 +459,8 @@ void Mesh::UploadDynamicVertices(
         this->data.layout,
         positions,
         normals,
-        this->vertexCount
+        this->vertexCount,
+        uvs
     );
     this->dynamicVertexSource = true;
     if (!this->attached || this->vbo == nullptr)
@@ -452,6 +476,14 @@ void Mesh::UploadDynamicVertices(
         updatedVertices.data()
     );
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void Mesh::UploadDynamicVertices(
+    std::span<const glm::vec3> positions,
+    std::span<const glm::vec3> normals
+)
+{
+    this->UploadDynamicFrame(positions, normals);
 }
 
 bool Mesh::HasDynamicVertexSource() const noexcept

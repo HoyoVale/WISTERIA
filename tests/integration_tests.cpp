@@ -11230,6 +11230,238 @@ void TestStaticModelClassification()
     }
 }
 
+void TestSabaRenderFrameViewBridge()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("extended-morph-pmx");
+    RequireCoreAsset("extended-morph-pmx");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "r16::sabaRenderView",
+        modelPath
+    );
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    ModelInstance instance(model, registry.CreateRuntime(model));
+    IModelRuntimeDriver* runtime = instance.TryGetRuntime();
+    Require(runtime != nullptr, "Saba render-view runtime was not created");
+    instance.Update(0.0f);
+
+    const ModelRenderFrameView& view = instance.LastRenderFrameView();
+    Require(
+        !view.geometry.positions.empty(),
+        "Saba render view lost geometry"
+    );
+    Require(
+        view.uvs.size() == view.geometry.positions.size() &&
+            !view.uvs.empty(),
+        "Saba dynamic UV channel is missing or misaligned"
+    );
+    Require(
+        !view.materials.empty() &&
+            view.materials.size() == model.PartCount(),
+        "Saba material override slots do not match the asset parts"
+    );
+
+    const std::vector<glm::vec2> baseUvs(
+        view.uvs.begin(),
+        view.uvs.end()
+    );
+    const std::vector<MaterialRuntimeOverride> baseMaterials(
+        view.materials.begin(),
+        view.materials.end()
+    );
+
+    Require(
+        runtime->SetMorphWeight("uv", 1.0f),
+        "Saba UV morph weight was not accepted"
+    );
+    instance.Update(0.0f);
+    const ModelRenderFrameView& uvView = instance.LastRenderFrameView();
+    bool uvChanged = false;
+    for (std::size_t index = 0U; index < baseUvs.size(); ++index)
+    {
+        if (baseUvs[index] != uvView.uvs[index])
+        {
+            uvChanged = true;
+            break;
+        }
+    }
+    Require(
+        uvChanged,
+        "Saba UV morph did not reach the render frame view"
+    );
+
+    Require(
+        runtime->SetMorphWeight("materialMorph", 1.0f),
+        "Saba material morph weight was not accepted"
+    );
+    instance.Update(0.0f);
+    const ModelRenderFrameView& materialView =
+        instance.LastRenderFrameView();
+    bool materialChanged = false;
+    for (std::size_t index = 0U;
+         index < baseMaterials.size();
+         ++index)
+    {
+        if (baseMaterials[index].diffuse !=
+                materialView.materials[index].diffuse ||
+            baseMaterials[index].textureMultiply !=
+                materialView.materials[index].textureMultiply ||
+            baseMaterials[index].textureAdd !=
+                materialView.materials[index].textureAdd)
+        {
+            materialChanged = true;
+            break;
+        }
+    }
+    Require(
+        materialChanged,
+        "Saba material morph did not reach the override channel"
+    );
+}
+
+void TestSabaRenderPartMutationMapping()
+{
+    RequireFullAssetsTier();
+    const std::filesystem::path modelPath =
+        FixturePath("production-pmx-yeshiguang");
+    RequireFullAsset("production-pmx-yeshiguang");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "r16::sabaPartMutation",
+        modelPath
+    );
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    scene.Update(0.0f);
+    const ModelRenderFrameView& view =
+        entity.GetModelInstance().LastRenderFrameView();
+    Require(
+        !view.materials.empty() &&
+            view.materials.size() == entity.RenderPartCount(),
+        "Saba part-mutation fixture has no material slots"
+    );
+    const std::size_t originalCount = entity.RenderPartCount();
+    Require(
+        originalCount > 1U,
+        "Saba part-mutation fixture needs more than one part"
+    );
+    Require(
+        entity.RemoveRenderPart(entity.RenderParts()[0]),
+        "Saba part removal failed"
+    );
+    Require(
+        entity.RenderPartCount() == originalCount - 1U,
+        "Saba part removal did not shrink the entity"
+    );
+    scene.Update(0.0f);
+    const ModelRenderFrameView& after =
+        entity.GetModelInstance().LastRenderFrameView();
+    for (std::size_t index = 0U;
+         index < entity.RenderPartCount();
+         ++index)
+    {
+        const std::optional<std::uint32_t> slot =
+            entity.RenderParts()[index].MorphMaterialIndex();
+        Require(
+            slot.has_value() && *slot < after.materials.size(),
+            "Surviving Saba part lost its runtime material slot"
+        );
+    }
+    Require(
+        entity.RenderParts()[0].MorphMaterialIndex().value_or(0U) == 1U,
+        "Surviving Saba part was remapped by vector index instead of slot"
+    );
+}
+
+void TestGenericRenderFrameViewAbsence()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "r16::genericRenderView",
+        modelPath
+    );
+
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    scene.Update(0.25f);
+    const ModelRenderFrameView& view =
+        entity.GetModelInstance().LastRenderFrameView();
+    Require(
+        view.uvs.empty() && view.materials.empty(),
+        "Generic runtime fabricated dynamic UV or material channels"
+    );
+    Require(
+        view.pose != nullptr,
+        "Generic runtime lost its Pose in the render view"
+    );
+}
+
+void TestSabaDeterministicRenderViewPublication()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "r16::sabaDeterministicRenderView",
+        modelPath
+    );
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    std::unique_ptr<IModelRuntimeDriver> runtime =
+        registry.CreateRuntime(model);
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(
+        runtime.get()
+    );
+    Require(
+        stepper != nullptr,
+        "pmx-physics runtime does not expose deterministic stepping"
+    );
+
+    runtime->Update(0.0f);
+    const ModelRenderFrameView realtimeView =
+        runtime->ProduceRenderFrameView();
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "PrepareFrameZero failed for the render-view publication test"
+    );
+    const ModelRenderFrameView exactView =
+        runtime->ProduceRenderFrameView();
+    Require(
+        exactView.materials.size() == realtimeView.materials.size() &&
+            exactView.materials.size() == model.PartCount(),
+        "Deterministic publication lost material slots"
+    );
+    Require(
+        exactView.uvs.size() == realtimeView.uvs.size() &&
+            exactView.uvs.size() == exactView.geometry.positions.size(),
+        "Deterministic publication lost the dynamic UV channel"
+    );
+    bool same = true;
+    for (std::size_t index = 0U;
+         index < exactView.materials.size();
+         ++index)
+    {
+        if (exactView.materials[index].diffuse !=
+                realtimeView.materials[index].diffuse)
+        {
+            same = false;
+            break;
+        }
+    }
+    Require(
+        same,
+        "Deterministic and real-time publication disagree on materials"
+    );
+}
+
 }
 
 int main()
@@ -11612,6 +11844,22 @@ int main()
     failures += !RunTest(
         "R1.5 static model classification",
         TestStaticModelClassification
+    );
+    failures += !RunTest(
+        "R1.6 Saba render frame view bridge",
+        TestSabaRenderFrameViewBridge
+    );
+    failures += !RunTest(
+        "R1.6 Saba render part mutation mapping",
+        TestSabaRenderPartMutationMapping
+    );
+    failures += !RunTest(
+        "R1.6 generic render frame view absence",
+        TestGenericRenderFrameViewAbsence
+    );
+    failures += !RunTest(
+        "R1.6 Saba deterministic render view publication",
+        TestSabaDeterministicRenderViewPublication
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",

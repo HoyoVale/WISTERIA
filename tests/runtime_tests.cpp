@@ -683,35 +683,61 @@ void TestProceduralMalformedGeometryRejected()
     registry.Register(std::make_unique<ProceduralTestBackend>());
 
     ModelInstance instance(model, registry.CreateRuntime(model));
-    instance.Update(0.0f);
-
-    bool captureRejected = false;
+    bool updateRejected = false;
     try
     {
-        (void)instance.CaptureSnapshot(CaptureMask::All);
+        instance.Update(0.0f);
     }
     catch (const std::logic_error&)
     {
-        captureRejected = true;
+        updateRejected = true;
     }
     Require(
-        captureRejected,
-        "CaptureSnapshot accepted a one-empty geometry frame"
+        updateRejected,
+        "ModelInstance accepted a malformed render frame at Update"
+    );
+}
+
+void TestProceduralMalformedRenderChannelsRejected()
+{
+    ModelBackendRegistry registry;
+    registry.Register(std::make_unique<ProceduralTestBackend>());
+
+    ModelAsset uvModel("procedural-malformed-uv-canary");
+    ConfigureProceduralCanary(uvModel);
+    ModelInstance uvInstance(uvModel, registry.CreateRuntime(uvModel));
+    bool uvRejected = false;
+    try
+    {
+        uvInstance.Update(0.0f);
+    }
+    catch (const std::logic_error&)
+    {
+        uvRejected = true;
+    }
+    Require(
+        uvRejected,
+        "ModelInstance accepted a malformed UV channel"
     );
 
-    Mesh mesh(DefaultModelData{});
-    bool uploadRejected = false;
+    ModelAsset materialModel("procedural-malformed-materials-canary");
+    ConfigureProceduralCanary(materialModel);
+    ModelInstance materialInstance(
+        materialModel,
+        registry.CreateRuntime(materialModel)
+    );
+    bool materialsRejected = false;
     try
     {
-        instance.UploadDynamicVertices(mesh);
+        materialInstance.Update(0.0f);
     }
     catch (const std::logic_error&)
     {
-        uploadRejected = true;
+        materialsRejected = true;
     }
     Require(
-        uploadRejected,
-        "UploadDynamicVertices accepted a one-empty geometry frame"
+        materialsRejected,
+        "ModelInstance accepted a malformed material slot channel"
     );
 }
 
@@ -1039,6 +1065,10 @@ int main()
     failures += !RunTest(
         "R1.5 procedural malformed geometry rejected",
         TestProceduralMalformedGeometryRejected
+    );
+    failures += !RunTest(
+        "R1.5 procedural malformed render channels rejected",
+        TestProceduralMalformedRenderChannelsRejected
     );
     failures += !RunTest(
         "R1.5 runtime suppresses legacy state",

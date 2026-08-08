@@ -107,15 +107,28 @@ void Renderer::Render(
         {
             const glm::mat4 model =
                 entityTransform * part.LocalTransform();
+            ModelRenderFrameView frame;
+            if (entity.TryGetModelInstance() != nullptr &&
+                entity.TryGetModelInstance()->HasRuntime())
+            {
+                frame = entity.TryGetModelInstance()->LastRenderFrameView();
+            }
+            else
+            {
+                frame.pose = entity.TryGetPose();
+                frame.morphState = entity.TryGetMorphState();
+            }
             RenderCommand command{
                 &part,
                 model,
-                entity.TryGetPose(),
-                entity.TryGetMorphState()
+                frame.pose,
+                frame.morphState
             };
-            const MaterialMorphValues materialValues =
-                EvaluateMaterialMorphs(part, command.morphState);
-            if (EffectiveAlphaMode(part.GetMaterial(), materialValues) ==
+            command.material = ResolveMaterialState(part, frame);
+            if (EffectiveAlphaMode(
+                    part.GetMaterial(),
+                    command.material
+                ) ==
                 MaterialAlphaMode::Blend)
             {
                 transparentCommands.push_back(command);
@@ -299,6 +312,7 @@ void Renderer::Render(
             scene,
             command.pose,
             command.morphState,
+            command.material,
             0
         );
     }
@@ -335,6 +349,7 @@ void Renderer::Render(
             scene,
             command.pose,
             command.morphState,
+            command.material,
             0
         );
     }
@@ -375,6 +390,7 @@ void Renderer::Render(
                     scene,
                     command.pose,
                     command.morphState,
+                    command.material,
                     0
                 );
             }
@@ -404,6 +420,7 @@ void Renderer::Render(
                         scene,
                         command.pose,
                         command.morphState,
+                        command.material,
                         1
                     );
                 }
@@ -424,6 +441,7 @@ void Renderer::Render(
                         scene,
                         command.pose,
                         command.morphState,
+                        command.material,
                         1
                     );
                 }
@@ -441,6 +459,7 @@ void Renderer::Render(
                         scene,
                         command.pose,
                         command.morphState,
+                        command.material,
                         2
                     );
                 }

@@ -56,6 +56,14 @@ public:
         std::span<const glm::vec3> positions,
         std::span<const glm::vec3> normals
     );
+    // R1.6 Phase 0C combined dynamic frame upload: positions + normals +
+    // optional dynamic UVs are rebuilt into the interleaved vertex buffer in
+    // ONE pass. An empty uvs span keeps the static texCoord attribute.
+    void UploadDynamicFrame(
+        std::span<const glm::vec3> positions,
+        std::span<const glm::vec3> normals,
+        std::span<const glm::vec2> uvs = {}
+    );
     bool HasDynamicVertexSource() const noexcept;
     void SetDynamicVertexProvider(MeshDynamicVertexProvider provider);
     const MeshDynamicVertexProvider& DynamicVertexProvider() const noexcept;
@@ -72,7 +80,8 @@ public:
         std::span<const Layout> layout,
         std::span<const glm::vec3> positions,
         std::span<const glm::vec3> normals,
-        std::size_t vertexCount
+        std::size_t vertexCount,
+        std::span<const glm::vec2> uvs = {}
     );
 
     bool HasMorphTargets() const noexcept;

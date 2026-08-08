@@ -69,8 +69,11 @@ uniform int outlinePass;
 uniform vec4 materialEdgeColor;
 uniform float materialEdgeSize;
 uniform vec4 materialTextureFactor;
+uniform vec4 materialTextureAddFactor;
 uniform vec4 materialSphereTextureFactor;
+uniform vec4 materialSphereTextureAddFactor;
 uniform vec4 materialToonTextureFactor;
+uniform vec4 materialToonTextureAddFactor;
 uniform sampler2DArray shadowMap;
 uniform int shadowEnabled;
 uniform int receiveShadow;
@@ -180,7 +183,7 @@ vec3 ToonFactor(float normalDotLight)
 
     float coordinate = clamp(normalDotLight * 0.5 + 0.5, 0.0, 1.0);
     return (texture(toonTexture, vec2(0.5, coordinate)) *
-        materialToonTextureFactor).rgb;
+        materialToonTextureFactor + materialToonTextureAddFactor).rgb;
 }
 
 vec3 DirectLight(
@@ -293,7 +296,8 @@ void main()
     }
 
     vec4 sampledColor = hasBaseTexture != 0
-        ? texture(baseColorTexture, vertexTexCoord) * materialTextureFactor
+        ? texture(baseColorTexture, vertexTexCoord) *
+            materialTextureFactor + materialTextureAddFactor
         : vec4(1.0);
     vec4 baseColor = sampledColor * materialBaseColorFactor;
     if (materialAlphaMode == 0)
@@ -319,7 +323,7 @@ void main()
             sphereUv.y = 1.0 - sphereUv.y;
         }
         vec3 sphere = (texture(sphereTexture, sphereUv) *
-            materialSphereTextureFactor).rgb;
+            materialSphereTextureFactor + materialSphereTextureAddFactor).rgb;
         if (sphereMapMode == 1 || sphereMapMode == 3)
             albedo *= sphere;
         else if (sphereMapMode == 2)

@@ -34,6 +34,41 @@ struct ModelFrameView
     std::uint64_t updateSerial = 0U;
 };
 
+// R1.6 Phase 0C: neutral per-material evaluated terminal state. The texture
+// channels keep Saba's independent multiply + add factors because a single
+// combined factor cannot represent the PMX material morph terminal state.
+struct MaterialRuntimeOverride
+{
+    glm::vec4 diffuse{1.0f};         // RGBA, includes alpha
+    glm::vec3 specular{1.0f};
+    float shininess = 32.0f;
+    glm::vec3 ambient{0.0f};
+    glm::vec4 edgeColor{0.0f, 0.0f, 0.0f, 1.0f};
+    float edgeSize = 0.0f;
+
+    glm::vec4 textureMultiply{1.0f};
+    glm::vec4 textureAdd{0.0f};
+
+    glm::vec4 sphereTextureMultiply{1.0f};
+    glm::vec4 sphereTextureAdd{0.0f};
+
+    glm::vec4 toonTextureMultiply{1.0f};
+    glm::vec4 toonTextureAdd{0.0f};
+};
+
+// R1.6 Phase 0C: transient renderer-facing view. Zero-copy spans point into
+// runtime-owned buffers and are valid until the next runtime state mutation
+// (Update / Reset / exact step / seek / restore / morph override) or
+// destruction. Renderer consumes it within one frame; it is never stored.
+struct ModelRenderFrameView
+{
+    ModelVertexFrame geometry;
+    std::span<const glm::vec2> uvs;
+    std::span<const MaterialRuntimeOverride> materials;
+    const Pose* pose = nullptr;
+    const MorphState* morphState = nullptr;
+};
+
 // Engine-facing contract for any model runtime. Scene/Entity/Renderer depend
 // on this interface rather than on Saba, glTF, VRM, or another backend.
 class IModelRuntimeDriver
@@ -54,6 +89,7 @@ public:
     virtual bool NeedsDynamicVertexUpload() const noexcept = 0;
     virtual ModelVertexFrame VertexFrame() const noexcept = 0;
     virtual ModelFrameView ProduceFrameView() const;
+    virtual ModelRenderFrameView ProduceRenderFrameView() const;
     virtual PhysicsInstance* TryGetPhysicsInstance() noexcept = 0;
     virtual const PhysicsInstance* TryGetPhysicsInstance() const noexcept = 0;
     virtual std::string_view BackendName() const noexcept = 0;

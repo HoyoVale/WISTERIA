@@ -96,8 +96,13 @@ struct ShaderInterface
     std::string materialEdgeColor = "materialEdgeColor";
     std::string materialEdgeSize = "materialEdgeSize";
     std::string materialTextureFactor = "materialTextureFactor";
+    std::string materialTextureAddFactor = "materialTextureAddFactor";
     std::string materialSphereTextureFactor = "materialSphereTextureFactor";
+    std::string materialSphereTextureAddFactor =
+        "materialSphereTextureAddFactor";
     std::string materialToonTextureFactor = "materialToonTextureFactor";
+    std::string materialToonTextureAddFactor =
+        "materialToonTextureAddFactor";
 
     // Shadow mapping contract. MMD toon materials set shadowingSupported so
     // the renderer uploads the shadow map state; PBR/basic shaders stay off.

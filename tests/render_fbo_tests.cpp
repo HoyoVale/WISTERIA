@@ -1001,6 +1001,74 @@ int main()
                 "Generic animation did not change offscreen pixels"
             );
         }
+
+        // R1.6 Phase 0C: Saba material morph reaches the unified renderer
+        // through LastRenderFrameView (resolved MaterialRuntimeOverride),
+        // and the morph changes the offscreen pixels. The CORE fixture is
+        // textureless, so the UV channel is proven at the render-view level
+        // (integration bridge test) while this smoke proves the material
+        // override pixel path.
+        {
+            const std::filesystem::path pmxPath =
+                std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+                "extended_morph.pmx";
+            Require(
+                std::filesystem::is_regular_file(pmxPath),
+                "extended_morph.pmx fixture is missing"
+            );
+            GraphicsDevice device;
+            ResourceManager resources;
+            resources.BindGraphicsDevice(device);
+            ModelAsset& pmxModel = resources.LoadModel(
+                "r16::sabaRenderSmoke",
+                pmxPath
+            );
+            Scene scene;
+            scene.CreateDirectionalLight(DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = {1.0f, 0.96f, 0.92f},
+                .Intensity = 1.0f
+            });
+            Entity& entity = scene.InstantiateModel(pmxModel);
+            const glm::vec3 boundsCenter =
+                entity.RenderParts()[0].GetMesh().LocalBoundsCenter();
+            Camera camera(CameraParam{
+                .Position = boundsCenter + glm::vec3(0.0f, 2.0f, -3.0f),
+                .Target = boundsCenter,
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            const glm::mat4 projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+            SceneFramebuffer target;
+            target.Resize(TestWidth, TestHeight);
+            Renderer renderer;
+
+            scene.Update(0.0f);
+            target.Clear(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            renderer.Render(scene, camera, projection, target);
+            const Rgba8Frame baseFrame = ReadbackRgba8(target);
+
+            IModelRuntimeDriver* runtime =
+                entity.GetModelInstance().TryGetRuntime();
+            Require(
+                runtime != nullptr &&
+                    runtime->SetMorphWeight("materialMorph", 1.0f),
+                "Saba material morph weight was not accepted"
+            );
+            scene.Update(0.0f);
+            target.Clear(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            renderer.Render(scene, camera, projection, target);
+            const Rgba8Frame morphFrame = ReadbackRgba8(target);
+            Require(
+                morphFrame.pixels != baseFrame.pixels,
+                "Saba material morph did not change the offscreen pixels"
+            );
+        }
     }
     catch (const std::exception& error)
     {

@@ -63,6 +63,7 @@ public:
     const Pose* TryGetPose() const noexcept override;
     bool NeedsDynamicVertexUpload() const noexcept override;
     ModelVertexFrame VertexFrame() const noexcept override;
+    ModelRenderFrameView ProduceRenderFrameView() const override;
     PhysicsInstance* TryGetPhysicsInstance() noexcept override;
     const PhysicsInstance* TryGetPhysicsInstance() const noexcept override;
     std::string_view BackendName() const noexcept override;
@@ -203,6 +204,7 @@ private:
     ) const noexcept;
     void ApplyMmdIkOverrides() noexcept;
     void SyncPoseFromSaba();
+    void SyncRenderStateFromSaba();
     // R1.2A deterministic helpers. They own the exact evaluation order; the
     // public EvaluateTick/stepper entries only validate and delegate.
     TimelineStatus ValidateReplayConfig(

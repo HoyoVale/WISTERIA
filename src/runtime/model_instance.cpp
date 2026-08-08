@@ -94,7 +94,13 @@ RootMotionDelta ModelInstance::Update(float deltaTime)
     {
         this->runtime->Update(deltaTime);
         ++this->updateSerial;
-        this->lastView = this->runtime->ProduceFrameView();
+        // R1.6 Phase 0C: produce the render-facing view exactly once,
+        // validate the generic channel contract, then keep the lightweight
+        // frame view in sync with the same production.
+        this->lastRenderView = this->runtime->ProduceRenderFrameView();
+        this->ValidateRenderFrameView(this->lastRenderView);
+        this->lastView.geometry = this->lastRenderView.geometry;
+        this->lastView.pose = this->lastRenderView.pose;
         this->lastView.updateSerial = this->updateSerial;
         this->snapshot.metadata.updateSerial = this->updateSerial;
         this->snapshot.metadata.motionFrame =
@@ -117,6 +123,7 @@ void ModelInstance::Reset()
     // The transient view is invalid after Reset; persist nothing that could
     // be mistaken for current state.
     this->lastView = {};
+    this->lastRenderView = {};
     this->snapshot.metadata.valid = false;
     this->snapshot.metadata.updateSerial = this->updateSerial;
     this->frameValid = false;
@@ -132,27 +139,32 @@ void ModelInstance::UploadDynamicVertices(Mesh& mesh)
 {
     if (this->runtime == nullptr)
         return;
-    const ModelVertexFrame frame = this->lastView.geometry;
+    const ModelVertexFrame frame = this->lastRenderView.geometry;
+    const std::span<const glm::vec2> uvs = this->lastRenderView.uvs;
     // Frozen geometry semantics (R1.5 §5.4): both spans empty means no
     // runtime-owned deformed geometry; one empty span is an invalid frame
     // and must be rejected exactly like CaptureGeometry rejects it.
     if (frame.positions.empty() && frame.normals.empty())
         return;
-    if (frame.positions.size() != frame.normals.size())
+    if (frame.positions.size() != frame.normals.size() ||
+        (!uvs.empty() && uvs.size() != frame.positions.size()))
         throw std::logic_error("Runtime vertex frame is inconsistent");
 
     const std::span<const std::uint32_t> sourceIndices =
         mesh.SourceVertexIndices();
     if (sourceIndices.empty())
     {
-        mesh.UploadDynamicVertices(frame.positions, frame.normals);
+        mesh.UploadDynamicFrame(frame.positions, frame.normals, uvs);
         return;
     }
 
     std::vector<glm::vec3> positions;
     std::vector<glm::vec3> normals;
+    std::vector<glm::vec2> remappedUvs;
     positions.reserve(sourceIndices.size());
     normals.reserve(sourceIndices.size());
+    if (!uvs.empty())
+        remappedUvs.reserve(sourceIndices.size());
     for (std::uint32_t index : sourceIndices)
     {
         if (index >= frame.positions.size())
@@ -163,13 +175,60 @@ void ModelInstance::UploadDynamicVertices(Mesh& mesh)
         }
         positions.push_back(frame.positions[index]);
         normals.push_back(frame.normals[index]);
+        if (!uvs.empty())
+            remappedUvs.push_back(uvs[index]);
     }
-    mesh.UploadDynamicVertices(positions, normals);
+    mesh.UploadDynamicFrame(
+        positions,
+        normals,
+        uvs.empty() ? std::span<const glm::vec2>{}
+                    : std::span<const glm::vec2>(remappedUvs)
+    );
 }
 
 const ModelFrameView& ModelInstance::LastFrameView() const noexcept
 {
     return this->lastView;
+}
+
+const ModelRenderFrameView& ModelInstance::LastRenderFrameView() const noexcept
+{
+    return this->lastRenderView;
+}
+
+void ModelInstance::ValidateRenderFrameView(
+    const ModelRenderFrameView& view
+)
+{
+    // Geometry: both empty = absent; otherwise sizes must match.
+    if (!(view.geometry.positions.empty() &&
+            view.geometry.normals.empty()) &&
+        view.geometry.positions.size() != view.geometry.normals.size())
+    {
+        throw std::logic_error(
+            "Runtime render geometry is inconsistent"
+        );
+    }
+    // UV: empty = absent; non-empty requires geometry and equal size.
+    if (!view.uvs.empty())
+    {
+        if (view.geometry.positions.empty() ||
+            view.uvs.size() != view.geometry.positions.size())
+        {
+            throw std::logic_error(
+                "Runtime render UV channel is inconsistent"
+            );
+        }
+    }
+    // Materials: empty = absent; non-empty must be in the runtime material
+    // slot domain (v1: one slot per asset part).
+    if (!view.materials.empty() &&
+        view.materials.size() != this->asset->PartCount())
+    {
+        throw std::logic_error(
+            "Runtime material override channel is inconsistent"
+        );
+    }
 }
 
 const ModelFrameSnapshot& ModelInstance::CaptureSnapshot(

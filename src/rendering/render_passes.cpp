@@ -13,6 +13,7 @@ void Renderer::DrawPart(
     const Scene& scene,
     const Pose* pose,
     const MorphState* morphState,
+    const MaterialMorphValues& materialValues,
     int oitPass
 )
 {
@@ -23,8 +24,6 @@ void Renderer::DrawPart(
         mesh.DynamicVertexProvider()(mesh);
     VAO& vertexArray = this->VertexArrayFor(mesh);
     material.Attach();
-    const MaterialMorphValues materialValues =
-        EvaluateMaterialMorphs(part, morphState);
     const MaterialAlphaMode alphaMode =
         EffectiveAlphaMode(material, materialValues);
 
@@ -177,6 +176,13 @@ void Renderer::DrawPart(
             materialValues.textureFactor.a
         );
         program.Uniform4f(
+            shaderInterface.materialTextureAddFactor,
+            materialValues.textureAdd.r,
+            materialValues.textureAdd.g,
+            materialValues.textureAdd.b,
+            materialValues.textureAdd.a
+        );
+        program.Uniform4f(
             shaderInterface.materialSphereTextureFactor,
             materialValues.sphereTextureFactor.r,
             materialValues.sphereTextureFactor.g,
@@ -184,11 +190,25 @@ void Renderer::DrawPart(
             materialValues.sphereTextureFactor.a
         );
         program.Uniform4f(
+            shaderInterface.materialSphereTextureAddFactor,
+            materialValues.sphereTextureAdd.r,
+            materialValues.sphereTextureAdd.g,
+            materialValues.sphereTextureAdd.b,
+            materialValues.sphereTextureAdd.a
+        );
+        program.Uniform4f(
             shaderInterface.materialToonTextureFactor,
             materialValues.toonTextureFactor.r,
             materialValues.toonTextureFactor.g,
             materialValues.toonTextureFactor.b,
             materialValues.toonTextureFactor.a
+        );
+        program.Uniform4f(
+            shaderInterface.materialToonTextureAddFactor,
+            materialValues.toonTextureAdd.r,
+            materialValues.toonTextureAdd.g,
+            materialValues.toonTextureAdd.b,
+            materialValues.toonTextureAdd.a
         );
         program.Uniform1i(shaderInterface.outlinePass, 0);
     }

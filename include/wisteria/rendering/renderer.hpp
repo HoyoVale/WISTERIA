@@ -93,6 +93,7 @@ private:
         const Scene& scene,
         const Pose* pose,
         const MorphState* morphState,
+        const MaterialMorphValues& materialValues,
         int oitPass
     );
     void EnsureOitResources(const SceneFramebuffer& target);

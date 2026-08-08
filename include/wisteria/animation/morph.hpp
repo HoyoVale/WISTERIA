@@ -151,8 +151,11 @@ struct MaterialMorphValues
     glm::vec4 edgeColor{0.0f, 0.0f, 0.0f, 1.0f};
     float edgeSize = 0.0f;
     glm::vec4 textureFactor{1.0f};
+    glm::vec4 textureAdd{0.0f};
     glm::vec4 sphereTextureFactor{1.0f};
+    glm::vec4 sphereTextureAdd{0.0f};
     glm::vec4 toonTextureFactor{1.0f};
+    glm::vec4 toonTextureAdd{0.0f};
 };
 
 class PoseBuffer;

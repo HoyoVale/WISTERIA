@@ -17,6 +17,18 @@ ModelFrameView IModelRuntimeDriver::ProduceFrameView() const
     };
 }
 
+ModelRenderFrameView IModelRuntimeDriver::ProduceRenderFrameView() const
+{
+    const ModelFrameView frame = this->ProduceFrameView();
+    return ModelRenderFrameView{
+        frame.geometry,
+        {},
+        {},
+        frame.pose,
+        this->TryGetMorphState()
+    };
+}
+
 Pose& IModelRuntimeDriver::GetPose()
 {
     Pose* result = this->TryGetPose();

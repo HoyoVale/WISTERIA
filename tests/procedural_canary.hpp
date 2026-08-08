@@ -15,6 +15,8 @@
 //   procedural-one-bone-canary     1-bone Pose + Animator, no geometry
 //   procedural-root-motion-canary  root-motion delta, no Pose/geometry
 //   procedural-malformed-canary    3 positions / 0 normals (invalid frame)
+//   procedural-malformed-uv-canary       valid geometry + UV size mismatch
+//   procedural-malformed-materials-canary valid geometry + slot mismatch
 
 #include "test_support.hpp"
 
@@ -366,6 +368,166 @@ private:
     std::uint64_t revision = 1U;
 };
 
+class ProceduralMalformedUvRuntime final : public IModelRuntimeDriver
+{
+public:
+    bool Initialize() override
+    {
+        return true;
+    }
+
+    void Update(float) override
+    {
+    }
+
+    void Reset() override
+    {
+    }
+
+    Pose* TryGetPose() noexcept override
+    {
+        return nullptr;
+    }
+
+    const Pose* TryGetPose() const noexcept override
+    {
+        return nullptr;
+    }
+
+    bool NeedsDynamicVertexUpload() const noexcept override
+    {
+        return true;
+    }
+
+    ModelVertexFrame VertexFrame() const noexcept override
+    {
+        return ModelVertexFrame{
+            std::span<const glm::vec3>(
+                this->positions.data(),
+                this->positions.size()
+            ),
+            std::span<const glm::vec3>(
+                this->normals.data(),
+                this->normals.size()
+            ),
+            this->revision
+        };
+    }
+
+    ModelRenderFrameView ProduceRenderFrameView() const override
+    {
+        ModelRenderFrameView view;
+        view.geometry = this->VertexFrame();
+        // Deliberately wrong: 2 UVs for 3 vertices.
+        view.uvs = std::span<const glm::vec2>(
+            this->uvs.data(),
+            this->uvs.size()
+        );
+        return view;
+    }
+
+    PhysicsInstance* TryGetPhysicsInstance() noexcept override
+    {
+        return nullptr;
+    }
+
+    const PhysicsInstance* TryGetPhysicsInstance() const noexcept override
+    {
+        return nullptr;
+    }
+
+    std::string_view BackendName() const noexcept override
+    {
+        return "procedural-canary";
+    }
+
+private:
+    std::array<glm::vec3, 3> positions{};
+    std::array<glm::vec3, 3> normals{};
+    std::array<glm::vec2, 2> uvs{};
+    std::uint64_t revision = 1U;
+};
+
+class ProceduralMalformedMaterialsRuntime final : public IModelRuntimeDriver
+{
+public:
+    bool Initialize() override
+    {
+        return true;
+    }
+
+    void Update(float) override
+    {
+    }
+
+    void Reset() override
+    {
+    }
+
+    Pose* TryGetPose() noexcept override
+    {
+        return nullptr;
+    }
+
+    const Pose* TryGetPose() const noexcept override
+    {
+        return nullptr;
+    }
+
+    bool NeedsDynamicVertexUpload() const noexcept override
+    {
+        return false;
+    }
+
+    ModelVertexFrame VertexFrame() const noexcept override
+    {
+        return ModelVertexFrame{
+            std::span<const glm::vec3>(
+                this->positions.data(),
+                this->positions.size()
+            ),
+            std::span<const glm::vec3>(
+                this->normals.data(),
+                this->normals.size()
+            ),
+            this->revision
+        };
+    }
+
+    ModelRenderFrameView ProduceRenderFrameView() const override
+    {
+        ModelRenderFrameView view;
+        view.geometry = this->VertexFrame();
+        // Deliberately wrong: 2 slots for an asset with 0 parts.
+        view.materials = std::span<const MaterialRuntimeOverride>(
+            this->materials.data(),
+            this->materials.size()
+        );
+        return view;
+    }
+
+    PhysicsInstance* TryGetPhysicsInstance() noexcept override
+    {
+        return nullptr;
+    }
+
+    const PhysicsInstance* TryGetPhysicsInstance() const noexcept override
+    {
+        return nullptr;
+    }
+
+    std::string_view BackendName() const noexcept override
+    {
+        return "procedural-canary";
+    }
+
+private:
+    std::array<glm::vec3, 3> positions{};
+    std::array<glm::vec3, 3> normals{};
+    std::array<MaterialRuntimeOverride, 2> materials{};
+    std::uint64_t revision = 1U;
+};
+
 class ProceduralTestBackend final : public IModelBackend
 {
 public:
@@ -393,6 +555,10 @@ public:
             return std::make_unique<ProceduralRootMotionRuntime>();
         if (asset.Name() == "procedural-malformed-canary")
             return std::make_unique<ProceduralMalformedGeometryRuntime>();
+        if (asset.Name() == "procedural-malformed-uv-canary")
+            return std::make_unique<ProceduralMalformedUvRuntime>();
+        if (asset.Name() == "procedural-malformed-materials-canary")
+            return std::make_unique<ProceduralMalformedMaterialsRuntime>();
         throw std::invalid_argument(
             "ProceduralTestBackend has no canary for asset: " +
             asset.Name()

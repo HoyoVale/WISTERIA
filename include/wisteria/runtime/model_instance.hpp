@@ -49,6 +49,10 @@ public:
 
     // Latest zero-copy transient view (valid until the next Update).
     const ModelFrameView& LastFrameView() const noexcept;
+    // R1.6 Phase 0C: renderer-facing transient view (valid until the next
+    // runtime state mutation). Renderer consumes this, never the runtime
+    // directly.
+    const ModelRenderFrameView& LastRenderFrameView() const noexcept;
 
     // Captures the requested channels into the WISTERIA-owned persistent
     // snapshot. Only the requested channels are copied; geometry is never
@@ -63,12 +67,14 @@ private:
     bool CapturePose();
     bool CaptureMorphs();
     bool CaptureGeometry();
+    void ValidateRenderFrameView(const ModelRenderFrameView& view);
 
     const ModelAsset* asset = nullptr;
     std::unique_ptr<IModelRuntimeDriver> runtime;
     std::vector<std::unique_ptr<Mesh>> instanceMeshes;
     std::unordered_map<const Mesh*, Mesh*> meshMap;
     ModelFrameView lastView;
+    ModelRenderFrameView lastRenderView;
     ModelFrameSnapshot snapshot;
     std::uint64_t updateSerial = 0U;
     bool frameValid = false;
