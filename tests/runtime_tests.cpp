@@ -575,14 +575,21 @@ void TestProceduralOneBoneCanary()
     entity.SetModelInstance(
         std::make_unique<ModelInstance>(model, registry.CreateRuntime(model))
     );
+    IModelRuntimeDriver* runtime =
+        entity.TryGetModelInstance()->TryGetRuntime();
     Require(entity.HasPose(), "Entity did not forward the runtime Pose");
     Require(
         entity.HasAnimator(),
         "HasSkeleton runtime must expose an Animator"
     );
     Require(
-        entity.TryGetAnimator() != nullptr,
+        entity.TryGetAnimator() == runtime->TryGetAnimator() &&
+            entity.TryGetAnimator() != nullptr,
         "Entity Animator forwarding returned null"
+    );
+    Require(
+        entity.TryGetPose() == runtime->TryGetPose(),
+        "Entity Pose forwarding resolved to a non-runtime owner"
     );
     Require(
         entity.TryGetMorphState() == nullptr,
