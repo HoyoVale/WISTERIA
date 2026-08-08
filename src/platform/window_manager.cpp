@@ -695,6 +695,10 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
     const auto profileStart = std::chrono::steady_clock::now();
 
     window.MakeContextCurrent();
+    // R1.6 Phase 0B (P1-2): flush GPU deletes queued from non-current
+    // contexts as soon as the owning context is current again.
+    if (this->graphicsDevice != nullptr)
+        this->graphicsDevice->FlushPendingDeletes();
     ReportGlErrors("frame-begin", frameIndex, window.Title());
     const WindowSize framebufferSize = window.GetFramebufferSize();
     if (framebufferSize.width <= 0 || framebufferSize.height <= 0)

@@ -68,6 +68,7 @@ public:
 
 private:
     Framebuffer framebuffer;
+    GraphicsDevice* device = nullptr;
     GLuint colorTexture = 0;
     GLuint depthRenderbuffer = 0;
     int width = 0;

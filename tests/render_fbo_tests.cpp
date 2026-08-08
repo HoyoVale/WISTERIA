@@ -1,4 +1,5 @@
 #include "wisteria/rendering/framebuffer.hpp"
+#include "wisteria/rendering/frame_readback.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
@@ -689,6 +690,293 @@ int main()
             std::printf(
                 "[RENDER FBO] imported-pbr pixel=%u,%u,%u,%u\n",
                 pixel[0], pixel[1], pixel[2], pixel[3]
+            );
+        }
+
+        // R1.6 Phase 0B: ReadbackRgba8 canonical dimensions, color and GL
+        // state preservation (read FBO / read buffer / pack alignment /
+        // PBO / pack row/skip / viewport untouched).
+        {
+            SceneFramebuffer readbackTarget;
+            readbackTarget.Resize(4, 4);
+            readbackTarget.Clear(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+
+            glViewport(1, 2, 3, 4);
+
+            GLuint pixelPackBuffer = 0U;
+            glGenBuffers(1, &pixelPackBuffer);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, pixelPackBuffer);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            glReadBuffer(GL_BACK);
+            glPixelStorei(GL_PACK_ALIGNMENT, 8);
+
+            GLint expectedReadFramebuffer = 0;
+            GLint expectedReadBuffer = GL_BACK;
+            GLint expectedPackAlignment = 0;
+            GLint expectedPixelPackBuffer = 0;
+            GLint expectedPackRowLength = 0;
+            GLint expectedPackSkipPixels = 0;
+            GLint expectedPackSkipRows = 0;
+            glGetIntegerv(
+                GL_READ_FRAMEBUFFER_BINDING,
+                &expectedReadFramebuffer
+            );
+            glGetIntegerv(GL_READ_BUFFER, &expectedReadBuffer);
+            glGetIntegerv(GL_PACK_ALIGNMENT, &expectedPackAlignment);
+            glGetIntegerv(
+                GL_PIXEL_PACK_BUFFER_BINDING,
+                &expectedPixelPackBuffer
+            );
+            glGetIntegerv(GL_PACK_ROW_LENGTH, &expectedPackRowLength);
+            glGetIntegerv(GL_PACK_SKIP_PIXELS, &expectedPackSkipPixels);
+            glGetIntegerv(GL_PACK_SKIP_ROWS, &expectedPackSkipRows);
+
+            const Rgba8Frame stateFrame = ReadbackRgba8(readbackTarget);
+            Require(
+                stateFrame.width == 4U &&
+                    stateFrame.height == 4U &&
+                    stateFrame.pixels.size() == 4U * 4U * 4U,
+                "ReadbackRgba8 returned wrong dimensions or size"
+            );
+            Require(
+                stateFrame.pixels[0] == 255U &&
+                    stateFrame.pixels[1] == 0U &&
+                    stateFrame.pixels[2] == 0U,
+                "ReadbackRgba8 did not preserve the clear color"
+            );
+
+            GLint actualReadFramebuffer = 0;
+            GLint actualReadBuffer = GL_BACK;
+            GLint actualPackAlignment = 0;
+            GLint actualPixelPackBuffer = 0;
+            GLint actualPackRowLength = 0;
+            GLint actualPackSkipPixels = 0;
+            GLint actualPackSkipRows = 0;
+            GLint actualViewport[4] = {0, 0, 0, 0};
+            glGetIntegerv(
+                GL_READ_FRAMEBUFFER_BINDING,
+                &actualReadFramebuffer
+            );
+            glGetIntegerv(GL_READ_BUFFER, &actualReadBuffer);
+            glGetIntegerv(GL_PACK_ALIGNMENT, &actualPackAlignment);
+            glGetIntegerv(
+                GL_PIXEL_PACK_BUFFER_BINDING,
+                &actualPixelPackBuffer
+            );
+            glGetIntegerv(GL_PACK_ROW_LENGTH, &actualPackRowLength);
+            glGetIntegerv(GL_PACK_SKIP_PIXELS, &actualPackSkipPixels);
+            glGetIntegerv(GL_PACK_SKIP_ROWS, &actualPackSkipRows);
+            glGetIntegerv(GL_VIEWPORT, actualViewport);
+            Require(
+                actualReadFramebuffer == expectedReadFramebuffer &&
+                    actualReadBuffer == expectedReadBuffer &&
+                    actualPackAlignment == expectedPackAlignment &&
+                    actualPixelPackBuffer == expectedPixelPackBuffer &&
+                    actualPackRowLength == expectedPackRowLength &&
+                    actualPackSkipPixels == expectedPackSkipPixels &&
+                    actualPackSkipRows == expectedPackSkipRows &&
+                    actualViewport[0] == 1 &&
+                    actualViewport[1] == 2 &&
+                    actualViewport[2] == 3 &&
+                    actualViewport[3] == 4,
+                "ReadbackRgba8 leaked GL readback or viewport state"
+            );
+
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            glDeleteBuffers(1, &pixelPackBuffer);
+        }
+
+        // R1.6 Phase 0B: top-left orientation contract (top red, bottom
+        // green on a 4x4 target).
+        {
+            SceneFramebuffer orientationTarget;
+            orientationTarget.Resize(4, 4);
+            orientationTarget.Clear(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+
+            const GLboolean previousScissor = glIsEnabled(GL_SCISSOR_TEST);
+            GLboolean previousColorMask[4] = {
+                GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE
+            };
+            glGetBooleanv(GL_COLOR_WRITEMASK, previousColorMask);
+            orientationTarget.Bind();
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(0, 0, 4, 2);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            if (previousScissor == GL_FALSE)
+                glDisable(GL_SCISSOR_TEST);
+            glColorMask(
+                previousColorMask[0],
+                previousColorMask[1],
+                previousColorMask[2],
+                previousColorMask[3]
+            );
+
+            const Rgba8Frame orientation = ReadbackRgba8(orientationTarget);
+            Require(
+                orientation.pixels[0] == 255U &&
+                    orientation.pixels[1] == 0U &&
+                    orientation.pixels[2] == 0U,
+                "Top-left pixel is not red"
+            );
+            const std::size_t bottomLeft =
+                (static_cast<std::size_t>(orientation.height) - 1U) *
+                static_cast<std::size_t>(orientation.width) * 4U;
+            Require(
+                orientation.pixels[bottomLeft] == 0U &&
+                    orientation.pixels[bottomLeft + 1U] == 255U &&
+                    orientation.pixels[bottomLeft + 2U] == 0U,
+                "Bottom-left pixel is not green"
+            );
+        }
+
+        // R1.6 Phase 0B: static asset offscreen render + readback + viewport
+        // guard (P1-4) + repeatable readback.
+        {
+            const std::filesystem::path boxPath =
+                std::filesystem::path("tests") / "assets" / "models" /
+                "Box.glb";
+            Require(
+                std::filesystem::is_regular_file(boxPath),
+                "Box.glb fixture is missing"
+            );
+            GraphicsDevice device;
+            ResourceManager resources;
+            resources.BindGraphicsDevice(device);
+            ModelAsset& boxModel = resources.LoadModel("r16::box", boxPath);
+            Scene scene;
+            scene.CreateDirectionalLight(DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = {1.0f, 0.96f, 0.92f},
+                .Intensity = 1.0f
+            });
+            scene.InstantiateModel(boxModel);
+            Camera camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            const glm::mat4 projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+            SceneFramebuffer target;
+            target.Resize(TestWidth, TestHeight);
+            Renderer renderer;
+
+            target.Clear(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            glViewport(3, 4, 5, 6);
+            renderer.Render(scene, camera, projection, target);
+            GLint viewportAfter[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_VIEWPORT, viewportAfter);
+            Require(
+                viewportAfter[0] == 3 && viewportAfter[1] == 4 &&
+                    viewportAfter[2] == 5 && viewportAfter[3] == 6,
+                "Renderer::Render leaked viewport state (P1-4)"
+            );
+
+            const Rgba8Frame frame = ReadbackRgba8(target);
+            Require(
+                frame.width == TestWidth &&
+                    frame.height == TestHeight &&
+                    frame.pixels.size() ==
+                        static_cast<std::size_t>(TestWidth) * TestHeight * 4U,
+                "Offscreen static readback dimensions are wrong"
+            );
+            bool anyNonZero = false;
+            for (const std::uint8_t channel : frame.pixels)
+            {
+                if (channel != 0U)
+                {
+                    anyNonZero = true;
+                    break;
+                }
+            }
+            Require(
+                anyNonZero,
+                "Offscreen static render returned an all-zero frame"
+            );
+            const Rgba8Frame repeated = ReadbackRgba8(target);
+            Require(
+                repeated.pixels == frame.pixels,
+                "Repeated offscreen readback differs"
+            );
+        }
+
+        // R1.6 Phase 0B: Generic runtime (animated triangle) enters the same
+        // offscreen output boundary and motion changes the pixels.
+        {
+            const std::filesystem::path trianglePath =
+                std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+                "animated_triangle.gltf";
+            Require(
+                std::filesystem::is_regular_file(trianglePath),
+                "animated_triangle.gltf fixture is missing"
+            );
+            GraphicsDevice device;
+            ResourceManager resources;
+            resources.BindGraphicsDevice(device);
+            ModelAsset& triangleModel = resources.LoadModel(
+                "r16::animatedTriangle",
+                trianglePath
+            );
+            Scene scene;
+            scene.CreateDirectionalLight(DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = {1.0f, 0.96f, 0.92f},
+                .Intensity = 1.0f
+            });
+            scene.InstantiateModel(triangleModel);
+            Camera camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            const glm::mat4 projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+            SceneFramebuffer target;
+            target.Resize(TestWidth, TestHeight);
+            Renderer renderer;
+
+            scene.Update(0.25f);
+            target.Clear(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            renderer.Render(scene, camera, projection, target);
+            const Rgba8Frame firstFrame = ReadbackRgba8(target);
+            Require(
+                firstFrame.pixels.size() ==
+                    static_cast<std::size_t>(TestWidth) * TestHeight * 4U,
+                "Generic offscreen readback dimensions are wrong"
+            );
+            bool anyNonZero = false;
+            for (const std::uint8_t channel : firstFrame.pixels)
+            {
+                if (channel != 0U)
+                {
+                    anyNonZero = true;
+                    break;
+                }
+            }
+            Require(
+                anyNonZero,
+                "Generic offscreen render returned an all-zero frame"
+            );
+
+            scene.Update(0.5f);
+            target.Clear(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            renderer.Render(scene, camera, projection, target);
+            const Rgba8Frame movedFrame = ReadbackRgba8(target);
+            Require(
+                movedFrame.pixels != firstFrame.pixels,
+                "Generic animation did not change offscreen pixels"
             );
         }
     }

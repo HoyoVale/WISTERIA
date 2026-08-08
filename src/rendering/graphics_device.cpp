@@ -26,6 +26,9 @@ void DeleteObject(GraphicsDevice::ResourceKind kind, GLuint name) noexcept
     case GraphicsDevice::ResourceKind::Framebuffer:
         glDeleteFramebuffers(1, &name);
         break;
+    case GraphicsDevice::ResourceKind::Renderbuffer:
+        glDeleteRenderbuffers(1, &name);
+        break;
     }
 }
 }

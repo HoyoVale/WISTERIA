@@ -55,7 +55,8 @@ Framebuffer::~Framebuffer()
 }
 
 Framebuffer::Framebuffer(Framebuffer&& other) noexcept
-    : framebuffer(std::exchange(other.framebuffer, 0))
+    : device(std::exchange(other.device, nullptr)),
+      framebuffer(std::exchange(other.framebuffer, 0))
 {
 }
 
@@ -65,6 +66,7 @@ Framebuffer& Framebuffer::operator=(Framebuffer&& other) noexcept
         return *this;
 
     this->Release();
+    this->device = std::exchange(other.device, nullptr);
     this->framebuffer = std::exchange(other.framebuffer, 0);
     return *this;
 }
@@ -171,7 +173,7 @@ SceneFramebuffer::~SceneFramebuffer()
 }
 
 SceneFramebuffer::SceneFramebuffer(GraphicsDevice* device)
-    : framebuffer(device)
+    : framebuffer(device), device(device)
 {
 }
 
@@ -279,9 +281,33 @@ void SceneFramebuffer::BindColorTexture(unsigned int textureUnit) const
 void SceneFramebuffer::Release() noexcept
 {
     if (this->depthRenderbuffer != 0)
-        glDeleteRenderbuffers(1, &this->depthRenderbuffer);
+    {
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Renderbuffer,
+                this->depthRenderbuffer
+            );
+        }
+        else
+        {
+            glDeleteRenderbuffers(1, &this->depthRenderbuffer);
+        }
+    }
     if (this->colorTexture != 0)
-        glDeleteTextures(1, &this->colorTexture);
+    {
+        if (this->device != nullptr)
+        {
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                this->colorTexture
+            );
+        }
+        else
+        {
+            glDeleteTextures(1, &this->colorTexture);
+        }
+    }
     this->framebuffer.Release();
 
     this->depthRenderbuffer = 0;

@@ -24,7 +24,8 @@ public:
         Texture,
         VertexArray,
         Buffer,
-        Framebuffer
+        Framebuffer,
+        Renderbuffer
     };
 
     GraphicsDevice();

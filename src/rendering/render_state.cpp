@@ -9,6 +9,7 @@ namespace wisteria
 void CaptureRenderState(RenderState& state)
 {
     glGetIntegerv(GL_ACTIVE_TEXTURE, &state.activeTexture);
+    glGetIntegerv(GL_VIEWPORT, state.viewport);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &state.drawFramebuffer);
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &state.readFramebuffer);
     glGetIntegerv(GL_DRAW_BUFFER, &state.drawBuffer);
@@ -41,6 +42,12 @@ void RestoreRenderState(const RenderState& state)
         );
     }
     glActiveTexture(static_cast<GLenum>(state.activeTexture));
+    glViewport(
+        state.viewport[0],
+        state.viewport[1],
+        state.viewport[2],
+        state.viewport[3]
+    );
     glBindFramebuffer(
         GL_DRAW_FRAMEBUFFER,
         static_cast<GLuint>(state.drawFramebuffer)

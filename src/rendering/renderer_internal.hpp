@@ -131,6 +131,7 @@ constexpr std::size_t RendererTrackedTextureUnitCount =
 struct RenderState
 {
     GLint activeTexture = GL_TEXTURE0;
+    GLint viewport[4] = {0, 0, 0, 0};
     GLint drawFramebuffer = 0;
     GLint readFramebuffer = 0;
     GLint drawBuffer = GL_BACK;
