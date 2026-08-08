@@ -5,10 +5,12 @@
 #include <optional>
 #include <string_view>
 #include <glm/vec3.hpp>
+#include "wisteria/core/root_motion.hpp"
 #include "wisteria/runtime/frame_snapshot.hpp"
 
 namespace wisteria
 {
+class Animator;
 class Pose;
 class Mesh;
 class PhysicsInstance;
@@ -42,14 +44,55 @@ public:
     virtual bool Initialize() = 0;
     virtual void Update(float deltaTime) = 0;
     virtual void Reset() = 0;
-    virtual Pose& GetPose() = 0;
-    virtual const Pose& GetPose() const = 0;
+    // Optional Pose channel. A vertex-only / physics-only / morph-only
+    // runtime returns nullptr instead of faking a skeleton. GetPose() is a
+    // convenience that throws std::logic_error when no Pose exists.
+    virtual Pose* TryGetPose() noexcept = 0;
+    virtual const Pose* TryGetPose() const noexcept = 0;
+    Pose& GetPose();
+    const Pose& GetPose() const;
     virtual bool NeedsDynamicVertexUpload() const noexcept = 0;
     virtual ModelVertexFrame VertexFrame() const noexcept = 0;
     virtual ModelFrameView ProduceFrameView() const;
     virtual PhysicsInstance* TryGetPhysicsInstance() noexcept = 0;
     virtual const PhysicsInstance* TryGetPhysicsInstance() const noexcept = 0;
     virtual std::string_view BackendName() const noexcept = 0;
+
+    // Optional morph state channel. Saba manages morphs internally and
+    // returns nullptr; WisteriaGeneric returns its owned MorphState when the
+    // asset has morphs. Neutral snapshot access goes through MorphCount /
+    // DescribeMorph / ReadMorphState / MorphRevision, not through this
+    // pointer.
+    virtual MorphState* TryGetMorphState() noexcept
+    {
+        return nullptr;
+    }
+
+    virtual const MorphState* TryGetMorphState() const noexcept
+    {
+        return nullptr;
+    }
+
+    // Optional animator channel. WisteriaGeneric returns its owned Animator
+    // when a skeleton exists (HasSkeleton → Animator exists); Saba returns
+    // nullptr because it owns its motion timeline internally.
+    virtual Animator* TryGetAnimator() noexcept
+    {
+        return nullptr;
+    }
+
+    virtual const Animator* TryGetAnimator() const noexcept
+    {
+        return nullptr;
+    }
+
+    // R1.5 single-consumer root motion. Returns the pending delta from the
+    // last Update and clears it in the same call. No thread-safety claim:
+    // runtimes stay creator-thread-affine. Default is identity.
+    virtual RootMotionDelta ConsumeRootMotion() noexcept
+    {
+        return {};
+    }
 
     // Runtime capability and physics configuration description. Not per-frame
     // state; backends advertise exactly what they expose.

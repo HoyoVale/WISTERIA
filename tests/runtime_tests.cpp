@@ -1,4 +1,5 @@
 #include "test_support.hpp"
+#include "procedural_canary.hpp"
 
 namespace
 {
@@ -387,6 +388,257 @@ void TestModelInstantiation()
     );
 }
 
+void TestProceduralVertexCanary()
+{
+    ModelAsset model("procedural-vertex-canary");
+    ConfigureProceduralCanary(model);
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric,
+        "Procedural canary lost its explicit backend identity"
+    );
+    Require(
+        model.HasExplicitBackendKind(),
+        "Procedural canary must carry an explicit backend kind"
+    );
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    registry.Register(std::make_unique<ProceduralTestBackend>());
+
+    std::unique_ptr<IModelRuntimeDriver> runtime =
+        registry.CreateRuntime(model);
+    Require(
+        runtime != nullptr,
+        "Registry did not create a WisteriaGeneric runtime"
+    );
+    Require(
+        runtime->BackendName() == "procedural-canary",
+        "Procedural backend name mismatch"
+    );
+
+    ModelInstance instance(model, std::move(runtime));
+    Require(instance.HasRuntime(), "ModelInstance lost its runtime");
+
+    const ModelFrameSnapshot& before =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        !before.metadata.valid,
+        "Snapshot became valid before the first Update"
+    );
+
+    instance.Update(0.25f);
+    Require(
+        instance.LastFrameView().geometry.positions.size() == 3U,
+        "Vertex canary did not publish three positions"
+    );
+    Require(
+        instance.LastFrameView().pose == nullptr,
+        "Vertex-only runtime fabricated a Pose"
+    );
+
+    const ModelFrameSnapshot& snapshot =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(snapshot.metadata.valid, "Snapshot is not valid after Update");
+    Require(!snapshot.pose.captured, "No-Pose runtime captured a Pose");
+    Require(
+        !snapshot.morphs.captured,
+        "No-Morph runtime captured morphs"
+    );
+    Require(
+        snapshot.geometry.captured,
+        "Vertex runtime did not capture geometry"
+    );
+    Require(
+        snapshot.geometry.positions.size() == 3U,
+        "Geometry snapshot has the wrong vertex count"
+    );
+
+    const glm::vec3 firstPosition = snapshot.geometry.positions[1];
+    instance.Update(0.25f);
+    const ModelFrameSnapshot& second =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        second.geometry.positions[1] != firstPosition,
+        "Vertex geometry did not change with time"
+    );
+
+    ModelInstance firstInstance(model, registry.CreateRuntime(model));
+    ModelInstance secondInstance(model, registry.CreateRuntime(model));
+    firstInstance.Update(0.1f);
+    secondInstance.Update(0.9f);
+    const ModelFrameSnapshot& firstSnapshot =
+        firstInstance.CaptureSnapshot(CaptureMask::All);
+    const ModelFrameSnapshot& secondSnapshot =
+        secondInstance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        firstSnapshot.geometry.positions[0] !=
+            secondSnapshot.geometry.positions[0],
+        "Vertex canary instances share mutable state"
+    );
+
+    bool noPoseRejected = false;
+    try
+    {
+        (void)instance.TryGetRuntime()->GetPose();
+    }
+    catch (const std::logic_error&)
+    {
+        noPoseRejected = true;
+    }
+    Require(
+        noPoseRejected,
+        "GetPose() did not reject a Pose-less runtime"
+    );
+
+    Entity entity;
+    entity.SetModelInstance(
+        std::make_unique<ModelInstance>(model, registry.CreateRuntime(model))
+    );
+    entity.Update(0.5f);
+    Require(!entity.HasPose(), "Entity reported a Pose for vertex canary");
+    Require(
+        entity.TryGetPose() == nullptr,
+        "Entity returned a fabricated Pose"
+    );
+    Require(
+        !entity.HasAnimator(),
+        "Entity reported an Animator for vertex canary"
+    );
+    Require(
+        !entity.HasMorphState(),
+        "Entity reported morph state for vertex canary"
+    );
+}
+
+void TestProceduralOneBoneCanary()
+{
+    ModelAsset model("procedural-one-bone-canary");
+    ConfigureProceduralCanary(model);
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    registry.Register(std::make_unique<ProceduralTestBackend>());
+
+    ModelInstance instance(model, registry.CreateRuntime(model));
+    Require(instance.HasRuntime(), "One-bone canary has no runtime");
+
+    instance.Update(0.25f);
+    Require(
+        instance.LastFrameView().pose != nullptr,
+        "One-bone runtime did not publish its Pose"
+    );
+    Require(
+        instance.LastFrameView().pose->BoneCount() == 1U,
+        "One-bone runtime published the wrong bone count"
+    );
+
+    const ModelFrameSnapshot& snapshot =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(snapshot.metadata.valid, "Snapshot is not valid after Update");
+    Require(snapshot.pose.captured, "One-bone Pose was not captured");
+    Require(
+        snapshot.pose.localTransforms.size() == 1U,
+        "Pose snapshot has the wrong bone count"
+    );
+    Require(
+        !snapshot.geometry.captured,
+        "No-geometry runtime captured an empty geometry channel"
+    );
+    Require(
+        !snapshot.morphs.captured,
+        "One-bone runtime captured morphs"
+    );
+
+    const glm::mat4 firstLocal = snapshot.pose.localTransforms[0];
+    instance.Update(0.25f);
+    const ModelFrameSnapshot& second =
+        instance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        second.pose.localTransforms[0] != firstLocal,
+        "One-bone Pose did not change with time"
+    );
+
+    ModelInstance firstInstance(model, registry.CreateRuntime(model));
+    ModelInstance secondInstance(model, registry.CreateRuntime(model));
+    firstInstance.Update(0.1f);
+    secondInstance.Update(0.9f);
+    const ModelFrameSnapshot& firstSnapshot =
+        firstInstance.CaptureSnapshot(CaptureMask::All);
+    const ModelFrameSnapshot& secondSnapshot =
+        secondInstance.CaptureSnapshot(CaptureMask::All);
+    Require(
+        firstSnapshot.pose.localTransforms[0] !=
+            secondSnapshot.pose.localTransforms[0],
+        "One-bone instances share mutable Pose state"
+    );
+
+    Entity entity;
+    entity.SetModelInstance(
+        std::make_unique<ModelInstance>(model, registry.CreateRuntime(model))
+    );
+    Require(entity.HasPose(), "Entity did not forward the runtime Pose");
+    Require(
+        entity.HasAnimator(),
+        "HasSkeleton runtime must expose an Animator"
+    );
+    Require(
+        entity.TryGetAnimator() != nullptr,
+        "Entity Animator forwarding returned null"
+    );
+    Require(
+        entity.TryGetMorphState() == nullptr,
+        "Entity fabricated morph state"
+    );
+    entity.Update(0.5f);
+    Require(
+        entity.GetPose().BoneCount() == 1U,
+        "Entity Pose forwarding broke the one-bone runtime"
+    );
+}
+
+void TestProceduralRootMotionExactlyOnce()
+{
+    ModelAsset model("procedural-root-motion-canary");
+    ConfigureProceduralCanary(model);
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    registry.Register(std::make_unique<ProceduralTestBackend>());
+
+    ModelInstance instance(model, registry.CreateRuntime(model));
+    IModelRuntimeDriver* runtime = instance.TryGetRuntime();
+    const RootMotionDelta delta = instance.Update(0.5f);
+    Require(
+        !delta.IsIdentity(),
+        "ModelInstance::Update lost the pending root motion"
+    );
+    Require(
+        NearlyEqual(delta.translation.x, 0.25f),
+        "Root motion delta has the wrong translation"
+    );
+    Require(
+        runtime->ConsumeRootMotion().IsIdentity(),
+        "Root motion was not consumed exactly once"
+    );
+    Require(
+        instance.Update(0.0f).IsIdentity(),
+        "Zero-delta update fabricated root motion"
+    );
+
+    Entity entity;
+    entity.SetModelInstance(
+        std::make_unique<ModelInstance>(model, registry.CreateRuntime(model))
+    );
+    entity.Update(0.5f);
+    Require(
+        NearlyEqual(entity.GetTransform().Position().x, 0.25f),
+        "Entity did not apply the runtime root motion"
+    );
+    entity.Update(0.0f);
+    Require(
+        NearlyEqual(entity.GetTransform().Position().x, 0.25f),
+        "Entity applied root motion more than once"
+    );
+}
+
 void TestFrameRateIndependentBehaviours()
 {
     Mesh mesh(DefaultModelData{});
@@ -619,6 +871,18 @@ int main()
     failures += !RunTest("Built-in cube tangents", TestBuiltInCubeTangents);
     failures += !RunTest("Mesh bounds center", TestMeshBoundsCenter);
     failures += !RunTest("Model instantiation", TestModelInstantiation);
+    failures += !RunTest(
+        "R1.5 procedural vertex canary",
+        TestProceduralVertexCanary
+    );
+    failures += !RunTest(
+        "R1.5 procedural one-bone canary",
+        TestProceduralOneBoneCanary
+    );
+    failures += !RunTest(
+        "R1.5 procedural root motion exactly once",
+        TestProceduralRootMotionExactlyOnce
+    );
     failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
     failures += !RunTest("Input frame transitions", TestInputFrameTransitions);
     failures += !RunTest("Free camera controller", TestFreeCameraController);

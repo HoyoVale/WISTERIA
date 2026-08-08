@@ -88,7 +88,7 @@ std::size_t ModelInstance::InstanceMeshCount() const noexcept
     return this->instanceMeshes.size();
 }
 
-void ModelInstance::Update(float deltaTime)
+RootMotionDelta ModelInstance::Update(float deltaTime)
 {
     if (this->runtime != nullptr)
     {
@@ -105,7 +105,9 @@ void ModelInstance::Update(float deltaTime)
             this->runtime->IsMotionLooping();
         this->snapshot.metadata.valid = true;
         this->frameValid = true;
+        return this->runtime->ConsumeRootMotion();
     }
+    return {};
 }
 
 void ModelInstance::Reset()
@@ -204,7 +206,15 @@ bool ModelInstance::CapturePose()
 {
     if (this->runtime == nullptr)
         return false;
-    const Pose& pose = this->runtime->GetPose();
+    Pose* posePointer = this->runtime->TryGetPose();
+    if (posePointer == nullptr)
+    {
+        // Optional channel: a runtime without a Pose reports the channel as
+        // absent instead of fabricating an empty snapshot.
+        this->snapshot.pose.captured = false;
+        return false;
+    }
+    const Pose& pose = *posePointer;
     const std::uint64_t poseRevision = pose.Revision();
     if (poseRevision != this->snapshot.pose.poseRevision ||
         !this->snapshot.pose.captured)
@@ -277,6 +287,19 @@ bool ModelInstance::CaptureGeometry()
     if (this->runtime == nullptr)
         return false;
     const ModelVertexFrame frame = this->lastView.geometry;
+    if (frame.positions.empty() && frame.normals.empty())
+    {
+        // Frozen zero-value semantics (R1.5 §5.4): empty spans mean no
+        // runtime-owned deformed geometry, never a captured empty channel.
+        this->snapshot.geometry.captured = false;
+        return false;
+    }
+    if (frame.positions.size() != frame.normals.size())
+    {
+        throw std::logic_error(
+            "Runtime vertex frame is inconsistent"
+        );
+    }
     if (frame.revision != this->snapshot.geometry.sourceRevision ||
         !this->snapshot.geometry.captured)
     {

@@ -195,7 +195,7 @@ Pose* Entity::TryGetPose() noexcept
         IModelRuntimeDriver* runtime =
             this->modelInstance->TryGetRuntime();
         if (runtime != nullptr)
-            return &runtime->GetPose();
+            return runtime->TryGetPose();
     }
     return this->pose.get();
 }
@@ -207,7 +207,7 @@ const Pose* Entity::TryGetPose() const noexcept
         const IModelRuntimeDriver* runtime =
             this->modelInstance->TryGetRuntime();
         if (runtime != nullptr)
-            return &runtime->GetPose();
+            return runtime->TryGetPose();
     }
     return this->pose.get();
 }
@@ -243,60 +243,104 @@ void Entity::SetSkeleton(const Skeleton& skeleton)
 
 bool Entity::HasAnimator() const noexcept
 {
-    return this->animator != nullptr;
+    return this->TryGetAnimator() != nullptr;
 }
 
 Animator* Entity::TryGetAnimator() noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+        {
+            if (Animator* animator = runtime->TryGetAnimator())
+                return animator;
+        }
+    }
     return this->animator.get();
 }
 
 const Animator* Entity::TryGetAnimator() const noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        const IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+        {
+            if (const Animator* animator = runtime->TryGetAnimator())
+                return animator;
+        }
+    }
     return this->animator.get();
 }
 
 Animator& Entity::GetAnimator()
 {
-    if (this->animator == nullptr)
+    Animator* result = this->TryGetAnimator();
+    if (result == nullptr)
         throw std::logic_error("Entity has no skeleton animator");
-    return *this->animator;
+    return *result;
 }
 
 const Animator& Entity::GetAnimator() const
 {
-    if (this->animator == nullptr)
+    const Animator* result = this->TryGetAnimator();
+    if (result == nullptr)
         throw std::logic_error("Entity has no skeleton animator");
-    return *this->animator;
+    return *result;
 }
 
 bool Entity::HasMorphState() const noexcept
 {
-    return this->morphState != nullptr;
+    return this->TryGetMorphState() != nullptr;
 }
 
 MorphState* Entity::TryGetMorphState() noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+        {
+            if (MorphState* morphState = runtime->TryGetMorphState())
+                return morphState;
+        }
+    }
     return this->morphState.get();
 }
 
 const MorphState* Entity::TryGetMorphState() const noexcept
 {
+    if (this->modelInstance != nullptr)
+    {
+        const IModelRuntimeDriver* runtime =
+            this->modelInstance->TryGetRuntime();
+        if (runtime != nullptr)
+        {
+            if (const MorphState* morphState = runtime->TryGetMorphState())
+                return morphState;
+        }
+    }
     return this->morphState.get();
 }
 
 MorphState& Entity::GetMorphState()
 {
-    if (this->morphState == nullptr)
+    MorphState* result = this->TryGetMorphState();
+    if (result == nullptr)
         throw std::logic_error("Entity has no morph state");
-    return *this->morphState;
+    return *result;
 }
 
 const MorphState& Entity::GetMorphState() const
 {
-    if (this->morphState == nullptr)
+    const MorphState* result = this->TryGetMorphState();
+    if (result == nullptr)
         throw std::logic_error("Entity has no morph state");
-    return *this->morphState;
+    return *result;
 }
 
 void Entity::SetMorphSet(const MorphSet& morphSet)
@@ -490,7 +534,10 @@ void Entity::Update(float deltaTime)
     if (this->modelInstance != nullptr &&
         this->modelInstance->HasRuntime())
     {
-        this->modelInstance->Update(deltaTime);
+        const RootMotionDelta rootMotion =
+            this->modelInstance->Update(deltaTime);
+        if (!rootMotion.IsIdentity())
+            this->transform.ApplyLocalMotion(rootMotion);
     }
     else if (this->animator != nullptr)
     {

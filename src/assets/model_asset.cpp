@@ -47,8 +47,31 @@ const ModelSourceDescriptor& ModelAsset::GetSourceDescriptor() const
     return *this->sourceDescriptor;
 }
 
+void ModelAsset::SetBackendKind(ModelBackendKind kind)
+{
+    if (kind > ModelBackendKind::WisteriaGeneric)
+    {
+        throw std::invalid_argument(
+            "ModelAsset backend kind is out of range"
+        );
+    }
+    if (this->backendKind.has_value())
+        throw std::logic_error("ModelAsset backend kind is already set");
+    this->backendKind.emplace(kind);
+}
+
+bool ModelAsset::HasExplicitBackendKind() const noexcept
+{
+    return this->backendKind.has_value();
+}
+
 ModelBackendKind ModelAsset::BackendKind() const noexcept
 {
+    // R1.5 Phase 0B: explicit backend identity is the single authority.
+    // The sourceDescriptor->backend fallback is legacy-only and stays in
+    // place until Phase 0C removes the parasitic classification.
+    if (this->backendKind.has_value())
+        return *this->backendKind;
     return this->sourceDescriptor.has_value()
         ? this->sourceDescriptor->backend
         : ModelBackendKind::Static;

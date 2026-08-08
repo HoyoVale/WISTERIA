@@ -1,6 +1,6 @@
 # R1.5 Phase 0A — Second Dynamic Runtime Contract
 
-> 状态：**FROZEN DRAFT（2026-08-08，待契约级审查）**。
+> 状态：**CONTRACT FROZEN（2026-08-08，最终契约级审查通过）**。
 > 一句话：**证明 `IModelRuntimeDriver / ModelInstance / ModelBackendRegistry`
 > 不是为 Saba 特制的。**
 
@@ -104,7 +104,7 @@ virtual const MorphState* TryGetMorphState() const noexcept { return nullptr; }
 ```
 
 - Saba：`nullptr`（Saba 内部自管 morph，不暴露 WISTERIA MorphState）；
-- WisteriaGeneric：`&ownedMorphState`；
+- WisteriaGeneric：owned MorphState 存在时返回其地址，否则 `nullptr`；
 - `Entity::TryGetMorphState()` 增加 Runtime 转发，fallback 到 legacy
   Entity morphState；Renderer 继续只问“这个 Entity 当前有什么可渲染状态”，
   架构不改。
@@ -116,6 +116,9 @@ ReadMorphState() / MorphRevision()` 驱动**：WisteriaGenericRuntimeDriver
 `ModelInstance::CaptureMorphs()` 不得出现
 `if GenericRuntime ...` 之类的 backend 特判。
 
+`SetMorphWeight() / MorphWeight()` 也必须桥接同一个 owned MorphState：
+neutral morph 的读与写同源，不得出现两套入口。
+
 ### 5.3 Optional Animator
 
 ```cpp
@@ -124,7 +127,7 @@ virtual const Animator* TryGetAnimator() const noexcept { return nullptr; }
 ```
 
 - Saba：`nullptr`；
-- WisteriaGeneric：`&ownedAnimator`；
+- WisteriaGeneric：owned Animator 存在时返回其地址，否则 `nullptr`；
 - `Entity::HasAnimator() / TryGetAnimator() / GetAnimator()` 与 Pose/Morph
   一致：Runtime first → fallback legacy standalone Entity animator。
 
@@ -155,6 +158,21 @@ no morph runtime:
 
 no CPU-deformed geometry:
   snapshot.geometry.captured = false
+```
+
+`ModelVertexFrame` 不新增 available 字段，冻结既有 zero-value 语义：
+
+```text
+positions.empty && normals.empty
+→ 无 runtime-owned deformed geometry
+→ snapshot.geometry.captured = false
+
+positions.size == normals.size && size > 0
+→ valid geometry
+
+仅一个 span 为空或 size 不等
+→ invalid runtime frame
+→ logic_error / 等效内部失败
 ```
 
 Snapshot channel 是 optional capability，不是所有 Runtime 必须填满的固定
@@ -190,6 +208,18 @@ Physics Snapshot / Restore
 Stable C ABI
 ```
 
+### 5.6 Legacy optional playback metadata（不泛化）
+
+`MotionFrame() / IsMotionPaused() / IsMotionLooping()` 是从 MMD/VMD
+30 Hz 语义发展来的遗留可选接口。R1.5 不泛化：
+
+```text
+WisteriaGeneric 保持这些接口的默认 unsupported 值；
+不得人为把 Animator 秒制时间换算成 VMD 30Hz motionFrame。
+```
+
+真正通用的 playback metadata 契约留待后续阶段，不在 R1.5 定义。
+
 ## 6. Animator / Pose / MorphState 所有权（冻结）
 
 ```text
@@ -203,15 +233,32 @@ ModelInstance
 存在性规则：
 
 ```text
-HasSkeleton → Pose exists
-HasMorphs   → MorphState exists
-Pose exists → Animator may exist
+HasSkeleton
+→ Pose exists
+→ Animator exists
+
+HasMorphs
+→ MorphState exists
+
+!HasSkeleton && HasMorphs
+→ MorphState exists
+→ Pose == nullptr
+→ Animator == nullptr
+
+AnimationClipCount > 0 && !HasSkeleton
+→ R1.5 unsupported
+→ Initialize() fails honestly
 ```
 
-R1.5 不为 morph-only 模型制造 dummy Skeleton/Pose。若资产有 morph
-animation clip 但没有 Skeleton，而当前 Animator 无法 pose-less playback，
-则 **R1.5 不要求支持该组合；`Initialize()` 必须诚实拒绝，而不是伪造
-Pose**（Animator 泛化留待后续）。
+`HasSkeleton → Animator exists` 继承旧 Entity 路径的兼容语义：当前
+`Entity::SetSkeleton` 同时创建 Pose 与 Animator，迁移前 model-backed
+skeletal 资产无论有无 AnimationClip，`HasAnimator()` 都为 true；R1.5
+不允许迁移后出现“有 Pose 无 Animator”的新组合。
+
+R1.5 不为 morph-only 模型制造 dummy Skeleton/Pose。若资产有
+AnimationClip 但没有 Skeleton（包括 morph animation clip），当前 Animator
+无法 pose-less playback，则 **R1.5 不要求支持该组合；`Initialize()` 必须
+诚实拒绝，而不是伪造 Pose**（Animator 泛化留待后续）。
 
 - Runtime 从 `ModelAsset` immutable data 初始化，不重新读文件；
 - `Animator(Pose&, MorphState*)` 的所有指针均在 Runtime 内部，无跨 owner
@@ -230,10 +277,15 @@ virtual RootMotionDelta ConsumeRootMotion() noexcept { return {}; }
 ```
 
 ```text
-ConsumeRootMotion() → 返回 pending delta，并原子清空
+ConsumeRootMotion() → 在同一次调用内返回 pending delta，
+                      并将 pending state 置 identity
 Reset()             → pending root motion 变为 identity
 RootMotion 不属于 ModelFrameView / ModelFrameSnapshot
 ```
+
+“同一次调用内置 identity”即 exactly-once consume 语义；不声明跨线程
+atomic / thread-safe 保证（Runtime 保持 R1.4 的 creator-thread-affine
+caller precondition）。
 
 ```text
 Runtime::Update()
@@ -270,7 +322,7 @@ for (part : model.Parts())
 
 ## 9. Phase 计划与验收
 
-### Phase 0A — Contract Frozen（本文档）
+### Phase 0A — Contract Frozen（本文档，2026-08-08 最终契约级审查闭合）
 
 ### Phase 0B — Procedural Canary
 

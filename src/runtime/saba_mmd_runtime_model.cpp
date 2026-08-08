@@ -2948,18 +2948,18 @@ double SabaMmdRuntimeModel::MotionMaxFrame() const noexcept
         : 0.0;
 }
 
-Pose& SabaMmdRuntimeModel::GetPose()
+Pose* SabaMmdRuntimeModel::TryGetPose() noexcept
 {
     if (this->impl->pose == nullptr)
-        throw std::logic_error("Saba runtime has no initialized pose");
-    return *this->impl->pose;
+        return nullptr;
+    return this->impl->pose.get();
 }
 
-const Pose& SabaMmdRuntimeModel::GetPose() const
+const Pose* SabaMmdRuntimeModel::TryGetPose() const noexcept
 {
     if (this->impl->pose == nullptr)
-        throw std::logic_error("Saba runtime has no initialized pose");
-    return *this->impl->pose;
+        return nullptr;
+    return this->impl->pose.get();
 }
 
 bool SabaMmdRuntimeModel::NeedsDynamicVertexUpload() const noexcept

@@ -21,7 +21,8 @@ namespace wisteria
 enum class ModelBackendKind : std::uint8_t
 {
     Static = 0,
-    SabaMmd = 1
+    SabaMmd = 1,
+    WisteriaGeneric = 2
 };
 
 struct ModelSourceDescriptor
@@ -47,6 +48,11 @@ public:
     bool HasSourceDescriptor() const noexcept;
     const ModelSourceDescriptor* TryGetSourceDescriptor() const noexcept;
     const ModelSourceDescriptor& GetSourceDescriptor() const;
+    // R1.5 Phase 0B: explicit backend identity is the authority. Once set it
+    // wins over the legacy sourceDescriptor->backend classification; without
+    // it BackendKind() keeps the pre-R1.5 fallback for compatibility.
+    void SetBackendKind(ModelBackendKind kind);
+    bool HasExplicitBackendKind() const noexcept;
     ModelBackendKind BackendKind() const noexcept;
     std::size_t PartCount() const noexcept;
     std::span<const RenderPart> Parts() const noexcept;
@@ -81,6 +87,7 @@ public:
 
 private:
     std::string name;
+    std::optional<ModelBackendKind> backendKind;
     std::optional<ModelSourceDescriptor> sourceDescriptor;
     std::vector<RenderPart> parts;
     std::optional<Skeleton> skeleton;

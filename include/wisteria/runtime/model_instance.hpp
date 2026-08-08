@@ -3,6 +3,7 @@
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/runtime/runtime_model_base.hpp"
 #include "wisteria/runtime/frame_snapshot.hpp"
+#include "wisteria/core/root_motion.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -40,7 +41,9 @@ public:
     const Mesh& ResolveMesh(const Mesh& assetMesh) const;
     std::size_t InstanceMeshCount() const noexcept;
 
-    void Update(float deltaTime);
+    // R1.5: returns the runtime's pending root-motion delta (exactly-once
+    // consumed) after publishing the frame view and metadata.
+    RootMotionDelta Update(float deltaTime);
     void Reset();
     void UploadDynamicVertices(Mesh& mesh);
 

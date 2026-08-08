@@ -12,9 +12,25 @@ ModelFrameView IModelRuntimeDriver::ProduceFrameView() const
 {
     return ModelFrameView{
         this->VertexFrame(),
-        &this->GetPose(),
+        this->TryGetPose(),
         0U
     };
+}
+
+Pose& IModelRuntimeDriver::GetPose()
+{
+    Pose* result = this->TryGetPose();
+    if (result == nullptr)
+        throw std::logic_error("Runtime has no skeleton pose");
+    return *result;
+}
+
+const Pose& IModelRuntimeDriver::GetPose() const
+{
+    const Pose* result = this->TryGetPose();
+    if (result == nullptr)
+        throw std::logic_error("Runtime has no skeleton pose");
+    return *result;
 }
 
 ModelRuntimeCapabilities IModelRuntimeDriver::Capabilities() const

@@ -59,8 +59,8 @@ public:
     bool Initialize() override;
     void Update(float deltaTime) override;
     void Reset() override;
-    Pose& GetPose() override;
-    const Pose& GetPose() const override;
+    Pose* TryGetPose() noexcept override;
+    const Pose* TryGetPose() const noexcept override;
     bool NeedsDynamicVertexUpload() const noexcept override;
     ModelVertexFrame VertexFrame() const noexcept override;
     PhysicsInstance* TryGetPhysicsInstance() noexcept override;

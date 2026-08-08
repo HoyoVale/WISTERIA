@@ -1244,14 +1244,14 @@ public:
     {
     }
 
-    Pose& GetPose() override
+    Pose* TryGetPose() noexcept override
     {
-        return this->pose;
+        return &this->pose;
     }
 
-    const Pose& GetPose() const override
+    const Pose* TryGetPose() const noexcept override
     {
-        return this->pose;
+        return &this->pose;
     }
 
     bool NeedsDynamicVertexUpload() const noexcept override
