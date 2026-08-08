@@ -80,14 +80,26 @@ bool AtomicReplace(
     if (error)
         return false;
     const int directory = ::open(finalPath.parent_path().c_str(), O_RDONLY);
-    if (directory >= 0)
-    {
-        const bool synced = fsync(directory) == 0;
-        ::close(directory);
-        if (!synced)
-            return false;
-    }
+    if (directory < 0)
+        return false;
+    const bool synced = fsync(directory) == 0;
+    const bool closed = ::close(directory) == 0;
+    return synced && closed;
+#endif
+}
+
+bool SyncParentDirectory(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    (void)path;
     return true;
+#else
+    const int directory = ::open(path.c_str(), O_RDONLY);
+    if (directory < 0)
+        return false;
+    const bool synced = fsync(directory) == 0;
+    const bool closed = ::close(directory) == 0;
+    return synced && closed;
 #endif
 }
 
@@ -97,6 +109,7 @@ bool AppendDurable(
     const std::string& record
 )
 {
+    const bool newlyCreated = !std::filesystem::is_regular_file(path);
     FILE* file = std::fopen(path.string().c_str(), "ab");
     if (file == nullptr)
         return false;
@@ -108,6 +121,11 @@ bool AppendDurable(
     ) == record.size() && std::fputc('\n', file) != EOF;
     const bool durable = ok && FlushDurably(file);
     const bool closed = std::fclose(file) == 0;
+    if (newlyCreated && durable && closed &&
+        !SyncParentDirectory(path.parent_path()))
+    {
+        return false;
+    }
     return durable && closed;
 }
 
@@ -711,7 +729,15 @@ OfflineFrameSequence::ReadLastCommittedRecord()
     }
     if (!sawSession)
     {
-        this->Fail("manifest has no session record");
+        // A manifest truncated to zero (crash before the first session
+        // record completed) is equivalent to a fresh directory, not
+        // corruption. A non-empty manifest without a session record is
+        // corruption.
+        if (std::filesystem::file_size(this->ManifestPath()) != 0U)
+        {
+            this->Fail("manifest has no session record");
+            return std::nullopt;
+        }
         return std::nullopt;
     }
     return last;
@@ -744,6 +770,16 @@ OfflineFrameSequence::RenderAndPersist(MotionFrameIndex frame)
     // before applying any policy.
     const std::optional<FrameRecord> committed =
         this->FindFrameRecord(frame);
+    // Append-only forward commit log: a frame below the manifest tail that
+    // was never committed cannot be inserted as new history.
+    if (!committed.has_value() &&
+        this->lastCommitted.has_value() &&
+        frame <= *this->lastCommitted)
+    {
+        this->Fail("cannot append an uncommitted historical frame " +
+            std::to_string(frame));
+        return {};
+    }
     if (committed.has_value() &&
         this->config.overwritePolicy == SequenceOverwritePolicy::Overwrite &&
         committed->rgbaHash != rgbaHash)
@@ -856,6 +892,13 @@ OfflineFrameSequence::RenderAndPersist(MotionFrameIndex frame)
     }
     const std::vector<std::uint8_t> wire = SerializeCheckpoint(checkpoint);
     record.checkpointWireHash = HashBytes(wire);
+    if (rewriteOnly && !skipCheckpointRewrite &&
+        record.checkpointWireHash != committed->checkpointWireHash)
+    {
+        this->Fail("Overwrite checkpoint wire hash mismatch for frame " +
+            std::to_string(frame));
+        return {};
+    }
     if (rewriteOnly)
     {
         // Keep the slot the committed record points at; do not disturb the

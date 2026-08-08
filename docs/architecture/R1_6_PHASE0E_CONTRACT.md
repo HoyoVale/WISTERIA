@@ -397,4 +397,18 @@ I. Publication：
    presentation 输入；目录可复制后 Resume）。
 7. committed Overwrite：new rgbaHash != committed.rgbaHash
    → deterministic mismatch → fail-stop。
+
+### Micro Closure Guard（2026-08-09 三轮闭合）
+
+```text
+1. POSIX durable replace：open(parent directory) 失败必须 false；
+   首次创建 manifest 后额外 fsync parent directory。
+2. JSONL = append-only forward commit log：
+   frame <= lastCommitted && 无 committed record → 拒绝插入
+   （已有 record 的 frame 仍允许 Reject/Overwrite/VerifySkip）。
+3. latest committed Overwrite：checkpointWireHash 必须与 committed
+   record 相同，否则 fail-stop（不允许静默替换唯一 resume anchor）。
+4. 空 manifest（首次 session record 未完成即 crash，truncate 后 0
+   字节）= fresh session，可重新写 session record；
+   非空但无 session record = corruption（fail-stop）。
 ```

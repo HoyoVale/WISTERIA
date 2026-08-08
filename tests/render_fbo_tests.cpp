@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <fstream>
@@ -1826,6 +1827,147 @@ int main()
                 readFile(dirA / "checkpoint-B.bin") == checkpointB6,
                 "Slot B was destroyed before the frame-7 manifest commit"
             );
+
+            // Append-only forward commit log: an uncommitted historical
+            // frame below the tail must be rejected without touching the
+            // manifest or the checkpoint slot.
+            {
+                const std::vector<std::uint8_t> checkpointABefore =
+                    readFile(dirA / "checkpoint-A.bin");
+                OfflineFrameSequence backfill(
+                    scene,
+                    renderer,
+                    *runtime,
+                    instance,
+                    configA
+                );
+                bool backfillRejected = false;
+                try
+                {
+                    backfill.RenderRange(1U, 1U);
+                }
+                catch (const std::exception&)
+                {
+                    backfillRejected = true;
+                }
+                Require(
+                    backfillRejected && backfill.Failed(),
+                    "Uncommitted historical frame was appended"
+                );
+                Require(
+                    readFile(dirA / "checkpoint-A.bin") ==
+                        checkpointABefore,
+                    "Rejected backfill disturbed the checkpoint slot"
+                );
+                std::ifstream manifest(dirA / "manifest.jsonl");
+                std::string line;
+                MotionFrameIndex lastSeen = 0U;
+                while (std::getline(manifest, line))
+                {
+                    if (line.find("\"type\":\"frame\"") ==
+                        std::string::npos)
+                    {
+                        continue;
+                    }
+                    const std::size_t key =
+                        line.find("\"frameIndex\":");
+                    if (key != std::string::npos)
+                    {
+                        lastSeen = static_cast<MotionFrameIndex>(
+                            std::strtoull(
+                                line.c_str() + key + 13U,
+                                nullptr,
+                                10
+                            )
+                        );
+                    }
+                }
+                Require(
+                    lastSeen == 7U,
+                    "Rejected backfill changed the manifest tail"
+                );
+            }
+
+            // Overwrite of the latest committed frame succeeds when both the
+            // RGBA and the checkpoint wire hash match.
+            {
+                const std::vector<std::uint8_t> checkpointABefore =
+                    readFile(dirA / "checkpoint-A.bin");
+                OfflineFrameSequence latestOverwrite(
+                    scene,
+                    renderer,
+                    *runtime,
+                    instance,
+                    configCursor
+                );
+                latestOverwrite.RenderRange(7U, 7U);
+                Require(
+                    !latestOverwrite.Failed() &&
+                        latestOverwrite.LastCommittedFrame().value_or(99U) ==
+                            7U,
+                    "Latest committed overwrite failed"
+                );
+                Require(
+                    readFile(dirA / "checkpoint-A.bin") ==
+                        checkpointABefore,
+                    "Latest overwrite changed the checkpoint wire"
+                );
+            }
+
+            // A manifest truncated to zero by a crash before the first
+            // session record completed is equivalent to a fresh directory.
+            {
+                const std::filesystem::path dirH =
+                    std::filesystem::temp_directory_path() /
+                    "wisteria_seq_h";
+                std::filesystem::remove_all(dirH, ignored);
+                std::filesystem::create_directories(dirH, ignored);
+                {
+                    std::ofstream partial(
+                        dirH / "manifest.jsonl",
+                        std::ios::binary
+                    );
+                    partial << "{\"type\":\"session\",\"sessionIdentity\"";
+                }
+                OfflineFrameSequenceConfig configH = configA;
+                configH.outputDirectory = dirH;
+                OfflineFrameSequence freshRecovery(
+                    scene,
+                    renderer,
+                    *runtime,
+                    instance,
+                    configH
+                );
+                freshRecovery.RenderRange(0U, 0U);
+                Require(
+                    !freshRecovery.Failed() &&
+                        freshRecovery.LastCommittedFrame().value_or(99U) ==
+                            0U,
+                    "Empty-manifest recovery did not behave like a fresh dir"
+                );
+                std::ifstream manifest(dirH / "manifest.jsonl");
+                const std::string content{
+                    std::istreambuf_iterator<char>(manifest),
+                    std::istreambuf_iterator<char>()
+                };
+                std::size_t sessionCount = 0U;
+                std::size_t position = 0U;
+                while ((position = content.find(
+                        "\"type\":\"session\"",
+                        position
+                    )) != std::string::npos)
+                {
+                    ++sessionCount;
+                    position += 16U;
+                }
+                Require(
+                    sessionCount == 1U &&
+                        content.find("\"frameIndex\":0") !=
+                            std::string::npos,
+                    "Empty-manifest recovery wrote a malformed manifest"
+                );
+                std::filesystem::remove_all(dirH, ignored);
+            }
 
             // Session identity is path-independent: a copied output directory
             // must resume and must not duplicate the session record.

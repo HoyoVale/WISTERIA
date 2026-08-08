@@ -178,3 +178,20 @@ Box.glb 使像素断言有效。
 8. camera-track FOV 生效回归：加载 perspective 相机 VMD（FOV 30）
    后输出 != 无 track 基线
 ```
+
+## 9. Micro Closure Guard（2026-08-09 三轮闭合）
+
+```text
+1. POSIX AtomicReplace：open(parent dir) 失败 → false；
+   AppendDurable 首次创建 manifest 后 fsync parent directory
+2. append-only forward commit log：
+   frame <= lastCommitted && 无 committed record → fail-stop
+   （回归：tail=7 时 RenderRange(1,1) 被拒，manifest tail 与
+     checkpoint-A 均不变）
+3. latest committed Overwrite：
+   checkpointWireHash != committed hash → fail-stop
+   （回归：Overwrite(7) 成功且 checkpoint-A 字节不变）
+4. 空 manifest = fresh session：
+   （回归：只写 partial session 行 → RenderRange(0,0) 恢复为
+     全新目录，恰好一个 session record + frame0 commit 成功）
+```
