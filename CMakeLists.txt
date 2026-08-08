@@ -186,6 +186,7 @@ set(WISTERIA_RUNTIME_SOURCES
 
 set(WISTERIA_PLATFORM_SOURCES
     src/platform/application.cpp
+    src/platform/egl_headless_context.cpp
     src/platform/free_camera_controller.cpp
     src/platform/input.cpp
     src/platform/window.cpp
@@ -343,6 +344,34 @@ target_precompile_headers(wisteria_platform PRIVATE
 
 target_compile_definitions(wisteria_platform PUBLIC GLFW_INCLUDE_NONE)
 
+# R1.7 Phase 0B: optional EGL headless provider (Linux). On Windows the
+# provider source compiles to a stub and CreateHeadlessContext returns
+# nullptr; the GLFW hidden-window path remains the reference/regression.
+if(UNIX AND NOT APPLE)
+    find_path(WISTERIA_EGL_INCLUDE_DIR NAMES EGL/egl.h)
+    find_library(WISTERIA_EGL_LIBRARY NAMES EGL)
+    if(WISTERIA_EGL_INCLUDE_DIR AND WISTERIA_EGL_LIBRARY)
+        set(WISTERIA_EGL_FOUND TRUE)
+        target_compile_definitions(wisteria_platform PRIVATE
+            WISTERIA_ENABLE_EGL=1
+        )
+        target_include_directories(wisteria_platform PRIVATE
+            ${WISTERIA_EGL_INCLUDE_DIR}
+        )
+        target_link_libraries(wisteria_platform
+            PUBLIC ${WISTERIA_EGL_LIBRARY} ${CMAKE_DL_LIBS}
+        )
+    endif()
+endif()
+
+if(WISTERIA_EGL_FOUND)
+    # R1.7 Phase 0B smoke: owns an EGL context with no window system,
+    # loads GL entry points, clears a minimal FBO and verifies readback.
+    add_executable(wisteria_headless_smoke tests/headless_smoke.cpp)
+    target_link_libraries(wisteria_headless_smoke PRIVATE wisteria_platform)
+    target_compile_features(wisteria_headless_smoke PRIVATE cxx_std_20)
+endif()
+
 # native C ABI shared library for FFI / frontend integration
 if(WISTERIA_BUILD_NATIVE)
     add_library(wisteria_native SHARED
@@ -479,6 +508,12 @@ if(BUILD_TESTING)
     set_tests_properties(wisteria.render-fbo PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+    if(WISTERIA_EGL_FOUND)
+        add_test(NAME wisteria.headless-smoke COMMAND wisteria_headless_smoke)
+        set_tests_properties(wisteria.headless-smoke PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+    endif()
 
     # R1.4 Phase 0A: pure-C layout/constant smoke for the Stable Runtime
     # C ABI v1 subset. Compiled with a C compiler only; static assertions

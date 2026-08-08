@@ -1,0 +1,303 @@
+# R1.7 — True Headless Context Provider（契约草案）
+
+> 状态：**FROZEN v1.0（2026-08-09，四项决策已拍板）**
+> 前置：R1.6 Phase 0A–0E CLOSED（`R1_6_OFFLINE_OUTPUT_CONTRACT.md` 第 383 行：
+> `Phase 0F 拆为 R1.7 — Headless Context Provider`）。
+> 本文件只冻结 R1.7 的范围、边界、验收口径与阶段计划；精确接口字段在
+> Phase 0B 对照 EGL 实测后冻结。
+
+## 1. 一句话
+
+R1.7 让 WISTERIA 的离线渲染链
+（`Scene → Renderer → SceneFramebuffer → ReadbackRgba8`）不再依赖任何
+Window System：无窗口、无 Present、无 SwapBuffers、无桌面环境，
+由引擎自有的 Headless Context Provider 提供 OpenGL 上下文，
+并顺带修复 R1.6 留下的 GraphicsDevice share-group identity 债务。
+
+```text
+Model / Motion
+      ↓
+   Runtime
+      ↓
+    Scene
+      ↓
+  Renderer
+      ↓
+EGL surfaceless / software fallback context
+      ↓
+ SceneFramebuffer → RGBA8 → PNG / raw
+```
+
+## 2. 现状盘点（2026-08-09 实测）
+
+### 2.1 当前 GL context 创建路径
+
+```text
+窗口路径   Application → GLFW → Window(glfwCreateWindow) → MakeContextCurrent
+离屏路径   R1.6 = 同一个 Application 的 hidden GLFW window（visible=false），
+           或测试内直接 glfwCreateWindow(GLFW_VISIBLE=FALSE)
+Linux NULL 后端 = GLFW 无平台后端：glfwInit 失败 → render 测试 SKIP（无 GL）
+```
+
+`RenderOffline`（`include/wisteria/rendering/offline_render.hpp`）只要求
+"owning GL context 当前"；`OfflineFrameSequence` 从宿主借用
+Scene/Renderer/Runtime/ModelInstance，不拥有 context。因此
+**Headless Context 可以只替换"context 从哪来"，不改 Renderer 与序列管线**。
+
+### 2.2 R1.6 明确留给 R1.7 的债务
+
+```text
+A. Headless context provider（EGL/OSMesa/surfaceless）
+B. GraphicsDevice share-group identity：
+   - context token 目前用"第一个 GLFWwindow*"近似
+   - multi-window 共享 context 下非 owner window 的
+     ContextIsCurrent() 为 false → FlushPendingDeletes 不执行
+   - MakeContextCurrent 后没有自动 FlushPendingDeletes
+   - 开放 Stable Render C Portal 前必须解决
+```
+
+### 2.3 WSL / 真实 Linux 环境实测（本机 WSL Ubuntu 22.04）
+
+```text
+EGL client extensions:  EGL_EXT_platform_base、EGL_EXT_platform_device、
+                        EGL_MESA_platform_surfaceless、...（存在）
+EGL 版本:               1.5（Mesa Project）
+GBM platform:           eglInitialize 失败（WSL 无 /dev/dri 访问）
+Wayland platform:       可用（WSLg），但依赖窗口系统，不是 headless
+OSMesa:                 未安装（无头文件、无库）→ v1 不作为必选 provider
+已知问题:               WSLg Mesa D3D12（vendor=Microsoft）首帧后读回全黑，
+                        必须 LIBGL_ALWAYS_SOFTWARE=1 软件回退；
+                        真实独立 Linux 机器渲染链路正常（R0.4 已定性）
+```
+
+结论：**v1 只做 EGL**：首选 EGL surfaceless（Mesa），软件回退用
+`EGL_EXT_platform_device` + `EGL_MESA_device_software`（llvmpipe），
+不依赖 DISPLAY/WAYLAND_DISPLAY。WSL 只做兼容性验证，真实 Linux 是发布基线。
+OSMesa 明确留到 v2/按需，R1.7 v1 不实现。
+
+## 3. R1.7 范围
+
+### 3.1 必须交付
+
+```text
+1. HeadlessContext 抽象（platform 层）：
+   - 创建 / 销毁 / MakeCurrent / ReleaseCurrent
+   - 返回 opaque context token（接入 GraphicsDevice identity）
+   - 返回诊断信息（vendor / renderer / GL version / platform）
+2. EGL provider（Linux，含 WSL）：
+   - 首选 EGL_MESA_platform_surfaceless
+   - 回退 EGL_EXT_platform_device + EGL_MESA_device_software（llvmpipe）
+   - 失败时给出可读诊断，不静默
+3. GLFW hidden-window provider：
+   - 保留为通用参考实现 / 失败回退 / Windows 现有路径回归
+4. GraphicsDevice share-group identity 修复：
+   - context token 由 provider 注册，不再用"第一个窗口"近似
+   - MakeContextCurrent 后自动 FlushPendingDeletes
+   - ReleaseAll 在 headless 或窗口 context 下都成立
+5. Headless 渲染入口（无窗口）：
+   - RenderOffline 可在纯 headless context 上运行
+   - OfflineFrameSequence 可在无窗口 session 上运行
+6. 测试与验证矩阵
+```
+
+### 3.2 明确不做（R1.7 边界）
+
+```text
+Vulkan / RenderGraph / RenderDevice / IRenderTarget 抽象
+Stable Render C Portal
+多 context 并发 / 多线程渲染
+Windows WGL PBuffer / ANGLE 真 headless（保持 hidden window 路径）
+OSMesa（留 v2/按需：若未来需要纯 CPU、直接渲染到用户内存、
+完全不依赖 window system 的独立软件 provider，可考虑 OSMesa）
+视频编码 / FFmpeg / Audio
+```
+
+## 4. 接口草案（Phase 0B 冻结 share-group 语义与类型）
+
+```cpp
+// R1.7 Phase 0B：一个 OpenGL share group 的不透明身份。
+// 它标识的是"上下文组"，不是某个 native context handle。
+// 多个 native context（EGLContext / GLFWwindow / WGL context）
+// 只要属于同一个 share group，就必须映射到同一个 token。
+using GraphicsShareGroupToken = const void*;
+
+// include/wisteria/platform/headless_context.hpp（命名先冻结）
+struct HeadlessContextOptions
+{
+    int major = 3;
+    int minor = 3;
+    // forceSoftware == true：必须使用软件 renderer（llvmpipe/softpipe）。
+    // 找不到软件设备时明确失败，绝不偷偷回退硬件。
+    bool forceSoftware = false;
+};
+
+class IHeadlessContext
+{
+public:
+    virtual ~IHeadlessContext() = default;
+
+    virtual void MakeCurrent() = 0;
+    virtual void ReleaseCurrent() = 0;
+
+    virtual GraphicsShareGroupToken ShareGroupToken() const noexcept = 0;
+    virtual std::string_view ProviderName() const noexcept = 0;
+    virtual std::string_view PlatformName() const noexcept = 0;
+    virtual std::string_view EglVersion() const noexcept = 0;
+    virtual std::string_view EglVendor() const noexcept = 0;
+    virtual std::string_view Renderer() const noexcept = 0;
+    virtual std::string_view Vendor() const noexcept = 0;
+    virtual std::string_view Version() const noexcept = 0;
+    virtual bool IsSoftware() const noexcept = 0;
+};
+
+// provider factory：EGL 优先，GLFW hidden 回退；forceSoftware 时
+// 跳过硬件设备直接选 llvmpipe/softpipe；EGL 不可用/失败返回 nullptr。
+std::unique_ptr<IHeadlessContext> CreateHeadlessContext(
+    const HeadlessContextOptions& options = {});
+```
+
+**share-group identity 修正（Phase 0B 只冻结语义与类型，迁移在 0C）：**
+
+```text
+旧语义（错误）：
+  GraphicsDevice::contextToken = first GLFWwindow*
+  SetCurrentContext(window) / CurrentContext()
+  → 第二个共享窗口 != token → ContextIsCurrent() == false
+
+新语义（冻结）：
+  GraphicsDevice owns ShareGroupToken（一个 share group 一个身份）
+  SetShareGroupToken(...) / ShareGroupToken()
+  SetCurrentShareGroup(...) / CurrentShareGroup()
+  Native Context A/B/C ─→ ShareGroup #17
+  只要当前 native context 属于 #17，ContextIsCurrent() 成立
+```
+
+**生命周期事务规则（冻结）：**
+
+```text
+MakeCurrent
+    ↓
+注册 current share-group
+    ↓
+FlushPendingDeletes
+```
+
+"context 成为 current" 与 "处理该 share group 的 pending GPU deletes"
+是一个生命周期事务，不允许再依赖"下一帧 RenderAll 恰好帮我 flush"。
+
+头文件依赖规则（不变）：
+
+```text
+platform/headless_context.hpp    只暴露 IHeadlessContext + options
+platform/egl_headless_context.cpp 私有包含 EGL 头（platform 层允许）
+core/rendering 不 include EGL / GLFW 类型
+```
+
+## 5. 平台矩阵与验收口径
+
+| 环境 | 预期 | 性质 |
+|---|---|---|
+| 真实 Linux（硬件 GL/EGL） | EGL surfaceless 或硬件 EGL，像素输出正常 | **发布基线** |
+| WSLg（Mesa D3D12） | 自动/显式软件回退 llvmpipe，像素输出正常 | 兼容性记录 |
+| WSL 无 DISPLAY/WAYLAND_DISPLAY | EGL surfaceless + 软件回退仍可渲染 | 兼容性记录 |
+| Windows | hidden GLFW 路径全部回归通过 | 回归基线 |
+| Linux NULL 后端 | 编译通过；无 context 时测试 SKIP（保持现状） | 编译基线 |
+
+验收命令（草案）：
+
+```bash
+# WSL：无桌面环境 + 软件回退
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  ./build-linux/wisteria_headless_smoke --software
+
+# WSL：软件回退 + 确定性序列
+env -u DISPLAY -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
+  ./build-linux/wisteria_render_tests
+
+# 真实 Linux：硬件 EGL
+./build-linux/wisteria_render_tests
+```
+
+像素口径：R1.7 不承诺跨平台/跨渲染器 pixel hash 一致；只承诺
+**同环境、同 provider 下可复现**，与 R1.6 冻结口径一致。
+
+## 6. 阶段计划
+
+```text
+Phase 0A  契约（本文档）——冻结范围与边界
+Phase 0B  HeadlessContext + EGL Provider（范围见下）
+Phase 0C  GraphicsDevice share-group identity + FlushPendingDeletes 修复
+Phase 0D  Headless 渲染 session + OfflineFrameSequence 无窗口运行 + 测试
+Phase 0E  四矩阵验证 + Final Closure
+```
+
+### Phase 0B 范围（已批准）
+
+```text
+1.  IHeadlessContext
+2.  HeadlessContextOptions
+3.  GraphicsShareGroupToken 语义冻结（类型冻结，迁移在 0C）
+4.  EGL platform discovery
+    ├─ EGL_MESA_platform_surfaceless
+    └─ EGL_EXT_platform_device
+5.  EGL OpenGL 3.3 Core context 创建
+6.  software-device selection（forceSoftware 严格语义）
+7.  GL function loader（eglGetProcAddress + dlsym fallback）
+8.  diagnostics（EGL version/vendor、provider/platform、GL vendor/renderer/version）
+9.  wisteria_headless_smoke
+    ├─ 不创建 GLFW window
+    ├─ 不需要 DISPLAY / WAYLAND_DISPLAY
+    ├─ MakeCurrent → GL loader → 最小 FBO → clear → glReadPixels 验证
+10. EGL 生命周期测试 Create → Current → Release → Current → Destroy
+```
+
+Phase 0B **不做**：
+
+```text
+HeadlessRenderSession
+OfflineFrameSequence migration
+GraphicsDevice 全面改造（share-group 语义/类型在 0B 冻结，迁移在 0C）
+Windows WGL
+OSMesa
+Stable C ABI
+Application 重构
+渲染级 compatibility probe（0D/0E）
+```
+
+## 7. 已拍板决策（2026-08-09）
+
+| 决策项 | 结论 |
+|---|---|
+| v1 平台范围 | Linux EGL surfaceless + WSL 软件回退 + GLFW hidden reference |
+| Windows WGL PBuffer | 不进 v1，留后续 |
+| OSMesa | 不进 v1，留 v2/按需 provider |
+| 无窗口入口 | 独立 `HeadlessRenderSession`（Phase 0D），不改 Application |
+| 软件回退 | 自动探测 + 显式 `forceSoftware`（严格语义） |
+| share-group | `GraphicsShareGroupToken` 替代 native context token（0B 冻结类型，0C 迁移） |
+
+软件回退严格语义：
+
+```text
+forceSoftware == true → 必须软件 renderer（llvmpipe/softpipe）
+                      → 找不到软件设备 = 明确失败，绝不回退硬件
+
+forceSoftware == false → EGL surfaceless/default → 失败才走
+                         device（硬件优先，软件兜底）
+```
+
+注意：WSL 的 Mesa D3D12 问题可能发生在"context 创建成功、渲染正常、
+后续 readback/帧异常"阶段，因此 **0B 只保证 context 层自动回退**；
+渲染级 compatibility probe 属于 0D/0E 验收（用 RenderOffline + RGBA8
+readback 作为真实探针）。
+
+## 8. 成功标准
+
+```text
+1. env -u DISPLAY -u WAYLAND_DISPLAY 下能完成 RenderOffline 并得到
+   非空、可校验的 RGBA8 帧（WSL 软件回退）
+2. 真实 Linux 硬件路径与 hidden GLFW 参考在同环境像素一致（或给出
+   已记录的 provider 差异）
+3. Windows 全部既有测试零回归
+4. GraphicsDevice 在多窗口 + headless 混合生命周期下无 pending delete
+   泄漏，ReleaseAll 恒在 owning context 下执行
+```
