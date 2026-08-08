@@ -203,6 +203,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/program_cache.cpp
     src/rendering/mesh.cpp
     src/rendering/model.cpp
+    src/rendering/offline_render.cpp
     src/rendering/primitives/cube.cpp
     src/rendering/primitives/procedural.cpp
     src/rendering/render_part.cpp
@@ -253,6 +254,7 @@ set(WISTERIA_MMD_SOURCES
     src/mmd/mmd_pose_solver.cpp
     src/mmd/mmd_camera_conversion.cpp
     src/mmd/mmd_light_conversion.cpp
+    src/mmd/mmd_presentation.cpp
     src/mmd/vmd_importer.cpp
     src/mmd/physics/mmd_physics_audit.cpp
     src/mmd/physics/mmd_physics_asset.cpp

@@ -1,5 +1,6 @@
 #include "wisteria/rendering/framebuffer.hpp"
 #include "wisteria/rendering/frame_readback.hpp"
+#include "wisteria/rendering/offline_render.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
@@ -1086,6 +1087,73 @@ int main()
             Require(
                 morphFrame.pixels != baseFrame.pixels,
                 "Saba material morph did not change the offscreen pixels"
+            );
+        }
+
+        // R1.6 Phase 0D: explicit offline render request drives the same
+        // output chain (Scene -> Renderer -> SceneFramebuffer -> RGBA8)
+        // without any Window/Present involvement.
+        {
+            const std::filesystem::path boxPath =
+                std::filesystem::path("tests") / "assets" / "models" /
+                "Box.glb";
+            GraphicsDevice device;
+            ResourceManager resources;
+            resources.BindGraphicsDevice(device);
+            ModelAsset& boxModel = resources.LoadModel(
+                "r16::offlineBox",
+                boxPath
+            );
+            Scene scene;
+            scene.CreateDirectionalLight(DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = {1.0f, 0.96f, 0.92f},
+                .Intensity = 1.0f
+            });
+            scene.InstantiateModel(boxModel);
+            Renderer renderer;
+
+            OfflineRenderRequest request;
+            request.width = TestWidth;
+            request.height = TestHeight;
+            request.camera = Camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            request.projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+
+            const Rgba8Frame offlineFrame =
+                RenderOffline(scene, request, renderer);
+            Require(
+                offlineFrame.width == TestWidth &&
+                    offlineFrame.height == TestHeight &&
+                    offlineFrame.pixels.size() ==
+                        static_cast<std::size_t>(TestWidth) * TestHeight * 4U,
+                "OfflineRenderRequest returned wrong dimensions"
+            );
+            bool anyRgbNonZero = false;
+            for (std::size_t index = 0U;
+                 index + 2U < offlineFrame.pixels.size();
+                 index += 4U)
+            {
+                if (offlineFrame.pixels[index] != 0U ||
+                    offlineFrame.pixels[index + 1U] != 0U ||
+                    offlineFrame.pixels[index + 2U] != 0U)
+                {
+                    anyRgbNonZero = true;
+                    break;
+                }
+            }
+            Require(
+                anyRgbNonZero,
+                "OfflineRenderRequest returned an empty frame"
             );
         }
     }

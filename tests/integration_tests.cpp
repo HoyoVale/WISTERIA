@@ -6,6 +6,7 @@
 #include "wisteria/mmd/physics/mmd_physics_trace.hpp"
 #include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/runtime/model_backend.hpp"
+#include "wisteria/mmd/mmd_presentation.hpp"
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
 #include "trace_jsonl.hpp"
@@ -11497,6 +11498,182 @@ void TestSabaDeterministicRenderViewPublication()
     }
 }
 
+void TestMmdPresentationApplication()
+{
+    // Build a VMD containing one camera keyframe and two light keyframes.
+    const auto writePresentationVmd = [](const std::filesystem::path& path)
+    {
+        std::vector<std::uint8_t> bytes;
+        const auto appendValue = [&bytes]<typename T>(const T& value)
+        {
+            const std::size_t offset = bytes.size();
+            bytes.resize(offset + sizeof(T));
+            std::memcpy(bytes.data() + offset, &value, sizeof(T));
+        };
+        const auto appendFixed = [&bytes](
+            std::string_view value,
+            std::size_t size
+        )
+        {
+            const std::size_t begin = bytes.size();
+            bytes.resize(begin + size, 0U);
+            const std::size_t copySize = std::min(value.size(), size);
+            std::memcpy(bytes.data() + begin, value.data(), copySize);
+        };
+
+        appendFixed("Vocaloid Motion Data 0002", 30U);
+        appendFixed("testModel", 20U);
+        appendValue(std::uint32_t{0U});  // bone frames
+        appendValue(std::uint32_t{0U});  // morph frames
+        appendValue(std::uint32_t{1U});  // camera frames
+
+        appendValue(std::uint32_t{0U});  // camera frame
+        appendValue(8.0f);               // distance
+        appendValue(0.0f);               // eye x
+        appendValue(0.0f);               // eye y
+        appendValue(0.0f);               // eye z
+        appendValue(0.0f);               // rotation x
+        appendValue(0.0f);               // rotation y
+        appendValue(0.0f);               // rotation z
+        const std::array<std::uint8_t, 24> interpolation{};
+        bytes.insert(
+            bytes.end(),
+            interpolation.begin(),
+            interpolation.end()
+        );
+        appendValue(std::uint32_t{30U}); // view angle (degrees)
+        appendValue(std::uint8_t{1U});   // perspective
+
+        appendValue(std::uint32_t{2U});  // light frames
+        const auto appendLightFrame = [&appendValue](
+            std::uint32_t frame,
+            const glm::vec3& color,
+            const glm::vec3& position
+        )
+        {
+            appendValue(frame);
+            appendValue(color.x);
+            appendValue(color.y);
+            appendValue(color.z);
+            appendValue(position.x);
+            appendValue(position.y);
+            appendValue(position.z);
+        };
+        appendLightFrame(
+            0U,
+            glm::vec3(1.0f, 0.9f, 0.8f),
+            glm::vec3(1.0f, 1.0f, 0.5f)
+        );
+        appendLightFrame(
+            30U,
+            glm::vec3(0.4f, 0.6f, 1.0f),
+            glm::vec3(-1.0f, 1.0f, -0.5f)
+        );
+
+        std::ofstream out(path, std::ios::binary);
+        Require(out.is_open(), "Cannot write presentation VMD fixture");
+        out.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size())
+        );
+        out.close();
+    };
+
+    const std::filesystem::path fixturePath =
+        std::filesystem::temp_directory_path() /
+        "wisteria_presentation_test.vmd";
+    writePresentationVmd(fixturePath);
+
+    const CameraParam fallbackCamera{
+        .Position = {0.0f, 0.0f, 3.0f},
+        .Target = {0.0f, 0.0f, 0.0f},
+        .Up = {0.0f, 1.0f, 0.0f},
+        .VerticalFovDegrees = 45.0f,
+        .NearClip = 0.1f,
+        .FarClip = 1000.0f
+    };
+    const DirectionalLightData fallbackLight{
+        .Direction = {-0.2f, -1.0f, -0.3f},
+        .Color = glm::vec3(1.0f),
+        .Intensity = 0.35f
+    };
+
+    SabaMmdRuntimeModel runtime({});
+    Camera camera(fallbackCamera);
+    DirectionalLight light(fallbackLight);
+    Require(
+        !ApplyMmdCameraFrame(runtime, 0.0f, camera, fallbackCamera),
+        "Camera adapter applied a frame without a camera track"
+    );
+    Require(
+        camera.Position() == fallbackCamera.Position,
+        "Camera changed although no camera track was loaded"
+    );
+    Require(
+        !ApplyMmdLightFrame(runtime, 0.0f, light, fallbackLight),
+        "Light adapter applied a frame without a light track"
+    );
+    Require(
+        light.Color() == fallbackLight.Color,
+        "Light changed although no light track was loaded"
+    );
+
+    Require(
+        runtime.LoadCameraMotion(fixturePath),
+        "Saba rejected the camera-bearing VMD"
+    );
+    Require(
+        runtime.LoadLightMotion(fixturePath),
+        "Saba rejected the light-bearing VMD"
+    );
+
+    Require(
+        ApplyMmdCameraFrame(runtime, 0.0f, camera, fallbackCamera),
+        "Camera adapter did not apply the loaded camera track"
+    );
+    Require(
+        NearlyEqual(camera.Position(), glm::vec3(0.0f, 0.0f, 8.0f)) &&
+            NearlyEqual(camera.Target(), glm::vec3(0.0f, 0.0f, 7.0f)),
+        "Camera adapter produced the wrong look-at pose"
+    );
+    Require(
+        NearlyEqual(camera.VerticalFovDegrees(), 30.0f),
+        "Camera adapter did not apply the MMD view angle"
+    );
+
+    Require(
+        ApplyMmdLightFrame(runtime, 0.0f, light, fallbackLight),
+        "Light adapter did not apply the loaded light track"
+    );
+    Require(
+        NearlyEqual(light.Color(), glm::vec3(1.0f, 0.9f, 0.8f)),
+        "Light adapter did not apply the MMD light color"
+    );
+    const glm::vec3 expectedDirection =
+        glm::normalize(glm::vec3(-1.0f, -1.0f, 0.5f));
+    Require(
+        NearlyEqual(light.Direction(), expectedDirection),
+        "Light adapter did not convert the MMD light position"
+    );
+
+    // Scene-level application: the adapter updates an existing Scene
+    // directional light; the host owns scene wiring.
+    Scene scene;
+    DirectionalLight& sceneLight =
+        scene.CreateDirectionalLight(fallbackLight);
+    Require(
+        ApplyMmdLightFrame(runtime, 0.0f, sceneLight, fallbackLight),
+        "Scene light adapter did not apply the light track"
+    );
+    Require(
+        NearlyEqual(sceneLight.Color(), glm::vec3(1.0f, 0.9f, 0.8f)),
+        "Scene directional light was not updated"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove(fixturePath, ignored);
+}
+
 }
 
 int main()
@@ -11895,6 +12072,10 @@ int main()
     failures += !RunTest(
         "R1.6 Saba deterministic render view publication",
         TestSabaDeterministicRenderViewPublication
+    );
+    failures += !RunTest(
+        "R1.6 MMD presentation application",
+        TestMmdPresentationApplication
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",
