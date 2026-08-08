@@ -196,6 +196,24 @@ const ModelRenderFrameView& ModelInstance::LastRenderFrameView() const noexcept
     return this->lastRenderView;
 }
 
+void ModelInstance::PublishCurrentRuntimeFrame()
+{
+    if (this->runtime == nullptr)
+        return;
+    ++this->updateSerial;
+    this->lastRenderView = this->runtime->ProduceRenderFrameView();
+    this->ValidateRenderFrameView(this->lastRenderView);
+    this->lastView.geometry = this->lastRenderView.geometry;
+    this->lastView.pose = this->lastRenderView.pose;
+    this->lastView.updateSerial = this->updateSerial;
+    this->snapshot.metadata.updateSerial = this->updateSerial;
+    this->snapshot.metadata.motionFrame = this->runtime->MotionFrame();
+    this->snapshot.metadata.motionPaused = this->runtime->IsMotionPaused();
+    this->snapshot.metadata.motionLooping = this->runtime->IsMotionLooping();
+    this->snapshot.metadata.valid = true;
+    this->frameValid = true;
+}
+
 void ModelInstance::ValidateRenderFrameView(
     const ModelRenderFrameView& view
 )

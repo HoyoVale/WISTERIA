@@ -1,8 +1,10 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/window_manager.hpp"
+#include "wisteria/rendering/bmp_writer.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -192,9 +194,6 @@ void SaveWindowScreenshotBmp(
         }
     }
 
-    const int rowSize = ((width * 3 + 3) / 4) * 4;
-    const int dataSize = rowSize * height;
-    const int fileSize = 54 + dataSize;
     char fileName[160];
     std::snprintf(
         fileName,
@@ -205,75 +204,33 @@ void SaveWindowScreenshotBmp(
     );
     const std::filesystem::path outputPath =
         std::filesystem::path(directory) / fileName;
-    std::ofstream output(outputPath, std::ios::binary);
-    if (!output)
+    // glReadPixels returns rows bottom-up (row 0 = image bottom). Convert to
+    // the canonical top-left order and let the BMP writer handle the
+    // bottom-up file layout; screenshot orientation now matches
+    // Rgba8Frame / ReadbackRgba8.
+    std::vector<unsigned char> topDown(rgba.size());
+    const std::size_t rowBytes =
+        static_cast<std::size_t>(width) * 4U;
+    for (int y = 0; y < height; ++y)
     {
-        std::cerr << "[FRAME CAPTURE] cannot open "
-                  << outputPath.string() << std::endl;
+        std::memcpy(
+            topDown.data() + static_cast<std::size_t>(y) * rowBytes,
+            rgba.data() +
+                static_cast<std::size_t>(height - 1 - y) * rowBytes,
+            rowBytes
+        );
+    }
+    try
+    {
+        WriteBmp24(outputPath, width, height, topDown);
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "[FRAME CAPTURE] cannot write "
+                  << outputPath.string() << ": " << error.what()
+                  << std::endl;
         return;
     }
-
-    const auto put32 = [&output](int value)
-    {
-        const unsigned char bytes[4] = {
-            static_cast<unsigned char>(value & 0xFF),
-            static_cast<unsigned char>((value >> 8) & 0xFF),
-            static_cast<unsigned char>((value >> 16) & 0xFF),
-            static_cast<unsigned char>((value >> 24) & 0xFF)
-        };
-        output.write(
-            reinterpret_cast<const char*>(bytes),
-            sizeof(bytes)
-        );
-    };
-    const auto put16 = [&output](int value)
-    {
-        const unsigned char bytes[2] = {
-            static_cast<unsigned char>(value & 0xFF),
-            static_cast<unsigned char>((value >> 8) & 0xFF)
-        };
-        output.write(
-            reinterpret_cast<const char*>(bytes),
-            sizeof(bytes)
-        );
-    };
-
-    output.put('B');
-    output.put('M');
-    put32(fileSize);
-    put16(0);
-    put16(0);
-    put32(54);
-    put32(40);
-    put32(width);
-    put32(height);
-    put16(1);
-    put16(24);
-    put32(0);
-    put32(dataSize);
-    put32(2835);
-    put32(2835);
-    put32(0);
-    put32(0);
-
-    std::vector<unsigned char> row(static_cast<std::size_t>(rowSize), 0U);
-    for (int y = height - 1; y >= 0; --y)
-    {
-        for (int x = 0; x < width; ++x)
-        {
-            const std::size_t pixel =
-                (static_cast<std::size_t>(y) * width +
-                 static_cast<std::size_t>(x)) * 4U;
-            row[static_cast<std::size_t>(x) * 3U] = rgba[pixel + 2U];
-            row[static_cast<std::size_t>(x) * 3U + 1U] = rgba[pixel + 1U];
-            row[static_cast<std::size_t>(x) * 3U + 2U] = rgba[pixel];
-        }
-        output.write(
-            reinterpret_cast<const char*>(row.data()),
-            row.size()
-        );
-    }
-    output.close();
 
     std::cout << "[FRAME CAPTURE] frame=" << frameIndex
               << " source=" << sourceName

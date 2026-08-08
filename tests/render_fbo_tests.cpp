@@ -1,6 +1,9 @@
 #include "wisteria/rendering/framebuffer.hpp"
 #include "wisteria/rendering/frame_readback.hpp"
 #include "wisteria/rendering/offline_render.hpp"
+#include "wisteria/runtime/mmd_runtime_model.hpp"
+#include "wisteria/runtime/model_instance.hpp"
+#include "wisteria/scene/offline_frame_sequence.hpp"
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
@@ -18,9 +21,12 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1237,6 +1243,233 @@ int main()
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             callerFramebuffer.Release();
+        }
+
+        // R1.6 Phase 0E: deterministic frame sequence (from-start, resume,
+        // overwrite policies) through the unified offscreen boundary.
+        {
+            const auto readFile = [](const std::filesystem::path& path)
+            {
+                std::ifstream stream(path, std::ios::binary);
+                Require(
+                    stream.is_open(),
+                    "Sequence artifact is unreadable: " + path.string()
+                );
+                return std::vector<std::uint8_t>(
+                    std::istreambuf_iterator<char>(stream),
+                    std::istreambuf_iterator<char>()
+                );
+            };
+            const auto frameFileName = [](std::size_t frame)
+            {
+                std::ostringstream stream;
+                stream << std::setw(8) << std::setfill('0') << frame
+                       << ".png";
+                return stream.str();
+            };
+
+            const std::filesystem::path pmxPath =
+                std::filesystem::path(WISTERIA_TEST_DATA_DIR) /
+                "pmx_physics.pmx";
+            GraphicsDevice device;
+            ResourceManager resources;
+            resources.BindGraphicsDevice(device);
+            ModelAsset& pmxModel = resources.LoadModel(
+                "r16::sequence",
+                pmxPath
+            );
+            Scene scene;
+            scene.CreateDirectionalLight(DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+                .Intensity = 1.0f
+            });
+            Entity& entity = scene.InstantiateModel(pmxModel);
+            Renderer renderer;
+            ModelInstance& instance = entity.GetModelInstance();
+            auto* runtime = dynamic_cast<MmdRuntimeModel*>(
+                instance.TryGetRuntime()
+            );
+            Require(runtime != nullptr, "Sequence test lost the MMD runtime");
+
+            OfflineRenderRequest baseRequest;
+            baseRequest.width = TestWidth;
+            baseRequest.height = TestHeight;
+            baseRequest.camera = Camera(CameraParam{
+                .Position = {0.0f, 3.0f, 3.0f},
+                .Target = {0.0f, 0.0f, 0.0f},
+                .Up = {0.0f, 1.0f, 0.0f},
+                .VerticalFovDegrees = 45.0f
+            });
+            baseRequest.projection = glm::perspective(
+                glm::radians(45.0f),
+                1.0f,
+                0.1f,
+                100.0f
+            );
+
+            const std::filesystem::path dirA =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_a";
+            const std::filesystem::path dirB =
+                std::filesystem::temp_directory_path() /
+                "wisteria_seq_b";
+            std::error_code ignored;
+            std::filesystem::remove_all(dirA, ignored);
+            std::filesystem::remove_all(dirB, ignored);
+
+            OfflineFrameSequenceConfig configA;
+            configA.outputDirectory = dirA;
+            configA.renderRequest = baseRequest;
+            configA.writePng = true;
+            configA.writeRaw = false;
+            configA.overwritePolicy = SequenceOverwritePolicy::Reject;
+
+            OfflineFrameSequence sequenceA(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configA
+            );
+            sequenceA.RenderRange(0U, 2U);
+            Require(
+                !sequenceA.Failed() &&
+                    sequenceA.LastCommittedFrame().value_or(99U) == 2U,
+                "From-start sequence did not commit frames 0..2"
+            );
+            Require(
+                std::filesystem::is_regular_file(
+                    dirA / "00000000.png"
+                ) &&
+                    std::filesystem::is_regular_file(
+                        dirA / "00000002.png"
+                    ) &&
+                    std::filesystem::is_regular_file(
+                        dirA / "manifest.jsonl"
+                    ) &&
+                    std::filesystem::is_regular_file(
+                        dirA / "checkpoint-A.bin"
+                    ) &&
+                    std::filesystem::is_regular_file(
+                        dirA / "checkpoint-B.bin"
+                    ),
+                "Sequence did not persist PNGs, manifest and checkpoints"
+            );
+
+            // From-start reference 0..3 in a separate output directory.
+            OfflineFrameSequenceConfig configB = configA;
+            configB.outputDirectory = dirB;
+            OfflineFrameSequence sequenceB(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configB
+            );
+            sequenceB.RenderRange(0U, 3U);
+            Require(
+                !sequenceB.Failed(),
+                "From-start reference sequence failed"
+            );
+            const std::vector<std::uint8_t> referenceFrame3 =
+                readFile(dirB / "00000003.png");
+            for (std::size_t frame = 0U; frame <= 2U; ++frame)
+            {
+                Require(
+                    readFile(
+                        dirA / frameFileName(frame)
+                    ) == readFile(
+                        dirB / frameFileName(frame)
+                    ),
+                    "Identical frames differ between output directories"
+                );
+            }
+
+            // Resume: restore checkpoint 2, step 3, frame 3 must equal the
+            // from-start frame 3 (same build / render environment).
+            OfflineFrameSequence resume(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configA
+            );
+            resume.Resume(3U);
+            Require(
+                !resume.Failed() &&
+                    resume.LastCommittedFrame().value_or(99U) == 3U,
+                "Resume did not commit frame 3"
+            );
+            Require(
+                readFile(dirA / "00000003.png") == referenceFrame3,
+                "Resume frame differs from the from-start sequence"
+            );
+
+            // Reject policy on existing artifacts -> fail-stop.
+            OfflineFrameSequence reject(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configA
+            );
+            bool rejected = false;
+            try
+            {
+                reject.RenderRange(0U, 1U);
+            }
+            catch (const std::exception&)
+            {
+                rejected = true;
+            }
+            Require(
+                rejected && reject.Failed(),
+                "Reject policy did not fail on existing artifacts"
+            );
+
+            // Overwrite policy succeeds.
+            OfflineFrameSequenceConfig configOverwrite = configA;
+            configOverwrite.overwritePolicy =
+                SequenceOverwritePolicy::Overwrite;
+            OfflineFrameSequence overwrite(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configOverwrite
+            );
+            overwrite.RenderRange(0U, 1U);
+            Require(
+                !overwrite.Failed(),
+                "Overwrite policy failed"
+            );
+
+            // VerifySkip re-renders, compares rgbaHash, and keeps files.
+            const std::vector<std::uint8_t> frame0Before =
+                readFile(dirA / "00000000.png");
+            OfflineFrameSequenceConfig configVerify = configA;
+            configVerify.overwritePolicy =
+                SequenceOverwritePolicy::VerifySkip;
+            OfflineFrameSequence verify(
+                scene,
+                renderer,
+                *runtime,
+                instance,
+                configVerify
+            );
+            verify.RenderRange(0U, 2U);
+            Require(
+                !verify.Failed(),
+                "VerifySkip policy failed"
+            );
+            Require(
+                readFile(dirA / "00000000.png") == frame0Before,
+                "VerifySkip rewrote an identical artifact"
+            );
+
+            std::filesystem::remove_all(dirA, ignored);
+            std::filesystem::remove_all(dirB, ignored);
         }
     }
     catch (const std::exception& error)

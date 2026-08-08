@@ -1,5 +1,8 @@
 #include "test_support.hpp"
 #include "procedural_canary.hpp"
+#include "wisteria/common/png_encoder.hpp"
+#include "wisteria/rendering/bmp_writer.hpp"
+#include "wisteria/vendor/stb_image.h"
 
 namespace
 {
@@ -818,6 +821,147 @@ void TestRuntimeSuppressesLegacyState()
     );
 }
 
+void TestPngEncoderRoundTrip()
+{
+    constexpr int Width = 3;
+    constexpr int Height = 2;
+    std::vector<std::uint8_t> rgba(
+        static_cast<std::size_t>(Width) * Height * 4U
+    );
+    for (int y = 0; y < Height; ++y)
+    {
+        for (int x = 0; x < Width; ++x)
+        {
+            const std::size_t base =
+                static_cast<std::size_t>(y * Width + x) * 4U;
+            rgba[base + 0U] = static_cast<std::uint8_t>(x * 80U);
+            rgba[base + 1U] = static_cast<std::uint8_t>(y * 90U);
+            rgba[base + 2U] = static_cast<std::uint8_t>(
+                x * 40U + y * 60U
+            );
+            rgba[base + 3U] = 255U;
+        }
+    }
+
+    const std::vector<std::uint8_t> png = EncodePngRgba8(
+        static_cast<std::uint32_t>(Width),
+        static_cast<std::uint32_t>(Height),
+        rgba
+    );
+    Require(
+        png.size() > 8U &&
+            png[0] == 0x89U && png[1] == 0x50U &&
+            png[2] == 0x4EU && png[3] == 0x47U,
+        "PNG encoder did not emit a PNG signature"
+    );
+
+    int decodedWidth = 0;
+    int decodedHeight = 0;
+    int decodedChannels = 0;
+    stbi_uc* decoded = stbi_load_from_memory(
+        png.data(),
+        static_cast<int>(png.size()),
+        &decodedWidth,
+        &decodedHeight,
+        &decodedChannels,
+        4
+    );
+    Require(
+        decoded != nullptr,
+        "PNG encoder output could not be decoded"
+    );
+    Require(
+        decodedWidth == Width && decodedHeight == Height &&
+            decodedChannels == 4,
+        "PNG round trip changed dimensions or channels"
+    );
+    for (std::size_t index = 0U; index < rgba.size(); ++index)
+    {
+        Require(
+            decoded[index] == rgba[index],
+            "PNG round trip changed pixel data"
+        );
+    }
+    stbi_image_free(decoded);
+}
+
+void TestBmpWriterOrientation()
+{
+    // Canonical top-left 2x2 frame:
+    //   red    | green
+    //   blue   | white
+    constexpr int Width = 2;
+    constexpr int Height = 2;
+    const std::array<std::uint8_t, Width * Height * 4> rgba{
+        255U, 0U, 0U, 255U,    0U, 255U, 0U, 255U,
+        0U, 0U, 255U, 255U,    255U, 255U, 255U, 255U
+    };
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        "wisteria_bmp_orientation_test.bmp";
+    WriteBmp24(path, Width, Height, rgba);
+
+    std::ifstream stream(path, std::ios::binary);
+    Require(stream.is_open(), "BMP test file is unreadable");
+    const std::vector<std::uint8_t> bytes{
+        std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>()
+    };
+    const auto read32 = [&bytes](std::size_t offset)
+    {
+        return static_cast<std::uint32_t>(bytes[offset]) |
+            (static_cast<std::uint32_t>(bytes[offset + 1U]) << 8U) |
+            (static_cast<std::uint32_t>(bytes[offset + 2U]) << 16U) |
+            (static_cast<std::uint32_t>(bytes[offset + 3U]) << 24U);
+    };
+    const auto read16 = [&bytes](std::size_t offset)
+    {
+        return static_cast<std::uint16_t>(bytes[offset]) |
+            (static_cast<std::uint16_t>(bytes[offset + 1U]) << 8U);
+    };
+    Require(
+        bytes.size() >= 54U &&
+            bytes[0] == 'B' && bytes[1] == 'M',
+        "BMP header is invalid"
+    );
+    Require(
+        static_cast<int>(read32(18U)) == Width &&
+            static_cast<int>(read32(22U)) == Height &&
+            read16(28U) == 24U,
+        "BMP header dimensions or bit depth changed"
+    );
+    const std::size_t pixelOffset = read32(10U);
+    const std::size_t rowSize = ((Width * 3 + 3) / 4) * 4;
+    const auto pixelAt = [&](int x, int y)
+    {
+        // BMP rows are bottom-up: file row y == image row Height-1-y.
+        const std::size_t row = static_cast<std::size_t>(Height - 1 - y);
+        const std::size_t base =
+            pixelOffset + row * rowSize + static_cast<std::size_t>(x) * 3U;
+        return std::array<std::uint8_t, 3>{
+            bytes[base + 2U],
+            bytes[base + 1U],
+            bytes[base]
+        };
+    };
+    const auto expectPixel = [&](int x, int y, std::uint8_t r,
+        std::uint8_t g, std::uint8_t b)
+    {
+        const std::array<std::uint8_t, 3> pixel = pixelAt(x, y);
+        Require(
+            pixel[0] == r && pixel[1] == g && pixel[2] == b,
+            "BMP orientation mismatch"
+        );
+    };
+    expectPixel(0, 0, 255U, 0U, 0U);
+    expectPixel(1, 0, 0U, 255U, 0U);
+    expectPixel(0, 1, 0U, 0U, 255U);
+    expectPixel(1, 1, 255U, 255U, 255U);
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 void TestFrameRateIndependentBehaviours()
 {
     Mesh mesh(DefaultModelData{});
@@ -1073,6 +1217,14 @@ int main()
     failures += !RunTest(
         "R1.5 runtime suppresses legacy state",
         TestRuntimeSuppressesLegacyState
+    );
+    failures += !RunTest(
+        "R1.6 PNG encoder round trip",
+        TestPngEncoderRoundTrip
+    );
+    failures += !RunTest(
+        "R1.6 BMP writer orientation",
+        TestBmpWriterOrientation
     );
     failures += !RunTest("Frame-rate independent behaviours", TestFrameRateIndependentBehaviours);
     failures += !RunTest("Input frame transitions", TestInputFrameTransitions);

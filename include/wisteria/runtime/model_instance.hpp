@@ -54,6 +54,12 @@ public:
     // directly.
     const ModelRenderFrameView& LastRenderFrameView() const noexcept;
 
+    // R1.6 Phase 0E: re-publishes the current runtime state into the frame /
+    // render views WITHOUT calling runtime->Update(), consuming root motion
+    // or advancing time. Required after deterministic exact stepping /
+    // restore so the Renderer sees frame N, not the stale N-1 cache.
+    void PublishCurrentRuntimeFrame();
+
     // Captures the requested channels into the WISTERIA-owned persistent
     // snapshot. Only the requested channels are copied; geometry is never
     // copied implicitly. Returns the stable snapshot reference.

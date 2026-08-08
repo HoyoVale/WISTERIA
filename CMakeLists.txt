@@ -166,6 +166,7 @@ include(third-party/saba/WISTERIA.cmake)
 set(WISTERIA_COMMON_SOURCES
     src/common/stb_image.cpp
     src/common/miniz.cpp
+    src/common/png_encoder.cpp
 )
 
 set(WISTERIA_CORE_SOURCES
@@ -193,6 +194,7 @@ set(WISTERIA_PLATFORM_SOURCES
 
 set(WISTERIA_RENDERING_SOURCES
     src/rendering/camera.cpp
+    src/rendering/bmp_writer.cpp
     src/rendering/ebo.cpp
     src/rendering/environment.cpp
     src/rendering/framebuffer.cpp
@@ -265,6 +267,7 @@ set(WISTERIA_SCENE_SOURCES
     src/scene/behaviour.cpp
     src/scene/entity.cpp
     src/scene/scene.cpp
+    src/scene/offline_frame_sequence.cpp
 )
 
 add_library(wisteria_core STATIC
@@ -284,6 +287,7 @@ target_include_directories(wisteria_core
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
         ${WISTERIA_BULLET_ROOT}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
 )
 
 target_compile_features(wisteria_core PUBLIC

@@ -1,12 +1,10 @@
 /* WISTERIA local build configuration for vendored miniz (3.1.2).
-   Only the low-level inflate path (tinfl) is used to replace
-   stb_image's zlib decoder; everything else is disabled. */
+   Inflate (tinfl) replaces stb_image's zlib decoder; deflate + zlib APIs
+   (tdefl / mz_compress2 / mz_crc32) feed the R1.6 PNG encoder. */
 
 #define MINIZ_NO_STDIO
 #define MINIZ_NO_TIME
 #define MINIZ_NO_ARCHIVE_APIS
-#define MINIZ_NO_ZLIB_APIS
-#define MINIZ_NO_DEFLATE_APIS
 #include "wisteria/vendor/miniz.h"
 /**************************************************************************
  *

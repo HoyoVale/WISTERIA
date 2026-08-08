@@ -11745,6 +11745,59 @@ void TestMmdPresentationApplication()
     std::filesystem::remove(fixturePath, ignored);
 }
 
+void TestPublishCurrentRuntimeFrame()
+{
+    const std::filesystem::path modelPath = FixturePath("pmx-physics");
+    RequireCoreAsset("pmx-physics");
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "r16::publishCurrentFrame",
+        modelPath
+    );
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    ModelInstance& instance = entity.GetModelInstance();
+    auto* runtime = dynamic_cast<MmdRuntimeModel*>(
+        instance.TryGetRuntime()
+    );
+    Require(runtime != nullptr, "Publish test lost the MMD runtime");
+    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(runtime);
+    Require(
+        stepper != nullptr,
+        "Publish test lost the deterministic stepper"
+    );
+
+    Require(
+        stepper->PrepareFrameZero({}) == TimelineStatus::Ok,
+        "Publish test PrepareFrameZero failed"
+    );
+    instance.PublishCurrentRuntimeFrame();
+    const std::uint64_t revision0 =
+        instance.LastRenderFrameView().geometry.revision;
+    Require(
+        instance.LastRenderFrameView().pose ==
+            instance.LastFrameView().pose,
+        "Publish did not sync the frame view pose"
+    );
+
+    // Publishing without a runtime mutation must be idempotent.
+    instance.PublishCurrentRuntimeFrame();
+    Require(
+        instance.LastRenderFrameView().geometry.revision == revision0,
+        "Publish advanced state without a runtime mutation"
+    );
+
+    Require(
+        stepper->StepMotionFrameExact(1U, {}) == TimelineStatus::Ok,
+        "Publish test exact step failed"
+    );
+    instance.PublishCurrentRuntimeFrame();
+    Require(
+        instance.LastRenderFrameView().geometry.revision != revision0,
+        "Publish did not reflect the exact step result"
+    );
+}
+
 }
 
 int main()
@@ -12147,6 +12200,10 @@ int main()
     failures += !RunTest(
         "R1.6 MMD presentation application",
         TestMmdPresentationApplication
+    );
+    failures += !RunTest(
+        "R1.6 publish current runtime frame",
+        TestPublishCurrentRuntimeFrame
     );
     failures += !RunTest(
         "R1.3 trace reproducible and schema",
