@@ -39,18 +39,24 @@ enum class ModelBackendKind : std::uint8_t
 数值冻结，不得重排。资产分类语义（非扩展名规则）：
 
 ```text
-PMX
-→ SabaMmd
+Imported asset:
+  PMX → SabaMmd
+  otherwise inspect imported result:
+    Skeleton || Morph || AnimationClip → WisteriaGeneric
+    otherwise → Static
 
-非 PMX 且 (HasSkeleton || HasMorphs || AnimationClipCount > 0)
-→ WisteriaGeneric
-
-其余
-→ Static
+Programmatic / procedural asset:
+  may explicitly assign BackendKind before exposure;
+  explicit assignment bypasses automatic imported-asset classification.
 ```
 
 一个完全静态的 GLB 仍必须是 `Static`；`animated_triangle.gltf` 因带
 Skeleton + AnimationClip 而进入 `WisteriaGeneric`。
+
+**`ModelAsset::backendKind` 是唯一权威 backend identity。**
+`ModelSourceDescriptor` 只描述 source；过渡期即使其旧 `backend` 字段
+仍存在，`BackendKind()` 也**不得**再以它为权威来源，否则会出现两个
+backend identity 不一致。
 
 当前 `ResourceManager::LoadModel()` 按扩展名（`.pmx` 与否）分类，是
 R1.5 要修正的已知缺口：分类必须基于导入结果（Phase 0C 落地）。
@@ -67,7 +73,8 @@ ModelAsset
 
 允许无 `sourcePath` 的 procedural asset（如 canary），仍携带
 `WisteriaGeneric` backend 身份。当前 `ModelAsset::BackendKind()` 返回
-`sourceDescriptor->backend` 的寄生关系在 Phase 0C 移除。
+`sourceDescriptor->backend` 的寄生关系在 Phase 0C 移除；在此之前，
+显式赋值的 `backendKind` 优先于任何自动分类（见 §3 优先级）。
 
 ## 5. Runtime contract 修正（冻结）
 
@@ -81,16 +88,15 @@ vertex-only / morph-only / physics-only Runtime 不成立。修正：
 virtual Pose* TryGetPose() noexcept = 0;
 virtual const Pose* TryGetPose() const noexcept = 0;
 
-// convenience，建立在 TryGetPose() != nullptr 之上
-Pose& GetPose();
-const Pose& GetPose() const;
+Pose& GetPose();          // convenience；TryGetPose() == nullptr 时
+const Pose& GetPose() const;  // 抛 std::logic_error（已定义行为，非 UB）
 ```
 
 `ProduceFrameView()` 使用 `TryGetPose()`，允许 `pose == nullptr`。
 `Entity::TryGetPose()` 改为转发 `TryGetPose()`（当前直接 `&runtime->GetPose()`，
 无 Pose 的 Runtime 会误报存在）。
 
-### 5.2 Optional MorphState
+### 5.2 Optional MorphState（含 neutral snapshot bridge）
 
 ```cpp
 virtual MorphState* TryGetMorphState() noexcept { return nullptr; }
@@ -103,10 +109,79 @@ virtual const MorphState* TryGetMorphState() const noexcept { return nullptr; }
   Entity morphState；Renderer 继续只问“这个 Entity 当前有什么可渲染状态”，
   架构不改。
 
-### 5.3 Capabilities 诚实
+`TryGetMorphState()` 只服务 Renderer / Entity API。**neutral
+`ModelFrameSnapshot` 仍由 `MorphCount() / DescribeMorph() /
+ReadMorphState() / MorphRevision()` 驱动**：WisteriaGenericRuntimeDriver
+必须把 owned MorphState 桥接到这四个 neutral 接口，
+`ModelInstance::CaptureMorphs()` 不得出现
+`if GenericRuntime ...` 之类的 backend 特判。
 
-Generic Runtime 的 `Capabilities()` 如实返回
-`physics = false`、`checkpoint = false`。R1.5 不为 Generic Runtime 增加：
+### 5.3 Optional Animator
+
+```cpp
+virtual Animator* TryGetAnimator() noexcept { return nullptr; }
+virtual const Animator* TryGetAnimator() const noexcept { return nullptr; }
+```
+
+- Saba：`nullptr`；
+- WisteriaGeneric：`&ownedAnimator`；
+- `Entity::HasAnimator() / TryGetAnimator() / GetAnimator()` 与 Pose/Morph
+  一致：Runtime first → fallback legacy standalone Entity animator。
+
+**迁移默认播放必须继承**：`Scene::InstantiateModel()` 旧分支对带
+AnimationClip 的模型自动 `Animator.Play(AnimationClipAt(0))`；删除旧分支后，
+`WisteriaGenericRuntimeDriver` 初始化必须继承该默认行为：
+
+```text
+if Animator exists && AnimationClipCount > 0
+    Play(AnimationClipAt(0))
+```
+
+否则 `animated_triangle.gltf` 迁移后 Runtime 存在却不默认播放，“迁移等价”
+会失败。
+
+### 5.4 Snapshot optional channels
+
+`CaptureSnapshot(All)` 不代表每个 channel 都必须存在：
+
+```text
+no Pose runtime:
+  snapshot.metadata.valid = true
+  snapshot.pose.captured = false
+  no exception
+
+no morph runtime:
+  snapshot.morphs.captured = false
+
+no CPU-deformed geometry:
+  snapshot.geometry.captured = false
+```
+
+Snapshot channel 是 optional capability，不是所有 Runtime 必须填满的固定
+结构。
+
+### 5.5 Capabilities 与 CreationOptions 语义
+
+Generic Runtime 的 `Capabilities()` 冻结为精确字段：
+
+```text
+所有 PhysicsBackendCapabilities 字段     = false
+所有 CheckpointBackendCapabilities 字段  = false
+PhysicsInfo.available                   = false
+PhysicsInfo.ownsSimulationStep          = false
+```
+
+`Reset()` 仍是 Runtime 基础接口，不等于 physics `supportsReset`。
+
+`RuntimeCreationOptions` 对 Generic backend 的语义冻结：
+
+```text
+WisteriaGeneric 不解释 RuntimeCompatibilityProfile 与
+RuntimePhysicsSettings；改变这些不受支持字段的合法取值，
+不得改变 Generic Runtime 行为。
+```
+
+R1.5 不为 Generic Runtime 增加：
 
 ```text
 Checkpoint / ReplayFromCheckpoint
@@ -120,15 +195,30 @@ Stable C ABI
 ```text
 ModelInstance
 └─ WisteriaGenericRuntimeDriver
-   ├─ Pose
-   ├─ MorphState
-   └─ Animator
+   ├─ optional Pose
+   ├─ optional MorphState
+   └─ optional Animator
 ```
+
+存在性规则：
+
+```text
+HasSkeleton → Pose exists
+HasMorphs   → MorphState exists
+Pose exists → Animator may exist
+```
+
+R1.5 不为 morph-only 模型制造 dummy Skeleton/Pose。若资产有 morph
+animation clip 但没有 Skeleton，而当前 Animator 无法 pose-less playback，
+则 **R1.5 不要求支持该组合；`Initialize()` 必须诚实拒绝，而不是伪造
+Pose**（Animator 泛化留待后续）。
 
 - Runtime 从 `ModelAsset` immutable data 初始化，不重新读文件；
 - `Animator(Pose&, MorphState*)` 的所有指针均在 Runtime 内部，无跨 owner
   指针；
-- ModelInstance 不直接拥有 Pose/MorphState（与 Saba Runtime owns Pose 对称）。
+- ModelInstance 不直接拥有 Pose/MorphState/Animator
+  （与 Saba Runtime owns Pose 对称）。
+- 初始化继承旧 Scene 路径的默认播放行为（§5.3）。
 
 ## 7. RootMotion single-consumer（冻结）
 
@@ -140,9 +230,19 @@ virtual RootMotionDelta ConsumeRootMotion() noexcept { return {}; }
 ```
 
 ```text
+ConsumeRootMotion() → 返回 pending delta，并原子清空
+Reset()             → pending root motion 变为 identity
+RootMotion 不属于 ModelFrameView / ModelFrameSnapshot
+```
+
+```text
 Runtime::Update()
   ↓ 产生 RootMotionDelta
-ModelInstance::Update(dt) 在同一 Update 中返回并消费一次
+ModelInstance::Update(dt) 固定顺序：
+  runtime.Update(dt)
+  → publish current frame view / metadata
+  → ConsumeRootMotion()
+  → return delta
   ↓
 Entity 应用 Transform.ApplyLocalMotion(rootMotion)
 ```
@@ -216,6 +316,42 @@ Saba:                            R1.2–R1.4 矩阵不变
 Renderer:                        0 Saba 类型、0 WisteriaGeneric 类型
 四套矩阵：                       全绿
 ```
+
+Phase 0B canary 验收（optional channel 语义直接验证）：
+
+```text
+Procedural vertex-only runtime:
+  TryGetPose() == nullptr
+  TryGetMorphState() == nullptr
+  TryGetAnimator() == nullptr
+  CaptureSnapshot(All):
+    metadata.valid == true
+    pose.captured == false
+    morphs.captured == false
+    geometry.captured == true
+  geometry changes with time
+  two instances independent
+
+Procedural 1-bone runtime:
+  TryGetPose() != nullptr
+  TryGetAnimator() != nullptr
+  pose.captured == true
+  geometry may be absent
+
+Generic Morph:
+  TryGetMorphState() != nullptr
+  MorphCount/Describe/Read/Revision 与 owned MorphState 一致
+  MorphSnapshot captured
+  Renderer 看到同一个 MorphState
+```
+
+迁移等价中的“render output 一致”措辞冻结为：
+
+```text
+renderer-visible state / existing render smoke remains equivalent
+```
+
+R1.5 不引入 pixel-exact render 等价概念（顺延 R1.6）。
 
 ## 10. R1.6 Debt Ledger（只记录，不在 R1.5 处理）
 
