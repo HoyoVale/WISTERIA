@@ -311,13 +311,23 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
     catch (...)
     {
         glfwMakeContextCurrent(previousContext);
-        GraphicsDevice::SetCurrentContext(previousContext);
+        GraphicsDevice::SetCurrentShareGroup(
+            this->ShareGroupTokenForContext(previousContext)
+        );
+        if (previousContext != nullptr && this->graphicsDevice != nullptr)
+            this->graphicsDevice->FlushPendingDeletes();
         throw;
     }
     glfwMakeContextCurrent(previousContext);
-    GraphicsDevice::SetCurrentContext(previousContext);
+    GraphicsDevice::SetCurrentShareGroup(
+        this->ShareGroupTokenForContext(previousContext)
+    );
+    if (previousContext != nullptr && this->graphicsDevice != nullptr)
+        this->graphicsDevice->FlushPendingDeletes();
 
     Window& result = *window;
+    window->shareGroupToken = this->ShareGroupToken();
+    window->device = this->graphicsDevice;
     this->TrackScene(window->GetSceneHandle());
     auto managed = std::make_unique<ManagedWindow>(
         std::move(window),
@@ -615,6 +625,15 @@ void WindowManager::UpdateWindowControllers(float deltaTime)
 void WindowManager::SetGraphicsDevice(GraphicsDevice& device) noexcept
 {
     this->graphicsDevice = &device;
+    const auto propagate = [&device](std::unique_ptr<ManagedWindow>& managed)
+    {
+        if (managed->window != nullptr)
+            managed->window->device = &device;
+    };
+    for (auto& managed : this->windows)
+        propagate(managed);
+    for (auto& managed : this->pendingWindows)
+        propagate(managed);
 }
 
 std::vector<Scene*> WindowManager::UniqueScenes() const
@@ -652,10 +671,8 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
     const auto profileStart = std::chrono::steady_clock::now();
 
     window.MakeContextCurrent();
-    // R1.6 Phase 0B (P1-2): flush GPU deletes queued from non-current
-    // contexts as soon as the owning context is current again.
-    if (this->graphicsDevice != nullptr)
-        this->graphicsDevice->FlushPendingDeletes();
+    // R1.7 Phase 0C: MakeContextCurrent is now the lifecycle transaction
+    // (MakeCurrent → register share group → flush pending deletes).
     ReportGlErrors("frame-begin", frameIndex, window.Title());
     const WindowSize framebufferSize = window.GetFramebufferSize();
     if (framebufferSize.width <= 0 || framebufferSize.height <= 0)
@@ -876,6 +893,29 @@ GLFWwindow* WindowManager::SharedResourceContext() const noexcept
     return nullptr;
 }
 
+GraphicsShareGroupToken WindowManager::ShareGroupTokenForContext(
+    GLFWwindow* context
+) const noexcept
+{
+    if (context == nullptr)
+        return nullptr;
+    const auto matches = [context](
+        const std::unique_ptr<ManagedWindow>& managed
+    )
+    {
+        return managed->window != nullptr &&
+            managed->window->GetGLFWwindow() == context;
+    };
+    const bool known =
+        std::any_of(this->windows.begin(), this->windows.end(), matches) ||
+        std::any_of(
+            this->pendingWindows.begin(),
+            this->pendingWindows.end(),
+            matches
+        );
+    return known ? this->ShareGroupToken() : nullptr;
+}
+
 void WindowManager::DestroyAllWindows() noexcept
 {
     const auto destroy = [](auto& managedWindows)
@@ -888,7 +928,7 @@ void WindowManager::DestroyAllWindows() noexcept
             if (managed->window != nullptr &&
                 managed->window->GetGLFWwindow() != nullptr)
             {
-                glfwMakeContextCurrent(managed->window->GetGLFWwindow());
+                managed->window->MakeContextCurrent();
             }
             managed.reset();
         }

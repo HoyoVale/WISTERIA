@@ -1,19 +1,12 @@
 #pragma once
 
+#include "wisteria/rendering/graphics_share_group.hpp"
+
 #include <memory>
 #include <string_view>
 
 namespace wisteria
 {
-// R1.7 Phase 0B: opaque identity of one OpenGL share group.
-//
-// A share group is the unit of GPU-object ownership, not a single native
-// context handle. Multiple native contexts (EGLContext / GLFWwindow /
-// future WGL contexts) that share resources must map to the same token.
-// Phase 0B freezes this type and semantics; GraphicsDevice migration happens
-// in Phase 0C.
-using GraphicsShareGroupToken = const void*;
-
 struct HeadlessContextOptions
 {
     int major = 3;

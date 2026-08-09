@@ -73,6 +73,12 @@ public:
     void SetGraphicsDevice(GraphicsDevice& device) noexcept;
 
     std::size_t WindowCount() const noexcept;
+    // R1.7 Phase 0C: the share-group identity shared by every window of this
+    // manager. Stable for the manager's lifetime.
+    GraphicsShareGroupToken ShareGroupToken() const noexcept
+    {
+        return &this->shareGroupIdentity;
+    }
 
 private:
     friend class Application;
@@ -117,12 +123,19 @@ private:
     void ClearTrackedScenes() noexcept;
     void ReleaseContextLocalResources() noexcept;
     GLFWwindow* SharedResourceContext() const noexcept;
+    GraphicsShareGroupToken ShareGroupTokenForContext(
+        GLFWwindow* context
+    ) const noexcept;
     void DestroyAllWindows() noexcept;
     void RequireOwnerThread() const;
 
 private:
+    struct ShareGroupIdentity
+    {
+    };
     std::vector<std::unique_ptr<ManagedWindow>> windows;
     std::vector<std::unique_ptr<ManagedWindow>> pendingWindows;
+    ShareGroupIdentity shareGroupIdentity;
     GraphicsDevice* graphicsDevice = nullptr;
     std::vector<std::weak_ptr<Scene>> trackedScenes;
     std::thread::id ownerThread;

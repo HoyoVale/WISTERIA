@@ -227,6 +227,7 @@ env -u DISPLAY -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
 Phase 0A  契约（本文档）——冻结范围与边界
 Phase 0B  HeadlessContext + EGL Provider（范围见下）
 Phase 0C  GraphicsDevice share-group identity + FlushPendingDeletes 修复
+          （范围见下）
 Phase 0D  Headless 渲染 session + OfflineFrameSequence 无窗口运行 + 测试
 Phase 0E  四矩阵验证 + Final Closure
 ```
@@ -261,6 +262,44 @@ Windows WGL
 OSMesa
 Stable C ABI
 Application 重构
+渲染级 compatibility probe（0D/0E）
+```
+
+### Phase 0C 范围（已批准）
+
+```text
+1. GraphicsShareGroupToken 下沉到 rendering/graphics_share_group.hpp
+   （platform/headless_context.hpp 复用，依赖方向保持 rendering ← platform）
+2. GraphicsDevice API 迁移：
+   SetShareGroupToken / ShareGroupToken / HasShareGroupToken /
+   RequireShareGroupToken / SetCurrentShareGroup / CurrentShareGroup
+   （ContextIsCurrent 语义 = 当前 native context 属于本 share group）
+3. Window：
+   - 持有 shareGroupToken（WindowManager 统一赋值）
+   - 持有非拥有 GraphicsDevice*（仅用于生命周期事务）
+   - MakeContextCurrent = MakeCurrent → 注册 current share-group
+     → FlushPendingDeletes（单一事务，不再依赖 RenderAll）
+4. WindowManager：
+   - ShareGroupIdentity 统一 token（所有共享窗口映射同一身份）
+   - CreateWindow 后赋 token/device；恢复 previous context 时注册
+     share group + flush
+   - SetGraphicsDevice 向既有窗口传播 device
+5. Application：CreateWindow 注册首个 share group；Shutdown 用
+   share-group token 校验 + 释放
+6. native read_pixels：移除手动 FlushPendingDeletes（事务已覆盖）
+7. EGL provider：ShareGroupToken 改为身份对象（非 native handle）；
+   MakeCurrent/ReleaseCurrent 注册/清空 current share group
+8. 测试更新：unit GraphicsDevice ownership、render deferred-delete
+   queue；Windows + WSL 双平台回归
+```
+
+Phase 0C **不做**：
+
+```text
+HeadlessRenderSession（0D）
+Application 零窗口模式（0D）
+OfflineFrameSequence migration（0D）
+Windows WGL / OSMesa / Stable C ABI
 渲染级 compatibility probe（0D/0E）
 ```
 

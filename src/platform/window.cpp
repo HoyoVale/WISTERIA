@@ -51,7 +51,7 @@ void Window::Release() noexcept
     if (this->window != nullptr)
     {
         glfwMakeContextCurrent(this->window);
-        GraphicsDevice::SetCurrentContext(this->window);
+        GraphicsDevice::SetCurrentShareGroup(this->shareGroupToken);
     }
     this->cameraController.reset();
     this->camera.reset();
@@ -66,8 +66,7 @@ void Window::Release() noexcept
 
 void Window::init()
 {
-    glfwMakeContextCurrent(this->GetGLFWwindow());
-    GraphicsDevice::SetCurrentContext(this->GetGLFWwindow());
+    this->MakeContextCurrent();
 
     if (!gladLoadGL(glfwGetProcAddress))
         throw std::runtime_error("Failed to load OpenGL functions");
@@ -150,7 +149,11 @@ void Window::MakeContextCurrent() const
     if (this->window == nullptr)
         throw std::logic_error("Cannot activate a destroyed window");
     glfwMakeContextCurrent(this->window);
-    GraphicsDevice::SetCurrentContext(this->window);
+    // R1.7 Phase 0C lifecycle transaction:
+    //   MakeCurrent → register current share group → flush pending deletes.
+    GraphicsDevice::SetCurrentShareGroup(this->shareGroupToken);
+    if (this->device != nullptr)
+        this->device->FlushPendingDeletes();
 }
 
 void Window::SwapBuffers() const

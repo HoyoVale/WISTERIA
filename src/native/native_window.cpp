@@ -661,9 +661,8 @@ enum WisteriaStatus wisteria_window_read_pixels(
         return InvalidHandle(ctx, "Context has no application");
 
     entry->window->MakeContextCurrent();
-    // R1.6 Phase 0B (P1-2): the owning context is current; drain queued GPU
-    // deletes before doing GPU work on this window.
-    ctx.application->GetGraphicsDevice().FlushPendingDeletes();
+    // R1.7 Phase 0C: MakeContextCurrent flushes queued GPU deletes as part
+    // of the share-group lifecycle transaction.
     const SceneFramebuffer& framebuffer =
         ctx.application->GetFramebuffer(*entry->window);
     if (framebuffer.Width() <= 0 || framebuffer.Height() <= 0)

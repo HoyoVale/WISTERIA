@@ -2167,18 +2167,21 @@ void TestGraphicsDevice()
     GraphicsDevice device;
     Require(device.Programs() != nullptr, "device owns a program cache");
     Require(device.ProgramCount() == 0, "fresh device has no programs");
-    Require(!device.HasContextToken(), "fresh device has no context token");
+    Require(
+        !device.HasShareGroupToken(),
+        "fresh device has no share group token"
+    );
 
     const void* token = reinterpret_cast<const void*>(std::uintptr_t(0x1234));
-    device.SetContextToken(token);
-    Require(device.HasContextToken(), "context token registered");
-    Require(device.ContextToken() == token, "context token preserved");
-    device.RequireContextToken(token);
+    device.SetShareGroupToken(token);
+    Require(device.HasShareGroupToken(), "share group token registered");
+    Require(device.ShareGroupToken() == token, "share group token preserved");
+    device.RequireShareGroupToken(token);
 
     bool threw = false;
     try
     {
-        device.RequireContextToken(
+        device.RequireShareGroupToken(
             reinterpret_cast<const void*>(std::uintptr_t(0x5678))
         );
     }
@@ -2186,7 +2189,7 @@ void TestGraphicsDevice()
     {
         threw = true;
     }
-    Require(threw, "mismatched context token must throw");
+    Require(threw, "mismatched share group token must throw");
 
     device.ReleaseAll();
     Require(device.ProgramCount() == 0, "ReleaseAll clears the program cache");

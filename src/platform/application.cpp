@@ -59,9 +59,10 @@ Window& Application::CreateWindow(const WindowConfig& config)
     if (!this->glfwInitialized)
         throw std::logic_error("Application is not initialized");
     Window& window = this->windowManager.CreateWindow(config);
-    // The first window context identifies the device's share group.
-    if (!this->graphicsDevice.HasContextToken())
-        this->graphicsDevice.SetContextToken(window.GetGLFWwindow());
+    // The first window registers the device's share-group identity. Every
+    // window of this Application maps to the same token.
+    if (!this->graphicsDevice.HasShareGroupToken())
+        this->graphicsDevice.SetShareGroupToken(window.ShareGroupToken());
     return window;
 }
 
@@ -282,18 +283,20 @@ void Application::Shutdown() noexcept
         this->windowManager.SharedResourceContext();
     if (resourceContext != nullptr)
     {
+        const GraphicsShareGroupToken shareGroup =
+            this->windowManager.ShareGroupToken();
         glfwMakeContextCurrent(resourceContext);
-        GraphicsDevice::SetCurrentContext(resourceContext);
-        // Verify the registered share-group context, then release every GPU
+        GraphicsDevice::SetCurrentShareGroup(shareGroup);
+        // Verify the registered share group, then release every GPU
         // resource owned by the device (programs first, then resources whose
         // materials hold references into the same cache). The token is only
         // registered by Application::CreateWindow; callers that create
         // windows through WindowManager directly skip the assertion.
-        if (this->graphicsDevice.HasContextToken())
+        if (this->graphicsDevice.HasShareGroupToken())
         {
             try
             {
-                this->graphicsDevice.RequireContextToken(resourceContext);
+                this->graphicsDevice.RequireShareGroupToken(shareGroup);
             }
             catch (const std::exception& error)
             {
@@ -309,7 +312,7 @@ void Application::Shutdown() noexcept
     if (this->glfwInitialized)
     {
         glfwMakeContextCurrent(nullptr);
-        GraphicsDevice::SetCurrentContext(nullptr);
+        GraphicsDevice::SetCurrentShareGroup(nullptr);
         ReleaseGlfw();
         this->glfwInitialized = false;
     }

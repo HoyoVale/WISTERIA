@@ -3,6 +3,7 @@
 #include <glad/gl.h>
 
 #include "wisteria/rendering/program_cache.hpp"
+#include "wisteria/rendering/graphics_share_group.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -42,14 +43,17 @@ public:
     // once per material.
     std::shared_ptr<ProgramCache> Programs() const noexcept;
 
-    // Opaque identity of the GL context that owns this device's share group.
-    // The platform layer registers the first window context here; core
-    // rendering code never needs GLFW. GPU teardown verifies the current
-    // context matches before releasing resources.
-    void SetContextToken(const void* token) noexcept;
-    const void* ContextToken() const noexcept;
-    bool HasContextToken() const noexcept;
-    void RequireContextToken(const void* currentContext) const;
+    // Opaque identity of the GL share group that owns this device's GPU
+    // resources. The platform layer registers the share group (all windows
+    // sharing resources map to the same token); core rendering code never
+    // needs GLFW or EGL. GPU teardown verifies the current share group
+    // matches before releasing resources.
+    void SetShareGroupToken(GraphicsShareGroupToken token) noexcept;
+    GraphicsShareGroupToken ShareGroupToken() const noexcept;
+    bool HasShareGroupToken() const noexcept;
+    void RequireShareGroupToken(
+        GraphicsShareGroupToken currentShareGroup
+    ) const;
 
     // Frees every GPU resource owned by the device (currently the shader
     // program cache). Must be called with a context of the share group
@@ -73,16 +77,21 @@ public:
 
     std::size_t PendingDeleteCount() const noexcept;
 
-    // Platform hook: records which GL context is current on the calling
-    // thread. The platform layer calls this after every glfwMakeContextCurrent.
-    static void SetCurrentContext(const void* context) noexcept;
-    static const void* CurrentContext() noexcept;
+    // Platform hook: records which share group is current on the calling
+    // thread. The platform layer calls this after every context activation
+    // (GLFW window or headless EGL), mapping the native context to its share
+    // group. Multiple native contexts of one share group register the same
+    // token.
+    static void SetCurrentShareGroup(
+        GraphicsShareGroupToken shareGroup
+    ) noexcept;
+    static GraphicsShareGroupToken CurrentShareGroup() noexcept;
 
 private:
     bool ContextIsCurrent() const noexcept;
 
     std::shared_ptr<ProgramCache> programs = std::make_shared<ProgramCache>();
-    const void* contextToken = nullptr;
+    GraphicsShareGroupToken shareGroupToken = nullptr;
     std::vector<std::pair<ResourceKind, GLuint>> pendingDeletes;
 };
 }  // namespace wisteria

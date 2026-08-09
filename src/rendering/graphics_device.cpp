@@ -8,7 +8,7 @@ namespace wisteria
 {
 namespace
 {
-thread_local const void* gCurrentContext = nullptr;
+thread_local GraphicsShareGroupToken gCurrentShareGroup = nullptr;
 
 void DeleteObject(GraphicsDevice::ResourceKind kind, GLuint name) noexcept
 {
@@ -44,27 +44,31 @@ std::shared_ptr<ProgramCache> GraphicsDevice::Programs() const noexcept
     return this->programs;
 }
 
-void GraphicsDevice::SetContextToken(const void* token) noexcept
+void GraphicsDevice::SetShareGroupToken(
+    GraphicsShareGroupToken token
+) noexcept
 {
-    this->contextToken = token;
+    this->shareGroupToken = token;
 }
 
-const void* GraphicsDevice::ContextToken() const noexcept
+GraphicsShareGroupToken GraphicsDevice::ShareGroupToken() const noexcept
 {
-    return this->contextToken;
+    return this->shareGroupToken;
 }
 
-bool GraphicsDevice::HasContextToken() const noexcept
+bool GraphicsDevice::HasShareGroupToken() const noexcept
 {
-    return this->contextToken != nullptr;
+    return this->shareGroupToken != nullptr;
 }
 
-void GraphicsDevice::RequireContextToken(const void* currentContext) const
+void GraphicsDevice::RequireShareGroupToken(
+    GraphicsShareGroupToken currentShareGroup
+) const
 {
-    if (this->contextToken != currentContext)
+    if (this->shareGroupToken != currentShareGroup)
     {
         throw std::logic_error(
-            "GraphicsDevice operation requires its owning GL context"
+            "GraphicsDevice operation requires its owning GL share group"
         );
     }
 }
@@ -80,22 +84,24 @@ std::size_t GraphicsDevice::ProgramCount() const noexcept
     return this->programs->Size();
 }
 
-void GraphicsDevice::SetCurrentContext(const void* context) noexcept
+void GraphicsDevice::SetCurrentShareGroup(
+    GraphicsShareGroupToken shareGroup
+) noexcept
 {
-    gCurrentContext = context;
+    gCurrentShareGroup = shareGroup;
 }
 
-const void* GraphicsDevice::CurrentContext() noexcept
+GraphicsShareGroupToken GraphicsDevice::CurrentShareGroup() noexcept
 {
-    return gCurrentContext;
+    return gCurrentShareGroup;
 }
 
 bool GraphicsDevice::ContextIsCurrent() const noexcept
 {
     // A null token means legacy/unmanaged usage where callers already
     // guarantee a current context; delete immediately to preserve behavior.
-    return this->contextToken == nullptr ||
-        gCurrentContext == this->contextToken;
+    return this->shareGroupToken == nullptr ||
+        gCurrentShareGroup == this->shareGroupToken;
 }
 
 void GraphicsDevice::DeleteResource(ResourceKind kind, GLuint name) noexcept

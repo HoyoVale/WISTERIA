@@ -1,6 +1,7 @@
 #pragma once
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/platform/input.hpp"
+#include "wisteria/rendering/graphics_share_group.hpp"
 #include "wisteria/scene/scene.hpp"
 #include <GLFW/glfw3.h>
 #include <memory>
@@ -10,6 +11,7 @@ namespace wisteria
 {
 class Application;
 class WindowManager;
+class GraphicsDevice;
 
 using SceneHandle = std::shared_ptr<Scene>;
 using CameraHandle = std::shared_ptr<Camera>;
@@ -32,6 +34,12 @@ public:
     WindowSize GetFramebufferSize() const noexcept;
     glm::mat4 Projection(float aspect) const;
     bool ShouldClose() const noexcept;
+    // R1.7 Phase 0C: share-group identity assigned by WindowManager. All
+    // windows of one Application map to the same token.
+    GraphicsShareGroupToken ShareGroupToken() const noexcept
+    {
+        return this->shareGroupToken;
+    }
     void MakeContextCurrent() const;
     void SwapBuffers() const;
     const std::string& Title() const noexcept;
@@ -75,6 +83,10 @@ private:
     WindowSize size;
     std::string title;
     GLFWwindow* window = nullptr;
+    GraphicsShareGroupToken shareGroupToken = nullptr;
+    // Non-owning device reference for the MakeCurrent lifecycle transaction
+    // (flush pending GPU deletes after the share group becomes current).
+    GraphicsDevice* device = nullptr;
     Input input;
     SceneHandle scene;
     CameraHandle camera;

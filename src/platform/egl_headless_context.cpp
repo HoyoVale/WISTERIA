@@ -15,6 +15,8 @@
 #include <EGL/eglext.h>
 #include <dlfcn.h>
 
+#include "wisteria/rendering/graphics_device.hpp"
+
 #include <glad/gl.h>
 
 // Mesa exposes the surfaceless platform through a client extension; older
@@ -146,6 +148,11 @@ public:
                 EglErrorString(eglGetError())
             );
         }
+        // R1.7 Phase 0C: register the provider's share group as current so
+        // GraphicsDevice::ContextIsCurrent() works for engine-owned
+        // resources. Pending-delete flushing belongs to the session that
+        // owns the GraphicsDevice (Phase 0D).
+        GraphicsDevice::SetCurrentShareGroup(this->ShareGroupToken());
     }
 
     void ReleaseCurrent() override
@@ -158,6 +165,7 @@ public:
             EGL_NO_SURFACE,
             EGL_NO_CONTEXT
         );
+        GraphicsDevice::SetCurrentShareGroup(nullptr);
     }
 
     GraphicsShareGroupToken ShareGroupToken() const noexcept override
@@ -533,11 +541,9 @@ private:
         this->glVersion = NullableString(
             reinterpret_cast<const char*>(glGetString(GL_VERSION))
         );
-        // Phase 0B: a single owned context is one share group; its handle is
-        // the v1 token. Phase 0C defines the mapping for multi-context
-        // window/headless groups.
-        this->shareGroupToken =
-            reinterpret_cast<const void*>(this->context);
+        // The token is a provider-owned identity object, never a native
+        // context handle: contexts sharing resources map to one identity.
+        this->shareGroupToken = &this->shareGroupIdentity;
     }
 
     void DestroyResources() noexcept
@@ -565,6 +571,7 @@ private:
             eglTerminate(this->display);
             this->displayInitialized = false;
         }
+        GraphicsDevice::SetCurrentShareGroup(nullptr);
         this->display = EGL_NO_DISPLAY;
         this->shareGroupToken = nullptr;
     }
@@ -583,6 +590,10 @@ private:
     std::string glVendor;
     std::string glRenderer;
     std::string glVersion;
+    struct ShareGroupIdentity
+    {
+    };
+    ShareGroupIdentity shareGroupIdentity;
     GraphicsShareGroupToken shareGroupToken = nullptr;
 };
 }  // namespace

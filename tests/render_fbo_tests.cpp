@@ -523,8 +523,8 @@ int main()
         // with no context, and released once the context returns.
         {
             GraphicsDevice deferredDevice;
-            deferredDevice.SetContextToken(window);
-            GraphicsDevice::SetCurrentContext(window);
+            deferredDevice.SetShareGroupToken(window);
+            GraphicsDevice::SetCurrentShareGroup(window);
             {
                 Texture immediate(
                     TextureData::FromRgba8(
@@ -541,7 +541,7 @@ int main()
                 "device must delete immediately with its context current"
             );
 
-            GraphicsDevice::SetCurrentContext(nullptr);
+            GraphicsDevice::SetCurrentShareGroup(nullptr);
             {
                 Texture queued(
                     TextureData::FromRgba8(
@@ -557,7 +557,7 @@ int main()
                 deferredDevice.PendingDeleteCount() == 1U,
                 "device must queue deletions without its context current"
             );
-            GraphicsDevice::SetCurrentContext(window);
+            GraphicsDevice::SetCurrentShareGroup(window);
             deferredDevice.FlushPendingDeletes();
             Require(
                 deferredDevice.PendingDeleteCount() == 0U,
