@@ -1,6 +1,8 @@
 # R1.7 — True Headless Context Provider（契约草案）
 
-> 状态：**FROZEN v1.0 + R1.7 CLOSED（2026-08-09，Phase 0A–0E 四矩阵验证通过）**
+> 状态：**FROZEN v1.0；R1.7 0A–0D CLOSED，0E FINAL CLOSURE PENDING**
+> （2026-08-09：Windows/WSL 四矩阵通过；native-Linux 硬件 release gate
+> 待真实 Linux 机器执行 `script/verify_r17_native_linux.sh`）
 > 前置：R1.6 Phase 0A–0E CLOSED（`R1_6_OFFLINE_OUTPUT_CONTRACT.md` 第 383 行：
 > `Phase 0F 拆为 R1.7 — Headless Context Provider`）。
 > 本文件只冻结 R1.7 的范围、边界、验收口径与阶段计划；精确接口字段在
@@ -255,7 +257,8 @@ Phase 0C  GraphicsDevice share-group identity +
           FlushPendingDeletes 修复（范围见下）               ✅ CLOSED
 Phase 0D  Headless 渲染 session + OfflineFrameSequence
           无窗口运行 + 测试（范围见下）                      ✅ CLOSED
-Phase 0E  四矩阵验证 + Final Closure                         ✅ CLOSED
+Phase 0E  四矩阵验证 + Final Closure                         ⏳ PENDING
+          （native-Linux 硬件 release gate）
 ```
 
 ### Phase 0B 范围（已批准）

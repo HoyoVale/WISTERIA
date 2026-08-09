@@ -1,9 +1,13 @@
 # R1.7 — True Headless Context Provider Final Closure（2026-08-09）
 
-> 状态：**FROZEN / IMPLEMENTED / VALIDATED / CLOSED**。
+> 状态：**FROZEN / IMPLEMENTED / VALIDATED / 0A–0D CLOSED；
+> 0E FINAL CLOSURE PENDING（native-Linux 硬件 release gate）**。
 > 契约：`docs/architecture/R1_7_HEADLESS_CONTEXT_CONTRACT.md`。
 > 四矩阵（2026-08-09 实测）：
 > Windows CORE 8/8、Windows FULL 9/9、Linux CORE 9/9、Linux FULL 10/10。
+> 注：Linux 两套矩阵当前为 WSL + llvmpipe（兼容性记录）；
+> 真实 Linux 硬件 EGL 发布基线待真机执行
+> `script/verify_r17_native_linux.sh` 后并入。
 
 ## 1. 一句话
 
@@ -27,7 +31,9 @@ WISTERIA 已经可以从头到尾**不依赖任何 Window System** 完成离线�
      （零窗口 RenderOffline +
        OfflineFrameSequence +
        compatibility probe）
-0E  四矩阵验证 + Final Closure         CLOSED ✅
+0E  四矩阵验证 + Final Closure         ⏳ PENDING
+     （Windows/WSL 矩阵已绿；
+       native-Linux 硬件 release gate 待真机执行）
 ```
 
 ## 3. 最终架构
@@ -66,19 +72,27 @@ RGBA8 / PNG / manifest / checkpoint
 6. ReleaseAll ownership 校验失败 → fail-stop，不继续 GL 删除
 ```
 
-## 4. 四套矩阵（2026-08-09 实测）
+## 4. 矩阵（2026-08-09 实测）
 
 ```text
-Windows CORE（MSVC RelWithDebInfo）            8/8  Passed
-Windows FULL（MSVC RelWithDebInfo + 完整资产） 9/9  Passed
-Linux CORE（GCC RelWithDebInfo，WSL）          9/9  Passed
-Linux FULL（GCC RelWithDebInfo + 完整资产）   10/10 Passed
+Windows 回归矩阵（MSVC RelWithDebInfo）：
+  CORE 8/8 Passed
+  FULL（完整资产）9/9 Passed
+
+WSL 兼容性矩阵（GCC，LIBGL_ALWAYS_SOFTWARE=1 → llvmpipe）：
+  CORE 9/9 Passed（含 headless-smoke）
+  FULL（完整资产）10/10 Passed
+
+Native Linux 硬件发布基线（真实 Linux 机器，硬件 EGL）：
+  ⏳ PENDING —— 至少 headless-smoke（session + sequence probe）
+  必须 PASS；推荐 CORE/FULL 全量。
+  执行：./script/verify_r17_native_linux.sh [--core|--full]
 ```
 
-Linux 侧在 WSL 使用 `LIBGL_ALWAYS_SOFTWARE=1`（llvmpipe），符合
-"WSL Mesa D3D12 不可靠、必须软件回退；真实独立 Linux 硬件正常"的
-验收口径。Windows 无 EGL provider，headless-smoke 只在 Linux 矩阵
-出现；Windows 保持 GLFW hidden 回归基线。
+WSL 使用 `LIBGL_ALWAYS_SOFTWARE=1`（llvmpipe），符合
+"WSL Mesa D3D12 不可靠、必须软件回退"的兼容性口径。Windows 无 EGL
+provider，headless-smoke 只在 Linux 矩阵出现；Windows 保持 GLFW
+hidden 回归基线。
 
 测试清单：
 
@@ -121,7 +135,18 @@ R2.x  RenderDevice / RenderTarget / RenderGraph / 多后端
 
 ## 8. 冻结声明
 
-R1.7 Phase 0A–0E 至此停止开发，不再扩大反例空间；除非出现具体
-反例证据，后续工作必须消费已冻结的 ownership 模型与 factory
-不变量，而不是重新打开。
+R1.7 Phase 0A–0D 已停止开发。0E 在 native-Linux 硬件 release gate
+通过后正式 CLOSED；在此之前不扩大反例空间，后续工作必须消费已
+冻结的 ownership 模型、factory 不变量与 fail-stop teardown 语义。
 
+## 9. Closure Fix（2026-08-09 终审后）
+
+```text
+1. HeadlessRenderSession 析构 fail-stop：
+   teardown 时 MakeCurrent() 失败 → std::terminate()，
+   绝不继续 renderer.Release() / ReleaseAll() 的 glDelete*。
+2. native-Linux 硬件发布基线：
+   script/verify_r17_native_linux.sh 在真实 Linux 机器执行，
+   无 LIBGL_ALWAYS_SOFTWARE；smoke 必须 software=no 且
+   session + sequence probe 全 PASS。
+```

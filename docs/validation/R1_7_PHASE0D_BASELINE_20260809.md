@@ -90,7 +90,20 @@ integration PASS（含 R1.7 window release clears trackers）
    软件回退（llvmpipe）完整通过；真实 Linux 硬件路径待 0E 矩阵
 ```
 
-## 5. Phase 0D 边界确认
+## 5. Closure Fix（2026-08-09 终审后）
+
+```text
+HeadlessRenderSession 析构 fail-stop：
+  teardown 时 MakeCurrent() 失败 → 打印 FATAL 并 std::terminate()，
+  绝不继续 renderer.Release() / graphicsDevice.ReleaseAll() 的
+  glDelete*（Renderer 部分资源直接 glDelete，不走延迟队列）。
+
+真实 Linux 硬件路径：由 script/verify_r17_native_linux.sh 在
+真实 Linux 机器执行（无 LIBGL_ALWAYS_SOFTWARE），作为 0E
+release gate，结果并入 Final Closure。
+```
+
+## 6. Phase 0D 边界确认
 
 ```text
 未做：四矩阵/0E Final Closure、Stable Render C ABI、
@@ -98,8 +111,7 @@ integration PASS（含 R1.7 window release clears trackers）
       视频编码 / Audio
 ```
 
-## 6. 下一步
+## 7. 下一步
 
 Phase 0E：四矩阵验证（Windows CORE/FULL、Linux CORE/FULL）
 + Final Closure；之后 R1.7 全阶段 CLOSED。
-

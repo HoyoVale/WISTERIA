@@ -2,6 +2,7 @@
 
 #include "wisteria/rendering/headless_render_session.hpp"
 
+#include <exception>
 #include <utility>
 
 namespace wisteria
@@ -30,9 +31,14 @@ HeadlessRenderSession::~HeadlessRenderSession()
     {
         std::fprintf(
             stderr,
-            "[headless-session] MakeCurrent during teardown failed: %s\n",
+            "[headless-session] FATAL: MakeCurrent during teardown failed; "
+            "aborting without GL teardown: %s\n",
             error.what()
         );
+        // Fail-stop: with no reliable owning context current, Renderer and
+        // GraphicsDevice must never reach their glDelete* calls. A later
+        // context-loss design may add AbandonGpuResources(); R1.7 does not.
+        std::terminate();
     }
     this->renderer.Release();
     this->graphicsDevice.ReleaseAll();
