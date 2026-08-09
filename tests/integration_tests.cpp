@@ -7,6 +7,7 @@
 #include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/runtime/model_backend.hpp"
 #include "wisteria/mmd/mmd_presentation.hpp"
+#include "wisteria/rendering/graphics_device.hpp"
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
 #include "trace_jsonl.hpp"
@@ -11809,6 +11810,61 @@ void TestPublishCurrentRuntimeFrame()
 
 }
 
+#if defined(WISTERIA_TEST_NATIVE_ABI)
+// R1.7 Final Fix: destroying the current native window context must clear
+// both GraphicsDevice trackers (context token + share group).
+void TestR17WindowReleaseClearsTrackers()
+{
+    WisteriaContext context = 0U;
+    Require(
+        wisteria_create_context(&context) == WISTERIA_OK,
+        "R1.7 tracker context creation failed"
+    );
+
+    WisteriaWindow firstWindow = 0U;
+    if (wisteria_window_create(
+            context,
+            160,
+            120,
+            "WISTERIA R1.7 tracker A",
+            &firstWindow
+        ) != WISTERIA_OK)
+    {
+        wisteria_destroy_context(context);
+        SkipTest("window backend is unavailable in this environment");
+    }
+
+    WisteriaWindow secondWindow = 0U;
+    Require(
+        wisteria_window_create(
+            context,
+            160,
+            120,
+            "WISTERIA R1.7 tracker B",
+            &secondWindow
+        ) == WISTERIA_OK,
+        "R1.7 second shared window creation failed"
+    );
+
+    // Destroying B (which becomes the current context during synchronous
+    // teardown) must leave both trackers empty.
+    Require(
+        wisteria_window_destroy(context, secondWindow) == WISTERIA_OK,
+        "R1.7 window destroy failed"
+    );
+    Require(
+        GraphicsDevice::CurrentContext() == nullptr &&
+            GraphicsDevice::CurrentShareGroup() == nullptr,
+        "R1.7 trackers not cleared after destroying the current context"
+    );
+
+    Require(
+        wisteria_destroy_context(context) == WISTERIA_OK,
+        "R1.7 tracker context destroy failed"
+    );
+}
+#endif  // WISTERIA_TEST_NATIVE_ABI
+
 int main()
 {
     int failures = 0;
@@ -11890,6 +11946,10 @@ int main()
     failures += !RunTest(
         "Native ABI window/scene cascade",
         TestNativeAbiWindowSceneCascade
+    );
+    failures += !RunTest(
+        "R1.7 window release clears trackers",
+        TestR17WindowReleaseClearsTrackers
     );
     failures += !RunTest(
         "Native ABI exception boundary",

@@ -3,7 +3,7 @@
 #include <glad/gl.h>
 
 #include "wisteria/rendering/program_cache.hpp"
-#include "wisteria/rendering/graphics_share_group.hpp"
+#include "wisteria/rendering/graphics_context.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -62,14 +62,22 @@ public:
 
     std::size_t ProgramCount() const noexcept;
 
-    // Unified GPU-object deletion. When the calling thread's current GL
-    // context is this device's share-group context (or the device has no
-    // registered token, i.e. legacy mode), the object is deleted immediately;
-    // otherwise it is queued and released by FlushPendingDeletes the next
-    // time the owning context is current. This makes cross-thread or
-    // after-context resource destruction safe instead of calling glDelete*
-    // with no (or the wrong) context current.
-    void DeleteResource(ResourceKind kind, GLuint name) noexcept;
+    // Unified GPU-object deletion.
+    //
+    // Shared objects (Texture/Buffer/Renderbuffer) are deleted immediately
+    // when the current share group is this device's share group, otherwise
+    // queued until that share group is current again.
+    //
+    // Context-local objects (VertexArray/Framebuffer) carry owningContext,
+    // the native context in whose namespace the object lives. They are
+    // deleted immediately only when that exact context is current; otherwise
+    // queued with the owner recorded. A sibling context of the same share
+    // group must never flush a context-local queue entry.
+    void DeleteResource(
+        ResourceKind kind,
+        GLuint name,
+        GraphicsContextToken owningContext = nullptr
+    ) noexcept;
 
     // Deletes every queued object. No-op when the owning context is not
     // current on the calling thread.
@@ -77,11 +85,12 @@ public:
 
     std::size_t PendingDeleteCount() const noexcept;
 
-    // Platform hook: records which share group is current on the calling
-    // thread. The platform layer calls this after every context activation
-    // (GLFW window or headless EGL), mapping the native context to its share
-    // group. Multiple native contexts of one share group register the same
-    // token.
+    // Platform hooks: record which native context and share group are
+    // current on the calling thread. The platform layer calls this after
+    // every context activation (GLFW window or headless EGL), mapping the
+    // native context to its context token and share-group token.
+    static void SetCurrentContext(GraphicsContextToken context) noexcept;
+    static GraphicsContextToken CurrentContext() noexcept;
     static void SetCurrentShareGroup(
         GraphicsShareGroupToken shareGroup
     ) noexcept;
@@ -89,9 +98,17 @@ public:
 
 private:
     bool ContextIsCurrent() const noexcept;
+    static bool ContextLocalIsCurrent(GraphicsContextToken owner) noexcept;
+    static bool IsSharedResource(ResourceKind kind) noexcept;
 
     std::shared_ptr<ProgramCache> programs = std::make_shared<ProgramCache>();
     GraphicsShareGroupToken shareGroupToken = nullptr;
-    std::vector<std::pair<ResourceKind, GLuint>> pendingDeletes;
+    struct PendingDelete
+    {
+        ResourceKind kind;
+        GLuint name;
+        GraphicsContextToken owningContext;
+    };
+    std::vector<PendingDelete> pendingDeletes;
 };
 }  // namespace wisteria

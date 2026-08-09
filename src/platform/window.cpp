@@ -48,9 +48,11 @@ Window::~Window()
 
 void Window::Release() noexcept
 {
-    if (this->window != nullptr)
+    const bool hadWindow = this->window != nullptr;
+    if (hadWindow)
     {
         glfwMakeContextCurrent(this->window);
+        GraphicsDevice::SetCurrentContext(this->contextToken);
         GraphicsDevice::SetCurrentShareGroup(this->shareGroupToken);
     }
     this->cameraController.reset();
@@ -61,6 +63,14 @@ void Window::Release() noexcept
     {
         glfwDestroyWindow(this->window);
         this->window = nullptr;
+    }
+    if (hadWindow)
+    {
+        // R1.7 Final Fix: after the native context is destroyed, both
+        // trackers must be empty. No GPU work may claim this share group or
+        // context is still current.
+        GraphicsDevice::SetCurrentContext(nullptr);
+        GraphicsDevice::SetCurrentShareGroup(nullptr);
     }
 }
 
@@ -149,8 +159,10 @@ void Window::MakeContextCurrent() const
     if (this->window == nullptr)
         throw std::logic_error("Cannot activate a destroyed window");
     glfwMakeContextCurrent(this->window);
-    // R1.7 Phase 0C lifecycle transaction:
-    //   MakeCurrent → register current share group → flush pending deletes.
+    // R1.7 Final Fix lifecycle transaction:
+    //   MakeCurrent → register context token → register share group →
+    //   flush pending deletes (shared + context-local queues).
+    GraphicsDevice::SetCurrentContext(this->contextToken);
     GraphicsDevice::SetCurrentShareGroup(this->shareGroupToken);
     if (this->device != nullptr)
         this->device->FlushPendingDeletes();

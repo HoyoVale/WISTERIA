@@ -8,7 +8,8 @@
 namespace wisteria
 {
 VAO::VAO(GraphicsDevice* device)
-    : device(device)
+    : device(device),
+      owningContext(GraphicsDevice::CurrentContext())
 {
     glGenVertexArrays(1, &this->vao);
 }
@@ -21,7 +22,8 @@ VAO::~VAO()
         {
             this->device->DeleteResource(
                 GraphicsDevice::ResourceKind::VertexArray,
-                this->vao
+                this->vao,
+                this->owningContext
             );
         }
         else
@@ -29,6 +31,7 @@ VAO::~VAO()
             glDeleteVertexArrays(1, &this->vao);
         }
         this->vao = 0;
+        this->owningContext = nullptr;
     }
 }
 

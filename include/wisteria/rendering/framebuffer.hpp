@@ -36,6 +36,9 @@ public:
 
 private:
     GraphicsDevice* device = nullptr;
+    // R1.7 Final Fix: framebuffer objects are context-local; the native
+    // context that created this object must be current when it is deleted.
+    GraphicsContextToken owningContext = nullptr;
     GLuint framebuffer = 0;
 };
 

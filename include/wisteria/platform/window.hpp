@@ -1,7 +1,7 @@
 #pragma once
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/platform/input.hpp"
-#include "wisteria/rendering/graphics_share_group.hpp"
+#include "wisteria/rendering/graphics_context.hpp"
 #include "wisteria/scene/scene.hpp"
 #include <GLFW/glfw3.h>
 #include <memory>
@@ -39,6 +39,12 @@ public:
     GraphicsShareGroupToken ShareGroupToken() const noexcept
     {
         return this->shareGroupToken;
+    }
+    // R1.7 Final Fix: native context identity (GLFWwindow*). Each window is
+    // its own context; context-local GPU objects belong to this identity.
+    GraphicsContextToken ContextToken() const noexcept
+    {
+        return this->contextToken;
     }
     void MakeContextCurrent() const;
     void SwapBuffers() const;
@@ -83,6 +89,7 @@ private:
     WindowSize size;
     std::string title;
     GLFWwindow* window = nullptr;
+    GraphicsContextToken contextToken = nullptr;
     GraphicsShareGroupToken shareGroupToken = nullptr;
     // Non-owning device reference for the MakeCurrent lifecycle transaction
     // (flush pending GPU deletes after the share group becomes current).

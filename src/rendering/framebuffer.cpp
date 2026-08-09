@@ -56,6 +56,7 @@ Framebuffer::~Framebuffer()
 
 Framebuffer::Framebuffer(Framebuffer&& other) noexcept
     : device(std::exchange(other.device, nullptr)),
+      owningContext(std::exchange(other.owningContext, nullptr)),
       framebuffer(std::exchange(other.framebuffer, 0))
 {
 }
@@ -67,6 +68,7 @@ Framebuffer& Framebuffer::operator=(Framebuffer&& other) noexcept
 
     this->Release();
     this->device = std::exchange(other.device, nullptr);
+    this->owningContext = std::exchange(other.owningContext, nullptr);
     this->framebuffer = std::exchange(other.framebuffer, 0);
     return *this;
 }
@@ -76,6 +78,7 @@ void Framebuffer::Create()
     if (this->framebuffer != 0)
         return;
 
+    this->owningContext = GraphicsDevice::CurrentContext();
     glGenFramebuffers(1, &this->framebuffer);
     if (this->framebuffer == 0)
         throw std::runtime_error("Cannot create framebuffer");
@@ -146,7 +149,8 @@ void Framebuffer::Release() noexcept
         {
             this->device->DeleteResource(
                 GraphicsDevice::ResourceKind::Framebuffer,
-                this->framebuffer
+                this->framebuffer,
+                this->owningContext
             );
         }
         else
@@ -155,6 +159,7 @@ void Framebuffer::Release() noexcept
         }
     }
     this->framebuffer = 0;
+    this->owningContext = nullptr;
 }
 
 GLuint Framebuffer::Id() const noexcept

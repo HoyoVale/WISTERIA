@@ -119,7 +119,17 @@ public:
     explicit EglHeadlessContext(const HeadlessContextOptions& options)
         : options(options)
     {
-        this->Initialize();
+        try
+        {
+            this->Initialize();
+        }
+        catch (...)
+        {
+            // The destructor does not run for a failed construction; release
+            // any EGL display/context created before the exception.
+            this->DestroyResources();
+            throw;
+        }
     }
 
     ~EglHeadlessContext() override
@@ -148,10 +158,9 @@ public:
                 EglErrorString(eglGetError())
             );
         }
-        // R1.7 Phase 0C: register the provider's share group as current so
-        // GraphicsDevice::ContextIsCurrent() works for engine-owned
-        // resources. Pending-delete flushing belongs to the session that
-        // owns the GraphicsDevice (Phase 0D).
+        // R1.7 Final Fix: register both identities so GraphicsDevice can
+        // reason about context-local vs shared object ownership.
+        GraphicsDevice::SetCurrentContext(this->ContextToken());
         GraphicsDevice::SetCurrentShareGroup(this->ShareGroupToken());
     }
 
@@ -159,13 +168,25 @@ public:
     {
         if (this->display == EGL_NO_DISPLAY)
             return;
-        eglMakeCurrent(
+        if (!eglMakeCurrent(
             this->display,
             EGL_NO_SURFACE,
             EGL_NO_SURFACE,
             EGL_NO_CONTEXT
-        );
+        ))
+        {
+            throw std::runtime_error(
+                "eglMakeCurrent(EGL_NO_CONTEXT) failed: " +
+                EglErrorString(eglGetError())
+            );
+        }
+        GraphicsDevice::SetCurrentContext(nullptr);
         GraphicsDevice::SetCurrentShareGroup(nullptr);
+    }
+
+    GraphicsContextToken ContextToken() const noexcept override
+    {
+        return &this->contextIdentity;
     }
 
     GraphicsShareGroupToken ShareGroupToken() const noexcept override
@@ -210,8 +231,6 @@ public:
 
     bool IsSoftware() const noexcept override
     {
-        if (this->softwareSelected)
-            return true;
         return HasExtension(this->glRenderer, "llvmpipe") ||
             HasExtension(this->glRenderer, "softpipe") ||
             HasExtension(this->glRenderer, "swrast");
@@ -224,6 +243,13 @@ private:
         this->CreateContext();
         this->LoadGlFunctions();
         this->CaptureDiagnostics();
+        if (this->options.forceSoftware && !this->IsSoftware())
+        {
+            throw std::runtime_error(
+                "forceSoftware: GL_RENDERER is not a software renderer "
+                "(renderer=\"" + this->glRenderer + "\")"
+            );
+        }
     }
 
     static std::string QueryClientExtensions()
@@ -571,6 +597,7 @@ private:
             eglTerminate(this->display);
             this->displayInitialized = false;
         }
+        GraphicsDevice::SetCurrentContext(nullptr);
         GraphicsDevice::SetCurrentShareGroup(nullptr);
         this->display = EGL_NO_DISPLAY;
         this->shareGroupToken = nullptr;
@@ -593,6 +620,10 @@ private:
     struct ShareGroupIdentity
     {
     };
+    struct ContextIdentity
+    {
+    };
+    ContextIdentity contextIdentity;
     ShareGroupIdentity shareGroupIdentity;
     GraphicsShareGroupToken shareGroupToken = nullptr;
 };

@@ -286,12 +286,14 @@ void Application::Shutdown() noexcept
         const GraphicsShareGroupToken shareGroup =
             this->windowManager.ShareGroupToken();
         glfwMakeContextCurrent(resourceContext);
+        GraphicsDevice::SetCurrentContext(resourceContext);
         GraphicsDevice::SetCurrentShareGroup(shareGroup);
         // Verify the registered share group, then release every GPU
         // resource owned by the device (programs first, then resources whose
         // materials hold references into the same cache). The token is only
         // registered by Application::CreateWindow; callers that create
         // windows through WindowManager directly skip the assertion.
+        bool releaseSharedGlResources = true;
         if (this->graphicsDevice.HasShareGroupToken())
         {
             try
@@ -300,11 +302,18 @@ void Application::Shutdown() noexcept
             }
             catch (const std::exception& error)
             {
-                std::cerr << "[WARN] " << error.what() << '\n';
+                std::cerr
+                    << "[ERROR] share-group validation failed; skipping GL "
+                       "resource teardown: "
+                    << error.what() << '\n';
+                releaseSharedGlResources = false;
             }
         }
-        this->graphicsDevice.ReleaseAll();
-        this->resources.Clear();
+        if (releaseSharedGlResources)
+        {
+            this->graphicsDevice.ReleaseAll();
+            this->resources.Clear();
+        }
     }
 
     this->windowManager.DestroyAllWindows();
@@ -312,6 +321,7 @@ void Application::Shutdown() noexcept
     if (this->glfwInitialized)
     {
         glfwMakeContextCurrent(nullptr);
+        GraphicsDevice::SetCurrentContext(nullptr);
         GraphicsDevice::SetCurrentShareGroup(nullptr);
         ReleaseGlfw();
         this->glfwInitialized = false;

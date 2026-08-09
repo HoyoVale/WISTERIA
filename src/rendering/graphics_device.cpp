@@ -8,6 +8,7 @@ namespace wisteria
 {
 namespace
 {
+thread_local GraphicsContextToken gCurrentContext = nullptr;
 thread_local GraphicsShareGroupToken gCurrentShareGroup = nullptr;
 
 void DeleteObject(GraphicsDevice::ResourceKind kind, GLuint name) noexcept
@@ -84,6 +85,18 @@ std::size_t GraphicsDevice::ProgramCount() const noexcept
     return this->programs->Size();
 }
 
+void GraphicsDevice::SetCurrentContext(
+    GraphicsContextToken context
+) noexcept
+{
+    gCurrentContext = context;
+}
+
+GraphicsContextToken GraphicsDevice::CurrentContext() noexcept
+{
+    return gCurrentContext;
+}
+
 void GraphicsDevice::SetCurrentShareGroup(
     GraphicsShareGroupToken shareGroup
 ) noexcept
@@ -104,25 +117,77 @@ bool GraphicsDevice::ContextIsCurrent() const noexcept
         gCurrentShareGroup == this->shareGroupToken;
 }
 
-void GraphicsDevice::DeleteResource(ResourceKind kind, GLuint name) noexcept
+bool GraphicsDevice::ContextLocalIsCurrent(
+    GraphicsContextToken owner
+) noexcept
+{
+    // A null owner means legacy/unmanaged usage; the caller already
+    // guarantees a current context, so delete immediately.
+    return owner == nullptr || gCurrentContext == owner;
+}
+
+bool GraphicsDevice::IsSharedResource(ResourceKind kind) noexcept
+{
+    return kind == ResourceKind::Texture ||
+        kind == ResourceKind::Buffer ||
+        kind == ResourceKind::Renderbuffer;
+}
+
+void GraphicsDevice::DeleteResource(
+    ResourceKind kind,
+    GLuint name,
+    GraphicsContextToken owningContext
+) noexcept
 {
     if (name == 0U)
         return;
-    if (this->ContextIsCurrent())
+
+    if (IsSharedResource(kind))
+    {
+        if (this->ContextIsCurrent())
+        {
+            DeleteObject(kind, name);
+            return;
+        }
+        this->pendingDeletes.push_back(PendingDelete{kind, name, nullptr});
+        return;
+    }
+
+    if (ContextLocalIsCurrent(owningContext))
     {
         DeleteObject(kind, name);
         return;
     }
-    this->pendingDeletes.emplace_back(kind, name);
+    this->pendingDeletes.push_back(
+        PendingDelete{kind, name, owningContext}
+    );
 }
 
 void GraphicsDevice::FlushPendingDeletes() noexcept
 {
-    if (!this->ContextIsCurrent())
+    if (this->pendingDeletes.empty())
         return;
-    for (const auto& [kind, name] : this->pendingDeletes)
-        DeleteObject(kind, name);
-    this->pendingDeletes.clear();
+
+    std::vector<PendingDelete> remaining;
+    remaining.reserve(this->pendingDeletes.size());
+    for (const PendingDelete& entry : this->pendingDeletes)
+    {
+        if (IsSharedResource(entry.kind))
+        {
+            if (this->ContextIsCurrent())
+                DeleteObject(entry.kind, entry.name);
+            else
+                remaining.push_back(entry);
+        }
+        else
+        {
+            if (ContextLocalIsCurrent(entry.owningContext))
+                DeleteObject(entry.kind, entry.name);
+            else
+                remaining.push_back(entry);
+        }
+    }
+    this->pendingDeletes = std::move(remaining);
 }
 
 std::size_t GraphicsDevice::PendingDeleteCount() const noexcept

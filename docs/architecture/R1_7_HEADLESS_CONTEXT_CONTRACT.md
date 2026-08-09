@@ -112,13 +112,11 @@ OSMesa（留 v2/按需：若未来需要纯 CPU、直接渲染到用户内存、
 视频编码 / FFmpeg / Audio
 ```
 
-## 4. 接口草案（Phase 0B 冻结 share-group 语义与类型）
+## 4. 接口草案（双身份模型，Final Fix 后冻结）
 
 ```cpp
-// R1.7 Phase 0B：一个 OpenGL share group 的不透明身份。
-// 它标识的是"上下文组"，不是某个 native context handle。
-// 多个 native context（EGLContext / GLFWwindow / WGL context）
-// 只要属于同一个 share group，就必须映射到同一个 token。
+// R1.7 Final Fix：OpenGL 存在两个所有权域，必须双身份。
+using GraphicsContextToken = const void*;
 using GraphicsShareGroupToken = const void*;
 
 // include/wisteria/platform/headless_context.hpp（命名先冻结）
@@ -139,6 +137,7 @@ public:
     virtual void MakeCurrent() = 0;
     virtual void ReleaseCurrent() = 0;
 
+    virtual GraphicsContextToken ContextToken() const noexcept = 0;
     virtual GraphicsShareGroupToken ShareGroupToken() const noexcept = 0;
     virtual std::string_view ProviderName() const noexcept = 0;
     virtual std::string_view PlatformName() const noexcept = 0;
@@ -156,20 +155,40 @@ std::unique_ptr<IHeadlessContext> CreateHeadlessContext(
     const HeadlessContextOptions& options = {});
 ```
 
-**share-group identity 修正（Phase 0B 只冻结语义与类型，迁移在 0C）：**
+**对象所有权分域（Final Fix 冻结）：**
+
+```text
+Shared（按 ShareGroupToken 判断）：
+  Texture / Buffer / Renderbuffer / Shader / Program
+
+Context-local（按 ContextToken 判断）：
+  VertexArray / Framebuffer
+  后续 Query / TransformFeedback / ProgramPipeline 按规范归类
+
+删除规则：
+  shared object      → CurrentShareGroup == OwnerShareGroup 才可删
+  context-local      → CurrentContext == OwnerContext 才可删
+  context-local 排队项必须记录 owning ContextToken；
+  同 share group 的兄弟 context 不得 flush 它。
+```
+
+**share-group identity 修正（Phase 0B/0C 迁移，Final Fix 补齐）：**
 
 ```text
 旧语义（错误）：
   GraphicsDevice::contextToken = first GLFWwindow*
-  SetCurrentContext(window) / CurrentContext()
+  所有 ResourceKind 统一按 share group 判断
   → 第二个共享窗口 != token → ContextIsCurrent() == false
+  → VAO/FBO 在兄弟 context 上被误删（context-local 命名空间不同）
 
-新语义（冻结）：
+新语义（冻结，双身份）：
   GraphicsDevice owns ShareGroupToken（一个 share group 一个身份）
   SetShareGroupToken(...) / ShareGroupToken()
+  SetCurrentContext(...) / CurrentContext()（native context 身份）
   SetCurrentShareGroup(...) / CurrentShareGroup()
-  Native Context A/B/C ─→ ShareGroup #17
-  只要当前 native context 属于 #17，ContextIsCurrent() 成立
+  Native Context A/B ─→ ContextToken A/B ─→ ShareGroup #17
+  shared：当前 context 属于 #17 → 可删
+  context-local：当前 ContextToken == 创建它的 ContextToken → 可删
 ```
 
 **生命周期事务规则（冻结）：**
@@ -177,13 +196,17 @@ std::unique_ptr<IHeadlessContext> CreateHeadlessContext(
 ```text
 MakeCurrent
     ↓
+注册 current context token
+    ↓
 注册 current share-group
     ↓
-FlushPendingDeletes
+FlushPendingDeletes（shared 队列 + context-local 队列）
 ```
 
-"context 成为 current" 与 "处理该 share group 的 pending GPU deletes"
+"context 成为 current" 与 "处理该身份对应的 pending GPU deletes"
 是一个生命周期事务，不允许再依赖"下一帧 RenderAll 恰好帮我 flush"。
+销毁 native context 后必须清空 CurrentContextToken 与
+CurrentShareGroupToken。
 
 头文件依赖规则（不变）：
 
@@ -243,6 +266,8 @@ Phase 0E  四矩阵验证 + Final Closure
     └─ EGL_EXT_platform_device
 5.  EGL OpenGL 3.3 Core context 创建
 6.  software-device selection（forceSoftware 严格语义）
+    （Final Fix：创建后必须验证 GL_RENDERER 为 llvmpipe/softpipe/swrast；
+      D3D12/Intel/NVIDIA/AMD 一律 FAIL，不得仅凭设备扩展报告成功）
 7.  GL function loader（eglGetProcAddress + dlsym fallback）
 8.  diagnostics（EGL version/vendor、provider/platform、GL vendor/renderer/version）
 9.  wisteria_headless_smoke
@@ -268,7 +293,8 @@ Application 重构
 ### Phase 0C 范围（已批准）
 
 ```text
-1. GraphicsShareGroupToken 下沉到 rendering/graphics_share_group.hpp
+1. GraphicsContextToken + GraphicsShareGroupToken 下沉到
+   rendering/graphics_context.hpp
    （platform/headless_context.hpp 复用，依赖方向保持 rendering ← platform）
 2. GraphicsDevice API 迁移：
    SetShareGroupToken / ShareGroupToken / HasShareGroupToken /
@@ -303,6 +329,31 @@ Windows WGL / OSMesa / Stable C ABI
 渲染级 compatibility probe（0D/0E）
 ```
 
+### Final Fix（2026-08-09 二轮审查后，已实施）
+
+```text
+1. 新增 GraphicsContextToken，双身份：CurrentContextToken +
+   CurrentShareGroupToken；GraphicsShareGroupToken 不推翻
+2. 对象所有权分域：
+   shared（Texture/Buffer/Renderbuffer）按 share group 判断
+   context-local（VertexArray/Framebuffer）按 owning context 判断
+3. context-local deferred delete 记录 owning ContextToken；
+   兄弟 context 不得 flush
+4. Window::MakeContextCurrent：注册 ContextToken →
+   注册 ShareGroupToken → flush 两个队列
+5. Window::Release：context-local 资源在 owning context 释放；
+   glfwDestroyWindow 后清空两个 tracker
+6. ReleaseAll 的 ownership 校验失败 → 跳过 GL teardown（fail-stop）
+7. forceSoftware：GL_RENDERER 必须真是软件渲染器，D3D12 FAIL
+8. EglHeadlessContext 构造失败释放已创建 EGL 资源；
+   ReleaseCurrent 检查 eglMakeCurrent 返回值后再清 tracker
+9. 新测试：
+   render：双 context 所有权矩阵（共享 Texture 可跨删；
+     VAO/FBO 排队、兄弟 context 不 flush、owning context 释放）
+   integration：销毁当前 window context 后两个 tracker 为空
+10. 0B/0C baseline 修订
+```
+
 ## 7. 已拍板决策（2026-08-09）
 
 | 决策项 | 结论 |
@@ -313,6 +364,9 @@ Windows WGL / OSMesa / Stable C ABI
 | 无窗口入口 | 独立 `HeadlessRenderSession`（Phase 0D），不改 Application |
 | 软件回退 | 自动探测 + 显式 `forceSoftware`（严格语义） |
 | share-group | `GraphicsShareGroupToken` 替代 native context token（0B 冻结类型，0C 迁移） |
+| 双身份 | Final Fix：`GraphicsContextToken` + `GraphicsShareGroupToken` 并存 |
+| 严格 software gate | `forceSoftware` 必须验证 GL_RENDERER，D3D12 拒绝 |
+| teardown fail-stop | ownership 校验失败后不得继续 GL 删除 |
 
 软件回退严格语义：
 

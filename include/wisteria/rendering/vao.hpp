@@ -29,6 +29,9 @@ private:
     static std::size_t ParseTypeSize(DataType type);
 private:
     GraphicsDevice* device = nullptr;
+    // R1.7 Final Fix: vertex array objects are context-local; the native
+    // context that created this object must be current when it is deleted.
+    GraphicsContextToken owningContext = nullptr;
     GLuint vao = 0;
     std::unordered_map<unsigned int, std::string> attribList;
     unsigned int index = 0;

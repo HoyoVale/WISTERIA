@@ -568,6 +568,113 @@ int main()
             );
         }
 
+        // R1.7 Final Fix: two-context share-group ownership matrix.
+        // Context A and context B belong to one share group, but each has its
+        // own namespace for context-local objects (VAO/FBO).
+        {
+            GLFWwindow* sharedWindow = glfwCreateWindow(
+                4,
+                4,
+                "wisteria shared context B",
+                nullptr,
+                window
+            );
+            Require(
+                sharedWindow != nullptr,
+                "second shared GLFW context creation failed"
+            );
+
+            GraphicsDevice ownershipDevice;
+            // One share-group identity for both contexts.
+            ownershipDevice.SetShareGroupToken(window);
+
+            // Context A: create one shared object and two context-local ones.
+            glfwMakeContextCurrent(window);
+            GraphicsDevice::SetCurrentContext(window);
+            GraphicsDevice::SetCurrentShareGroup(window);
+            GLuint textureA = 0U;
+            GLuint vertexArrayA = 0U;
+            GLuint framebufferA = 0U;
+            glGenTextures(1, &textureA);
+            glGenVertexArrays(1, &vertexArrayA);
+            glGenFramebuffers(1, &framebufferA);
+            Require(
+                textureA != 0U && vertexArrayA != 0U &&
+                    framebufferA != 0U,
+                "ownership matrix object creation failed"
+            );
+
+            // Switch to B: same share group, different context.
+            glfwMakeContextCurrent(sharedWindow);
+            GraphicsDevice::SetCurrentContext(sharedWindow);
+            GraphicsDevice::SetCurrentShareGroup(window);
+
+            // Shared texture: legal to delete from any share-group context.
+            ownershipDevice.DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                textureA
+            );
+            Require(
+                ownershipDevice.PendingDeleteCount() == 0U,
+                "shared texture must delete immediately on a sibling "
+                "context"
+            );
+
+            // Context-local VAO/FBO: must queue, never delete on B.
+            ownershipDevice.DeleteResource(
+                GraphicsDevice::ResourceKind::VertexArray,
+                vertexArrayA,
+                window
+            );
+            ownershipDevice.DeleteResource(
+                GraphicsDevice::ResourceKind::Framebuffer,
+                framebufferA,
+                window
+            );
+            Require(
+                ownershipDevice.PendingDeleteCount() == 2U,
+                "context-local objects must queue on a sibling context"
+            );
+
+            // Flushing while B is current must not release A's local objects.
+            ownershipDevice.FlushPendingDeletes();
+            Require(
+                ownershipDevice.PendingDeleteCount() == 2U,
+                "sibling context must not flush context-local queue"
+            );
+
+            // Back on the owning context A: flush releases both.
+            glfwMakeContextCurrent(window);
+            GraphicsDevice::SetCurrentContext(window);
+            GraphicsDevice::SetCurrentShareGroup(window);
+            ownershipDevice.FlushPendingDeletes();
+            Require(
+                ownershipDevice.PendingDeleteCount() == 0U,
+                "owning context must flush context-local queue"
+            );
+
+            // Destroying the current context leaves both trackers empty.
+            glfwMakeContextCurrent(sharedWindow);
+            GraphicsDevice::SetCurrentContext(sharedWindow);
+            GraphicsDevice::SetCurrentShareGroup(window);
+            glfwDestroyWindow(sharedWindow);
+            GraphicsDevice::SetCurrentContext(nullptr);
+            GraphicsDevice::SetCurrentShareGroup(nullptr);
+            Require(
+                GraphicsDevice::CurrentContext() == nullptr &&
+                    GraphicsDevice::CurrentShareGroup() == nullptr,
+                "trackers must be empty after destroying the context"
+            );
+
+            // Restore context A for the remaining tests.
+            glfwMakeContextCurrent(window);
+            GraphicsDevice::SetCurrentContext(window);
+            GraphicsDevice::SetCurrentShareGroup(window);
+            std::printf(
+                "[RENDER FBO] two-context share-group ownership matrix\n"
+            );
+        }
+
         // Renderer VAO cache: a mesh destroyed while a VAO is cached must not
         // dangle; a later mesh at the same address rebuilds the VAO.
         {

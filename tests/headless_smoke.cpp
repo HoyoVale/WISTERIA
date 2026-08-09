@@ -174,6 +174,16 @@ int main(int argumentCount, char* arguments[])
         );
         return 1;
     }
+    if (options.forceSoftware && !context->IsSoftware())
+    {
+        std::fprintf(
+            stderr,
+            "[headless-smoke] FAIL: forceSoftware did not yield a software "
+            "renderer (renderer=%s)\n",
+            std::string(context->Renderer()).c_str()
+        );
+        return 1;
+    }
     PrintDiagnostics(*context);
 
     if (!RenderProbe(*context, 1.0f, 0.0f, 0.0f))

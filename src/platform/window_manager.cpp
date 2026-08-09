@@ -311,6 +311,7 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
     catch (...)
     {
         glfwMakeContextCurrent(previousContext);
+        GraphicsDevice::SetCurrentContext(previousContext);
         GraphicsDevice::SetCurrentShareGroup(
             this->ShareGroupTokenForContext(previousContext)
         );
@@ -319,6 +320,7 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
         throw;
     }
     glfwMakeContextCurrent(previousContext);
+    GraphicsDevice::SetCurrentContext(previousContext);
     GraphicsDevice::SetCurrentShareGroup(
         this->ShareGroupTokenForContext(previousContext)
     );
@@ -326,6 +328,7 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
         this->graphicsDevice->FlushPendingDeletes();
 
     Window& result = *window;
+    window->contextToken = window->GetGLFWwindow();
     window->shareGroupToken = this->ShareGroupToken();
     window->device = this->graphicsDevice;
     this->TrackScene(window->GetSceneHandle());

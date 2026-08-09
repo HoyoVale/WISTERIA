@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wisteria/rendering/graphics_share_group.hpp"
+#include "wisteria/rendering/graphics_context.hpp"
 
 #include <memory>
 #include <string_view>
@@ -34,6 +34,8 @@ public:
     virtual void MakeCurrent() = 0;
     virtual void ReleaseCurrent() = 0;
 
+    // Identity of this native context (context-local object owner).
+    virtual GraphicsContextToken ContextToken() const noexcept = 0;
     // Identity of the share group this context belongs to. Stable for the
     // lifetime of the context (and for every context sharing with it).
     virtual GraphicsShareGroupToken ShareGroupToken() const noexcept = 0;
