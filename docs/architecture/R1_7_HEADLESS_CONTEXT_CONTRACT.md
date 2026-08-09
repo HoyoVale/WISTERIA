@@ -1,6 +1,6 @@
 # R1.7 — True Headless Context Provider（契约草案）
 
-> 状态：**FROZEN v1.0（2026-08-09，四项决策已拍板）**
+> 状态：**FROZEN v1.0 + R1.7 CLOSED（2026-08-09，Phase 0A–0E 四矩阵验证通过）**
 > 前置：R1.6 Phase 0A–0E CLOSED（`R1_6_OFFLINE_OUTPUT_CONTRACT.md` 第 383 行：
 > `Phase 0F 拆为 R1.7 — Headless Context Provider`）。
 > 本文件只冻结 R1.7 的范围、边界、验收口径与阶段计划；精确接口字段在
@@ -211,7 +211,9 @@ CurrentShareGroupToken。
 头文件依赖规则（不变）：
 
 ```text
-platform/headless_context.hpp    只暴露 IHeadlessContext + options
+rendering/headless_context.hpp    暴露 IHeadlessContext + options
+                                  （无 EGL/GLFW 类型）
+platform/headless_context.hpp     只暴露 CreateHeadlessContext factory
 platform/egl_headless_context.cpp 私有包含 EGL 头（platform 层允许）
 core/rendering 不 include EGL / GLFW 类型
 ```
@@ -247,12 +249,13 @@ env -u DISPLAY -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
 ## 6. 阶段计划
 
 ```text
-Phase 0A  契约（本文档）——冻结范围与边界
-Phase 0B  HeadlessContext + EGL Provider（范围见下）
-Phase 0C  GraphicsDevice share-group identity + FlushPendingDeletes 修复
-          （范围见下）
-Phase 0D  Headless 渲染 session + OfflineFrameSequence 无窗口运行 + 测试
-Phase 0E  四矩阵验证 + Final Closure
+Phase 0A  契约（本文档）——冻结范围与边界                    ✅ CLOSED
+Phase 0B  HeadlessContext + EGL Provider（范围见下）         ✅ CLOSED
+Phase 0C  GraphicsDevice share-group identity +
+          FlushPendingDeletes 修复（范围见下）               ✅ CLOSED
+Phase 0D  Headless 渲染 session + OfflineFrameSequence
+          无窗口运行 + 测试（范围见下）                      ✅ CLOSED
+Phase 0E  四矩阵验证 + Final Closure                         ✅ CLOSED
 ```
 
 ### Phase 0B 范围（已批准）
@@ -373,6 +376,40 @@ smoke 新增断言：
 文档修正：
   --software + LIBGL_ALWAYS_SOFTWARE=1 实测 platform=device-software
   （不是 surfaceless）；0C 语义验收点 #1 改为 shared/context-local 分域措辞。
+```
+
+### Phase 0D 范围（已批准）
+
+```text
+1. IHeadlessContext / HeadlessContextOptions 下沉到
+   rendering/headless_context.hpp（无 EGL/GLFW 类型）；
+   platform/headless_context.hpp 只保留 CreateHeadlessContext factory
+2. HeadlessRenderSession（rendering/headless_render_session.hpp/.cpp）：
+   composition root = IHeadlessContext + GraphicsDevice +
+   ResourceManager + Renderer；不碰 Application
+3. Session MakeCurrent 事务：
+   provider MakeCurrent → 双身份注册 → FlushPendingDeletes
+4. 零窗口 RenderOffline：session.RenderOffline(scene, request)
+   复用 ::wisteria::RenderOffline（SceneFramebuffer → RGBA8）
+5. 零窗口 OfflineFrameSequence：
+   pmx_physics.pmx + Box.glb → RenderRange(0..2) →
+   PNG / manifest.jsonl / checkpoint-A/B.bin
+6. 渲染级 compatibility probe（WSL 默认软件回退口径）：
+   Box.glb + directional light 全链路渲染，RGBA8 非黑且不透明
+7. headless_smoke 扩展：
+   lifecycle + FBO + session probe + sequence probe
+8. Windows / WSL 双平台回归
+```
+
+Phase 0D **不做**：
+
+```text
+四矩阵/0E Final Closure
+Stable Render C ABI
+Windows WGL / OSMesa
+Application 零窗口模式
+多线程渲染
+视频编码 / Audio
 ```
 
 ## 7. 已拍板决策（2026-08-09）

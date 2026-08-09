@@ -201,6 +201,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/framebuffer.cpp
     src/rendering/frame_readback.cpp
     src/rendering/graphics_device.cpp
+    src/rendering/headless_render_session.cpp
     src/rendering/light.cpp
     src/rendering/material.cpp
     src/rendering/program_cache.cpp
