@@ -151,6 +151,24 @@ public:
         return std::nullopt;
     }
 
+    // R1.8: persistent morph overrides survive animation evaluation and are
+    // re-applied after every exact step / Update. Instantaneous control is
+    // SetMorphWeight; these entries create an override that outlives one
+    // evaluation. Backends without override support return false / no-op.
+    virtual bool SetMorphOverride(std::string_view name, float weight)
+    {
+        (void)name;
+        (void)weight;
+        return false;
+    }
+    virtual void ClearMorphOverride(std::string_view name)
+    {
+        (void)name;
+    }
+    virtual void ClearAllMorphOverrides()
+    {
+    }
+
     // Optional neutral morph enumeration/state. Backends without morphs
     // return 0 / false. This keeps ModelInstance independent of MMD types.
     virtual std::size_t MorphCount() const noexcept

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wisteria/runtime/checkpoint.hpp"
+#include "wisteria/runtime/generic_checkpoint.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,12 @@ inline constexpr std::uint32_t CheckpointPayloadKindMmdR12C = 1U;
 inline constexpr std::uint32_t CheckpointPayloadSchemaMmdR12C = 1U;
 inline constexpr std::uint32_t CheckpointBackendIdSabaMmd = 1U;
 inline constexpr std::uint32_t CheckpointDeterministicProfileColdStepV1 = 1U;
+
+// R1.8 Generic R1.8 payload (same R1.4 envelope, new kind).
+inline constexpr std::uint32_t CheckpointPayloadKindGenericR18 = 2U;
+inline constexpr std::uint32_t CheckpointPayloadSchemaGenericR18 = 1U;
+inline constexpr std::uint32_t CheckpointBackendIdWisteriaGeneric = 2U;
+inline constexpr std::uint32_t CheckpointDeterministicProfileGenericV1 = 2U;
 
 inline constexpr std::uint64_t CheckpointWireHeaderSize = 48U;
 
@@ -184,5 +191,20 @@ TimelineStatus DeserializeCheckpoint(
     std::size_t size,
     const CheckpointSerializationOptions& options,
     FrameCheckpoint& output
+);
+
+// R1.8: Generic payload kind 2 codec. Reuses the R1.4 wire envelope
+// (magic / version / kind / schema / backend / profile / build identity /
+// size / checksum); only the payload body is backend-specific.
+std::vector<std::uint8_t> SerializeGenericCheckpoint(
+    const GenericRuntimeCheckpoint& checkpoint,
+    const CheckpointSerializationOptions& options = {}
+);
+
+TimelineStatus DeserializeGenericCheckpoint(
+    const std::uint8_t* bytes,
+    std::size_t size,
+    const CheckpointSerializationOptions& options,
+    GenericRuntimeCheckpoint& output
 );
 }  // namespace wisteria

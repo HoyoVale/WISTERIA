@@ -1,6 +1,7 @@
 # R1.8 — Generic Deterministic Runtime（契约草案）
 
-> 状态：**DRAFT v0.1（2026-08-09，待用户审查冻结）**
+> 状态：**FROZEN v1.0（2026-08-09，五项决策 + deterministic subset 已拍板）；
+> Phase 0A CLOSED**
 > 前置：R1.7 Phase 0A–0D CLOSED，0E native-Linux gate 进行中；
 > R1.6 确定性/checkpoint 基础设施已冻结。
 > 方向：把 Saba MMD 特有能力（exact step / checkpoint / restore / replay）
@@ -83,39 +84,71 @@ RenderDevice / RenderGraph / Vulkan（R2.x）
 
 ## 4. 关键设计草案
 
-### 4.1 Generic 帧域（决策 1）
+### 4.1 Generic 帧域（决策 1，已冻结）
 
 ```text
-推荐：冻结 30Hz canonical（MotionFrameIndex = 30Hz 绝对帧）
+冻结：30Hz canonical（MotionFrameIndex = WISTERIA 确定性编排坐标）
   PrepareFrameZero       → 帧 0：active clip t=0（或 bind pose）
   StepMotionFrameExact(N) → 求值 animator 于绝对时间 N/30
   clip 循环：按 clip loop 语义（loop → wrap；不 loop → clamp end）
-  root motion：每个 exact step 边界消费一次（不跨步累积）
+  30Hz 是编排时钟，不是要求源 clip 重采样成 30fps；
+  AnimationClip 保持连续秒时间域，在 N/30 处采样
   无 physics tick；ReplayConfig.physicsHz 忽略但必须为 120 或默认
 
-备选：clip-native fps（每个 clip 自带帧率）
-  —— 更贴近 glTF 语义，但与 R1.2A 冻结的 30Hz 主循环不一致
+Generic 确定性帧域上限（float 时间精度边界）：
+  MotionFrameIndex <= 2^20（1,048,576 帧 ≈ 9.7 小时 @30Hz），
+  保证 N/30 在 float 下仍可分辨相邻帧；超出 → 明确拒绝
 ```
 
-### 4.2 Generic checkpoint payload（决策 2）
+### 4.2 Generic checkpoint payload（决策 2，已冻结）
 
 ```text
 CheckpointPayloadKindGenericR18 = 2
 CheckpointPayloadSchemaGenericR18 = 1
 CheckpointBackendIdWisteriaGeneric = 2
 
-payload 字段（草案）：
-  frame（MotionFrameIndex）
-  activeClipIndex（或 none）
-  animatorTimeSeconds（double，canonical = frame / motionFps 或其 wrap）
-  morphOverrides（sorted，复用 UserOverrideState 排序契约）
-  pendingRootMotion（linear + angular）
-  assetFingerprint（mesh/clip 哈希 + build compatibility id）
+GenericR18Payload v1（0C 冻结精确字节布局）：
+  identity
+  ├─ asset fingerprint
+  ├─ clip identity/index
+  └─ deterministic configuration
+  timeline
+  ├─ MotionFrameIndex
+  ├─ canonical time
+  ├─ looping
+  ├─ playing/paused（v1 = playing，不暂停）
+  └─ clip terminal/clamp state
+  morph
+  └─ sorted user overrides（复用 UserOverrideState 排序契约）
+  root motion
+  ├─ enabled
+  ├─ root bone identity/index
+  └─ pending delta
+  validation
+  └─ reject unsupported Animator transient state
 
 Saba R12C payload（kind 1）序列化/反序列化保持不变。
 ```
 
-### 4.3 确定性 capability（决策 5 附录）
+### Phase 0C 范围（已批准）
+
+```text
+1. GenericRuntimeCheckpoint 中性状态（timeline / morph overrides /
+   root motion 配置 + pending delta / asset fingerprint）
+2. IDeterministicCheckpoint 后端无关接口
+   （Saba 保留 R1.2C FrameCheckpoint 路径，0D 按 capability 分派）
+3. payload kind 2 codec：复用 R1.4 envelope（EnvelopeWriter /
+   ReadEnvelopeHeader 抽取），MMD R12C 字节布局不变
+4. Generic CreateCheckpoint / RestoreCheckpoint / ReplayFromCheckpoint：
+   subset gate、帧域、fingerprint、canonicalTime 一致性校验
+5. 持久 morph override：IModelRuntimeDriver 新增默认 false 接口；
+   Generic 每次 exact step / Update 后重放
+6. capability：deterministic checkpoint 三比特 + 镜像打开
+7. 测试：round trip + restore/replay 与 from-start 等价；
+   wire 篡改/截断/build 身份/语义拒绝；out-of-subset capture 拒绝
+```
+
+### 4.3 确定性 capability（已冻结）
 
 ```cpp
 struct DeterministicBackendCapabilities
@@ -128,12 +161,16 @@ struct DeterministicBackendCapabilities
 struct ModelRuntimeCapabilities
 {
     PhysicsBackendCapabilities physics;
-    DeterministicBackendCapabilities deterministic;  // 新增
-    // CheckpointBackendCapabilities 保留为兼容别名/迁移期字段
+    DeterministicBackendCapabilities deterministic;  // 新增，authoritative
+    // 迁移期镜像：checkpoint 域只 mirror deterministic，禁止双真相源
+    CheckpointBackendCapabilities checkpoint;
 };
 ```
 
-### 4.4 OfflineFrameSequence 通用化（决策 3）
+规则：`deterministic` 是唯一 authoritative source；
+旧 `checkpoint` 域只是镜像，出现不一致视为 backend contract violation。
+
+### 4.4 OfflineFrameSequence 通用化（决策 3，已冻结）
 
 ```text
 现状：OfflineFrameSequence(scene, renderer, MmdRuntimeModel&, instance, cfg)
@@ -146,12 +183,53 @@ struct ModelRuntimeCapabilities
       PublishCurrentRuntimeFrame 语义
 ```
 
+### 4.5 Root motion（决策 5，已冻结）
+
+```text
+每个 exact frame boundary 产生恰好一个 deterministic root-motion delta；
+delta 进入 runtime pending state（StepMotionFrameExact 内部不消费），
+由编排层消费至多一次；pending root-motion 状态 + 配置属于 checkpoint。
+
+PrepareFrameZero        → pendingRootMotion = identity
+Frame N > 0             → delta 来自 canonical interval [(N-1)/30, N/30]
+                          绝不依赖"上一次实际调用时的 Animator time"
+loop 跨界（29→30）      → 按 clip loop 语义计算跨界 delta
+
+同一资产 + 同一 deterministic config + 同一 checkpoint state + 同一 N
+→ 同一 evaluated terminal runtime state（坐标式求值，非累积模拟）
+```
+
+### 4.6 Generic Deterministic Mode v1 subset（额外冻结）
+
+```text
+SUPPORTED：
+  - single active AnimationClip
+  - canonical 30Hz exact timeline
+  - loop / non-loop
+  - pose
+  - animation-driven morph
+  - user morph overrides
+  - root-motion configuration + pending delta
+  - checkpoint / restore / replay（0C 起）
+
+NOT SUPPORTED（进入 sequence/checkpoint 时检测到 → 明确
+UnsupportedDeterministicState，绝不悄悄丢状态）：
+  - active CrossFade / transition
+  - active AnimationStateMachine（states/transitions 非空）
+  - trigger-in-flight / float/bool parameters 非空
+  - speed != 1.0
+  - paused
+  - MMD IK overrides 非空
+  - 其他 payload schema 未捕获的可变 Animator 状态
+```
+
 ## 5. 阶段计划
 
 ```text
-Phase 0A  契约（本文档）——冻结帧域、checkpoint 形态、sequence 通用化
+Phase 0A  契约（本文档）——五项决策 + subset 冻结          ✅ CLOSED
 Phase 0B  Generic PrepareFrameZero / StepMotionFrameExact + capability
-Phase 0C  Generic snapshot/restore + checkpoint payload kind 2
+          ✅ CLOSED
+Phase 0C  Generic snapshot/restore + checkpoint payload kind 2          ✅ CLOSED
 Phase 0D  OfflineFrameSequence 运行时无关化 + 零窗口 Generic 序列
 Phase 0E  四矩阵 + Final Closure
 ```
@@ -169,16 +247,16 @@ Phase 0E  四矩阵 + Final Closure
 6. 四矩阵全绿
 ```
 
-## 7. 开放决策（需要用户拍板）
+## 7. 已拍板决策（2026-08-09）
 
 ```text
-1. Generic 帧域：30Hz canonical（推荐）还是 clip-native fps？
-2. Checkpoint 形态：新增 payload kind 2（推荐）还是统一后端无关模型？
-3. OfflineFrameSequence：改为 IModelRuntimeDriver + capability 门控
-   （推荐）还是保留 MmdRuntimeModel 签名 + 新增 Generic 并行类？
-4. exact step 时间原点：绝对时间 N/30 + clip 循环语义（推荐）
-   还是每次从 clip 0 重放？
-5. root motion：exact step 边界消费一次并纳入 checkpoint（推荐）
-   还是 exact step 不消费 root motion？
+1. Generic 帧域 = canonical 30Hz（编排坐标）；源 clip 保持连续时间域
+2. Checkpoint = R1.4 envelope + payload kind 2；MMD R12C 保持兼容
+3. OfflineFrameSequence = IModelRuntimeDriver& + capability/interface 门控；
+   禁止 Generic 并行序列类
+4. StepMotionFrameExact(N) = 绝对边界 N/30，禁止每步从 0 重放
+5. 每个 exact boundary 一个 deterministic root delta → pending state →
+   编排层消费至多一次；checkpoint 保存 pending + 配置
+6. Generic deterministic v1 subset（见 4.6）；
+   不支持状态显式失败，禁止部分 checkpoint
 ```
-

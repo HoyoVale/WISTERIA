@@ -392,8 +392,12 @@ std::uint32_t wisteria_stable_entity_capabilities(
             mmd->Capabilities();
         capabilities->struct_size = sizeof(*capabilities);
         capabilities->struct_version = 1U;
-        capabilities->capability_flags =
-            WISTERIA_CAP_SUPPORTS_DETERMINISTIC_EXACT_FRAME;
+        capabilities->capability_flags = 0U;
+        if (core.deterministic.supportsExactFrameStepping)
+        {
+            capabilities->capability_flags |=
+                WISTERIA_CAP_SUPPORTS_DETERMINISTIC_EXACT_FRAME;
+        }
         if (core.physics.supportsSnapshotCapture)
         {
             capabilities->capability_flags |=
@@ -404,18 +408,19 @@ std::uint32_t wisteria_stable_entity_capabilities(
             capabilities->capability_flags |=
                 WISTERIA_CAP_SUPPORTS_SNAPSHOT_RESTORE;
         }
-        if (core.checkpoint.supportsCheckpointCapture)
+        // R1.8: deterministic is authoritative; checkpoint is a mirror.
+        if (core.deterministic.supportsCheckpointCapture)
         {
             capabilities->capability_flags |=
                 WISTERIA_CAP_SUPPORTS_CHECKPOINT_CAPTURE |
                 WISTERIA_CAP_SUPPORTS_CHECKPOINT_SERIALIZATION;
         }
-        if (core.checkpoint.supportsCheckpointRestore)
+        if (core.deterministic.supportsCheckpointRestore)
         {
             capabilities->capability_flags |=
                 WISTERIA_CAP_SUPPORTS_CHECKPOINT_RESTORE;
         }
-        if (core.checkpoint.supportsReplayFromCheckpoint)
+        if (core.deterministic.supportsReplayFromCheckpoint)
         {
             capabilities->capability_flags |=
                 WISTERIA_CAP_SUPPORTS_REPLAY_FROM_CHECKPOINT;

@@ -163,10 +163,25 @@ struct CheckpointBackendCapabilities
     bool supportsReplayFromCheckpoint = false;
 };
 
+// R1.8: deterministic timeline capabilities. This is the authoritative
+// source for deterministic/checkpoint capability queries. The legacy
+// CheckpointBackendCapabilities field in ModelRuntimeCapabilities is a
+// migration mirror only and must always equal this struct; divergence is a
+// backend contract violation.
+struct DeterministicBackendCapabilities
+{
+    bool supportsExactFrameStepping = false;
+    bool supportsCheckpointCapture = false;
+    bool supportsCheckpointRestore = false;
+    bool supportsReplayFromCheckpoint = false;
+};
+
 // Runtime capability description (not per-frame state).
 struct ModelRuntimeCapabilities
 {
     PhysicsBackendCapabilities physics;
+    DeterministicBackendCapabilities deterministic;
+    // Migration mirror only; never an independent truth source.
     CheckpointBackendCapabilities checkpoint;
 };
 

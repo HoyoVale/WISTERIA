@@ -3110,6 +3110,11 @@ ModelRuntimeCapabilities SabaMmdRuntimeModel::Capabilities() const
     // R1.2C: the equivalence matrix is green, so the checkpoint surface is
     // open. These bits must stay false until restore->replay == from-start
     // actually holds on the supported 30/120 profile.
+    // R1.8: deterministic is the authoritative source; checkpoint mirrors it.
+    capabilities.deterministic.supportsExactFrameStepping = true;
+    capabilities.deterministic.supportsCheckpointCapture = true;
+    capabilities.deterministic.supportsCheckpointRestore = true;
+    capabilities.deterministic.supportsReplayFromCheckpoint = true;
     capabilities.checkpoint.supportsCheckpointCapture = true;
     capabilities.checkpoint.supportsCheckpointRestore = true;
     capabilities.checkpoint.supportsReplayFromCheckpoint = true;

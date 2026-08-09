@@ -2,9 +2,12 @@
 #include "procedural_canary.hpp"
 #include "wisteria/common/png_encoder.hpp"
 #include "wisteria/rendering/bmp_writer.hpp"
+#include "wisteria/runtime/checkpoint_serialization.hpp"
+#include "wisteria/runtime/wisteria_generic_runtime_driver.hpp"
 #include "wisteria/vendor/stb_image.h"
 
 #include <fstream>
+#include <functional>
 
 namespace
 {
@@ -1173,6 +1176,614 @@ void TestEnvironmentResourceAndSceneBinding()
 
 }
 
+// R1.8 Phase 0B helpers.
+void ConfigureR18GenericTimelineAsset(ModelAsset& model)
+{
+    Bone root;
+    root.name = "root";
+    root.parentIndex = InvalidBoneIndex;
+    root.bindLocalMatrix = glm::mat4(1.0f);
+    root.inverseBindMatrix = glm::mat4(1.0f);
+    std::vector<Bone> bones;
+    bones.push_back(root);
+
+    model.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    model.SetSkeleton(Skeleton(std::move(bones)));
+
+    MorphDefinition blinkMorph;
+    blinkMorph.name = "blink";
+    blinkMorph.category = MorphCategory::Other;
+    blinkMorph.kind = MorphKind::Vertex;
+    model.SetMorphs(std::vector<MorphDefinition>{blinkMorph});
+
+    // Root bone translates x: 0 at t=0 -> 2 at t=1 (clip duration 1s).
+    std::vector<VectorKeyframe> translationKeys;
+    translationKeys.push_back(VectorKeyframe{
+        .time = 0.0f,
+        .value = glm::vec3(0.0f, 0.0f, 0.0f)
+    });
+    translationKeys.push_back(VectorKeyframe{
+        .time = 1.0f,
+        .value = glm::vec3(2.0f, 0.0f, 0.0f)
+    });
+    std::vector<AnimationTrack> tracks;
+    tracks.emplace_back(0U, translationKeys);
+    model.AddAnimationClip(AnimationClip("walk", 1.0f, std::move(tracks)));
+
+    // Second clip used by subset-rejection tests (crossfade destination).
+    std::vector<AnimationTrack> secondTracks;
+    secondTracks.emplace_back(0U, translationKeys);
+    model.AddAnimationClip(
+        AnimationClip("walk2", 1.0f, std::move(secondTracks))
+    );
+}
+
+std::unique_ptr<WisteriaGenericRuntimeDriver> CreateR18GenericRuntime(
+    const ModelAsset& model
+)
+{
+    auto runtime = std::make_unique<WisteriaGenericRuntimeDriver>(model);
+    Require(
+        runtime->Initialize(),
+        "R1.8 generic runtime initialize failed"
+    );
+    return runtime;
+}
+
+void TestR18GenericPrepareFrameZeroAndExactStep()
+{
+    ModelAsset model("r18-generic-deterministic");
+    ConfigureR18GenericTimelineAsset(model);
+    auto runtimeA = CreateR18GenericRuntime(model);
+    auto runtimeB = CreateR18GenericRuntime(model);
+
+    const ReplayConfig config{30U, 120U, 0U, false};
+    Require(
+        runtimeA->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 PrepareFrameZero failed (A)"
+    );
+    Require(
+        runtimeB->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 PrepareFrameZero failed (B)"
+    );
+    Require(
+        runtimeA->TryGetPose()->LocalMatrix(0U) ==
+            runtimeB->TryGetPose()->LocalMatrix(0U),
+        "R1.8 frame 0 pose mismatch between instances"
+    );
+
+    for (MotionFrameIndex frame = 1U; frame <= 60U; ++frame)
+    {
+        Require(
+            runtimeA->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "R1.8 exact step failed (A)"
+        );
+        Require(
+            runtimeB->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "R1.8 exact step failed (B)"
+        );
+    }
+    Require(
+        runtimeA->TryGetPose()->LocalMatrix(0U) ==
+            runtimeB->TryGetPose()->LocalMatrix(0U),
+        "R1.8 frame 60 pose mismatch between instances"
+    );
+    // Non-looping: 60/30 = 2s clamps to clip duration 1s -> x = 2.
+    Require(
+        NearlyEqual(
+            runtimeA->TryGetPose()->LocalMatrix(0U)[3].x,
+            2.0f
+        ),
+        "R1.8 non-looping clamp did not reach the clip end"
+    );
+
+    // State machine rejections.
+    auto fresh = CreateR18GenericRuntime(model);
+    Require(
+        fresh->StepMotionFrameExact(1U, config) ==
+            TimelineStatus::InvalidState,
+        "R1.8 exact step before PrepareFrameZero was accepted"
+    );
+    Require(
+        fresh->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 fresh PrepareFrameZero failed"
+    );
+    Require(
+        fresh->StepMotionFrameExact(2U, config) ==
+            TimelineStatus::NonSequentialFrame,
+        "R1.8 non-sequential frame was accepted"
+    );
+    ReplayConfig drifted = config;
+    drifted.motionFps = 60U;
+    Require(
+        fresh->StepMotionFrameExact(1U, drifted) ==
+            TimelineStatus::DeterminismViolation,
+        "R1.8 config drift was accepted"
+    );
+}
+
+void TestR18GenericLoopAndClampSemantics()
+{
+    ModelAsset model("r18-generic-loop");
+    ConfigureR18GenericTimelineAsset(model);
+
+    // Looping: frame 30 is exactly one clip duration -> wraps to t=0.
+    auto loopRuntime = CreateR18GenericRuntime(model);
+    const ReplayConfig loopConfig{30U, 120U, 0U, true};
+    Require(
+        loopRuntime->PrepareFrameZero(loopConfig) == TimelineStatus::Ok,
+        "R1.8 loop PrepareFrameZero failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 30U; ++frame)
+    {
+        Require(
+            loopRuntime->StepMotionFrameExact(frame, loopConfig) ==
+                TimelineStatus::Ok,
+            "R1.8 loop exact step failed"
+        );
+    }
+    Require(
+        NearlyEqual(loopRuntime->TryGetAnimator()->Time(), 0.0f) &&
+            NearlyEqual(
+                loopRuntime->TryGetPose()->LocalMatrix(0U)[3].x,
+                0.0f
+            ),
+        "R1.8 loop did not wrap at the clip boundary"
+    );
+    Require(
+        loopRuntime->StepMotionFrameExact(31U, loopConfig) ==
+            TimelineStatus::Ok,
+        "R1.8 loop frame 31 failed"
+    );
+    Require(
+        NearlyEqual(
+            loopRuntime->TryGetPose()->LocalMatrix(0U)[3].x,
+            2.0f / 30.0f
+        ),
+        "R1.8 loop did not continue after wrap"
+    );
+
+    // Non-looping clamp: after the clip end, time and pose stay fixed.
+    auto clampRuntime = CreateR18GenericRuntime(model);
+    const ReplayConfig clampConfig{30U, 120U, 0U, false};
+    Require(
+        clampRuntime->PrepareFrameZero(clampConfig) == TimelineStatus::Ok,
+        "R1.8 clamp PrepareFrameZero failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 31U; ++frame)
+    {
+        Require(
+            clampRuntime->StepMotionFrameExact(frame, clampConfig) ==
+                TimelineStatus::Ok,
+            "R1.8 clamp exact step failed"
+        );
+    }
+    Require(
+        NearlyEqual(clampRuntime->TryGetAnimator()->Time(), 1.0f) &&
+            NearlyEqual(
+                clampRuntime->TryGetPose()->LocalMatrix(0U)[3].x,
+                2.0f
+            ),
+        "R1.8 non-looping clamp moved after the clip end"
+    );
+}
+
+void TestR18GenericRootMotionCanonicalDelta()
+{
+    ModelAsset model("r18-generic-root-motion");
+    ConfigureR18GenericTimelineAsset(model);
+    auto runtime = CreateR18GenericRuntime(model);
+    runtime->TryGetAnimator()->SetRootMotionBone(0U);
+    runtime->TryGetAnimator()->SetRootMotionEnabled(true);
+
+    const ReplayConfig config{30U, 120U, 0U, false};
+    Require(
+        runtime->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 root-motion PrepareFrameZero failed"
+    );
+    const RootMotionDelta frameZero = runtime->ConsumeRootMotion();
+    Require(
+        NearlyEqual(frameZero.translation.x, 0.0f) &&
+            NearlyEqual(frameZero.translation.y, 0.0f) &&
+            NearlyEqual(frameZero.translation.z, 0.0f),
+        "R1.8 frame 0 root motion must be identity"
+    );
+
+    Require(
+        runtime->StepMotionFrameExact(1U, config) == TimelineStatus::Ok,
+        "R1.8 root-motion frame 1 failed"
+    );
+    const RootMotionDelta first = runtime->ConsumeRootMotion();
+    Require(
+        NearlyEqual(first.translation.x, 2.0f / 30.0f),
+        "R1.8 canonical interval delta [0, 1/30] is wrong"
+    );
+    const RootMotionDelta secondConsume = runtime->ConsumeRootMotion();
+    Require(
+        NearlyEqual(secondConsume.translation.x, 0.0f),
+        "R1.8 root motion must be consumed exactly once"
+    );
+
+    Require(
+        runtime->StepMotionFrameExact(2U, config) == TimelineStatus::Ok,
+        "R1.8 root-motion frame 2 failed"
+    );
+    const RootMotionDelta second = runtime->ConsumeRootMotion();
+    Require(
+        NearlyEqual(second.translation.x, 2.0f / 30.0f),
+        "R1.8 canonical interval delta [1/30, 2/30] is wrong"
+    );
+}
+
+void TestR18GenericUnsupportedDeterministicState()
+{
+    ModelAsset model("r18-generic-subset-gate");
+    ConfigureR18GenericTimelineAsset(model);
+    const ReplayConfig config{30U, 120U, 0U, false};
+
+    const auto expectRejected =
+        [&](const std::function<void(WisteriaGenericRuntimeDriver&)>& mutate)
+    {
+        auto runtime = CreateR18GenericRuntime(model);
+        Require(
+            runtime->PrepareFrameZero(config) == TimelineStatus::Ok,
+            "R1.8 subset-gate prepare failed"
+        );
+        mutate(*runtime);
+        Require(
+            runtime->StepMotionFrameExact(1U, config) ==
+                TimelineStatus::UnsupportedDeterministicState,
+            "R1.8 out-of-subset animator state was accepted"
+        );
+    };
+
+    expectRejected([](WisteriaGenericRuntimeDriver& runtime)
+    {
+        runtime.TryGetAnimator()->Pause();
+    });
+    expectRejected([](WisteriaGenericRuntimeDriver& runtime)
+    {
+        runtime.TryGetAnimator()->SetSpeed(2.0f);
+    });
+    expectRejected([](WisteriaGenericRuntimeDriver& runtime)
+    {
+        runtime.TryGetAnimator()->SetFloat("param", 1.0f);
+    });
+    expectRejected([](WisteriaGenericRuntimeDriver& runtime)
+    {
+        runtime.TryGetAnimator()->SetTrigger("trigger");
+    });
+    expectRejected([&model](WisteriaGenericRuntimeDriver& runtime)
+    {
+        runtime.TryGetAnimator()->GetStateMachine().AddState(
+            AnimationState{
+                .name = "state",
+                .clip = &model.AnimationClipAt(0U),
+                .speed = 1.0f,
+                .looping = true
+            }
+        );
+    });
+    expectRejected([&model](WisteriaGenericRuntimeDriver& runtime)
+    {
+        runtime.TryGetAnimator()->CrossFade(
+            model.AnimationClipAt(1U),
+            0.5f
+        );
+    });
+}
+
+void TestR18GenericCapabilityAdvertisement()
+{
+    ModelAsset model("r18-generic-capabilities");
+    ConfigureR18GenericTimelineAsset(model);
+    auto runtime = CreateR18GenericRuntime(model);
+    const ModelRuntimeCapabilities capabilities = runtime->Capabilities();
+    Require(
+        capabilities.deterministic.supportsExactFrameStepping,
+        "R1.8 generic timeline must advertise exact stepping"
+    );
+    Require(
+        capabilities.deterministic.supportsCheckpointCapture &&
+            capabilities.deterministic.supportsCheckpointRestore &&
+            capabilities.deterministic.supportsReplayFromCheckpoint,
+        "R1.8 Phase 0C generic checkpoint capabilities must be open"
+    );
+    Require(
+        capabilities.checkpoint.supportsCheckpointCapture ==
+                capabilities.deterministic.supportsCheckpointCapture &&
+            capabilities.checkpoint.supportsCheckpointRestore ==
+                capabilities.deterministic.supportsCheckpointRestore &&
+            capabilities.checkpoint.supportsReplayFromCheckpoint ==
+                capabilities.deterministic.supportsReplayFromCheckpoint,
+        "R1.8 checkpoint mirror diverged from deterministic source"
+    );
+
+    ModelAsset plain("r18-generic-plain");
+    plain.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    WisteriaGenericRuntimeDriver plainRuntime(plain);
+    Require(
+        !plainRuntime.Initialize(),
+        "R1.8 plain generic asset initialized"
+    );
+    Require(
+        !plainRuntime.Capabilities().deterministic.supportsExactFrameStepping,
+        "R1.8 no-timeline generic advertised exact stepping"
+    );
+}
+
+void TestR18GenericCheckpointRoundTripAndReplay()
+{
+    ModelAsset model("r18-generic-checkpoint");
+    ConfigureR18GenericTimelineAsset(model);
+    const ReplayConfig config{30U, 120U, 0U, false};
+
+    // Source: root motion + morph override, prepare, step to frame 15.
+    auto source = CreateR18GenericRuntime(model);
+    source->TryGetAnimator()->SetRootMotionBone(0U);
+    source->TryGetAnimator()->SetRootMotionEnabled(true);
+    Require(
+        source->SetMorphOverride("blink", 0.5f),
+        "R1.8 source morph override was rejected"
+    );
+    Require(
+        source->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 checkpoint source prepare failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 15U; ++frame)
+    {
+        Require(
+            source->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "R1.8 checkpoint source step failed"
+        );
+    }
+
+    GenericRuntimeCheckpoint checkpoint;
+    Require(
+        source->CreateCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.8 CreateCheckpoint failed"
+    );
+    Require(
+        checkpoint.frame == 15U &&
+            checkpoint.activeClipIndex.has_value() &&
+            *checkpoint.activeClipIndex == 0U &&
+            checkpoint.rootMotionEnabled &&
+            checkpoint.rootMotionBoneIndex.has_value() &&
+            *checkpoint.rootMotionBoneIndex == 0U &&
+            checkpoint.morphOverrides.size() == 1U &&
+            checkpoint.morphOverrides[0].first == "blink" &&
+            NearlyEqual(checkpoint.morphOverrides[0].second, 0.5f) &&
+            checkpoint.assetFingerprint != 0U,
+        "R1.8 checkpoint payload fields are incomplete"
+    );
+
+    // Wire round trip.
+    const std::vector<std::uint8_t> wire =
+        SerializeGenericCheckpoint(checkpoint);
+    GenericRuntimeCheckpoint decoded;
+    Require(
+        DeserializeGenericCheckpoint(
+            wire.data(),
+            wire.size(),
+            {},
+            decoded
+        ) == TimelineStatus::Ok,
+        "R1.8 generic checkpoint wire round trip failed"
+    );
+    Require(
+        decoded.frame == checkpoint.frame &&
+            NearlyEqual(
+                decoded.canonicalTime,
+                checkpoint.canonicalTime
+            ) &&
+            decoded.morphOverrides == checkpoint.morphOverrides &&
+            decoded.assetFingerprint == checkpoint.assetFingerprint,
+        "R1.8 decoded checkpoint diverged from source"
+    );
+
+    // Reference: from-start to frame 30.
+    auto reference = CreateR18GenericRuntime(model);
+    reference->TryGetAnimator()->SetRootMotionBone(0U);
+    reference->TryGetAnimator()->SetRootMotionEnabled(true);
+    Require(
+        reference->SetMorphOverride("blink", 0.5f),
+        "R1.8 reference morph override was rejected"
+    );
+    Require(
+        reference->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 reference prepare failed"
+    );
+    for (MotionFrameIndex frame = 1U; frame <= 30U; ++frame)
+    {
+        Require(
+            reference->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "R1.8 reference step failed"
+        );
+    }
+
+    // Restore + continue.
+    auto restored = CreateR18GenericRuntime(model);
+    Require(
+        restored->RestoreCheckpoint(decoded) == TimelineStatus::Ok,
+        "R1.8 RestoreCheckpoint failed"
+    );
+    for (MotionFrameIndex frame = 16U; frame <= 30U; ++frame)
+    {
+        Require(
+            restored->StepMotionFrameExact(frame, config) ==
+                TimelineStatus::Ok,
+            "R1.8 restored step failed"
+        );
+    }
+    Require(
+        restored->TryGetPose()->LocalMatrix(0U) ==
+            reference->TryGetPose()->LocalMatrix(0U),
+        "R1.8 restore+continue pose diverged from from-start"
+    );
+    Require(
+        NearlyEqual(
+            restored->TryGetAnimator()->Time(),
+            reference->TryGetAnimator()->Time()
+        ) &&
+            NearlyEqual(
+                restored->MorphWeight("blink").value_or(-1.0f),
+                reference->MorphWeight("blink").value_or(-2.0f)
+            ),
+        "R1.8 restore+continue time/morph diverged"
+    );
+    const RootMotionDelta restoredDelta = restored->ConsumeRootMotion();
+    const RootMotionDelta referenceDelta = reference->ConsumeRootMotion();
+    Require(
+        NearlyEqual(
+            restoredDelta.translation.x,
+            referenceDelta.translation.x
+        ) &&
+            NearlyEqual(
+                restoredDelta.translation.y,
+                referenceDelta.translation.y
+            ) &&
+            NearlyEqual(
+                restoredDelta.translation.z,
+                referenceDelta.translation.z
+            ),
+        "R1.8 restore+continue root delta diverged"
+    );
+
+    // ReplayFromCheckpoint to the same target.
+    auto replayed = CreateR18GenericRuntime(model);
+    Require(
+        replayed->ReplayFromCheckpoint(decoded, 30U) == TimelineStatus::Ok,
+        "R1.8 ReplayFromCheckpoint failed"
+    );
+    Require(
+        replayed->TryGetPose()->LocalMatrix(0U) ==
+            reference->TryGetPose()->LocalMatrix(0U),
+        "R1.8 replay pose diverged from from-start"
+    );
+
+    // Capture requires a prepared deterministic state.
+    auto unprepared = CreateR18GenericRuntime(model);
+    GenericRuntimeCheckpoint unused;
+    Require(
+        unprepared->CreateCheckpoint(unused) ==
+            TimelineStatus::InvalidState,
+        "R1.8 checkpoint capture before prepare was accepted"
+    );
+}
+
+void TestR18GenericCheckpointRejections()
+{
+    ModelAsset model("r18-generic-checkpoint-reject");
+    ConfigureR18GenericTimelineAsset(model);
+    const ReplayConfig config{30U, 120U, 0U, false};
+
+    auto runtime = CreateR18GenericRuntime(model);
+    Require(
+        runtime->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 rejection prepare failed"
+    );
+    runtime->StepMotionFrameExact(1U, config);
+    GenericRuntimeCheckpoint checkpoint;
+    Require(
+        runtime->CreateCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.8 rejection checkpoint capture failed"
+    );
+
+    // Wire tampering: flip one payload byte.
+    std::vector<std::uint8_t> wire = SerializeGenericCheckpoint(checkpoint);
+    wire[CheckpointWireHeaderSize] ^= 0xFFU;
+    GenericRuntimeCheckpoint output;
+    Require(
+        DeserializeGenericCheckpoint(
+            wire.data(),
+            wire.size(),
+            {},
+            output
+        ) == TimelineStatus::InvalidCheckpoint,
+        "R1.8 tampered wire was accepted"
+    );
+
+    // Truncation.
+    Require(
+        DeserializeGenericCheckpoint(
+            wire.data(),
+            wire.size() - 1U,
+            {},
+            output
+        ) == TimelineStatus::InvalidCheckpoint,
+        "R1.8 truncated wire was accepted"
+    );
+
+    // Build compatibility mismatch.
+    CheckpointSerializationOptions writerOptions;
+    writerOptions.buildCompatibilityIdOverride = 12345U;
+    const std::vector<std::uint8_t> foreignWire =
+        SerializeGenericCheckpoint(checkpoint, writerOptions);
+    Require(
+        DeserializeGenericCheckpoint(
+            foreignWire.data(),
+            foreignWire.size(),
+            {},
+            output
+        ) == TimelineStatus::InvalidCheckpoint,
+        "R1.8 foreign build identity was accepted"
+    );
+
+    // Semantic restore rejections.
+    GenericRuntimeCheckpoint invalid = checkpoint;
+    invalid.activeClipIndex = 99U;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 invalid clip index was accepted"
+    );
+    invalid = checkpoint;
+    invalid.assetFingerprint = 7U;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 wrong asset fingerprint was accepted"
+    );
+    invalid = checkpoint;
+    invalid.frame = 1U << 21;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 out-of-domain frame was accepted"
+    );
+    invalid = checkpoint;
+    invalid.canonicalTime += 0.5f;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 mismatched canonical time was accepted"
+    );
+    invalid = checkpoint;
+    invalid.morphOverrides = {{"unknown", 0.5f}};
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 unknown morph override was accepted"
+    );
+
+    // Capture while out of subset must fail explicitly.
+    auto transient = CreateR18GenericRuntime(model);
+    Require(
+        transient->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 transient prepare failed"
+    );
+    transient->TryGetAnimator()->Pause();
+    Require(
+        transient->CreateCheckpoint(output) ==
+            TimelineStatus::UnsupportedDeterministicState,
+        "R1.8 out-of-subset capture was accepted"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -1235,6 +1846,34 @@ int main()
     failures += !RunTest(
         "Environment resource and Scene binding",
         TestEnvironmentResourceAndSceneBinding
+    );
+    failures += !RunTest(
+        "R1.8 generic PrepareFrameZero + exact step",
+        TestR18GenericPrepareFrameZeroAndExactStep
+    );
+    failures += !RunTest(
+        "R1.8 generic loop and clamp semantics",
+        TestR18GenericLoopAndClampSemantics
+    );
+    failures += !RunTest(
+        "R1.8 generic root-motion canonical delta",
+        TestR18GenericRootMotionCanonicalDelta
+    );
+    failures += !RunTest(
+        "R1.8 generic unsupported deterministic state",
+        TestR18GenericUnsupportedDeterministicState
+    );
+    failures += !RunTest(
+        "R1.8 generic capability advertisement",
+        TestR18GenericCapabilityAdvertisement
+    );
+    failures += !RunTest(
+        "R1.8 generic checkpoint round trip + replay",
+        TestR18GenericCheckpointRoundTripAndReplay
+    );
+    failures += !RunTest(
+        "R1.8 generic checkpoint rejections",
+        TestR18GenericCheckpointRejections
     );
     return failures == 0 ? 0 : 1;
 }

@@ -51,6 +51,11 @@ enum class TimelineStatus
     InvalidSnapshot,       // invalid values: non-finite, bad rotation basis,
                            // missing canonical claim
     Poisoned,              // write-phase failure; instance must be rebuilt
+    // R1.8: backend is deterministic-capable but the current runtime state
+    // is outside the frozen deterministic subset (e.g. active crossfade,
+    // state machine, in-flight trigger, non-1 speed, paused, IK overrides).
+    // The state is rejected explicitly; it is never partially checkpointed.
+    UnsupportedDeterministicState,
 };
 
 // Read-only diagnostics of the last canonical frame boundary. executedSubsteps

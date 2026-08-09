@@ -41,6 +41,23 @@ public:
     void SetSpeed(float speed);
     std::uint64_t DiscontinuityRevision() const noexcept;
 
+    // R1.8: Generic Deterministic Mode v1 subset gate. True when the
+    // animator is exactly the subset represented by the GenericR18 payload:
+    // single active clip, no transition, no state machine, no parameters or
+    // in-flight triggers, speed == 1, not paused, no MMD IK overrides.
+    bool IsDeterministicSubsetCompatible() const noexcept;
+
+    // R1.8: canonical absolute evaluation. Evaluates the active clip at
+    // canonicalTime (wrapped for loopMotion, clamped otherwise) and stores
+    // exactly one root-motion delta for the canonical interval
+    // [previousCanonicalTime, canonicalTime] into pendingRootMotion.
+    // Callers must gate with IsDeterministicSubsetCompatible() first.
+    void EvaluateCanonicalFrame(
+        float previousCanonicalTime,
+        float canonicalTime,
+        bool loopMotion
+    );
+
     void SetRootMotionBone(BoneIndex boneIndex);
     void ClearRootMotionBone();
     std::optional<BoneIndex> RootMotionBone() const noexcept;

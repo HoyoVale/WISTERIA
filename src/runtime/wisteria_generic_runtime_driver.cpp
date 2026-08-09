@@ -2,9 +2,47 @@
 #include "wisteria/runtime/wisteria_generic_runtime_driver.hpp"
 
 #include <cmath>
+#include <cstring>
 
 namespace wisteria
 {
+namespace
+{
+// R1.8 frozen canonical motion rate (engine-owned coordinate; source clips
+// remain continuous-time assets sampled at N/30).
+constexpr float kGenericCanonicalMotionFps = 30.0f;
+
+// Float canonical-time precision boundary: at 2^20 frames (~9.7h @30Hz) the
+// 32-bit time still resolves adjacent frames (≈8 ulps per frame). Beyond
+// this the engine refuses rather than silently losing exactness.
+constexpr MotionFrameIndex kMaxGenericDeterministicFrame = 1U << 20;
+
+std::uint64_t FnvBytesGeneric(
+    const std::uint8_t* data,
+    std::size_t size
+) noexcept
+{
+    constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t kPrime = 1099511628211ULL;
+    std::uint64_t state = kOffsetBasis;
+    for (std::size_t index = 0U; index < size; ++index)
+    {
+        state ^= data[index];
+        state *= kPrime;
+    }
+    return state;
+}
+
+void FnvU32Generic(std::uint64_t& state, std::uint32_t value) noexcept
+{
+    for (int shift = 0; shift < 32; shift += 8)
+    {
+        state ^= static_cast<std::uint8_t>((value >> shift) & 0xFFU);
+        state *= 1099511628211ULL;
+    }
+}
+}  // namespace
+
 WisteriaGenericRuntimeDriver::WisteriaGenericRuntimeDriver(
     const ModelAsset& asset
 )
@@ -59,6 +97,7 @@ void WisteriaGenericRuntimeDriver::Update(float deltaTime)
     {
         this->animator->Update(deltaTime);
         this->pendingRootMotion = this->animator->ConsumeRootMotion();
+        this->ApplyPersistentMorphOverrides();
     }
 }
 
@@ -129,6 +168,387 @@ RootMotionDelta WisteriaGenericRuntimeDriver::ConsumeRootMotion() noexcept
     const RootMotionDelta result = this->pendingRootMotion;
     this->pendingRootMotion = {};
     return result;
+}
+
+bool WisteriaGenericRuntimeDriver::ValidateDeterministicConfig(
+    const ReplayConfig& config
+) noexcept
+{
+    return config.motionFps == 30U &&
+        config.physicsHz == 120U &&
+        config.warmupFrames == 0U;
+}
+
+TimelineStatus WisteriaGenericRuntimeDriver::PrepareFrameZero(
+    const ReplayConfig& config
+)
+{
+    if (!ValidateDeterministicConfig(config))
+        return TimelineStatus::UnsupportedReplayProfile;
+    if (this->animator == nullptr || this->asset == nullptr ||
+        this->asset->AnimationClipCount() == 0U)
+    {
+        // Deterministic v1 requires a single active clip timeline; morph-
+        // only and static assets have no canonical frames.
+        return TimelineStatus::UnsupportedReplayProfile;
+    }
+
+    this->Reset();
+    this->animator->SetLooping(config.loopMotion);
+    if (!this->animator->IsDeterministicSubsetCompatible())
+        return TimelineStatus::UnsupportedDeterministicState;
+
+    // Frame 0: canonical evaluation at t=0; pending root motion is identity.
+    this->animator->EvaluateCanonicalFrame(0.0f, 0.0f, config.loopMotion);
+    this->pendingRootMotion = this->animator->ConsumeRootMotion();
+    this->ApplyPersistentMorphOverrides();
+
+    this->frozenConfig = config;
+    this->deterministicPrepared = true;
+    this->expectedNextFrame = 1U;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus WisteriaGenericRuntimeDriver::StepMotionFrameExact(
+    MotionFrameIndex frame,
+    const ReplayConfig& config
+)
+{
+    if (!this->deterministicPrepared)
+        return TimelineStatus::InvalidState;
+    if (config.motionFps != this->frozenConfig.motionFps ||
+        config.physicsHz != this->frozenConfig.physicsHz ||
+        config.warmupFrames != this->frozenConfig.warmupFrames)
+    {
+        return TimelineStatus::DeterminismViolation;
+    }
+    if (frame != this->expectedNextFrame)
+        return TimelineStatus::NonSequentialFrame;
+    if (frame > kMaxGenericDeterministicFrame)
+        return TimelineStatus::UnsupportedReplayProfile;
+    if (this->animator == nullptr ||
+        !this->animator->IsDeterministicSubsetCompatible())
+    {
+        return TimelineStatus::UnsupportedDeterministicState;
+    }
+
+    // Coordinate evaluation: the delta comes from the canonical interval
+    // [(N-1)/30, N/30], never from the last actual Animator time.
+    const float previousTime =
+        static_cast<float>(frame - 1U) / kGenericCanonicalMotionFps;
+    const float currentTime =
+        static_cast<float>(frame) / kGenericCanonicalMotionFps;
+    this->animator->EvaluateCanonicalFrame(
+        previousTime,
+        currentTime,
+        config.loopMotion
+    );
+    this->pendingRootMotion = this->animator->ConsumeRootMotion();
+    this->ApplyPersistentMorphOverrides();
+    this->expectedNextFrame = frame + 1U;
+    return TimelineStatus::Ok;
+}
+
+ModelRuntimeCapabilities WisteriaGenericRuntimeDriver::Capabilities() const
+{
+    ModelRuntimeCapabilities capabilities;
+    const bool hasTimeline = this->animator != nullptr &&
+        this->asset != nullptr &&
+        this->asset->AnimationClipCount() > 0U;
+    // R1.8 Phase 0C: exact stepping + checkpoint/replay open together.
+    capabilities.deterministic.supportsExactFrameStepping = hasTimeline;
+    capabilities.deterministic.supportsCheckpointCapture = hasTimeline;
+    capabilities.deterministic.supportsCheckpointRestore = hasTimeline;
+    capabilities.deterministic.supportsReplayFromCheckpoint = hasTimeline;
+    capabilities.checkpoint.supportsCheckpointCapture = hasTimeline;
+    capabilities.checkpoint.supportsCheckpointRestore = hasTimeline;
+    capabilities.checkpoint.supportsReplayFromCheckpoint = hasTimeline;
+    return capabilities;
+}
+
+std::uint64_t WisteriaGenericRuntimeDriver::ComputeAssetFingerprint()
+    const noexcept
+{
+    std::uint64_t state = 14695981039346656037ULL;
+    if (this->asset == nullptr)
+        return state;
+    const Skeleton* skeleton = this->asset->TryGetSkeleton();
+    FnvU32Generic(
+        state,
+        skeleton != nullptr
+            ? static_cast<std::uint32_t>(skeleton->BoneCount())
+            : 0U
+    );
+    const MorphSet* morphSet = this->asset->TryGetMorphSet();
+    FnvU32Generic(
+        state,
+        morphSet != nullptr
+            ? static_cast<std::uint32_t>(morphSet->MorphCount())
+            : 0U
+    );
+    for (std::size_t index = 0U; index < this->asset->AnimationClipCount();
+         ++index)
+    {
+        const AnimationClip& clip = this->asset->AnimationClipAt(index);
+        state = FnvBytesGeneric(
+            reinterpret_cast<const std::uint8_t*>(clip.Name().data()),
+            clip.Name().size()
+        ) ^ state;
+        state *= 1099511628211ULL;
+        std::uint32_t durationBits = 0U;
+        const float duration = clip.Duration();
+        std::memcpy(&durationBits, &duration, sizeof(durationBits));
+        FnvU32Generic(state, durationBits);
+        FnvU32Generic(
+            state,
+            static_cast<std::uint32_t>(clip.TrackCount())
+        );
+    }
+    return state;
+}
+
+void WisteriaGenericRuntimeDriver::ApplyPersistentMorphOverrides()
+{
+    if (this->morphState == nullptr || this->morphOverrides.empty())
+        return;
+    const MorphSet& morphSet = this->morphState->GetMorphSet();
+    for (const auto& [name, weight] : this->morphOverrides)
+    {
+        const std::optional<MorphIndex> index = morphSet.FindMorph(name);
+        if (index.has_value())
+            this->morphState->SetWeight(*index, weight);
+    }
+}
+
+bool WisteriaGenericRuntimeDriver::SetMorphOverride(
+    std::string_view name,
+    float weight
+)
+{
+    if (!std::isfinite(weight))
+        throw std::invalid_argument("Morph override weight must be finite");
+    if (this->morphState == nullptr)
+        return false;
+    const std::optional<MorphIndex> index =
+        this->morphState->GetMorphSet().FindMorph(name);
+    if (!index.has_value())
+        return false;
+    this->morphOverrides[std::string(name)] = weight;
+    this->morphState->SetWeight(*index, weight);
+    return true;
+}
+
+void WisteriaGenericRuntimeDriver::ClearMorphOverride(
+    std::string_view name
+)
+{
+    if (this->morphOverrides.erase(std::string(name)) == 0U)
+        return;
+    if (this->animator != nullptr)
+        this->animator->Evaluate();
+    this->ApplyPersistentMorphOverrides();
+}
+
+void WisteriaGenericRuntimeDriver::ClearAllMorphOverrides()
+{
+    if (this->morphOverrides.empty())
+        return;
+    this->morphOverrides.clear();
+    if (this->animator != nullptr)
+        this->animator->Evaluate();
+    this->ApplyPersistentMorphOverrides();
+}
+
+TimelineStatus WisteriaGenericRuntimeDriver::CreateCheckpoint(
+    GenericRuntimeCheckpoint& output
+) const
+{
+    if (!this->deterministicPrepared)
+        return TimelineStatus::InvalidState;
+    if (this->animator == nullptr ||
+        !this->animator->IsDeterministicSubsetCompatible())
+    {
+        return TimelineStatus::UnsupportedDeterministicState;
+    }
+
+    const MotionFrameIndex frame = this->expectedNextFrame - 1U;
+    output.frame = frame;
+    output.canonicalTime = this->animator->Time();
+    output.looping = this->animator->IsLooping();
+    output.playing = true;
+    const float duration = this->animator->CurrentClip()->Duration();
+    output.clipClamped =
+        !output.looping &&
+        output.canonicalTime >= duration - 0.0001f;
+    output.rootMotionEnabled = this->animator->IsRootMotionEnabled();
+    output.rootMotionBoneIndex =
+        this->animator->RootMotionBone()
+            ? std::optional<std::uint32_t>(
+                  static_cast<std::uint32_t>(
+                      *this->animator->RootMotionBone()
+                  )
+              )
+            : std::nullopt;
+    output.pendingRootMotion = this->pendingRootMotion;
+
+    output.morphOverrides.clear();
+    output.morphOverrides.reserve(this->morphOverrides.size());
+    for (const auto& [name, weight] : this->morphOverrides)
+        output.morphOverrides.emplace_back(name, weight);
+    std::sort(
+        output.morphOverrides.begin(),
+        output.morphOverrides.end(),
+        [](const auto& left, const auto& right)
+        {
+            return left.first < right.first;
+        }
+    );
+
+    output.activeClipIndex.reset();
+    const AnimationClip* currentClip = this->animator->CurrentClip();
+    if (currentClip != nullptr && this->asset != nullptr)
+    {
+        for (std::size_t index = 0U;
+             index < this->asset->AnimationClipCount();
+             ++index)
+        {
+            if (&this->asset->AnimationClipAt(index) == currentClip)
+            {
+                output.activeClipIndex =
+                    static_cast<std::uint32_t>(index);
+                break;
+            }
+        }
+    }
+    output.motionFps = this->frozenConfig.motionFps;
+    output.physicsHz = this->frozenConfig.physicsHz;
+    output.warmupFrames = this->frozenConfig.warmupFrames;
+    output.assetFingerprint = this->ComputeAssetFingerprint();
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus WisteriaGenericRuntimeDriver::RestoreCheckpoint(
+    const GenericRuntimeCheckpoint& checkpoint
+)
+{
+    if (this->animator == nullptr)
+        return TimelineStatus::UnsupportedReplayProfile;
+    if (!checkpoint.activeClipIndex.has_value() ||
+        this->asset == nullptr ||
+        *checkpoint.activeClipIndex >= this->asset->AnimationClipCount())
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (checkpoint.frame > kMaxGenericDeterministicFrame ||
+        checkpoint.motionFps != 30U ||
+        checkpoint.physicsHz != 120U ||
+        checkpoint.warmupFrames != 0U)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (checkpoint.assetFingerprint != this->ComputeAssetFingerprint())
+        return TimelineStatus::InvalidCheckpoint;
+    if (checkpoint.rootMotionEnabled &&
+        !checkpoint.rootMotionBoneIndex.has_value())
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (checkpoint.rootMotionBoneIndex.has_value() &&
+        this->pose != nullptr &&
+        *checkpoint.rootMotionBoneIndex >= this->pose->BoneCount())
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (this->morphState == nullptr &&
+        !checkpoint.morphOverrides.empty())
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    if (this->morphState != nullptr)
+    {
+        const MorphSet& morphSet = this->morphState->GetMorphSet();
+        for (const auto& [name, weight] : checkpoint.morphOverrides)
+        {
+            if (!morphSet.FindMorph(name).has_value() ||
+                !std::isfinite(weight))
+            {
+                return TimelineStatus::InvalidCheckpoint;
+            }
+        }
+    }
+
+    this->Reset();
+    this->animator->Play(
+        this->asset->AnimationClipAt(*checkpoint.activeClipIndex),
+        true
+    );
+    this->animator->SetLooping(checkpoint.looping);
+    if (checkpoint.rootMotionEnabled)
+    {
+        this->animator->SetRootMotionBone(
+            static_cast<BoneIndex>(*checkpoint.rootMotionBoneIndex)
+        );
+        this->animator->SetRootMotionEnabled(true);
+    }
+    else
+    {
+        this->animator->ClearRootMotionBone();
+    }
+    if (!this->animator->IsDeterministicSubsetCompatible())
+        return TimelineStatus::UnsupportedDeterministicState;
+
+    const float frameTime =
+        static_cast<float>(checkpoint.frame) / 30.0f;
+    const float duration =
+        this->animator->CurrentClip()->Duration();
+    const float expectedTime = duration > 0.0f
+        ? (checkpoint.looping
+               ? std::fmod(frameTime, duration)
+               : std::min(frameTime, duration))
+        : 0.0f;
+    if (std::abs(checkpoint.canonicalTime - expectedTime) > 0.0001f)
+        return TimelineStatus::InvalidCheckpoint;
+
+    this->animator->EvaluateCanonicalFrame(
+        frameTime,
+        frameTime,
+        checkpoint.looping
+    );
+    this->pendingRootMotion = checkpoint.pendingRootMotion;
+    this->morphOverrides.clear();
+    for (const auto& [name, weight] : checkpoint.morphOverrides)
+        this->morphOverrides[name] = weight;
+    this->ApplyPersistentMorphOverrides();
+
+    this->frozenConfig.motionFps = checkpoint.motionFps;
+    this->frozenConfig.physicsHz = checkpoint.physicsHz;
+    this->frozenConfig.warmupFrames = checkpoint.warmupFrames;
+    this->frozenConfig.loopMotion = checkpoint.looping;
+    this->deterministicPrepared = true;
+    this->expectedNextFrame = checkpoint.frame + 1U;
+    return TimelineStatus::Ok;
+}
+
+TimelineStatus WisteriaGenericRuntimeDriver::ReplayFromCheckpoint(
+    const GenericRuntimeCheckpoint& checkpoint,
+    MotionFrameIndex target
+)
+{
+    if (target <= checkpoint.frame)
+        return TimelineStatus::InvalidCheckpoint;
+    TimelineStatus status = this->RestoreCheckpoint(checkpoint);
+    if (status != TimelineStatus::Ok)
+        return status;
+    const ReplayConfig config = this->frozenConfig;
+    for (MotionFrameIndex frame = checkpoint.frame + 1U;
+         frame <= target;
+         ++frame)
+    {
+        status = this->StepMotionFrameExact(frame, config);
+        if (status != TimelineStatus::Ok)
+            return status;
+    }
+    return TimelineStatus::Ok;
 }
 
 bool WisteriaGenericRuntimeDriver::NeedsDynamicVertexUpload() const noexcept

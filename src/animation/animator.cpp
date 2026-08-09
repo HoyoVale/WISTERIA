@@ -465,6 +465,107 @@ std::uint64_t Animator::DiscontinuityRevision() const noexcept
     return this->discontinuityRevision;
 }
 
+bool Animator::IsDeterministicSubsetCompatible() const noexcept
+{
+    if (this->currentClip == nullptr || this->transition.has_value())
+        return false;
+    if (!this->playing || this->paused)
+        return false;
+    if (this->speed != 1.0f)
+        return false;
+    if (!this->floatParameters.empty() ||
+        !this->boolParameters.empty() ||
+        !this->activeTriggers.empty())
+    {
+        return false;
+    }
+    if (!this->mmdIkOverrides.empty())
+        return false;
+    if (this->stateMachine.StateCount() != 0U ||
+        this->stateMachine.TransitionCount() != 0U)
+    {
+        return false;
+    }
+    return true;
+}
+
+void Animator::EvaluateCanonicalFrame(
+    float previousCanonicalTime,
+    float canonicalTime,
+    bool loopMotion
+)
+{
+    if (this->currentClip == nullptr)
+    {
+        throw std::logic_error(
+            "Animator has no current clip for canonical evaluation"
+        );
+    }
+    if (!std::isfinite(previousCanonicalTime) ||
+        !std::isfinite(canonicalTime) ||
+        previousCanonicalTime < 0.0f ||
+        canonicalTime < 0.0f)
+    {
+        throw std::invalid_argument(
+            "Canonical times must be finite and non-negative"
+        );
+    }
+    if (canonicalTime < previousCanonicalTime)
+    {
+        throw std::invalid_argument(
+            "Canonical times must advance monotonically"
+        );
+    }
+
+    const AnimationClip& clip = *this->currentClip;
+    const float duration = clip.Duration();
+    RootMotionDelta delta;
+
+    if (duration > 0.0f && canonicalTime > 0.0f)
+    {
+        if (loopMotion)
+        {
+            float time = std::fmod(previousCanonicalTime, duration);
+            bool remainsPlaying = true;
+            const PlaybackAdvance advance = this->Advance(
+                clip,
+                canonicalTime - previousCanonicalTime,
+                1.0f,
+                true,
+                time,
+                remainsPlaying
+            );
+            delta = this->ExtractRootMotion(clip, advance);
+        }
+        else if (previousCanonicalTime < duration)
+        {
+            float time = previousCanonicalTime;
+            bool remainsPlaying = true;
+            const float clampedCurrent = std::min(canonicalTime, duration);
+            const PlaybackAdvance advance = this->Advance(
+                clip,
+                clampedCurrent - previousCanonicalTime,
+                1.0f,
+                false,
+                time,
+                remainsPlaying
+            );
+            delta = this->ExtractRootMotion(clip, advance);
+        }
+    }
+
+    const float evaluationTime = duration > 0.0f
+        ? (loopMotion ? std::fmod(canonicalTime, duration)
+                      : std::min(canonicalTime, duration))
+        : 0.0f;
+    if (evaluationTime != this->currentTime)
+        this->MarkDiscontinuity();
+    this->currentTime = evaluationTime;
+    this->ResetRootMotion();
+    this->Evaluate();
+    this->pendingRootMotion = delta;
+}
+
 void Animator::SetSpeed(float speed)
 {
     if (!std::isfinite(speed) || speed < 0.0f)

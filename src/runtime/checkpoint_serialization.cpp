@@ -215,6 +215,294 @@ private:
 
 constexpr std::uint8_t kWireMagic[4] = {'W', 'C', 'P', 'K'};
 
+// R1.8: shared R1.4 wire envelope writer. Payload-kind-specific codecs write
+// into PayloadWriter(); Finish() backfills size and FNV-1a64 checksum.
+class EnvelopeWriter
+{
+public:
+    EnvelopeWriter(
+        std::uint32_t payloadKind,
+        std::uint32_t payloadSchema,
+        std::uint32_t backendId,
+        std::uint32_t profileId,
+        std::uint64_t buildCompatibilityId
+    )
+    {
+        writer.Raw(kWireMagic, sizeof(kWireMagic));
+        writer.U32(CheckpointWireVersion);
+        writer.U32(payloadKind);
+        writer.U32(payloadSchema);
+        writer.U32(backendId);
+        writer.U32(profileId);
+        writer.U64(buildCompatibilityId);
+        this->payloadSizeOffset = writer.Buffer().size();
+        writer.U64(0U);  // payload size placeholder
+        this->checksumOffset = writer.Buffer().size();
+        writer.U64(0U);  // checksum placeholder
+        this->payloadOffset = writer.Buffer().size();
+    }
+
+    Writer& PayloadWriter() noexcept
+    {
+        return this->writer;
+    }
+
+    std::vector<std::uint8_t> Finish()
+    {
+        std::vector<std::uint8_t>& buffer = this->writer.Buffer();
+        const std::uint64_t payloadSize = static_cast<std::uint64_t>(
+            buffer.size() - this->payloadOffset
+        );
+        for (int shift = 0; shift < 64; shift += 8)
+        {
+            buffer[this->payloadSizeOffset +
+                   static_cast<std::size_t>(shift / 8)] =
+                static_cast<std::uint8_t>((payloadSize >> shift) & 0xFFU);
+        }
+        std::fill(
+            buffer.begin() +
+                static_cast<std::ptrdiff_t>(this->checksumOffset),
+            buffer.begin() +
+                static_cast<std::ptrdiff_t>(this->checksumOffset + 8U),
+            0U
+        );
+        const std::uint64_t checksum =
+            FnvBytes(buffer.data(), buffer.size());
+        for (int shift = 0; shift < 64; shift += 8)
+        {
+            buffer[this->checksumOffset +
+                   static_cast<std::size_t>(shift / 8)] =
+                static_cast<std::uint8_t>((checksum >> shift) & 0xFFU);
+        }
+        return std::move(buffer);
+    }
+
+private:
+    Writer writer;
+    std::size_t payloadSizeOffset = 0U;
+    std::size_t checksumOffset = 0U;
+    std::size_t payloadOffset = 0U;
+};
+
+struct EnvelopeHeader
+{
+    std::uint32_t wireVersion = 0U;
+    std::uint32_t payloadKind = 0U;
+    std::uint32_t payloadSchema = 0U;
+    std::uint32_t backendId = 0U;
+    std::uint32_t profileId = 0U;
+    std::uint64_t buildCompatibilityId = 0U;
+    std::uint64_t payloadSize = 0U;
+    std::uint64_t checksum = 0U;
+};
+
+// Reads and structurally validates the shared header (magic, wire version,
+// build identity, payload size). Kind/schema/backend/profile identity and
+// the checksum are validated by the caller because they are codec-specific.
+bool ReadEnvelopeHeader(
+    Reader& reader,
+    const CheckpointSerializationOptions& options,
+    EnvelopeHeader& header
+)
+{
+    std::uint8_t magic[4] = {0U, 0U, 0U, 0U};
+    if (!reader.ReadBytes(magic, sizeof(magic)) ||
+        !reader.ReadU32(header.wireVersion) ||
+        !reader.ReadU32(header.payloadKind) ||
+        !reader.ReadU32(header.payloadSchema) ||
+        !reader.ReadU32(header.backendId) ||
+        !reader.ReadU32(header.profileId) ||
+        !reader.ReadU64(header.buildCompatibilityId) ||
+        !reader.ReadU64(header.payloadSize) ||
+        !reader.ReadU64(header.checksum))
+    {
+        return false;
+    }
+    if (std::memcmp(magic, kWireMagic, sizeof(kWireMagic)) != 0 ||
+        header.wireVersion != CheckpointWireVersion)
+    {
+        return false;
+    }
+    const std::uint64_t expectedBuildId =
+        options.buildCompatibilityIdOverride.value_or(
+            CurrentBuildCompatibilityId()
+        );
+    if (expectedBuildId == 0U ||
+        header.buildCompatibilityId != expectedBuildId)
+    {
+        return false;
+    }
+    return header.payloadSize <= options.maxPayloadBytes &&
+        header.payloadSize == reader.Remaining();
+}
+
+bool ReadString(
+    Reader& reader,
+    const CheckpointSerializationOptions& options,
+    std::string& output
+)
+{
+    std::uint32_t length = 0U;
+    if (!reader.ReadU32(length) ||
+        static_cast<std::uint64_t>(length) > options.maxStringBytes ||
+        length > reader.Remaining())
+    {
+        return false;
+    }
+    output.resize(length);
+    if (length > 0U &&
+        !reader.ReadBytes(
+            reinterpret_cast<std::uint8_t*>(output.data()),
+            length
+        ))
+    {
+        return false;
+    }
+    return true;
+}
+
+void EncodeGenericPayload(
+    Writer& writer,
+    const GenericRuntimeCheckpoint& checkpoint
+)
+{
+    writer.U32(CheckpointPayloadSchemaGenericR18);
+    writer.U64(checkpoint.frame);
+    writer.F32(checkpoint.canonicalTime);
+    writer.Bool(checkpoint.looping);
+    writer.Bool(checkpoint.playing);
+    writer.Bool(checkpoint.clipClamped);
+    writer.Bool(checkpoint.rootMotionEnabled);
+    writer.Bool(checkpoint.rootMotionBoneIndex.has_value());
+    if (checkpoint.rootMotionBoneIndex.has_value())
+        writer.U32(*checkpoint.rootMotionBoneIndex);
+    writer.F32(checkpoint.pendingRootMotion.translation.x);
+    writer.F32(checkpoint.pendingRootMotion.translation.y);
+    writer.F32(checkpoint.pendingRootMotion.translation.z);
+    writer.F32(checkpoint.pendingRootMotion.rotation.x);
+    writer.F32(checkpoint.pendingRootMotion.rotation.y);
+    writer.F32(checkpoint.pendingRootMotion.rotation.z);
+    writer.F32(checkpoint.pendingRootMotion.rotation.w);
+    writer.U32(static_cast<std::uint32_t>(
+        checkpoint.morphOverrides.size()
+    ));
+    for (const auto& [name, weight] : checkpoint.morphOverrides)
+    {
+        writer.String(name);
+        writer.F32(weight);
+    }
+    writer.Bool(checkpoint.activeClipIndex.has_value());
+    if (checkpoint.activeClipIndex.has_value())
+        writer.U32(*checkpoint.activeClipIndex);
+    writer.U32(checkpoint.motionFps);
+    writer.U32(checkpoint.physicsHz);
+    writer.U32(checkpoint.warmupFrames);
+    writer.U64(checkpoint.assetFingerprint);
+}
+
+bool DecodeGenericPayload(
+    Reader& reader,
+    const CheckpointSerializationOptions& options,
+    GenericRuntimeCheckpoint& checkpoint
+)
+{
+    std::uint32_t payloadSchema = 0U;
+    if (!reader.ReadU32(payloadSchema) ||
+        payloadSchema != CheckpointPayloadSchemaGenericR18 ||
+        !reader.ReadU64(checkpoint.frame) ||
+        !reader.ReadF32(checkpoint.canonicalTime) ||
+        !reader.ReadBool(checkpoint.looping) ||
+        !reader.ReadBool(checkpoint.playing) ||
+        !reader.ReadBool(checkpoint.clipClamped) ||
+        !reader.ReadBool(checkpoint.rootMotionEnabled))
+    {
+        return false;
+    }
+    bool hasRootMotionBone = false;
+    if (!reader.ReadBool(hasRootMotionBone))
+        return false;
+    if (hasRootMotionBone)
+    {
+        std::uint32_t boneIndex = 0U;
+        if (!reader.ReadU32(boneIndex))
+            return false;
+        checkpoint.rootMotionBoneIndex = boneIndex;
+    }
+    else
+    {
+        checkpoint.rootMotionBoneIndex.reset();
+    }
+    if (!reader.ReadF32(checkpoint.pendingRootMotion.translation.x) ||
+        !reader.ReadF32(checkpoint.pendingRootMotion.translation.y) ||
+        !reader.ReadF32(checkpoint.pendingRootMotion.translation.z) ||
+        !reader.ReadF32(checkpoint.pendingRootMotion.rotation.x) ||
+        !reader.ReadF32(checkpoint.pendingRootMotion.rotation.y) ||
+        !reader.ReadF32(checkpoint.pendingRootMotion.rotation.z) ||
+        !reader.ReadF32(checkpoint.pendingRootMotion.rotation.w))
+    {
+        return false;
+    }
+    if (!IsFinite(checkpoint.canonicalTime) ||
+        !IsFinite(checkpoint.pendingRootMotion.translation.x) ||
+        !IsFinite(checkpoint.pendingRootMotion.translation.y) ||
+        !IsFinite(checkpoint.pendingRootMotion.translation.z) ||
+        !IsFinite(checkpoint.pendingRootMotion.rotation.x) ||
+        !IsFinite(checkpoint.pendingRootMotion.rotation.y) ||
+        !IsFinite(checkpoint.pendingRootMotion.rotation.z) ||
+        !IsFinite(checkpoint.pendingRootMotion.rotation.w))
+    {
+        return false;
+    }
+
+    std::uint32_t morphCount = 0U;
+    if (!reader.ReadU32(morphCount) ||
+        static_cast<std::uint64_t>(morphCount) >
+            options.maxMorphOverrideCount)
+    {
+        return false;
+    }
+    checkpoint.morphOverrides.clear();
+    checkpoint.morphOverrides.reserve(morphCount);
+    std::string previousName;
+    for (std::uint32_t index = 0U; index < morphCount; ++index)
+    {
+        std::string name;
+        float weight = 0.0f;
+        if (!ReadString(reader, options, name) ||
+            !reader.ReadF32(weight) ||
+            !IsFinite(weight) ||
+            (index > 0U && name <= previousName))
+        {
+            return false;
+        }
+        previousName = name;
+        checkpoint.morphOverrides.emplace_back(std::move(name), weight);
+    }
+
+    bool hasClip = false;
+    if (!reader.ReadBool(hasClip))
+        return false;
+    if (hasClip)
+    {
+        std::uint32_t clipIndex = 0U;
+        if (!reader.ReadU32(clipIndex))
+            return false;
+        checkpoint.activeClipIndex = clipIndex;
+    }
+    else
+    {
+        checkpoint.activeClipIndex.reset();
+    }
+    if (!reader.ReadU32(checkpoint.motionFps) ||
+        !reader.ReadU32(checkpoint.physicsHz) ||
+        !reader.ReadU32(checkpoint.warmupFrames) ||
+        !reader.ReadU64(checkpoint.assetFingerprint))
+    {
+        return false;
+    }
+    return reader.Remaining() == 0U;
+}
+
 constexpr std::size_t kMinMorphEntryBytes = 8U;   // len(4) + weight(4)
 constexpr std::size_t kMinIkEntryBytes = 5U;      // len(4) + enabled(1)
 // Encoded RigidBodySnapshot size: index(4) + mode(1) + mass(4) +
@@ -717,43 +1005,15 @@ std::vector<std::uint8_t> SerializeCheckpoint(
             "buildCompatibilityId must be non-zero"
         );
     }
-    Writer writer;
-    writer.Raw(kWireMagic, sizeof(kWireMagic));
-    writer.U32(CheckpointWireVersion);
-    writer.U32(CheckpointPayloadKindMmdR12C);
-    writer.U32(CheckpointPayloadSchemaMmdR12C);
-    writer.U32(CheckpointBackendIdSabaMmd);
-    writer.U32(CheckpointDeterministicProfileColdStepV1);
-    writer.U64(buildCompatibilityId);
-    const std::size_t payloadSizeOffset = writer.Buffer().size();
-    writer.U64(0U);  // payload size placeholder
-    const std::size_t checksumOffset = writer.Buffer().size();
-    writer.U64(0U);  // checksum placeholder
-
-    const std::size_t payloadOffset = writer.Buffer().size();
-    EncodePayload(writer, checkpoint);
-    const std::uint64_t payloadSize =
-        static_cast<std::uint64_t>(writer.Buffer().size() - payloadOffset);
-
-    std::vector<std::uint8_t>& buffer = writer.Buffer();
-    for (int shift = 0; shift < 64; shift += 8)
-    {
-        buffer[payloadSizeOffset + static_cast<std::size_t>(shift / 8)] =
-            static_cast<std::uint8_t>((payloadSize >> shift) & 0xFFU);
-    }
-    std::fill(
-        buffer.begin() + static_cast<std::ptrdiff_t>(checksumOffset),
-        buffer.begin() + static_cast<std::ptrdiff_t>(checksumOffset + 8U),
-        0U
+    EnvelopeWriter envelope(
+        CheckpointPayloadKindMmdR12C,
+        CheckpointPayloadSchemaMmdR12C,
+        CheckpointBackendIdSabaMmd,
+        CheckpointDeterministicProfileColdStepV1,
+        buildCompatibilityId
     );
-    const std::uint64_t checksum =
-        FnvBytes(buffer.data(), buffer.size());
-    for (int shift = 0; shift < 64; shift += 8)
-    {
-        buffer[checksumOffset + static_cast<std::size_t>(shift / 8)] =
-            static_cast<std::uint8_t>((checksum >> shift) & 0xFFU);
-    }
-    return buffer;
+    EncodePayload(envelope.PayloadWriter(), checkpoint);
+    return envelope.Finish();
 }
 
 TimelineStatus DeserializeCheckpoint(
@@ -769,47 +1029,12 @@ TimelineStatus DeserializeCheckpoint(
         return TimelineStatus::InvalidCheckpoint;
     }
     Reader reader(bytes, size);
-
-    std::uint8_t magic[4] = {0, 0, 0, 0};
-    std::uint32_t wireVersion = 0U;
-    std::uint32_t payloadKind = 0U;
-    std::uint32_t payloadSchema = 0U;
-    std::uint32_t backendId = 0U;
-    std::uint32_t profileId = 0U;
-    std::uint64_t buildId = 0U;
-    std::uint64_t payloadSize = 0U;
-    std::uint64_t checksum = 0U;
-    if (!reader.ReadBytes(magic, sizeof(magic)) ||
-        !reader.ReadU32(wireVersion) ||
-        !reader.ReadU32(payloadKind) ||
-        !reader.ReadU32(payloadSchema) ||
-        !reader.ReadU32(backendId) ||
-        !reader.ReadU32(profileId) ||
-        !reader.ReadU64(buildId) ||
-        !reader.ReadU64(payloadSize) ||
-        !reader.ReadU64(checksum))
-    {
-        return TimelineStatus::InvalidCheckpoint;
-    }
-    if (std::memcmp(magic, kWireMagic, sizeof(kWireMagic)) != 0 ||
-        wireVersion != CheckpointWireVersion ||
-        payloadKind != CheckpointPayloadKindMmdR12C ||
-        payloadSchema != CheckpointPayloadSchemaMmdR12C ||
-        backendId != CheckpointBackendIdSabaMmd ||
-        profileId != CheckpointDeterministicProfileColdStepV1)
-    {
-        return TimelineStatus::InvalidCheckpoint;
-    }
-    const std::uint64_t expectedBuildId =
-        options.buildCompatibilityIdOverride.value_or(
-            CurrentBuildCompatibilityId()
-        );
-    if (expectedBuildId == 0U || buildId != expectedBuildId)
-    {
-        return TimelineStatus::InvalidCheckpoint;
-    }
-    if (payloadSize > options.maxPayloadBytes ||
-        payloadSize != size - CheckpointWireHeaderSize)
+    EnvelopeHeader header;
+    if (!ReadEnvelopeHeader(reader, options, header) ||
+        header.payloadKind != CheckpointPayloadKindMmdR12C ||
+        header.payloadSchema != CheckpointPayloadSchemaMmdR12C ||
+        header.backendId != CheckpointBackendIdSabaMmd ||
+        header.profileId != CheckpointDeterministicProfileColdStepV1)
     {
         return TimelineStatus::InvalidCheckpoint;
     }
@@ -823,7 +1048,8 @@ TimelineStatus DeserializeCheckpoint(
             static_cast<std::ptrdiff_t>(CheckpointWireHeaderSize),
         0U
     );
-    if (FnvBytes(checksumBuffer.data(), checksumBuffer.size()) != checksum)
+    if (FnvBytes(checksumBuffer.data(), checksumBuffer.size()) !=
+        header.checksum)
     {
         return TimelineStatus::InvalidCheckpoint;
     }
@@ -832,6 +1058,79 @@ TimelineStatus DeserializeCheckpoint(
     if (!DecodePayload(reader, options, decoded) ||
         !reader.Ok() ||
         !CheckpointStructurallyConsistent(decoded))
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    output = std::move(decoded);
+    return TimelineStatus::Ok;
+}
+
+std::vector<std::uint8_t> SerializeGenericCheckpoint(
+    const GenericRuntimeCheckpoint& checkpoint,
+    const CheckpointSerializationOptions& options
+)
+{
+    const std::uint64_t buildCompatibilityId =
+        options.buildCompatibilityIdOverride.value_or(
+            CurrentBuildCompatibilityId()
+        );
+    if (buildCompatibilityId == 0U)
+    {
+        throw std::invalid_argument(
+            "buildCompatibilityId must be non-zero"
+        );
+    }
+    EnvelopeWriter envelope(
+        CheckpointPayloadKindGenericR18,
+        CheckpointPayloadSchemaGenericR18,
+        CheckpointBackendIdWisteriaGeneric,
+        CheckpointDeterministicProfileGenericV1,
+        buildCompatibilityId
+    );
+    EncodeGenericPayload(envelope.PayloadWriter(), checkpoint);
+    return envelope.Finish();
+}
+
+TimelineStatus DeserializeGenericCheckpoint(
+    const std::uint8_t* bytes,
+    std::size_t size,
+    const CheckpointSerializationOptions& options,
+    GenericRuntimeCheckpoint& output
+)
+{
+    if ((bytes == nullptr && size != 0U) ||
+        size < CheckpointWireHeaderSize)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    Reader reader(bytes, size);
+    EnvelopeHeader header;
+    if (!ReadEnvelopeHeader(reader, options, header) ||
+        header.payloadKind != CheckpointPayloadKindGenericR18 ||
+        header.payloadSchema != CheckpointPayloadSchemaGenericR18 ||
+        header.backendId != CheckpointBackendIdWisteriaGeneric ||
+        header.profileId != CheckpointDeterministicProfileGenericV1)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+
+    std::vector<std::uint8_t> checksumBuffer(bytes, bytes + size);
+    std::fill(
+        checksumBuffer.begin() +
+            static_cast<std::ptrdiff_t>(CheckpointWireHeaderSize - 8U),
+        checksumBuffer.begin() +
+            static_cast<std::ptrdiff_t>(CheckpointWireHeaderSize),
+        0U
+    );
+    if (FnvBytes(checksumBuffer.data(), checksumBuffer.size()) !=
+        header.checksum)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+
+    GenericRuntimeCheckpoint decoded;
+    if (!DecodeGenericPayload(reader, options, decoded) ||
+        !reader.Ok())
     {
         return TimelineStatus::InvalidCheckpoint;
     }
