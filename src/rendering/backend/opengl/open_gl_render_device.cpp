@@ -2,8 +2,8 @@
 
 #include "open_gl_render_device.hpp"
 
-#include <cassert>
-#include <cstdio>
+#include "rendering/renderer_internal.hpp"
+
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -79,18 +79,58 @@ std::string_view OpenGlRenderDevice::BackendName() const noexcept
     return "OpenGL";
 }
 
-const RenderDeviceCapabilities& OpenGlRenderDevice::Capabilities() const noexcept
+const RenderDeviceCapabilities& OpenGlRenderDevice::Capabilities() const
 {
+    if (!this->capabilitiesValid)
+    {
+        throw std::logic_error(
+            "RenderDevice capabilities are not initialized; "
+            "refresh with the owning share-group context current"
+        );
+    }
     return this->capabilities;
 }
 
-void OpenGlRenderDevice::RefreshCapabilities() noexcept
+void OpenGlRenderDevice::RefreshCapabilities()
 {
+    // R2.0 0B Final Fix: capabilities may only be queried while a context of
+    // this device's owning share group is current. WindowManager restores
+    // the previous context after creating a window, so composition roots
+    // must refresh inside a real current-context transaction.
+    const GraphicsShareGroupToken owning = this->graphicsDevice.ShareGroupToken();
+    if (owning == nullptr ||
+        GraphicsDevice::CurrentShareGroup() != owning)
+    {
+        throw std::logic_error(
+            "RenderDevice capabilities require the owning GL share-group "
+            "context to be current"
+        );
+    }
+
+    // Engine semantic: maxSkinningMatrices is the matrix-palette capacity
+    // actually addressable by the current pipeline, not a raw GL constant.
+    // R1 skinning (render_skinning.cpp) requires:
+    //   vertex texture fetch available
+    //   combined texture units leave room for the skinning unit
+    //   texture-buffer capacity holds at least one mat4 (4 vec4 texels)
+    // Capacity = GL_MAX_TEXTURE_BUFFER_SIZE / 4 (one mat4 = 4 texels).
     GLint vertexTextureUnits = 0;
+    GLint combinedTextureUnits = 0;
+    GLint maximumTexels = 0;
     glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &vertexTextureUnits);
-    this->capabilities.maxSkinningMatrices =
-        vertexTextureUnits > 0 ? static_cast<std::size_t>(vertexTextureUnits)
-                               : 0U;
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &combinedTextureUnits);
+    glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maximumTexels);
+    if (vertexTextureUnits < 1 ||
+        combinedTextureUnits <= static_cast<GLint>(SkinningTextureUnit) ||
+        maximumTexels < 4)
+    {
+        this->capabilities.maxSkinningMatrices = 0U;
+    }
+    else
+    {
+        this->capabilities.maxSkinningMatrices =
+            static_cast<std::size_t>(maximumTexels) / 4U;
+    }
     this->capabilities.independentBlend =
         GLAD_GL_ARB_draw_buffers_blend != 0 &&
         glad_glBlendFunciARB != nullptr;
@@ -114,11 +154,24 @@ BufferHandle OpenGlRenderDevice::CreateBuffer(const BufferDesc& desc)
     );
     glBindBuffer(MapBufferTarget(desc.usage), 0U);
     const std::uint64_t id = this->AllocateId();
-    this->resources.emplace(
-        id,
-        ResourceEntry{ResourceKind::Buffer, buffer}
-    );
-    return RenderDevice::MakeBufferHandle(id);
+    try
+    {
+        this->resources.emplace(
+            id,
+            ResourceEntry{
+                ResourceKind::Buffer,
+                buffer,
+                desc.size,
+                desc.usage
+            }
+        );
+    }
+    catch (...)
+    {
+        glDeleteBuffers(1, &buffer);
+        throw;
+    }
+    return RenderDevice::MakeBufferHandle(this->DeviceUid(), id);
 }
 
 TextureHandle OpenGlRenderDevice::CreateTexture(const TextureDesc& desc)
@@ -161,11 +214,19 @@ TextureHandle OpenGlRenderDevice::CreateTexture(const TextureDesc& desc)
         glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0U);
     const std::uint64_t id = this->AllocateId();
-    this->resources.emplace(
-        id,
-        ResourceEntry{ResourceKind::Texture, texture}
-    );
-    return RenderDevice::MakeTextureHandle(id);
+    try
+    {
+        this->resources.emplace(
+            id,
+            ResourceEntry{ResourceKind::Texture, texture}
+        );
+    }
+    catch (...)
+    {
+        glDeleteTextures(1, &texture);
+        throw;
+    }
+    return RenderDevice::MakeTextureHandle(this->DeviceUid(), id);
 }
 
 SamplerHandle OpenGlRenderDevice::CreateSampler(const SamplerDesc& desc)
@@ -195,11 +256,19 @@ SamplerHandle OpenGlRenderDevice::CreateSampler(const SamplerDesc& desc)
         static_cast<GLint>(MapWrap(desc.wrapT))
     );
     const std::uint64_t id = this->AllocateId();
-    this->resources.emplace(
-        id,
-        ResourceEntry{ResourceKind::Sampler, sampler}
-    );
-    return RenderDevice::MakeSamplerHandle(id);
+    try
+    {
+        this->resources.emplace(
+            id,
+            ResourceEntry{ResourceKind::Sampler, sampler}
+        );
+    }
+    catch (...)
+    {
+        glDeleteSamplers(1, &sampler);
+        throw;
+    }
+    return RenderDevice::MakeSamplerHandle(this->DeviceUid(), id);
 }
 
 PipelineHandle OpenGlRenderDevice::CreateGraphicsPipeline(
@@ -270,11 +339,19 @@ PipelineHandle OpenGlRenderDevice::CreateGraphicsPipeline(
         glDeleteShader(shader);
 
     const std::uint64_t id = this->AllocateId();
-    this->resources.emplace(
-        id,
-        ResourceEntry{ResourceKind::Pipeline, program}
-    );
-    return RenderDevice::MakePipelineHandle(id);
+    try
+    {
+        this->resources.emplace(
+            id,
+            ResourceEntry{ResourceKind::Pipeline, program}
+        );
+    }
+    catch (...)
+    {
+        glDeleteProgram(program);
+        throw;
+    }
+    return RenderDevice::MakePipelineHandle(this->DeviceUid(), id);
 }
 
 void OpenGlRenderDevice::UpdateBuffer(
@@ -284,6 +361,12 @@ void OpenGlRenderDevice::UpdateBuffer(
     std::size_t offset
 )
 {
+    if (RenderDevice::HandleDevice(handle) != this->DeviceUid())
+    {
+        throw std::invalid_argument(
+            "buffer handle does not belong to this RenderDevice"
+        );
+    }
     ResourceEntry* entry = this->Find(RenderDevice::HandleId(handle));
     if (entry == nullptr || entry->kind != ResourceKind::Buffer)
     {
@@ -293,6 +376,13 @@ void OpenGlRenderDevice::UpdateBuffer(
     }
     if (data == nullptr && size != 0U)
         throw std::invalid_argument("buffer update data must not be null");
+    if (offset > entry->bufferSize ||
+        size > entry->bufferSize - offset)
+    {
+        throw std::out_of_range(
+            "buffer update exceeds the buffer capacity"
+        );
+    }
     glBindBuffer(GL_ARRAY_BUFFER, entry->object);
     glBufferSubData(
         GL_ARRAY_BUFFER,
@@ -303,13 +393,20 @@ void OpenGlRenderDevice::UpdateBuffer(
     glBindBuffer(GL_ARRAY_BUFFER, 0U);
 }
 
-void OpenGlRenderDevice::DestroyBuffer(BufferHandle handle) noexcept
+void OpenGlRenderDevice::DestroyBuffer(BufferHandle handle)
 {
+    if (RenderDevice::HandleDevice(handle) != this->DeviceUid())
+    {
+        throw std::invalid_argument(
+            "buffer handle does not belong to this RenderDevice"
+        );
+    }
     ResourceEntry* entry = this->Find(RenderDevice::HandleId(handle));
     if (entry == nullptr || entry->kind != ResourceKind::Buffer)
     {
-        assert(!"wrong-device or unknown buffer handle");
-        return;
+        throw std::invalid_argument(
+            "buffer handle does not belong to this RenderDevice"
+        );
     }
     this->graphicsDevice.DeleteResource(
         GraphicsDevice::ResourceKind::Buffer,
@@ -318,13 +415,20 @@ void OpenGlRenderDevice::DestroyBuffer(BufferHandle handle) noexcept
     this->Erase(RenderDevice::HandleId(handle));
 }
 
-void OpenGlRenderDevice::DestroyTexture(TextureHandle handle) noexcept
+void OpenGlRenderDevice::DestroyTexture(TextureHandle handle)
 {
+    if (RenderDevice::HandleDevice(handle) != this->DeviceUid())
+    {
+        throw std::invalid_argument(
+            "texture handle does not belong to this RenderDevice"
+        );
+    }
     ResourceEntry* entry = this->Find(RenderDevice::HandleId(handle));
     if (entry == nullptr || entry->kind != ResourceKind::Texture)
     {
-        assert(!"wrong-device or unknown texture handle");
-        return;
+        throw std::invalid_argument(
+            "texture handle does not belong to this RenderDevice"
+        );
     }
     this->graphicsDevice.DeleteResource(
         GraphicsDevice::ResourceKind::Texture,
@@ -333,34 +437,51 @@ void OpenGlRenderDevice::DestroyTexture(TextureHandle handle) noexcept
     this->Erase(RenderDevice::HandleId(handle));
 }
 
-void OpenGlRenderDevice::DestroySampler(SamplerHandle handle) noexcept
+void OpenGlRenderDevice::DestroySampler(SamplerHandle handle)
 {
+    if (RenderDevice::HandleDevice(handle) != this->DeviceUid())
+    {
+        throw std::invalid_argument(
+            "sampler handle does not belong to this RenderDevice"
+        );
+    }
     ResourceEntry* entry = this->Find(RenderDevice::HandleId(handle));
     if (entry == nullptr || entry->kind != ResourceKind::Sampler)
     {
-        assert(!"wrong-device or unknown sampler handle");
-        return;
+        throw std::invalid_argument(
+            "sampler handle does not belong to this RenderDevice"
+        );
     }
-    // 0B: sampler objects are share-group shared; the composition root
-    // guarantees a current context at teardown. 0C unifies deletion through
-    // the device resource cache.
-    const GLuint sampler = entry->object;
-    glDeleteSamplers(1, &sampler);
+    // Sampler is a share-group shared object: reuse the R1.7 deletion queue
+    // (immediate when the owning share group is current, pending otherwise).
+    this->graphicsDevice.DeleteResource(
+        GraphicsDevice::ResourceKind::Sampler,
+        entry->object
+    );
     this->Erase(RenderDevice::HandleId(handle));
 }
 
 void OpenGlRenderDevice::DestroyGraphicsPipeline(
     PipelineHandle handle
-) noexcept
+)
 {
+    if (RenderDevice::HandleDevice(handle) != this->DeviceUid())
+    {
+        throw std::invalid_argument(
+            "pipeline handle does not belong to this RenderDevice"
+        );
+    }
     ResourceEntry* entry = this->Find(RenderDevice::HandleId(handle));
     if (entry == nullptr || entry->kind != ResourceKind::Pipeline)
     {
-        assert(!"wrong-device or unknown pipeline handle");
-        return;
+        throw std::invalid_argument(
+            "pipeline handle does not belong to this RenderDevice"
+        );
     }
-    const GLuint program = entry->object;
-    glDeleteProgram(program);
+    this->graphicsDevice.DeleteResource(
+        GraphicsDevice::ResourceKind::Program,
+        entry->object
+    );
     this->Erase(RenderDevice::HandleId(handle));
 }
 

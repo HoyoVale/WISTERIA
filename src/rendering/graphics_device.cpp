@@ -30,6 +30,12 @@ void DeleteObject(GraphicsDevice::ResourceKind kind, GLuint name) noexcept
     case GraphicsDevice::ResourceKind::Renderbuffer:
         glDeleteRenderbuffers(1, &name);
         break;
+    case GraphicsDevice::ResourceKind::Sampler:
+        glDeleteSamplers(1, &name);
+        break;
+    case GraphicsDevice::ResourceKind::Program:
+        glDeleteProgram(name);
+        break;
     }
 }
 }
@@ -130,7 +136,9 @@ bool GraphicsDevice::IsSharedResource(ResourceKind kind) noexcept
 {
     return kind == ResourceKind::Texture ||
         kind == ResourceKind::Buffer ||
-        kind == ResourceKind::Renderbuffer;
+        kind == ResourceKind::Renderbuffer ||
+        kind == ResourceKind::Sampler ||
+        kind == ResourceKind::Program;
 }
 
 void GraphicsDevice::DeleteResource(

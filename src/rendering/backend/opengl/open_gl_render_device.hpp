@@ -33,7 +33,7 @@ public:
 
     RenderBackendId BackendId() const noexcept override;
     std::string_view BackendName() const noexcept override;
-    const RenderDeviceCapabilities& Capabilities() const noexcept override;
+    const RenderDeviceCapabilities& Capabilities() const override;
 
     BufferHandle CreateBuffer(const BufferDesc& desc) override;
     TextureHandle CreateTexture(const TextureDesc& desc) override;
@@ -49,10 +49,10 @@ public:
         std::size_t offset = 0U
     ) override;
 
-    void DestroyBuffer(BufferHandle handle) noexcept override;
-    void DestroyTexture(TextureHandle handle) noexcept override;
-    void DestroySampler(SamplerHandle handle) noexcept override;
-    void DestroyGraphicsPipeline(PipelineHandle handle) noexcept override;
+    void DestroyBuffer(BufferHandle handle) override;
+    void DestroyTexture(TextureHandle handle) override;
+    void DestroySampler(SamplerHandle handle) override;
+    void DestroyGraphicsPipeline(PipelineHandle handle) override;
 
     // OpenGL-backend-internal access to the absorbed R1.7 machinery. Must
     // never be promoted into the neutral RenderDevice contract (Gate B).
@@ -62,7 +62,7 @@ public:
     // Queries engine-semantic capabilities from the current GL context.
     // Call with a context of the owning share group current; the composition
     // roots (HeadlessRenderSession / Application) refresh after activation.
-    void RefreshCapabilities() noexcept;
+    void RefreshCapabilities();
 
     // 0B transition helper: extracts the absorbed legacy GraphicsDevice from
     // a RenderDevice. Returns nullptr for null/non-OpenGL devices. OpenGL
@@ -84,6 +84,8 @@ private:
     {
         ResourceKind kind = ResourceKind::Buffer;
         std::uint32_t object = 0U;
+        std::size_t bufferSize = 0U;
+        BufferUsage bufferUsage = BufferUsage::Vertex;
     };
 
     const ResourceEntry* Find(std::uint64_t id) const;

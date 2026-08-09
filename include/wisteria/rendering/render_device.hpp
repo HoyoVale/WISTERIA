@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <string_view>
 #include <vector>
 
@@ -52,11 +53,22 @@ class BufferHandle
 {
 public:
     BufferHandle() = default;
-    constexpr bool IsValid() const noexcept { return this->id_ != 0U; }
+    constexpr bool IsValid() const noexcept
+    {
+        return this->device_ != 0U && this->id_ != 0U;
+    }
 
 private:
     friend class RenderDevice;
-    explicit BufferHandle(std::uint64_t id) noexcept : id_(id) {}
+    explicit BufferHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
+        : device_(device),
+          id_(id)
+    {
+    }
+    std::uint64_t device_ = 0U;
     std::uint64_t id_ = 0U;
 };
 
@@ -64,11 +76,22 @@ class TextureHandle
 {
 public:
     TextureHandle() = default;
-    constexpr bool IsValid() const noexcept { return this->id_ != 0U; }
+    constexpr bool IsValid() const noexcept
+    {
+        return this->device_ != 0U && this->id_ != 0U;
+    }
 
 private:
     friend class RenderDevice;
-    explicit TextureHandle(std::uint64_t id) noexcept : id_(id) {}
+    explicit TextureHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
+        : device_(device),
+          id_(id)
+    {
+    }
+    std::uint64_t device_ = 0U;
     std::uint64_t id_ = 0U;
 };
 
@@ -76,11 +99,22 @@ class SamplerHandle
 {
 public:
     SamplerHandle() = default;
-    constexpr bool IsValid() const noexcept { return this->id_ != 0U; }
+    constexpr bool IsValid() const noexcept
+    {
+        return this->device_ != 0U && this->id_ != 0U;
+    }
 
 private:
     friend class RenderDevice;
-    explicit SamplerHandle(std::uint64_t id) noexcept : id_(id) {}
+    explicit SamplerHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
+        : device_(device),
+          id_(id)
+    {
+    }
+    std::uint64_t device_ = 0U;
     std::uint64_t id_ = 0U;
 };
 
@@ -88,11 +122,22 @@ class PipelineHandle
 {
 public:
     PipelineHandle() = default;
-    constexpr bool IsValid() const noexcept { return this->id_ != 0U; }
+    constexpr bool IsValid() const noexcept
+    {
+        return this->device_ != 0U && this->id_ != 0U;
+    }
 
 private:
     friend class RenderDevice;
-    explicit PipelineHandle(std::uint64_t id) noexcept : id_(id) {}
+    explicit PipelineHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
+        : device_(device),
+          id_(id)
+    {
+    }
+    std::uint64_t device_ = 0U;
     std::uint64_t id_ = 0U;
 };
 
@@ -187,7 +232,7 @@ public:
 
     virtual RenderBackendId BackendId() const noexcept = 0;
     virtual std::string_view BackendName() const noexcept = 0;
-    virtual const RenderDeviceCapabilities& Capabilities() const noexcept = 0;
+    virtual const RenderDeviceCapabilities& Capabilities() const = 0;
 
     virtual BufferHandle CreateBuffer(const BufferDesc& desc) = 0;
     virtual TextureHandle CreateTexture(const TextureDesc& desc) = 0;
@@ -203,29 +248,41 @@ public:
         std::size_t offset = 0U
     ) = 0;
 
-    virtual void DestroyBuffer(BufferHandle handle) noexcept = 0;
-    virtual void DestroyTexture(TextureHandle handle) noexcept = 0;
-    virtual void DestroySampler(SamplerHandle handle) noexcept = 0;
-    virtual void DestroyGraphicsPipeline(PipelineHandle handle) noexcept = 0;
+    virtual void DestroyBuffer(BufferHandle handle) = 0;
+    virtual void DestroyTexture(TextureHandle handle) = 0;
+    virtual void DestroySampler(SamplerHandle handle) = 0;
+    virtual void DestroyGraphicsPipeline(PipelineHandle handle) = 0;
 
 protected:
-    RenderDevice() = default;
+    RenderDevice() : deviceUid_(NextDeviceUid()) {}
 
-    static BufferHandle MakeBufferHandle(std::uint64_t id) noexcept
+    static BufferHandle MakeBufferHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
     {
-        return BufferHandle(id);
+        return BufferHandle(device, id);
     }
-    static TextureHandle MakeTextureHandle(std::uint64_t id) noexcept
+    static TextureHandle MakeTextureHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
     {
-        return TextureHandle(id);
+        return TextureHandle(device, id);
     }
-    static SamplerHandle MakeSamplerHandle(std::uint64_t id) noexcept
+    static SamplerHandle MakeSamplerHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
     {
-        return SamplerHandle(id);
+        return SamplerHandle(device, id);
     }
-    static PipelineHandle MakePipelineHandle(std::uint64_t id) noexcept
+    static PipelineHandle MakePipelineHandle(
+        std::uint64_t device,
+        std::uint64_t id
+    ) noexcept
     {
-        return PipelineHandle(id);
+        return PipelineHandle(device, id);
     }
     static std::uint64_t HandleId(BufferHandle handle) noexcept
     {
@@ -243,5 +300,35 @@ protected:
     {
         return handle.id_;
     }
+    static std::uint64_t HandleDevice(BufferHandle handle) noexcept
+    {
+        return handle.device_;
+    }
+    static std::uint64_t HandleDevice(TextureHandle handle) noexcept
+    {
+        return handle.device_;
+    }
+    static std::uint64_t HandleDevice(SamplerHandle handle) noexcept
+    {
+        return handle.device_;
+    }
+    static std::uint64_t HandleDevice(PipelineHandle handle) noexcept
+    {
+        return handle.device_;
+    }
+
+    std::uint64_t DeviceUid() const noexcept { return this->deviceUid_; }
+
+private:
+    static std::uint64_t NextDeviceUid() noexcept
+    {
+        static std::atomic<std::uint64_t> nextDeviceUid{1U};
+        return nextDeviceUid.fetch_add(
+            1U,
+            std::memory_order_relaxed
+        );
+    }
+
+    std::uint64_t deviceUid_ = 0U;
 };
 }  // namespace wisteria

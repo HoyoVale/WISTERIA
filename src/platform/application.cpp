@@ -57,8 +57,34 @@ Window& Application::CreateWindow(const WindowConfig& config)
         LegacyGraphicsDevice(*this->renderDevice);
     if (!graphicsDevice.HasShareGroupToken())
         graphicsDevice.SetShareGroupToken(window.ShareGroupToken());
-    dynamic_cast<OpenGlRenderDevice&>(*this->renderDevice)
-        .RefreshCapabilities();
+    // Capabilities must be queried while a context of the owning share
+    // group is current. WindowManager restores the previous context before
+    // returning, so enter a short transaction on the new window's context.
+    GLFWwindow* previousContext = glfwGetCurrentContext();
+    glfwMakeContextCurrent(window.GetGLFWwindow());
+    GraphicsDevice::SetCurrentContext(window.GetGLFWwindow());
+    GraphicsDevice::SetCurrentShareGroup(window.ShareGroupToken());
+    try
+    {
+        dynamic_cast<OpenGlRenderDevice&>(*this->renderDevice)
+            .RefreshCapabilities();
+    }
+    catch (...)
+    {
+        glfwMakeContextCurrent(previousContext);
+        GraphicsDevice::SetCurrentContext(previousContext);
+        GraphicsDevice::SetCurrentShareGroup(
+            previousContext != nullptr
+                ? window.ShareGroupToken()
+                : nullptr
+        );
+        throw;
+    }
+    glfwMakeContextCurrent(previousContext);
+    GraphicsDevice::SetCurrentContext(previousContext);
+    GraphicsDevice::SetCurrentShareGroup(
+        previousContext != nullptr ? window.ShareGroupToken() : nullptr
+    );
     return window;
 }
 
@@ -262,6 +288,11 @@ GraphicsDevice& Application::GetGraphicsDevice() noexcept
 const GraphicsDevice& Application::GetGraphicsDevice() const noexcept
 {
     return LegacyGraphicsDevice(*this->renderDevice);
+}
+
+RenderDevice& Application::GetRenderDevice() noexcept
+{
+    return *this->renderDevice;
 }
 
 void Application::Shutdown() noexcept

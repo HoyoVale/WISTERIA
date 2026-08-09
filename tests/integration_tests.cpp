@@ -13271,18 +13271,26 @@ void TestR2RenderDeviceFoundation()
         "r2 backend identity"
     );
 
-    // Engine-semantic capabilities mirror the current GL context exactly
-    // (semantic fields, not API constants).
+    // Engine-semantic capabilities: maxSkinningMatrices is the actual
+    // matrix-palette capacity (GL_MAX_TEXTURE_BUFFER_SIZE / 4 when GPU
+    // skinning is addressable), NOT a raw GL constant mirror.
     const wisteria::RenderDeviceCapabilities& capabilities =
         device.Capabilities();
     GLint vertexTextureUnits = 0;
+    GLint combinedTextureUnits = 0;
+    GLint maximumTexels = 0;
     glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &vertexTextureUnits);
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &combinedTextureUnits);
+    glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maximumTexels);
+    const std::size_t expectedSkinningMatrices =
+        (vertexTextureUnits >= 1 &&
+         combinedTextureUnits > 11 &&
+         maximumTexels >= 4)
+            ? static_cast<std::size_t>(maximumTexels) / 4U
+            : 0U;
     Require(
-        capabilities.maxSkinningMatrices ==
-            static_cast<std::size_t>(vertexTextureUnits > 0
-                                         ? vertexTextureUnits
-                                         : 0),
-        "r2 maxSkinningMatrices must mirror the validated GL capability"
+        capabilities.maxSkinningMatrices == expectedSkinningMatrices,
+        "r2 maxSkinningMatrices must be the matrix-palette capacity"
     );
     const bool expectedIndependentBlend =
         GLAD_GL_ARB_draw_buffers_blend != 0 &&
@@ -13392,11 +13400,71 @@ void TestR2RenderDeviceFoundation()
         "r2 wrong-device buffer use was not detected"
     );
 
+    // Adversarial: A's first handle and B's first handle share resource id 1.
+    // B must reject A's handle AND leave its own resource untouched.
+    wisteria::BufferDesc secondBufferDesc;
+    secondBufferDesc.size = 64U;
+    secondBufferDesc.usage = wisteria::BufferUsage::Vertex;
+    const wisteria::BufferHandle bufferB =
+        secondDevice.CreateBuffer(secondBufferDesc);
+    Require(bufferB.IsValid(), "r2 second-device buffer create failed");
+    bool wrongDestroyRejected = false;
+    try
+    {
+        secondDevice.DestroyBuffer(buffer);
+    }
+    catch (const std::invalid_argument&)
+    {
+        wrongDestroyRejected = true;
+    }
+    Require(
+        wrongDestroyRejected,
+        "r2 wrong-device destroy was not detected"
+    );
+    const std::array<float, 4> secondData = {0.0f, 0.0f, 0.0f, 0.0f};
+    secondDevice.UpdateBuffer(
+        bufferB,
+        secondData.data(),
+        secondData.size() * sizeof(float)
+    );
+    secondDevice.DestroyBuffer(bufferB);
+
+    // Buffer bounds are validated by the neutral layer.
+    bool boundsRejected = false;
+    try
+    {
+        device.UpdateBuffer(
+            buffer,
+            vertexData.data(),
+            4096U,
+            0U
+        );
+    }
+    catch (const std::out_of_range&)
+    {
+        boundsRejected = true;
+    }
+    Require(boundsRejected, "r2 out-of-range buffer update was accepted");
+
+    // Sampler/pipeline are share-group shared objects: destroying them while
+    // a non-owning context is current must queue (R1.7 lifetime), never raw
+    // glDelete under the wrong context.
+    secondSession.MakeCurrent();
+    device.DestroySampler(sampler);
+    device.DestroyGraphicsPipeline(pipeline);
+    Require(
+        session.GetGraphicsDevice().PendingDeleteCount() == 2U,
+        "r2 sampler/pipeline deletion was not queued"
+    );
+    session.MakeCurrent();
+    Require(
+        session.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2 pending deletes were not flushed"
+    );
+
     // Destroy makes the logical handle unusable immediately.
     device.DestroyBuffer(buffer);
     device.DestroyTexture(texture);
-    device.DestroySampler(sampler);
-    device.DestroyGraphicsPipeline(pipeline);
     bool destroyedHandleRejected = false;
     try
     {
@@ -13459,6 +13527,50 @@ void TestR2RenderDeviceFoundation()
         }
     }
     Require(hasContent, "r2 render through RenderDevice session is empty");
+}
+
+void TestR2WindowedCapabilities()
+{
+    // R2.0 0B Final Fix: capabilities must only become authoritative after a
+    // real current-context transaction. The windowed composition root
+    // (Application) refreshes on first window creation; headless covers the
+    // session path in TestR2RenderDeviceFoundation.
+    wisteria::Application application;
+
+    // Before any window exists there is no current context; Capabilities()
+    // must reject instead of returning uninitialized defaults.
+    bool uninitializedRejected = false;
+    try
+    {
+        (void)application.GetRenderDevice().Capabilities();
+    }
+    catch (const std::logic_error&)
+    {
+        uninitializedRejected = true;
+    }
+    Require(
+        uninitializedRejected,
+        "r2 uninitialized capabilities were treated as authoritative"
+    );
+
+    // First window creation refreshes capabilities inside the new window's
+    // current-context transaction (WindowManager restores the previous
+    // context before returning; Application must not query GL afterwards).
+    wisteria::WindowConfig config;
+    config.width = 64;
+    config.height = 64;
+    config.visible = false;
+    application.CreateWindow(config);
+    const wisteria::RenderDeviceCapabilities& capabilities =
+        application.GetRenderDevice().Capabilities();
+    Require(
+        application.GetRenderDevice().BackendId() ==
+            wisteria::RenderBackendId::OpenGL,
+        "r2 windowed backend identity"
+    );
+    // maxSkinningMatrices semantics are validated against GL in the headless
+    // test; here the authoritative-read path is the subject under test.
+    (void)capabilities;
 }
 
 int main()
@@ -13590,6 +13702,10 @@ int main()
     failures += !RunTest(
         "R2.0 render device foundation",
         TestR2RenderDeviceFoundation
+    );
+    failures += !RunTest(
+        "R2.0 windowed capabilities transaction",
+        TestR2WindowedCapabilities
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

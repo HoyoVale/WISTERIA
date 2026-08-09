@@ -26,7 +26,9 @@ public:
         VertexArray,
         Buffer,
         Framebuffer,
-        Renderbuffer
+        Renderbuffer,
+        Sampler,
+        Program
     };
 
     GraphicsDevice();

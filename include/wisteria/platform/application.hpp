@@ -69,6 +69,8 @@ public:
     const ResourceManager& GetResources() const noexcept;
     GraphicsDevice& GetGraphicsDevice() noexcept;
     const GraphicsDevice& GetGraphicsDevice() const noexcept;
+    // R2.0 Phase 0B: backend-neutral device owned by this composition root.
+    RenderDevice& GetRenderDevice() noexcept;
 
 private:
     void Shutdown() noexcept;
