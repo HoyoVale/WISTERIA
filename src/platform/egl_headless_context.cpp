@@ -250,6 +250,26 @@ private:
                 "(renderer=\"" + this->glRenderer + "\")"
             );
         }
+        // Final Micro Fix: CreateHeadlessContext must return with no native
+        // context current and no registered trackers. Context creation made
+        // the context current to load GL entry points and read diagnostics;
+        // the public MakeCurrent() transaction owns the "current" state from
+        // now on. Otherwise a factory-created context-local object could be
+        // recorded with a null owner and bypass the ownership gate.
+        if (!eglMakeCurrent(
+                this->display,
+                EGL_NO_SURFACE,
+                EGL_NO_SURFACE,
+                EGL_NO_CONTEXT
+            ))
+        {
+            throw std::runtime_error(
+                "eglMakeCurrent(EGL_NO_CONTEXT) failed after initialization: "
+                + EglErrorString(eglGetError())
+            );
+        }
+        GraphicsDevice::SetCurrentContext(nullptr);
+        GraphicsDevice::SetCurrentShareGroup(nullptr);
     }
 
     static std::string QueryClientExtensions()

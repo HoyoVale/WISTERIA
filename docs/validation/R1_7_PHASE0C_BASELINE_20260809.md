@@ -106,7 +106,8 @@ integration PASS，新增：
 ```text
 smoke 自动（surfaceless + D3D12）       PASS
 smoke --software（D3D12）              FAIL（严格 gate，预期行为）
-smoke --software + LIBGL_ALWAYS_SOFTWARE=1（llvmpipe 4.5） PASS
+smoke --software + LIBGL_ALWAYS_SOFTWARE=1
+      （platform=device-software，llvmpipe 4.5） PASS
 unit 全部 PASS
 render-fbo（llvmpipe）PASS，含 two-context ownership matrix
 ```
@@ -133,12 +134,39 @@ EglHeadlessContext：ContextToken 身份对象；构造失败清理；
   ReleaseCurrent 检查返回值；forceSoftware 验证 GL_RENDERER
 ```
 
+### 4.4 Final Micro Fix（2026-08-09 三轮复审）
+
+```text
+factory current-state invariant：
+  Initialize() 完成 strict gate 后主动 eglMakeCurrent(NO_CONTEXT)，
+  并清空 CurrentContext / CurrentShareGroup；
+  CreateHeadlessContext 返回时 native EGL 不保持 current
+
+smoke 新增断言（全部通过）：
+  Create 后 trackers == nullptr
+  MakeCurrent 后 CurrentContext == ContextToken、
+    CurrentShareGroup == ShareGroupToken
+  ReleaseCurrent 后 trackers == nullptr
+
+实测（WSL）：
+  auto                                  PASS
+  --software（D3D12）                   FAIL（严格 gate）
+  --software + LIBGL_ALWAYS_SOFTWARE=1  PASS（device-software + llvmpipe）
+  LIBGL_ALWAYS_SOFTWARE=1               PASS（surfaceless + llvmpipe）
+```
+
 ## 5. 语义验收点
 
 ```text
 1. 多窗口共享 context：第二个窗口 MakeContextCurrent 后注册的是
-   与首窗相同的 ShareGroupToken → ContextIsCurrent() == true
-   → 该窗口销毁 GPU 对象立即删除，不再排入 pending 队列
+   自己的 ContextToken + 与首窗相同的 ShareGroupToken。删除合法性
+   按对象分域：
+   - shared object（Texture/Buffer/Renderbuffer）：share group 匹配
+     → 可立即删除
+   - 本窗口自己创建的 context-local object（VAO/FBO）：
+     context token 匹配 → 可立即删除
+   - 兄弟 context 创建的 context-local object：不可删除 → 排队，
+     兄弟 context 不得 flush
 2. MakeCurrent 事务：Window::MakeContextCurrent 内部完成
    MakeCurrent → 注册 share group → FlushPendingDeletes；
    RenderWindow / native read_pixels 不再各自手动 flush

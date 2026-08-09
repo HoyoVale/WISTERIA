@@ -80,13 +80,22 @@ PASS（但 software=yes 来自设备分类，不是实际 renderer —— 验收
           (renderer="D3D12 (Intel(R) UHD Graphics)")
 
 --software + LIBGL_ALWAYS_SOFTWARE=1
-  → platform=surfaceless renderer=llvmpipe (LLVM 15.0.7, 256 bits)
+  → platform=device-software renderer=llvmpipe (LLVM 15.0.7, 256 bits)
     version=4.5 (Core Profile) software=yes PASS
 ```
 
 现在 `IsSoftware()` 只看 GL_RENDERER（llvmpipe/softpipe/swrast），
 设备扩展分类不再作为成功证据；D3D12 一律拒绝。这正好匹配
 "WSL 只能软件回退、真实 Linux 硬件正常" 的验收口径。
+
+注：`forceSoftware == true` 无条件走 `EGL_EXT_platform_device` +
+`EGL_MESA_device_software`，因此即使配合 `LIBGL_ALWAYS_SOFTWARE=1`，
+platform 名也始终是 `device-software`（surfaceless 路径只在自动模式下使用）。
+
+Final Micro Fix：`CreateHeadlessContext` 返回前主动 unbind
+（eglMakeCurrent(NO_CONTEXT) + 清空两个 tracker），factory 不保持
+native current；smoke 对 Create/MakeCurrent/ReleaseCurrent 后的
+tracker 状态新增断言，全部通过。
 
 ### 3.3 记录在案的 llvmpipe 回退（LIBGL_ALWAYS_SOFTWARE=1）
 

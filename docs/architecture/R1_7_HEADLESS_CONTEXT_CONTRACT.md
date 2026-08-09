@@ -354,6 +354,27 @@ Windows WGL / OSMesa / Stable C ABI
 10. 0B/0C baseline 修订
 ```
 
+### Final Micro Fix（2026-08-09 三轮复审后，已实施）
+
+```text
+不变量：CreateHeadlessContext 返回后，native EGL context 不得保持
+current，CurrentContext / CurrentShareGroup 必须为 nullptr。
+
+实现：Initialize() 完成 strict gate 后主动 eglMakeCurrent(NO_CONTEXT)
+并清空两个 tracker；显式 MakeCurrent() 才是进入
+"native current → ContextToken → ShareGroupToken" 事务的唯一入口。
+
+smoke 新增断言：
+  Create 后 trackers 为 null；
+  MakeCurrent 后 CurrentContext == ContextToken、
+    CurrentShareGroup == ShareGroupToken；
+  ReleaseCurrent 后两个 tracker 回到 null。
+
+文档修正：
+  --software + LIBGL_ALWAYS_SOFTWARE=1 实测 platform=device-software
+  （不是 surfaceless）；0C 语义验收点 #1 改为 shared/context-local 分域措辞。
+```
+
 ## 7. 已拍板决策（2026-08-09）
 
 | 决策项 | 结论 |

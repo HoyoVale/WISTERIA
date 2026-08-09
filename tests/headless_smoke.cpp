@@ -10,6 +10,7 @@
 // Exit codes: 0 = PASS, 1 = probe failure, 2 = usage error.
 
 #include "wisteria/platform/headless_context.hpp"
+#include "wisteria/rendering/graphics_device.hpp"
 
 #include <glad/gl.h>
 
@@ -159,8 +160,40 @@ int main(int argumentCount, char* arguments[])
         std::fprintf(stderr, "[headless-smoke] FAIL: context creation\n");
         return 1;
     }
+    // Final Micro Fix invariant: the factory must not leave a native context
+    // current or any tracker registered.
+    if (wisteria::GraphicsDevice::CurrentContext() != nullptr ||
+        wisteria::GraphicsDevice::CurrentShareGroup() != nullptr)
+    {
+        std::fprintf(
+            stderr,
+            "[headless-smoke] FAIL: factory leaked current tracker state\n"
+        );
+        return 1;
+    }
     context->MakeCurrent();
+    if (wisteria::GraphicsDevice::CurrentContext() !=
+            context->ContextToken() ||
+        wisteria::GraphicsDevice::CurrentShareGroup() !=
+            context->ShareGroupToken())
+    {
+        std::fprintf(
+            stderr,
+            "[headless-smoke] FAIL: MakeCurrent did not register both "
+            "identities\n"
+        );
+        return 1;
+    }
     context->ReleaseCurrent();
+    if (wisteria::GraphicsDevice::CurrentContext() != nullptr ||
+        wisteria::GraphicsDevice::CurrentShareGroup() != nullptr)
+    {
+        std::fprintf(
+            stderr,
+            "[headless-smoke] FAIL: ReleaseCurrent leaked tracker state\n"
+        );
+        return 1;
+    }
     context->MakeCurrent();
     context.reset();
 
