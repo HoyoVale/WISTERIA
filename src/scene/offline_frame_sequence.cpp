@@ -306,6 +306,9 @@ std::string OfflineFrameSequence::SessionIdentity() const
     const std::uint64_t build = CurrentBuildCompatibilityId();
     fold(&build, sizeof(build));
     foldString(this->runtime->BackendName());
+    const std::uint64_t assetFingerprint =
+        this->modelInstance->Asset().DeterministicFingerprint();
+    fold(&assetFingerprint, sizeof(assetFingerprint));
     fold(&this->config.renderRequest.width, sizeof(std::uint32_t));
     fold(&this->config.renderRequest.height, sizeof(std::uint32_t));
     const CameraParam& camera = this->config.renderRequest.camera.GetParam();

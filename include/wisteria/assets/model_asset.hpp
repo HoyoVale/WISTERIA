@@ -79,6 +79,13 @@ public:
     const AnimationClip* FindAnimationClip(std::string_view name) const noexcept;
     AnimationClip& AddAnimationClip(AnimationClip clip);
 
+    // R1.8 Final Micro Fix: deterministic fingerprint of the whole immutable
+    // ModelAsset: backend kind, part ordering/local transforms, mesh topology
+    // (vertices/layout/indices/source mapping), mesh morph offsets (vertex +
+    // UV), skeleton, morph definitions and animation clips/keys. This is the
+    // asset identity gate for Generic checkpoints and offline sessions.
+    std::uint64_t DeterministicFingerprint() const noexcept;
+
     RenderPart& AddPart(
         Mesh& mesh,
         Material& material,

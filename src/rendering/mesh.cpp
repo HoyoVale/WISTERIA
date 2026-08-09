@@ -519,6 +519,16 @@ bool Mesh::HasMorphTargets() const noexcept
     return !this->morphTargets.empty();
 }
 
+const DefaultModelData& Mesh::Data() const noexcept
+{
+    return this->data;
+}
+
+std::span<const MeshMorphTarget> Mesh::MorphTargets() const noexcept
+{
+    return this->morphTargets;
+}
+
 std::size_t Mesh::MorphTargetCount() const noexcept
 {
     return this->morphTargets.size();

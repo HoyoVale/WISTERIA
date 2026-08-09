@@ -86,6 +86,10 @@ public:
 
     bool HasMorphTargets() const noexcept;
     std::size_t MorphTargetCount() const noexcept;
+    // R1.8 Final Micro Fix: read-only access to the immutable asset data for
+    // deterministic fingerprinting. Never mutate through these spans.
+    const DefaultModelData& Data() const noexcept;
+    std::span<const MeshMorphTarget> MorphTargets() const noexcept;
     bool CalculateMorphOffsets(
         std::span<const float> weights,
         std::vector<glm::vec3>& output

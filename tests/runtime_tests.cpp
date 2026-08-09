@@ -1893,6 +1893,146 @@ void TestR18GenericFingerprintSemantics()
             TimelineStatus::InvalidCheckpoint,
         "R1.8 fingerprint did not distinguish animation key data"
     );
+
+    // Same skeleton/clip/keys, different base mesh geometry.
+    const auto makePartData = [](std::size_t vertexCount)
+    {
+        DefaultModelData data;
+        data.layout = {{"position", 3, FLOAT}};
+        for (std::size_t index = 0U; index < vertexCount; ++index)
+        {
+            data.vertices.push_back(
+                static_cast<float>(index) * 0.5f
+            );
+            data.vertices.push_back(0.0f);
+            data.vertices.push_back(0.0f);
+        }
+        for (std::size_t index = 0U; index + 2U < vertexCount; ++index)
+        {
+            data.indices.push_back(
+                static_cast<std::uint32_t>(index)
+            );
+            data.indices.push_back(
+                static_cast<std::uint32_t>(index + 1U)
+            );
+            data.indices.push_back(
+                static_cast<std::uint32_t>(index + 2U)
+            );
+        }
+        return data;
+    };
+
+    ModelAsset meshModelA("r18-fp-mesh-a");
+    ConfigureR18GenericTimelineAsset(meshModelA);
+    Mesh triangleMesh(makePartData(3U));
+    Material sharedMaterial(MaterialData{});
+    meshModelA.AddPart(triangleMesh, sharedMaterial);
+
+    ModelAsset meshModelB("r18-fp-mesh-b");
+    ConfigureR18GenericTimelineAsset(meshModelB);
+    Mesh quadMesh(makePartData(4U));
+    meshModelB.AddPart(quadMesh, sharedMaterial);
+
+    auto meshRuntimeA = CreateR18GenericRuntime(meshModelA);
+    Require(
+        meshRuntimeA->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            meshRuntimeA->StepMotionFrameExact(1U, config) ==
+                TimelineStatus::Ok,
+        "R1.8 mesh-fingerprint prepare/step failed"
+    );
+    GenericRuntimeCheckpoint meshCheckpoint;
+    Require(
+        meshRuntimeA->CreateCheckpoint(meshCheckpoint) ==
+            TimelineStatus::Ok,
+        "R1.8 mesh-fingerprint capture failed"
+    );
+    auto meshRuntimeB = CreateR18GenericRuntime(meshModelB);
+    Require(
+        meshRuntimeB->RestoreCheckpoint(meshCheckpoint) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 fingerprint did not distinguish base mesh geometry"
+    );
+
+    // Same everything except vertex/UV morph offsets.
+    MeshMorphTarget vertexTargetA;
+    vertexTargetA.morphIndex = 0U;
+    vertexTargetA.offsets.push_back(VertexMorphOffset{
+        .vertexIndex = 0U,
+        .offset = glm::vec3(1.0f, 0.0f, 0.0f)
+    });
+    MeshMorphTarget vertexTargetB = vertexTargetA;
+    vertexTargetB.offsets[0].offset = glm::vec3(2.0f, 0.0f, 0.0f);
+
+    ModelAsset morphModelA("r18-fp-morph-a");
+    ConfigureR18GenericTimelineAsset(morphModelA);
+    Mesh morphMeshA(makePartData(3U), 0U, {vertexTargetA});
+    morphModelA.AddPart(morphMeshA, sharedMaterial);
+
+    ModelAsset morphModelB("r18-fp-morph-b");
+    ConfigureR18GenericTimelineAsset(morphModelB);
+    Mesh morphMeshB(makePartData(3U), 0U, {vertexTargetB});
+    morphModelB.AddPart(morphMeshB, sharedMaterial);
+
+    auto morphRuntimeA = CreateR18GenericRuntime(morphModelA);
+    Require(
+        morphRuntimeA->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            morphRuntimeA->StepMotionFrameExact(1U, config) ==
+                TimelineStatus::Ok,
+        "R1.8 morph-fingerprint prepare/step failed"
+    );
+    GenericRuntimeCheckpoint morphCheckpoint;
+    Require(
+        morphRuntimeA->CreateCheckpoint(morphCheckpoint) ==
+            TimelineStatus::Ok,
+        "R1.8 morph-fingerprint capture failed"
+    );
+    auto morphRuntimeB = CreateR18GenericRuntime(morphModelB);
+    Require(
+        morphRuntimeB->RestoreCheckpoint(morphCheckpoint) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 fingerprint did not distinguish vertex morph offsets"
+    );
+
+    MeshMorphTarget uvTargetA;
+    uvTargetA.morphIndex = 0U;
+    uvTargetA.uvOffsets.push_back(UvMorphOffset{
+        .vertexIndex = 0U,
+        .channel = 0U,
+        .offset = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)
+    });
+    MeshMorphTarget uvTargetB = uvTargetA;
+    uvTargetB.uvOffsets[0].offset =
+        glm::vec4(2.0f, 0.0f, 0.0f, 0.0f);
+
+    ModelAsset uvModelA("r18-fp-uv-a");
+    ConfigureR18GenericTimelineAsset(uvModelA);
+    Mesh uvMeshA(makePartData(3U), 0U, {uvTargetA});
+    uvModelA.AddPart(uvMeshA, sharedMaterial);
+
+    ModelAsset uvModelB("r18-fp-uv-b");
+    ConfigureR18GenericTimelineAsset(uvModelB);
+    Mesh uvMeshB(makePartData(3U), 0U, {uvTargetB});
+    uvModelB.AddPart(uvMeshB, sharedMaterial);
+
+    auto uvRuntimeA = CreateR18GenericRuntime(uvModelA);
+    Require(
+        uvRuntimeA->PrepareFrameZero(config) == TimelineStatus::Ok &&
+            uvRuntimeA->StepMotionFrameExact(1U, config) ==
+                TimelineStatus::Ok,
+        "R1.8 uv-fingerprint prepare/step failed"
+    );
+    GenericRuntimeCheckpoint uvCheckpoint;
+    Require(
+        uvRuntimeA->CreateCheckpoint(uvCheckpoint) ==
+            TimelineStatus::Ok,
+        "R1.8 uv-fingerprint capture failed"
+    );
+    auto uvRuntimeB = CreateR18GenericRuntime(uvModelB);
+    Require(
+        uvRuntimeB->RestoreCheckpoint(uvCheckpoint) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 fingerprint did not distinguish UV morph offsets"
+    );
 }
 
 void TestR18SequenceRootMotionBoundary()

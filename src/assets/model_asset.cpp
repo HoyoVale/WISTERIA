@@ -1,5 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/assets/model_asset.hpp"
+#include "wisteria/core/deterministic_fingerprint.hpp"
+#include "wisteria/rendering/mesh.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -269,5 +271,241 @@ RenderPart& ModelAsset::AddPart(
         localTransform,
         morphMaterialIndex
     );
+}
+
+std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
+{
+    FingerprintBuilder fp;
+    fp.String("wisteria-model-asset/deterministic/v1");
+    fp.U32(static_cast<std::uint32_t>(this->BackendKind()));
+
+    // Parts: ordering, local transforms, mesh topology and mesh morph data.
+    fp.U32(static_cast<std::uint32_t>(this->parts.size()));
+    for (const RenderPart& part : this->parts)
+    {
+        fp.Mat4(part.LocalTransform());
+        fp.U32(
+            part.MorphMaterialIndex().value_or(0xFFFFFFFFU)
+        );
+        const Mesh& mesh = part.GetMesh();
+        const DefaultModelData& data = mesh.Data();
+        fp.U64(data.vertices.size());
+        fp.Bytes(
+            data.vertices.data(),
+            data.vertices.size() * sizeof(float)
+        );
+        fp.U64(data.indices.size());
+        for (std::uint32_t index : data.indices)
+            fp.U32(index);
+        fp.U32(static_cast<std::uint32_t>(data.layout.size()));
+        for (const Layout& layout : data.layout)
+        {
+            fp.String(layout.name);
+            fp.U32(layout.size);
+            fp.U32(static_cast<std::uint32_t>(layout.type));
+            fp.Bool(layout.normalized);
+            fp.Bool(layout.integer);
+            fp.U32(layout.location);
+        }
+        const std::span<const std::uint32_t> sourceIndices =
+            mesh.SourceVertexIndices();
+        fp.U64(sourceIndices.size());
+        for (std::uint32_t index : sourceIndices)
+            fp.U32(index);
+        const std::span<const MeshMorphTarget> morphTargets =
+            mesh.MorphTargets();
+        fp.U64(morphTargets.size());
+        for (const MeshMorphTarget& target : morphTargets)
+        {
+            fp.U32(target.morphIndex);
+            fp.U64(target.offsets.size());
+            for (const VertexMorphOffset& offset : target.offsets)
+            {
+                fp.U32(offset.vertexIndex);
+                fp.Vec3(offset.offset);
+            }
+            fp.U64(target.uvOffsets.size());
+            for (const UvMorphOffset& offset : target.uvOffsets)
+            {
+                fp.U32(offset.vertexIndex);
+                fp.U8(offset.channel);
+                fp.Vec4(offset.offset);
+            }
+        }
+    }
+
+    // Skeleton topology and bind data.
+    const Skeleton* skeleton = this->TryGetSkeleton();
+    if (skeleton != nullptr)
+    {
+        fp.U32(static_cast<std::uint32_t>(skeleton->BoneCount()));
+        for (std::size_t index = 0U; index < skeleton->BoneCount(); ++index)
+        {
+            const Bone& bone = skeleton->BoneAt(
+                static_cast<BoneIndex>(index)
+            );
+            fp.String(bone.name);
+            fp.U32(bone.parentIndex);
+            fp.Mat4(bone.bindLocalMatrix);
+        }
+    }
+    else
+    {
+        fp.U32(0U);
+    }
+
+    // Morph definitions (identity + full member/offset data).
+    const MorphSet* morphSet = this->TryGetMorphSet();
+    if (morphSet != nullptr)
+    {
+        fp.U32(static_cast<std::uint32_t>(morphSet->MorphCount()));
+        for (const MorphDefinition& definition : morphSet->Definitions())
+        {
+            fp.String(definition.name);
+            fp.U32(static_cast<std::uint32_t>(definition.category));
+            fp.U32(static_cast<std::uint32_t>(definition.kind));
+            fp.U32(static_cast<std::uint32_t>(
+                definition.groupMembers.size()
+            ));
+            for (const GroupMorphMember& member : definition.groupMembers)
+            {
+                fp.U32(member.morphIndex);
+                fp.F32(member.weight);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.flipMembers.size()
+            ));
+            for (const FlipMorphMember& member : definition.flipMembers)
+            {
+                fp.U32(member.morphIndex);
+                fp.F32(member.weight);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.boneOffsets.size()
+            ));
+            for (const BoneMorphOffset& offset : definition.boneOffsets)
+            {
+                fp.U32(offset.boneIndex);
+                fp.Vec3(offset.translation);
+                fp.Quat(offset.rotation);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.materialOffsets.size()
+            ));
+            for (const MaterialMorphOffset& offset :
+                 definition.materialOffsets)
+            {
+                fp.U32(offset.materialIndex);
+                fp.U32(static_cast<std::uint32_t>(offset.operation));
+                fp.Vec4(offset.diffuse);
+                fp.Vec3(offset.specular);
+                fp.F32(offset.shininess);
+                fp.Vec3(offset.ambient);
+                fp.Vec4(offset.edgeColor);
+                fp.F32(offset.edgeSize);
+                fp.Vec4(offset.textureFactor);
+                fp.Vec4(offset.sphereTextureFactor);
+                fp.Vec4(offset.toonTextureFactor);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.impulseOffsets.size()
+            ));
+            for (const ImpulseMorphOffset& offset :
+                 definition.impulseOffsets)
+            {
+                fp.U32(offset.rigidBodyIndex);
+                fp.Bool(offset.local);
+                fp.Vec3(offset.velocity);
+                fp.Vec3(offset.torque);
+            }
+        }
+    }
+    else
+    {
+        fp.U32(0U);
+    }
+
+    // Animation clips: names, duration, tracks, keys and interpolation.
+    fp.U32(static_cast<std::uint32_t>(this->animationClips.size()));
+    for (const std::unique_ptr<AnimationClip>& clipPtr :
+         this->animationClips)
+    {
+        const AnimationClip& clip = *clipPtr;
+        fp.String(clip.Name());
+        fp.F32(clip.Duration());
+        fp.U32(static_cast<std::uint32_t>(clip.TrackCount()));
+        for (const AnimationTrack& track : clip.Tracks())
+        {
+            fp.U32(track.Bone());
+            fp.U32(static_cast<std::uint32_t>(
+                track.TranslationKeys().size()
+            ));
+            for (const VectorKeyframe& key : track.TranslationKeys())
+            {
+                fp.F32(key.time);
+                fp.Vec3(key.value);
+                for (const KeyframeInterpolation& interpolation :
+                     key.interpolation)
+                {
+                    fp.U32(static_cast<std::uint32_t>(interpolation.mode));
+                    fp.Vec2(interpolation.controlPoint1);
+                    fp.Vec2(interpolation.controlPoint2);
+                }
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                track.RotationKeys().size()
+            ));
+            for (const QuaternionKeyframe& key : track.RotationKeys())
+            {
+                fp.F32(key.time);
+                fp.Quat(key.value);
+                fp.U32(static_cast<std::uint32_t>(key.interpolation.mode));
+                fp.Vec2(key.interpolation.controlPoint1);
+                fp.Vec2(key.interpolation.controlPoint2);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                track.ScaleKeys().size()
+            ));
+            for (const VectorKeyframe& key : track.ScaleKeys())
+            {
+                fp.F32(key.time);
+                fp.Vec3(key.value);
+                for (const KeyframeInterpolation& interpolation :
+                     key.interpolation)
+                {
+                    fp.U32(static_cast<std::uint32_t>(interpolation.mode));
+                    fp.Vec2(interpolation.controlPoint1);
+                    fp.Vec2(interpolation.controlPoint2);
+                }
+            }
+        }
+        fp.U32(static_cast<std::uint32_t>(
+            clip.MorphWeightTrackCount()
+        ));
+        for (const MorphWeightTrack& track : clip.MorphWeightTracks())
+        {
+            fp.U32(track.Morph());
+            fp.U32(static_cast<std::uint32_t>(track.Keys().size()));
+            for (const FloatKeyframe& key : track.Keys())
+            {
+                fp.F32(key.time);
+                fp.F32(key.value);
+            }
+        }
+        fp.U32(static_cast<std::uint32_t>(
+            clip.MmdIkStateTrackCount()
+        ));
+        for (const MmdIkStateTrack& track : clip.MmdIkStateTracks())
+        {
+            fp.U32(track.ControllerBone());
+            fp.U32(static_cast<std::uint32_t>(track.Keys().size()));
+            for (const BoolKeyframe& key : track.Keys())
+            {
+                fp.F32(key.time);
+                fp.Bool(key.value);
+            }
+        }
+    }
+    return fp.Result();
 }
 }  // namespace wisteria

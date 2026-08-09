@@ -279,6 +279,25 @@ Phase 0E  四矩阵 + Final Closure
    仅最后 owner eglTerminate
 ```
 
+### Final Micro Fix（2026-08-09 复审后，已实施）
+
+```text
+assetFingerprint 完整性：
+  新增 ModelAsset::DeterministicFingerprint()（engine 级，单一来源）：
+    backend kind / part ordering + local transform /
+    mesh topology（vertices、layout、indices、source vertex mapping）/
+    mesh morph（vertex offsets + UV offsets）/
+    skeleton / morph definitions / animation clips+keys
+  FingerprintBuilder 收为 wisteria/core/deterministic_fingerprint.hpp
+  Generic ComputeAssetFingerprint = runtime tag + asset fingerprint
+  OfflineFrameSequence::SessionIdentity 折入资产指纹
+
+反例测试：
+  同 skeleton/clip/keys、不同 base mesh → 指纹不同 → restore 拒绝
+  仅 vertex morph offset 不同 → 指纹不同 → restore 拒绝
+  仅 UV morph offset 不同 → 指纹不同 → restore 拒绝
+```
+
 ## 6. 成功标准
 
 ```text
