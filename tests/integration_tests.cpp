@@ -13249,6 +13249,218 @@ void TestR19StableRenderPixelsMatchEngine()
     wisteria_stable_context_destroy(context);
 }
 
+void TestR2RenderDeviceFoundation()
+{
+    // R2.0 Phase 0B: backend-neutral RenderDevice + OpenGlRenderDevice.
+    // Verifies: neutral identity/capabilities, real resource lifecycle,
+    // wrong-device detection, invalid-shader rejection, and that the R1
+    // engine path still renders through the new composition root.
+    auto provider = wisteria::CreateHeadlessContext({});
+    Require(
+        provider != nullptr,
+        "r2 provider unavailable"
+    );
+    wisteria::HeadlessRenderSession session(std::move(provider));
+    session.MakeCurrent();
+    wisteria::RenderDevice& device = session.GetRenderDevice();
+
+    // Backend identity.
+    Require(
+        device.BackendId() == wisteria::RenderBackendId::OpenGL &&
+            device.BackendName() == "OpenGL",
+        "r2 backend identity"
+    );
+
+    // Engine-semantic capabilities mirror the current GL context exactly
+    // (semantic fields, not API constants).
+    const wisteria::RenderDeviceCapabilities& capabilities =
+        device.Capabilities();
+    GLint vertexTextureUnits = 0;
+    glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &vertexTextureUnits);
+    Require(
+        capabilities.maxSkinningMatrices ==
+            static_cast<std::size_t>(vertexTextureUnits > 0
+                                         ? vertexTextureUnits
+                                         : 0),
+        "r2 maxSkinningMatrices must mirror the validated GL capability"
+    );
+    const bool expectedIndependentBlend =
+        GLAD_GL_ARB_draw_buffers_blend != 0 &&
+        glad_glBlendFunciARB != nullptr;
+    Require(
+        capabilities.independentBlend == expectedIndependentBlend,
+        "r2 independentBlend must mirror the validated GL capability"
+    );
+
+    // Resource lifecycle: create -> update -> destroy.
+    wisteria::BufferDesc bufferDesc;
+    bufferDesc.size = 256U;
+    bufferDesc.usage = wisteria::BufferUsage::Vertex;
+    const wisteria::BufferHandle buffer = device.CreateBuffer(bufferDesc);
+    Require(buffer.IsValid(), "r2 buffer create failed");
+    const std::array<float, 8> vertexData = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f, 1.0f
+    };
+    device.UpdateBuffer(
+        buffer,
+        vertexData.data(),
+        vertexData.size() * sizeof(float)
+    );
+
+    wisteria::TextureDesc textureDesc;
+    textureDesc.width = 8U;
+    textureDesc.height = 8U;
+    textureDesc.format = wisteria::TextureFormat::Rgba8;
+    const wisteria::TextureHandle texture =
+        device.CreateTexture(textureDesc);
+    Require(texture.IsValid(), "r2 texture create failed");
+
+    const wisteria::SamplerHandle sampler =
+        device.CreateSampler(wisteria::SamplerDesc{});
+    Require(sampler.IsValid(), "r2 sampler create failed");
+
+    wisteria::GraphicsPipelineDesc pipelineDesc;
+    pipelineDesc.label = "r2-triangle";
+    pipelineDesc.stages = {
+        wisteria::ShaderStageDesc{
+            wisteria::ShaderStage::Vertex,
+            "#version 330 core\n"
+            "void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }",
+            "main"
+        },
+        wisteria::ShaderStageDesc{
+            wisteria::ShaderStage::Fragment,
+            "#version 330 core\n"
+            "out vec4 color;"
+            "void main() { color = vec4(1.0); }",
+            "main"
+        },
+    };
+    const wisteria::PipelineHandle pipeline =
+        device.CreateGraphicsPipeline(pipelineDesc);
+    Require(pipeline.IsValid(), "r2 pipeline create failed");
+
+    // Invalid shader source must be rejected explicitly.
+    bool compileRejected = false;
+    try
+    {
+        wisteria::GraphicsPipelineDesc invalidDesc;
+        invalidDesc.label = "r2-invalid";
+        invalidDesc.stages = {
+            wisteria::ShaderStageDesc{
+                wisteria::ShaderStage::Vertex,
+                "this is not GLSL",
+                "main"
+            },
+        };
+        device.CreateGraphicsPipeline(invalidDesc);
+    }
+    catch (const std::runtime_error&)
+    {
+        compileRejected = true;
+    }
+    Require(compileRejected, "r2 invalid shader was accepted");
+
+    // Wrong-device handle use is an engine contract violation (detected).
+    auto secondProvider = wisteria::CreateHeadlessContext({});
+    Require(
+        secondProvider != nullptr,
+        "r2 second provider unavailable"
+    );
+    wisteria::HeadlessRenderSession secondSession(
+        std::move(secondProvider)
+    );
+    secondSession.MakeCurrent();
+    wisteria::RenderDevice& secondDevice =
+        secondSession.GetRenderDevice();
+    bool wrongDeviceRejected = false;
+    try
+    {
+        secondDevice.UpdateBuffer(
+            buffer,
+            vertexData.data(),
+            vertexData.size() * sizeof(float)
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        wrongDeviceRejected = true;
+    }
+    Require(
+        wrongDeviceRejected,
+        "r2 wrong-device buffer use was not detected"
+    );
+
+    // Destroy makes the logical handle unusable immediately.
+    device.DestroyBuffer(buffer);
+    device.DestroyTexture(texture);
+    device.DestroySampler(sampler);
+    device.DestroyGraphicsPipeline(pipeline);
+    bool destroyedHandleRejected = false;
+    try
+    {
+        device.UpdateBuffer(
+            buffer,
+            vertexData.data(),
+            vertexData.size() * sizeof(float)
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        destroyedHandleRejected = true;
+    }
+    Require(
+        destroyedHandleRejected,
+        "r2 destroyed handle remained usable"
+    );
+
+    // R1 regression through the new composition root: the engine offline
+    // path still renders a non-zero frame via RenderDevice-backed session.
+    wisteria::Scene scene;
+    scene.CreateDirectionalLight(wisteria::DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+        .Intensity = 1.0f
+    });
+    wisteria::ResourceManager resources;
+    resources.BindGraphicsDevice(session.GetGraphicsDevice());
+    wisteria::ModelAsset& model = resources.LoadModel(
+        "r2::foundationQuad",
+        FixturePath("pbr-quad-gltf")
+    );
+    scene.InstantiateModel(model);
+    wisteria::OfflineRenderRequest request;
+    request.width = 32U;
+    request.height = 32U;
+    request.camera = wisteria::Camera(wisteria::CameraParam{
+        .Position = glm::vec3(0.0f, 3.0f, 3.0f),
+        .Target = glm::vec3(0.0f, 0.0f, 0.0f),
+        .Up = glm::vec3(0.0f, 1.0f, 0.0f),
+        .VerticalFovDegrees = 45.0f,
+        .NearClip = 0.1f,
+        .FarClip = 100.0f
+    });
+    request.projection = glm::perspective(
+        glm::radians(45.0f),
+        1.0f,
+        0.1f,
+        100.0f
+    );
+    const wisteria::Rgba8Frame frame =
+        session.RenderOffline(scene, request);
+    bool hasContent = false;
+    for (const std::uint8_t value : frame.pixels)
+    {
+        if (value != 0U)
+        {
+            hasContent = true;
+            break;
+        }
+    }
+    Require(hasContent, "r2 render through RenderDevice session is empty");
+}
+
 int main()
 {
     int failures = 0;
@@ -13374,6 +13586,10 @@ int main()
     failures += !RunTest(
         "R1.9 stable render pixels match engine",
         TestR19StableRenderPixelsMatchEngine
+    );
+    failures += !RunTest(
+        "R2.0 render device foundation",
+        TestR2RenderDeviceFoundation
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

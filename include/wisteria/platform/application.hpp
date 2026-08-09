@@ -3,6 +3,7 @@
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/core/timer.hpp"
 #include "wisteria/platform/window_manager.hpp"
+#include "wisteria/rendering/render_device.hpp"
 #include <cstddef>
 #include <memory>
 
@@ -73,9 +74,10 @@ private:
     void Shutdown() noexcept;
 
 private:
-    // One device per Application: owns the share-group GPU resources (shader
-    // programs, program cache) and the context identity for all windows.
-    GraphicsDevice graphicsDevice;
+    // R2.0 Phase 0B: one backend-neutral RenderDevice per Application
+    // (currently OpenGlRenderDevice, which absorbs the legacy GraphicsDevice
+    // and its share-group GPU resources).
+    std::unique_ptr<RenderDevice> renderDevice;
     ResourceManager resources;
     WindowManager windowManager;
     Timer timer;

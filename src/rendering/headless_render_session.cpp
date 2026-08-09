@@ -2,6 +2,8 @@
 
 #include "wisteria/rendering/headless_render_session.hpp"
 
+#include "backend/opengl/open_gl_render_device.hpp"
+
 #include <exception>
 #include <utility>
 
@@ -11,14 +13,25 @@ HeadlessRenderSession::HeadlessRenderSession(
     std::unique_ptr<IHeadlessContext> nextContext
 )
     : context(std::move(nextContext)),
-      renderer(&this->graphicsDevice)
+      renderDevice(std::make_unique<OpenGlRenderDevice>()),
+      renderer(this->renderDevice.get())
 {
     if (this->context == nullptr)
         throw std::invalid_argument(
             "HeadlessRenderSession requires a context provider"
         );
-    this->resources.BindGraphicsDevice(this->graphicsDevice);
-    this->graphicsDevice.SetShareGroupToken(this->context->ShareGroupToken());
+    auto* openGl = dynamic_cast<OpenGlRenderDevice*>(
+        this->renderDevice.get()
+    );
+    if (openGl == nullptr)
+    {
+        throw std::invalid_argument(
+            "R2.0: only the OpenGL RenderDevice backend is available"
+        );
+    }
+    GraphicsDevice& graphicsDevice = openGl->LegacyGraphicsDevice();
+    this->resources.BindGraphicsDevice(graphicsDevice);
+    graphicsDevice.SetShareGroupToken(this->context->ShareGroupToken());
 }
 
 HeadlessRenderSession::~HeadlessRenderSession()
@@ -41,16 +54,30 @@ HeadlessRenderSession::~HeadlessRenderSession()
         std::terminate();
     }
     this->renderer.Release();
-    this->graphicsDevice.ReleaseAll();
+    auto* openGl = dynamic_cast<OpenGlRenderDevice*>(
+        this->renderDevice.get()
+    );
+    if (openGl != nullptr)
+        openGl->LegacyGraphicsDevice().ReleaseAll();
     // ResourceManager::Clear is Application-private and unnecessary here:
     // member destruction order releases resources (renderer -> resources ->
-    // graphicsDevice -> context) while the provider context is still current.
+    // renderDevice -> context) while the provider context is still current.
 }
 
 void HeadlessRenderSession::MakeCurrent()
 {
     this->context->MakeCurrent();
-    this->graphicsDevice.FlushPendingDeletes();
+    auto* openGl = dynamic_cast<OpenGlRenderDevice*>(
+        this->renderDevice.get()
+    );
+    if (openGl == nullptr)
+    {
+        throw std::logic_error(
+            "R2.0: missing OpenGL RenderDevice backend"
+        );
+    }
+    openGl->LegacyGraphicsDevice().FlushPendingDeletes();
+    openGl->RefreshCapabilities();
 }
 
 void HeadlessRenderSession::ReleaseCurrent()
@@ -60,7 +87,15 @@ void HeadlessRenderSession::ReleaseCurrent()
 
 GraphicsDevice& HeadlessRenderSession::GetGraphicsDevice() noexcept
 {
-    return this->graphicsDevice;
+    auto* openGl = dynamic_cast<OpenGlRenderDevice*>(
+        this->renderDevice.get()
+    );
+    return openGl->LegacyGraphicsDevice();
+}
+
+RenderDevice& HeadlessRenderSession::GetRenderDevice() noexcept
+{
+    return *this->renderDevice;
 }
 
 ResourceManager& HeadlessRenderSession::GetResources() noexcept

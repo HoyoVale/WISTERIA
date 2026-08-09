@@ -1,6 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/application.hpp"
 #include "glfw_lifetime.hpp"
+#include "rendering/backend/opengl/open_gl_render_device.hpp"
 #include <GLFW/glfw3.h>
 #include <stdexcept>
 #include <utility>
@@ -11,6 +12,12 @@ namespace
 {
 using wisteria::platform::AcquireGlfwLifetime;
 using wisteria::platform::ReleaseGlfwLifetime;
+
+GraphicsDevice& LegacyGraphicsDevice(RenderDevice& device)
+{
+    auto& openGl = dynamic_cast<OpenGlRenderDevice&>(device);
+    return openGl.LegacyGraphicsDevice();
+}
 }
 
 Application::Application()
@@ -26,8 +33,12 @@ Application::Application()
     // All resources created through the manager share one program cache so
     // identical shader pairs compile once per application, not once per
     // material.
-    this->resources.BindGraphicsDevice(this->graphicsDevice);
-    this->windowManager.SetGraphicsDevice(this->graphicsDevice);
+    this->renderDevice = std::make_unique<OpenGlRenderDevice>();
+    GraphicsDevice& graphicsDevice =
+        LegacyGraphicsDevice(*this->renderDevice);
+    this->resources.BindGraphicsDevice(graphicsDevice);
+    this->windowManager.SetRenderDevice(*this->renderDevice);
+    this->windowManager.SetGraphicsDevice(graphicsDevice);
 }
 
 Application::~Application()
@@ -42,8 +53,12 @@ Window& Application::CreateWindow(const WindowConfig& config)
     Window& window = this->windowManager.CreateWindow(config);
     // The first window registers the device's share-group identity. Every
     // window of this Application maps to the same token.
-    if (!this->graphicsDevice.HasShareGroupToken())
-        this->graphicsDevice.SetShareGroupToken(window.ShareGroupToken());
+    GraphicsDevice& graphicsDevice =
+        LegacyGraphicsDevice(*this->renderDevice);
+    if (!graphicsDevice.HasShareGroupToken())
+        graphicsDevice.SetShareGroupToken(window.ShareGroupToken());
+    dynamic_cast<OpenGlRenderDevice&>(*this->renderDevice)
+        .RefreshCapabilities();
     return window;
 }
 
@@ -241,12 +256,12 @@ const ResourceManager& Application::GetResources() const noexcept
 
 GraphicsDevice& Application::GetGraphicsDevice() noexcept
 {
-    return this->graphicsDevice;
+    return LegacyGraphicsDevice(*this->renderDevice);
 }
 
 const GraphicsDevice& Application::GetGraphicsDevice() const noexcept
 {
-    return this->graphicsDevice;
+    return LegacyGraphicsDevice(*this->renderDevice);
 }
 
 void Application::Shutdown() noexcept
@@ -274,12 +289,14 @@ void Application::Shutdown() noexcept
         // materials hold references into the same cache). The token is only
         // registered by Application::CreateWindow; callers that create
         // windows through WindowManager directly skip the assertion.
+        GraphicsDevice& graphicsDevice =
+            LegacyGraphicsDevice(*this->renderDevice);
         bool releaseSharedGlResources = true;
-        if (this->graphicsDevice.HasShareGroupToken())
+        if (graphicsDevice.HasShareGroupToken())
         {
             try
             {
-                this->graphicsDevice.RequireShareGroupToken(shareGroup);
+                graphicsDevice.RequireShareGroupToken(shareGroup);
             }
             catch (const std::exception& error)
             {
@@ -292,7 +309,7 @@ void Application::Shutdown() noexcept
         }
         if (releaseSharedGlResources)
         {
-            this->graphicsDevice.ReleaseAll();
+            graphicsDevice.ReleaseAll();
             this->resources.Clear();
         }
     }

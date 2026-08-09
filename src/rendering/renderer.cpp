@@ -1,6 +1,7 @@
 #include "wisteria/common/pch.hpp"
 
 #include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_render_device.hpp"
 
 namespace wisteria
 {
@@ -36,11 +37,17 @@ private:
 };
 }
 
-Renderer::Renderer(GraphicsDevice* device)
-    : device(device),
-      oitFramebuffer(device),
-      shadowFramebuffer(device)
+Renderer::Renderer(RenderDevice* renderDevice)
+    : device(OpenGlRenderDevice::GraphicsDeviceFrom(renderDevice)),
+      oitFramebuffer(this->device),
+      shadowFramebuffer(this->device)
 {
+    if (renderDevice != nullptr && this->device == nullptr)
+    {
+        throw std::invalid_argument(
+            "R2.0: only the OpenGL RenderDevice backend is available"
+        );
+    }
 }
 
 void Renderer::SetConfig(const Config& nextConfig) noexcept

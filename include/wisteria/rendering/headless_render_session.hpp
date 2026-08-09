@@ -3,6 +3,7 @@
 #include "wisteria/assets/manager.hpp"
 #include "wisteria/rendering/headless_context.hpp"
 #include "wisteria/rendering/offline_render.hpp"
+#include "wisteria/rendering/render_device.hpp"
 #include "wisteria/rendering/renderer.hpp"
 
 #include <memory>
@@ -13,7 +14,7 @@ namespace wisteria
 //
 //   HeadlessRenderSession
 //   ├─ IHeadlessContext      (provider, owned)
-//   ├─ GraphicsDevice        (share-group identity registered from provider)
+//   ├─ RenderDevice          (OpenGlRenderDevice, owns GraphicsDevice)
 //   ├─ ResourceManager       (bound to the device)
 //   └─ Renderer              (bound to the device)
 //
@@ -36,6 +37,7 @@ public:
     void ReleaseCurrent();
 
     GraphicsDevice& GetGraphicsDevice() noexcept;
+    RenderDevice& GetRenderDevice() noexcept;
     ResourceManager& GetResources() noexcept;
     Renderer& GetRenderer() noexcept;
     IHeadlessContext& GetContext() noexcept;
@@ -49,7 +51,7 @@ public:
 
 private:
     std::unique_ptr<IHeadlessContext> context;
-    GraphicsDevice graphicsDevice;
+    std::unique_ptr<RenderDevice> renderDevice;
     ResourceManager resources;
     Renderer renderer;
 };

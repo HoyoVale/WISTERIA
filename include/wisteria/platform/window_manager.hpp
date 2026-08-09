@@ -2,6 +2,7 @@
 
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/rendering/framebuffer.hpp"
+#include "wisteria/rendering/render_device.hpp"
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/platform/window.hpp"
 #include <cstddef>
@@ -71,6 +72,9 @@ public:
         const FreeCameraControllerSettings& settings
     );
     void SetGraphicsDevice(GraphicsDevice& device) noexcept;
+    // R2.0 Phase 0B: the manager consumes the backend-neutral RenderDevice
+    // (composition root selects the backend before any window exists).
+    void SetRenderDevice(RenderDevice& device) noexcept;
 
     std::size_t WindowCount() const noexcept;
     // R1.7 Phase 0C: the share-group identity shared by every window of this
@@ -88,6 +92,7 @@ private:
         ManagedWindow(
             std::unique_ptr<Window> nextWindow,
             std::string captureStem,
+            RenderDevice* renderDevice,
             GraphicsDevice* device
         );
 
@@ -136,6 +141,7 @@ private:
     std::vector<std::unique_ptr<ManagedWindow>> windows;
     std::vector<std::unique_ptr<ManagedWindow>> pendingWindows;
     ShareGroupIdentity shareGroupIdentity;
+    RenderDevice* renderDevice = nullptr;
     GraphicsDevice* graphicsDevice = nullptr;
     std::vector<std::weak_ptr<Scene>> trackedScenes;
     std::thread::id ownerThread;

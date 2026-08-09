@@ -21,6 +21,7 @@ class Mesh;
 class MorphState;
 class Pose;
 class VAO;
+class RenderDevice;
 
 // Defined in src/rendering/renderer_internal.hpp; forward-declared here so
 // private pass methods can reference command lists in the public header.
@@ -48,7 +49,10 @@ public:
         float shadowBias = 0.003f;
     };
 
-    explicit Renderer(GraphicsDevice* device = nullptr);
+    // R2.0 Phase 0B: the renderer consumes the backend-neutral RenderDevice.
+    // The current OpenGL implementation downcasts internally (0C migrates
+    // mesh/material/texture layers onto device handles).
+    explicit Renderer(RenderDevice* device = nullptr);
     ~Renderer();
 
     void SetConfig(const Config& config) noexcept;

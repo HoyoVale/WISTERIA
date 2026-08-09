@@ -196,6 +196,7 @@ set(WISTERIA_PLATFORM_SOURCES
 set(WISTERIA_RENDERING_SOURCES
     src/rendering/camera.cpp
     src/rendering/bmp_writer.cpp
+    src/rendering/backend/opengl/open_gl_render_device.cpp
     src/rendering/ebo.cpp
     src/rendering/environment.cpp
     src/rendering/framebuffer.cpp
@@ -291,6 +292,7 @@ target_include_directories(wisteria_core
     PRIVATE
         ${WISTERIA_BULLET_ROOT}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_compile_features(wisteria_core PUBLIC
@@ -339,6 +341,10 @@ target_compile_features(wisteria_platform PUBLIC cxx_std_20)
 if(MSVC)
     target_compile_options(wisteria_platform PRIVATE /utf-8 /FS)
 endif()
+
+target_include_directories(wisteria_platform PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 target_precompile_headers(wisteria_platform PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/wisteria/common/pch.hpp
@@ -493,6 +499,29 @@ if(BUILD_TESTING)
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/script/gen_abi_safety_matrix.py
             --check
+    )
+
+    # R2.0 Phase 0B Gate A0: backend-neutral public headers must compile
+    # without any OpenGL/Vulkan dependency. This target includes ONLY
+    # render_device.hpp and links nothing (std only), so glad can never leak
+    # in transitively.
+    add_executable(wisteria_render_device_neutral_compile
+        tests/render_device_neutral_compile.cpp
+    )
+    target_include_directories(wisteria_render_device_neutral_compile PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_features(
+        wisteria_render_device_neutral_compile PRIVATE cxx_std_20
+    )
+    if(MSVC)
+        target_compile_options(
+            wisteria_render_device_neutral_compile PRIVATE /utf-8
+        )
+    endif()
+    add_test(
+        NAME wisteria.render-device-neutral-compile
+        COMMAND wisteria_render_device_neutral_compile
     )
 
     # Minimal render regression: creates a real GL context and verifies that

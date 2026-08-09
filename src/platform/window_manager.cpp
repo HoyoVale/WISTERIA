@@ -246,11 +246,12 @@ void SaveWindowScreenshotBmp(
 WindowManager::ManagedWindow::ManagedWindow(
     std::unique_ptr<Window> nextWindow,
     std::string nextCaptureStem,
+    RenderDevice* renderDevice,
     GraphicsDevice* device
 )
     : window(std::move(nextWindow)),
       captureStem(std::move(nextCaptureStem)),
-      renderer(device),
+      renderer(renderDevice),
       framebuffer(device)
 {
     if (this->window == nullptr)
@@ -335,6 +336,7 @@ Window& WindowManager::CreateWindow(const WindowConfig& config)
     auto managed = std::make_unique<ManagedWindow>(
         std::move(window),
         config.title,
+        this->renderDevice,
         this->graphicsDevice
     );
     if (this->running)
@@ -637,6 +639,11 @@ void WindowManager::SetGraphicsDevice(GraphicsDevice& device) noexcept
         propagate(managed);
     for (auto& managed : this->pendingWindows)
         propagate(managed);
+}
+
+void WindowManager::SetRenderDevice(RenderDevice& device) noexcept
+{
+    this->renderDevice = &device;
 }
 
 std::vector<Scene*> WindowManager::UniqueScenes() const
