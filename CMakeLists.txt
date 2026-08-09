@@ -239,6 +239,7 @@ set(WISTERIA_ASSET_SOURCES
     src/assets/importer.cpp
     src/assets/manager.cpp
     src/assets/model_asset.cpp
+    src/assets/model_asset_bundle.cpp
     src/assets/pmx_parser.cpp
     src/assets/saba_mmd_importer.cpp
 )
@@ -514,6 +515,17 @@ if(BUILD_TESTING)
         add_test(NAME wisteria.headless-smoke COMMAND wisteria_headless_smoke)
         set_tests_properties(wisteria.headless-smoke PROPERTIES
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+        # R1.9 Final Fix: forced EGL failure must reach the GLFW-hidden
+        # fallback provider (WSL software rendering compatibility).
+        add_test(
+            NAME wisteria.headless-smoke-glfw-fallback
+            COMMAND wisteria_headless_smoke
+        )
+        set_tests_properties(
+            wisteria.headless-smoke-glfw-fallback PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            ENVIRONMENT "WISTERIA_HEADLESS_DISABLE_EGL=1;LIBGL_ALWAYS_SOFTWARE=1"
         )
     endif()
 

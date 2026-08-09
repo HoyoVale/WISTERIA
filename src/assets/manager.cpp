@@ -1,5 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/assets/manager.hpp"
+#include "wisteria/assets/model_asset_bundle.hpp"
 #include "wisteria/assets/importer.hpp"
 #include "wisteria/assets/saba_mmd_importer.hpp"
 #include <algorithm>
@@ -507,158 +508,21 @@ ModelAsset& ResourceManager::LoadModel(
         importedTextures.push_back(std::move(texture));
     }
 
-    std::vector<std::unique_ptr<Material>> importedMaterials;
-    importedMaterials.reserve(imported.materials.size());
-    for (std::size_t index = 0; index < imported.materials.size(); ++index)
-    {
-        const ImportedMaterialData& source = imported.materials[index];
-        MaterialData data;
-        data.textureSources.clear();
-        data.baseColorFactor = source.baseColorFactor;
-        data.specularColor = source.specularColor;
-        data.shininess = source.shininess;
-        data.normalScale = source.normalScale;
-        data.shadingModel = source.shadingModel;
-        data.metallicFactor = source.metallicFactor;
-        data.roughnessFactor = source.roughnessFactor;
-        data.emissiveFactor = source.emissiveFactor;
-        data.occlusionStrength = source.occlusionStrength;
-        data.ambientColor = source.ambientColor;
-        data.sphereMapMode = source.sphereMapMode;
-        data.edgeColor = source.edgeColor;
-        data.edgeSize = source.edgeSize;
-        data.edgeEnabled = source.edgeEnabled;
-        data.alphaMode = source.alphaMode;
-        data.alphaCutoff = source.alphaCutoff;
-        data.doubleSided = source.doubleSided;
-        data.groundShadow = source.groundShadow;
-        data.castSelfShadow = source.castSelfShadow;
-        data.receiveSelfShadow = source.receiveSelfShadow;
-        if (source.shadingModel == MaterialShadingModel::MmdToon)
-        {
-            const std::filesystem::path shaderDirectory =
-                std::filesystem::current_path() / "assets" / "shaders";
-            data.shaderFilePath.VertexPath =
-                (shaderDirectory / "mmd.vert").string();
-            data.shaderFilePath.FragmentPath =
-                (shaderDirectory / "mmd.frag").string();
-            data.shaderInterface.imageBasedLightingEnabled = false;
-            data.shaderInterface.shadowingSupported = true;
-        }
-
-        MaterialTextureBindings bindings;
-        if (source.baseColorTexture.has_value())
-        {
-            const std::size_t textureIndex = *source.baseColorTexture;
-            bindings.emplace(
-                data.shaderInterface.baseColorTexture,
-                importedTextures[textureIndex]
-            );
-        }
-        if (source.normalTexture.has_value())
-        {
-            const std::size_t textureIndex = *source.normalTexture;
-            bindings.emplace(
-                data.shaderInterface.normalTexture,
-                importedTextures[textureIndex]
-            );
-        }
-        if (source.metallicRoughnessTexture.has_value())
-        {
-            const std::size_t textureIndex =
-                *source.metallicRoughnessTexture;
-            bindings.emplace(
-                data.shaderInterface.metallicRoughnessTexture,
-                importedTextures[textureIndex]
-            );
-        }
-        if (source.emissiveTexture.has_value())
-        {
-            const std::size_t textureIndex = *source.emissiveTexture;
-            bindings.emplace(
-                data.shaderInterface.emissiveTexture,
-                importedTextures[textureIndex]
-            );
-        }
-        if (source.occlusionTexture.has_value())
-        {
-            const std::size_t textureIndex = *source.occlusionTexture;
-            bindings.emplace(
-                data.shaderInterface.occlusionTexture,
-                importedTextures[textureIndex]
-            );
-        }
-        if (source.sphereTexture.has_value())
-        {
-            bindings.emplace(
-                data.shaderInterface.sphereTexture,
-                importedTextures[*source.sphereTexture]
-            );
-        }
-        if (source.toonTexture.has_value())
-        {
-            bindings.emplace(
-                data.shaderInterface.toonTexture,
-                importedTextures[*source.toonTexture]
-            );
-        }
-
-        importedMaterials.push_back(
-            std::make_unique<Material>(
-                data,
-                std::move(bindings),
-                this->graphicsDevice
-            )
-        );
-    }
-
-    std::vector<std::unique_ptr<Mesh>> importedMeshes;
-    importedMeshes.reserve(imported.meshes.size());
-    for (std::size_t index = 0; index < imported.meshes.size(); ++index)
-    {
-        importedMeshes.push_back(
-            std::make_unique<Mesh>(
-                std::move(imported.meshes[index].data),
-                imported.meshes[index].requiredBoneCount,
-                std::move(imported.meshes[index].morphTargets),
-                std::move(imported.meshes[index].sourceVertexIndices),
-                this->graphicsDevice
-            )
-        );
-    }
-
-    auto model = std::make_unique<ModelAsset>(name);
-    model->SetSourceDescriptor(ModelSourceDescriptor{
+    // R1.9 Final Fix: engine-owned assembly shared with the stable C ABI.
+    ModelAssetBundle bundle = BuildModelAssetBundle(
+        std::move(imported),
+        std::move(importedTextures),
+        backendKind,
         normalizedModelPath,
-        backendKind
-    });
-    model->SetBackendKind(backendKind);
-    if (imported.skeleton.has_value())
-        model->SetSkeleton(std::move(*imported.skeleton));
-    if (imported.mmdPhysics.has_value())
-        model->SetMmdPhysics(std::move(*imported.mmdPhysics));
-    if (!imported.morphs.empty())
-        model->SetMorphs(std::move(imported.morphs));
-    for (AnimationClip& clip : imported.animations)
-        model->AddAnimationClip(std::move(clip));
-    for (const ImportedPartData& part : imported.parts)
-    {
-        const std::size_t materialIndex =
-            imported.meshes[part.meshIndex].materialIndex;
-
-        model->AddPart(
-            *importedMeshes[part.meshIndex].get(),
-            *importedMaterials[materialIndex].get(),
-            part.localTransform,
-            imported.meshes[part.meshIndex].morphMaterialIndex
-        );
-    }
+        name,
+        this->graphicsDevice
+    );
 
     // Reserve first and then commit. If any insertion still fails, erase only
     // resources inserted by this call so the manager never keeps half a model.
-    this->textures.reserve(this->textures.size() + importedTextures.size());
-    this->materials.reserve(this->materials.size() + importedMaterials.size());
-    this->meshes.reserve(this->meshes.size() + importedMeshes.size());
+    this->textures.reserve(this->textures.size() + bundle.textures.size());
+    this->materials.reserve(this->materials.size() + bundle.materials.size());
+    this->meshes.reserve(this->meshes.size() + bundle.meshes.size());
     this->models.reserve(this->models.size() + 1);
     this->texturePathCache.reserve(
         this->texturePathCache.size() + newExternalTextures.size()
@@ -671,27 +535,33 @@ ModelAsset& ResourceManager::LoadModel(
     bool modelPathCommitted = false;
     try
     {
-        for (std::size_t index = 0; index < importedTextures.size(); ++index)
+        for (std::size_t index = 0; index < bundle.textures.size(); ++index)
         {
-            this->textures.emplace(textureNames[index], importedTextures[index]);
+            this->textures.emplace(
+                textureNames[index],
+                bundle.textures[index]
+            );
             ++textureCommitCount;
         }
-        for (std::size_t index = 0; index < importedMaterials.size(); ++index)
+        for (std::size_t index = 0; index < bundle.materials.size(); ++index)
         {
             this->materials.emplace(
                 materialNames[index],
-                std::move(importedMaterials[index])
+                std::move(bundle.materials[index])
             );
             ++materialCommitCount;
         }
-        for (std::size_t index = 0; index < importedMeshes.size(); ++index)
+        for (std::size_t index = 0; index < bundle.meshes.size(); ++index)
         {
-            this->meshes.emplace(meshNames[index], std::move(importedMeshes[index]));
+            this->meshes.emplace(
+                meshNames[index],
+                std::move(bundle.meshes[index])
+            );
             ++meshCommitCount;
         }
 
-        ModelAsset* result = model.get();
-        this->models.emplace(name, std::move(model));
+        ModelAsset* result = bundle.asset.get();
+        this->models.emplace(name, std::move(bundle.asset));
 
         const bool modelPathInserted =
             this->modelPathCache.emplace(normalizedModelPath, result).second;

@@ -193,6 +193,23 @@ TimelineStatus DeserializeCheckpoint(
     FrameCheckpoint& output
 );
 
+// R1.9 Final Fix: engine-owned envelope-header probe. The stable ABI must
+// not parse raw header offsets itself; malformed envelopes are Invalid and
+// valid envelopes with unknown future payload kinds are UnknownPayloadKind
+// (so the ABI can answer UNSUPPORTED instead of guessing).
+enum class CheckpointEnvelopeProbe : std::uint8_t
+{
+    Invalid,
+    MmdR12C,
+    GenericR18,
+    UnknownPayloadKind
+};
+
+CheckpointEnvelopeProbe ProbeCheckpointEnvelope(
+    const std::uint8_t* bytes,
+    std::size_t size
+) noexcept;
+
 // R1.8: Generic payload kind 2 codec. Reuses the R1.4 wire envelope
 // (magic / version / kind / schema / backend / profile / build identity /
 // size / checksum); only the payload body is backend-specific.

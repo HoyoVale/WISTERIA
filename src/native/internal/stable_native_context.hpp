@@ -25,7 +25,7 @@ struct StableEntityEntry
     // objects, so they are declared FIRST and destroyed LAST (C++ destroys
     // members in reverse declaration order).
     std::vector<std::unique_ptr<wisteria::Mesh>> meshes;
-    std::unique_ptr<wisteria::Material> material;
+    std::vector<std::unique_ptr<wisteria::Material>> materials;
     // The Saba adapter stores a pointer to the ModelAsset inside the
     // runtime (SetAsset). The entry must own the asset so the pointer never
     // dangles after entity_create returns.
@@ -34,6 +34,10 @@ struct StableEntityEntry
     // session can temporarily adopt it into a Scene (borrow -> render ->
     // return) without losing the exact runtime state.
     std::unique_ptr<wisteria::ModelInstance> modelInstance;
+    // R1.9 Final Fix: the first render session that adopts this entity is
+    // its exclusive GPU owner. Attached GPU objects may only be released
+    // while that session's context is current.
+    std::optional<WisteriaRenderSession> ownerRenderSession;
 };
 
 // R1.4 Phase 0B: Stable C ABI v1 context-owned state (contract §4). The
@@ -46,18 +50,41 @@ struct StableContextState
         wisteria::RegisterDefaultModelBackends(backends);
     }
 
+    ~StableContextState()
+    {
+        // R1.9 Final Fix: destroy in GPU-safe order. renderSessions is
+        // declared before entities so entities are destroyed first; before
+        // that happens, make the owning session's context current so
+        // attached meshes/materials release through a valid context.
+        for (auto& [handle, entry] : this->entities)
+        {
+            if (entry == nullptr ||
+                !entry->ownerRenderSession.has_value())
+            {
+                continue;
+            }
+            const auto session = this->renderSessions.find(
+                *entry->ownerRenderSession
+            );
+            if (session == this->renderSessions.end() ||
+                session->second == nullptr ||
+                session->second->session == nullptr)
+            {
+                continue;
+            }
+            try
+            {
+                session->second->session->MakeCurrent();
+            }
+            catch (const std::exception&)
+            {
+                // Context loss during process teardown: skip rather than
+                // terminate; remaining GL teardown is best-effort.
+            }
+        }
+    }
+
     ModelBackendRegistry backends;
-    std::unordered_map<
-        WisteriaEntity,
-        std::unique_ptr<StableEntityEntry>
-    > entities;
-    std::unordered_map<
-        WisteriaCheckpoint,
-        std::variant<
-            wisteria::FrameCheckpoint,
-            wisteria::GenericRuntimeCheckpoint
-        >
-    > checkpoints;
     // R1.9 Phase 0D: stable render sessions (engine HeadlessRenderSession)
     // with the last sequence cursor observed through the stable surface.
     struct RenderSessionEntry
@@ -70,6 +97,17 @@ struct StableContextState
         WisteriaRenderSession,
         std::unique_ptr<RenderSessionEntry>
     > renderSessions;
+    std::unordered_map<
+        WisteriaEntity,
+        std::unique_ptr<StableEntityEntry>
+    > entities;
+    std::unordered_map<
+        WisteriaCheckpoint,
+        std::variant<
+            wisteria::FrameCheckpoint,
+            wisteria::GenericRuntimeCheckpoint
+        >
+    > checkpoints;
 };
 
 inline StableEntityEntry* FindStableEntity(

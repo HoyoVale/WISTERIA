@@ -2,11 +2,13 @@
 
 #include "wisteria/platform/headless_context.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
+#include "glfw_lifetime.hpp"
 
 #include <GLFW/glfw3.h>
 #include <glad/gl.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -718,27 +720,6 @@ const char* NullableLocal(const char* value) noexcept
     return value != nullptr ? value : "";
 }
 
-std::mutex gGlfwHiddenMutex;
-std::size_t gGlfwHiddenCount = 0U;
-
-void AcquireGlfwHidden()
-{
-    std::lock_guard<std::mutex> lock(gGlfwHiddenMutex);
-    if (gGlfwHiddenCount == 0U && glfwInit() != GLFW_TRUE)
-        throw std::runtime_error("GLFW initialization failed");
-    ++gGlfwHiddenCount;
-}
-
-void ReleaseGlfwHidden() noexcept
-{
-    std::lock_guard<std::mutex> lock(gGlfwHiddenMutex);
-    if (gGlfwHiddenCount == 0U)
-        return;
-    --gGlfwHiddenCount;
-    if (gGlfwHiddenCount == 0U)
-        glfwTerminate();
-}
-
 bool RendererIsSoftware(std::string_view renderer) noexcept
 {
     return HasExtensionLocal(renderer, "llvmpipe") ||
@@ -751,7 +732,8 @@ class GlfwHeadlessContext final : public IHeadlessContext
 public:
     explicit GlfwHeadlessContext(const HeadlessContextOptions& options)
     {
-        AcquireGlfwHidden();
+        if (!wisteria::platform::AcquireGlfwLifetime())
+            throw std::runtime_error("GLFW initialization failed");
         try
         {
             glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -805,7 +787,7 @@ public:
         {
             if (this->window != nullptr)
                 glfwDestroyWindow(this->window);
-            ReleaseGlfwHidden();
+            wisteria::platform::ReleaseGlfwLifetime();
             throw;
         }
     }
@@ -819,7 +801,7 @@ public:
         }
         wisteria::GraphicsDevice::SetCurrentContext(nullptr);
         wisteria::GraphicsDevice::SetCurrentShareGroup(nullptr);
-        ReleaseGlfwHidden();
+        wisteria::platform::ReleaseGlfwLifetime();
     }
 
     GlfwHeadlessContext(const GlfwHeadlessContext&) = delete;
@@ -905,26 +887,40 @@ std::unique_ptr<IHeadlessContext> CreateHeadlessContext(
 )
 {
 #if defined(WISTERIA_ENABLE_EGL)
-    try
-    {
-        return std::make_unique<EglHeadlessContext>(options);
-    }
-    catch (const std::exception& error)
+    const bool eglDisabled =
+        std::getenv("WISTERIA_HEADLESS_DISABLE_EGL") != nullptr;
+    if (eglDisabled)
     {
         std::fprintf(
             stderr,
-            "[headless] EGL provider failed: %s\n",
-            error.what()
+            "[headless] EGL disabled by WISTERIA_HEADLESS_DISABLE_EGL\n"
         );
-        return nullptr;
     }
+    else
+    {
+        try
+        {
+            return std::make_unique<EglHeadlessContext>(options);
+        }
+        catch (const std::exception& error)
+        {
+            std::fprintf(
+                stderr,
+                "[headless] EGL provider failed: %s\n",
+                error.what()
+            );
+            // forceSoftware keeps strict semantics: never silently fall
+            // back to a context that is not proven software.
+            if (options.forceSoftware)
+                return nullptr;
+        }
+    }
+    if (options.forceSoftware)
+        return nullptr;
 #else
     (void)options;
 #endif
-    // Fallback / Windows provider. forceSoftware keeps its strict semantics:
-    // never silently fall back to a context that is not software.
-    if (options.forceSoftware)
-        return nullptr;
+    // Fallback / Windows provider (only reached when !forceSoftware).
     try
     {
         return std::make_unique<GlfwHeadlessContext>(options);

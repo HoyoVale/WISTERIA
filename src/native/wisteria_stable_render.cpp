@@ -119,7 +119,8 @@ bool ValidateSequenceOptions(
     if (options->width == 0U || options->height == 0U ||
         options->overwrite_policy > 2U ||
         (options->write_png != 0U && options->write_png != 1U) ||
-        (options->write_raw != 0U && options->write_raw != 1U))
+        (options->write_raw != 0U && options->write_raw != 1U) ||
+        (options->write_png == 0U && options->write_raw == 0U))
     {
         return false;
     }
@@ -228,6 +229,15 @@ std::uint32_t wisteria_stable_render_session_create(
                 "invalid render session options or out_session"
             );
         }
+        if (!ctx.stable->renderSessions.empty())
+        {
+            TrySetError(
+                &ctx,
+                "R1.9 v1 allows at most one active render session per "
+                "stable context"
+            );
+            return WISTERIA_STATUS_ALREADY_EXISTS;
+        }
         HeadlessContextOptions headlessOptions;
         headlessOptions.forceSoftware = options->force_software != 0U;
         auto provider = CreateHeadlessContext(headlessOptions);
@@ -258,6 +268,30 @@ std::uint32_t wisteria_stable_render_session_destroy(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
+        const auto sessionIterator =
+            ctx.stable->renderSessions.find(session);
+        if (sessionIterator == ctx.stable->renderSessions.end())
+        {
+            return StableNotFoundRender(
+                &ctx,
+                "unknown stable render session handle"
+            );
+        }
+        // R1.9 Final Fix: a session with bound rendered entities cannot be
+        // destroyed without orphaning their GPU objects.
+        for (const auto& [entityHandle, entry] : ctx.stable->entities)
+        {
+            if (entry != nullptr &&
+                entry->ownerRenderSession == session)
+            {
+                TrySetError(
+                    &ctx,
+                    "render session has bound rendered entities; destroy "
+                    "entities first"
+                );
+                return WISTERIA_STATUS_INVALID_STATE;
+            }
+        }
         if (ctx.stable->renderSessions.erase(session) == 0U)
         {
             return StableNotFoundRender(
@@ -303,20 +337,8 @@ std::uint32_t wisteria_stable_render_session_render(
         const std::uint64_t required =
             static_cast<std::uint64_t>(width) *
             static_cast<std::uint64_t>(height) * 4U;
-        if (rgba == nullptr)
-        {
-            *in_out_size = required;
-            return WISTERIA_STATUS_OK;
-        }
-        if (*in_out_size < required)
-        {
-            *in_out_size = required;
-            return StableInvalidArgumentRender(
-                &ctx,
-                "render buffer is too small"
-            );
-        }
-
+        // Handle validation comes before the size query so a garbage
+        // session/entity never observes STATUS_OK (status is authoritative).
         const auto sessionIterator =
             ctx.stable->renderSessions.find(session);
         if (sessionIterator == ctx.stable->renderSessions.end())
@@ -332,6 +354,29 @@ std::uint32_t wisteria_stable_render_session_render(
             return StableNotFoundRender(
                 &ctx,
                 "unknown stable entity handle"
+            );
+        }
+        if (entry->ownerRenderSession.has_value() &&
+            *entry->ownerRenderSession != session)
+        {
+            TrySetError(
+                &ctx,
+                "entity is bound to a different render session"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
+        entry->ownerRenderSession = session;
+        if (rgba == nullptr)
+        {
+            *in_out_size = required;
+            return WISTERIA_STATUS_OK;
+        }
+        if (*in_out_size < required)
+        {
+            *in_out_size = required;
+            return StableInvalidArgumentRender(
+                &ctx,
+                "render buffer is too small"
             );
         }
 
@@ -401,6 +446,16 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
                 "unknown stable entity handle"
             );
         }
+        if (entry->ownerRenderSession.has_value() &&
+            *entry->ownerRenderSession != session)
+        {
+            TrySetError(
+                &ctx,
+                "entity is bound to a different render session"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
+        entry->ownerRenderSession = session;
 
         auto scene = std::make_unique<Scene>();
         Entity& renderEntity = scene->CreateEntity();
@@ -444,10 +499,20 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
             config
         );
         renderSession->MakeCurrent();
-        sequence.RenderRange(
-            options->start_frame,
-            options->end_frame
-        );
+        try
+        {
+            sequence.RenderRange(
+                options->start_frame,
+                options->end_frame
+            );
+        }
+        catch (...)
+        {
+            sessionIterator->second->lastCommittedFrame =
+                sequence.LastCommittedFrame();
+            sessionIterator->second->sequenceFailed = sequence.Failed();
+            throw;
+        }
         sessionIterator->second->lastCommittedFrame =
             sequence.LastCommittedFrame();
         sessionIterator->second->sequenceFailed = sequence.Failed();
@@ -496,6 +561,16 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
                 "unknown stable entity handle"
             );
         }
+        if (entry->ownerRenderSession.has_value() &&
+            *entry->ownerRenderSession != session)
+        {
+            TrySetError(
+                &ctx,
+                "entity is bound to a different render session"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
+        entry->ownerRenderSession = session;
 
         auto scene = std::make_unique<Scene>();
         Entity& renderEntity = scene->CreateEntity();
@@ -539,7 +614,17 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
             config
         );
         renderSession->MakeCurrent();
-        sequence.Resume(options->end_frame);
+        try
+        {
+            sequence.Resume(options->end_frame);
+        }
+        catch (...)
+        {
+            sessionIterator->second->lastCommittedFrame =
+                sequence.LastCommittedFrame();
+            sessionIterator->second->sequenceFailed = sequence.Failed();
+            throw;
+        }
         sessionIterator->second->lastCommittedFrame =
             sequence.LastCommittedFrame();
         sessionIterator->second->sequenceFailed = sequence.Failed();

@@ -1,6 +1,7 @@
 # R1.9 — Stable Runtime / Render C ABI（契约草案 Phase 0A）
 
-> 状态：**FROZEN v1.0（2026-08-09，Phase 0A CLOSED）**
+> 状态：**FROZEN v1.0；0A CLOSED、0B/0D FINAL FIX APPLIED（待复审）、
+> 0E HOLD（2026-08-09）**
 > 前置：R1.8 CLOSED（tag `r1.8-final-closure`，四矩阵全绿）。
 > R1.7 native-Linux hardware gate 为独立 validation debt，
 > 不阻塞 R1.9 开发（真机条件具备时补跑 `script/verify_r17_native_linux.sh`）。
@@ -71,7 +72,7 @@ Python ctypes / Node N-API 示例（M3/M4 已跑通）
 ### KEEP（已稳定，只维护）
 
 ```text
-wisteria_stable_* 现有 14 个导出（R1.4 冻结）
+wisteria_stable_* 现有 19 个导出（R1.4 冻结）
 struct version/size 守卫、opaque handle 模型、单线程契约、
 UTF-8 路径、Status + last_error 错误模型
 checkpoint = opaque bytes 搬运（ABI 永不解释 payload 内部结构）
@@ -297,4 +298,36 @@ Additional ABI invariants
    - Resume 的 checkpoint ifstream 收窄作用域（Windows CRT 无
      FILE_SHARE_DELETE，同次 resume 改写同 slot 会 ACCESS_DENIED）
 7. ABI safety matrix：94 legacy + 30 stable
+```
+
+### Final Fix（2026-08-09 代码复审后，已实施）
+
+```text
+1. WisteriaNativeUtf8ToWide：分配 wideLength、写 wideLength、
+   成功后 resize(wideLength-1)——修复一元素越界写；
+   新增 Unicode 路径测试（中文目录/文件名，双平台）
+2. 资产组装单一 pipeline：ImportedModelData → ModelAssetBundle
+   （meshes/materials/textures），ResourceManager 与 stable entity
+   共同复用；imported materialIndex + texture bindings 完整保留
+3. capabilities：backend 身份来自 ModelAsset::BackendKind()；
+   Static = STATIC + profile/payload NONE；deterministic ↔ checkpoint
+   mirror 不一致 → INTERNAL + contract-violation last_error
+4. RenderSession/GPU ownership（v1 最小方案）：
+   一个 StableContext 最多一个 active RenderSession；
+   entity 首次 render 绑定 owner session；不同 session → INVALID_STATE；
+   entity_destroy 在 owner context current 下释放；
+   session_destroy 存在 bound entity → INVALID_STATE；
+   context 按 GPU-safe 顺序 teardown
+5. GLFW 生命周期统一：platform/glfw_lifetime.hpp 单一
+   Acquire/Release（Application + GlfwHeadlessContext 共用）；
+   新增共存测试
+6. provider fallback：EGL 失败 + !forceSoftware → 真正回退
+   GLFW-hidden；forceSoftware 严格；WISTERIA_HEADLESS_DISABLE_EGL
+   强制失败钩子 + ctest（smoke-glfw-fallback）
+7. stable render 一致性：size-query 先验证 session/entity；
+   sequence 异常同步 lastCommitted/failed；write_png||write_raw 必选；
+   invalid-handle + failure-state 测试
+8. 0C 前瞻：ProbeCheckpointEnvelope（engine-owned header parser）；
+   malformed → INVALID_CHECKPOINT；unknown kind → UNSUPPORTED
+9. 文档：KEEP 14→19；GLFW-hidden 描述为 compatibility provider
 ```

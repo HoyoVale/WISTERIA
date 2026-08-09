@@ -18,6 +18,7 @@
 #include "internal/stable_native_context.hpp"
 #include "wisteria/assets/importer.hpp"
 #include "wisteria/assets/saba_mmd_importer.hpp"
+#include "wisteria/assets/model_asset_bundle.hpp"
 #include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/runtime/generic_checkpoint.hpp"
 #include "wisteria/runtime/mmd_runtime_model.hpp"
@@ -149,20 +150,6 @@ std::vector<std::uint8_t> StableSerializeCheckpoint(
         );
     }
     return SerializeCheckpoint(std::get<FrameCheckpoint>(value));
-}
-
-std::uint32_t StableWirePayloadKind(
-    const std::uint8_t* bytes,
-    std::uint64_t size
-) noexcept
-{
-    // Envelope header: magic(4) + wireVersion(4) + payloadKind(4).
-    if (bytes == nullptr || size < 12U)
-        return 0U;
-    return static_cast<std::uint32_t>(bytes[8]) |
-        (static_cast<std::uint32_t>(bytes[9]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[10]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[11]) << 24U);
 }
 
 std::uint32_t MapTimelineStatus(TimelineStatus status) noexcept
@@ -438,65 +425,35 @@ std::uint32_t wisteria_stable_entity_create(
             backendKind = ModelBackendKind::WisteriaGeneric;
         }
 
-        auto asset = std::make_unique<ModelAsset>(model_path_utf8);
-        asset->SetSourceDescriptor(ModelSourceDescriptor{
-            modelPath,
-            backendKind
-        });
-        asset->SetBackendKind(backendKind);
-        if (imported.skeleton.has_value())
-            asset->SetSkeleton(std::move(*imported.skeleton));
-        if (imported.mmdPhysics.has_value())
-            asset->SetMmdPhysics(std::move(*imported.mmdPhysics));
-        if (!imported.morphs.empty())
-            asset->SetMorphs(std::move(imported.morphs));
-        for (AnimationClip& clip : imported.animations)
-            asset->AddAnimationClip(std::move(clip));
-
-        // Parts carry mesh topology into the deterministic fingerprint.
-        // A single default material is enough: the fingerprint folds parts,
-        // meshes and morph targets, not material contents, and stable
-        // runtime entities never render.
-        auto entry = std::make_unique<StableEntityEntry>();
-        entry->material = std::make_unique<Material>(MaterialData{});
-        std::vector<std::optional<std::uint32_t>> morphMaterialIndices;
-        entry->meshes.reserve(imported.meshes.size());
-        morphMaterialIndices.reserve(imported.meshes.size());
-        for (ImportedMeshData& meshData : imported.meshes)
+        // R1.9 Final Fix: engine-owned asset assembly shared with
+        // ResourceManager (imported materials + texture bindings preserved).
+        std::vector<std::shared_ptr<Texture>> textures;
+        textures.reserve(imported.textures.size());
+        for (ImportedTextureData& textureData : imported.textures)
         {
-            morphMaterialIndices.push_back(meshData.morphMaterialIndex);
-            entry->meshes.push_back(
-                std::make_unique<Mesh>(
-                    std::move(meshData.data),
-                    meshData.requiredBoneCount,
-                    std::move(meshData.morphTargets),
-                    std::move(meshData.sourceVertexIndices),
-                    nullptr
+            textures.push_back(
+                std::make_shared<Texture>(
+                    std::move(textureData.source)
                 )
             );
         }
-        for (const ImportedPartData& part : imported.parts)
-        {
-            if (part.meshIndex >= entry->meshes.size())
-            {
-                return StableInvalidArgument(
-                    &ctx,
-                    "imported part references an invalid mesh index"
-                );
-            }
-            asset->AddPart(
-                *entry->meshes[part.meshIndex],
-                *entry->material,
-                part.localTransform,
-                morphMaterialIndices[part.meshIndex]
-            );
-        }
+        ModelAssetBundle bundle = BuildModelAssetBundle(
+            std::move(imported),
+            std::move(textures),
+            backendKind,
+            modelPath,
+            model_path_utf8,
+            nullptr
+        );
+        auto entry = std::make_unique<StableEntityEntry>();
+        entry->meshes = std::move(bundle.meshes);
+        entry->materials = std::move(bundle.materials);
 
         std::unique_ptr<IModelRuntimeDriver> runtime;
         try
         {
             runtime = ctx.stable->backends.CreateRuntime(
-                *asset,
+                *bundle.asset,
                 coreOptions
             );
         }
@@ -505,7 +462,8 @@ std::uint32_t wisteria_stable_entity_create(
             TrySetError(&ctx, error.what());
             return WISTERIA_STATUS_INITIALIZATION;
         }
-        if (runtime == nullptr)
+        if (runtime == nullptr &&
+            backendKind != ModelBackendKind::Static)
         {
             return StableInvalidArgument(
                 &ctx,
@@ -513,11 +471,14 @@ std::uint32_t wisteria_stable_entity_create(
             );
         }
 
-        entry->asset = std::move(asset);
-        entry->modelInstance = std::make_unique<ModelInstance>(
-            *entry->asset,
-            std::move(runtime)
-        );
+        entry->asset = std::move(bundle.asset);
+        if (runtime != nullptr)
+        {
+            entry->modelInstance = std::make_unique<ModelInstance>(
+                *entry->asset,
+                std::move(runtime)
+            );
+        }
         const WisteriaEntity handle =
             static_cast<WisteriaEntity>(AllocateOpaqueHandle());
         ctx.stable->entities.emplace(handle, std::move(entry));
@@ -533,6 +494,29 @@ std::uint32_t wisteria_stable_entity_destroy(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
+        const auto entityIterator = ctx.stable->entities.find(entity);
+        if (entityIterator == ctx.stable->entities.end())
+        {
+            return StableNotFound(
+                &ctx,
+                "unknown stable entity handle"
+            );
+        }
+        // R1.9 Final Fix: release attached GPU resources with the owning
+        // render session's context current.
+        if (entityIterator->second != nullptr &&
+            entityIterator->second->ownerRenderSession.has_value())
+        {
+            const auto session = ctx.stable->renderSessions.find(
+                *entityIterator->second->ownerRenderSession
+            );
+            if (session != ctx.stable->renderSessions.end() &&
+                session->second != nullptr &&
+                session->second->session != nullptr)
+            {
+                session->second->session->MakeCurrent();
+            }
+        }
         if (ctx.stable->entities.erase(entity) == 0U)
         {
             return StableNotFound(
@@ -567,15 +551,41 @@ std::uint32_t wisteria_stable_entity_capabilities(
                 "unsupported capabilities struct version/size"
             );
         }
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
-        if (runtime == nullptr)
+        StableEntityEntry* entry = FindStableEntity(ctx, entity);
+        if (entry == nullptr || entry->asset == nullptr)
+        {
+            TrySetError(&ctx, "unknown stable entity handle");
             return WISTERIA_STATUS_NOT_FOUND;
-
-        const ModelRuntimeCapabilities core = runtime->Capabilities();
-        const bool isMmd =
-            dynamic_cast<MmdRuntimeModel*>(runtime) != nullptr;
+        }
+        IModelRuntimeDriver* runtime = entry->modelInstance != nullptr
+            ? entry->modelInstance->TryGetRuntime()
+            : nullptr;
+        const ModelRuntimeCapabilities core =
+            runtime != nullptr ? runtime->Capabilities()
+                               : ModelRuntimeCapabilities{};
+        // R1.8: deterministic is authoritative; the legacy checkpoint field
+        // is a mirror. Divergence is a backend contract violation.
+        if (core.checkpoint.supportsCheckpointCapture !=
+                core.deterministic.supportsCheckpointCapture ||
+            core.checkpoint.supportsCheckpointRestore !=
+                core.deterministic.supportsCheckpointRestore ||
+            core.checkpoint.supportsReplayFromCheckpoint !=
+                core.deterministic.supportsReplayFromCheckpoint)
+        {
+            TrySetError(
+                &ctx,
+                "backend contract violation: checkpoint capability mirror "
+                "diverged from the deterministic source"
+            );
+            return WISTERIA_STATUS_INTERNAL;
+        }
+        // Backend identity comes from the engine-owned ModelAsset, never
+        // from "which interface happens to be implemented".
+        const ModelBackendKind backendKind = entry->asset->BackendKind();
+        const bool isMmd = backendKind == ModelBackendKind::SabaMmd;
         const bool isGeneric =
-            dynamic_cast<IDeterministicCheckpoint*>(runtime) != nullptr;
+            backendKind == ModelBackendKind::WisteriaGeneric;
+        const bool isStatic = backendKind == ModelBackendKind::Static;
         capabilities->struct_size = sizeof(*capabilities);
         capabilities->struct_version = 1U;
         capabilities->capability_flags = 0U;
@@ -615,17 +625,23 @@ std::uint32_t wisteria_stable_entity_capabilities(
             ? WISTERIA_BACKEND_ID_SABA_MMD
             : (isGeneric
                    ? WISTERIA_BACKEND_ID_WISTERIA_GENERIC
-                   : WISTERIA_BACKEND_ID_UNKNOWN);
+                   : (isStatic
+                          ? WISTERIA_BACKEND_ID_STATIC
+                          : WISTERIA_BACKEND_ID_UNKNOWN));
         capabilities->runtime_backend_version = 1U;
-        capabilities->deterministic_profile_id = isGeneric
-            ? WISTERIA_DETERMINISTIC_PROFILE_GENERIC_V1
-            : WISTERIA_DETERMINISTIC_PROFILE_COLD_STEP_V1;
-        capabilities->checkpoint_payload_kind = isGeneric
-            ? WISTERIA_CHECKPOINT_PAYLOAD_KIND_GENERIC_R18
-            : WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C;
+        capabilities->deterministic_profile_id =
+            isGeneric
+                ? WISTERIA_DETERMINISTIC_PROFILE_GENERIC_V1
+                : (isMmd ? WISTERIA_DETERMINISTIC_PROFILE_COLD_STEP_V1
+                         : WISTERIA_DETERMINISTIC_PROFILE_NONE);
+        capabilities->checkpoint_payload_kind =
+            isGeneric
+                ? WISTERIA_CHECKPOINT_PAYLOAD_KIND_GENERIC_R18
+                : (isMmd ? WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C
+                         : WISTERIA_CHECKPOINT_PAYLOAD_KIND_NONE);
         capabilities->structural_frame_limit = kStructuralFrameLimit;
         capabilities->max_deterministic_motion_frame =
-            StableMaxFrameFor(*runtime);
+            runtime != nullptr ? StableMaxFrameFor(*runtime) : 0U;
         for (std::uint32_t& reserved : capabilities->reserved2)
             reserved = 0U;
         return WISTERIA_STATUS_OK;
@@ -1183,9 +1199,25 @@ std::uint32_t wisteria_stable_checkpoint_deserialize(
                 "bytes and out_checkpoint must not be null"
             );
         }
-        const std::uint32_t payloadKind =
-            StableWirePayloadKind(bytes, size);
-        if (payloadKind == WISTERIA_CHECKPOINT_PAYLOAD_KIND_GENERIC_R18)
+        const CheckpointEnvelopeProbe probe =
+            ProbeCheckpointEnvelope(
+                bytes,
+                static_cast<std::size_t>(size)
+            );
+        if (probe == CheckpointEnvelopeProbe::Invalid)
+        {
+            TrySetError(&ctx, "malformed checkpoint wire envelope");
+            return WISTERIA_STATUS_INVALID_CHECKPOINT;
+        }
+        if (probe == CheckpointEnvelopeProbe::UnknownPayloadKind)
+        {
+            TrySetError(
+                &ctx,
+                "unsupported checkpoint wire payload kind"
+            );
+            return WISTERIA_STATUS_UNSUPPORTED;
+        }
+        if (probe == CheckpointEnvelopeProbe::GenericR18)
         {
             GenericRuntimeCheckpoint decoded;
             const TimelineStatus status =
@@ -1216,7 +1248,7 @@ std::uint32_t wisteria_stable_checkpoint_deserialize(
             *out_checkpoint = handle;
             return WISTERIA_STATUS_OK;
         }
-        if (payloadKind == WISTERIA_CHECKPOINT_PAYLOAD_KIND_MMD_R12C)
+        if (probe == CheckpointEnvelopeProbe::MmdR12C)
         {
             FrameCheckpoint decoded;
             const TimelineStatus status = DeserializeCheckpoint(

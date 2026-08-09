@@ -990,6 +990,39 @@ bool CheckpointStructurallyConsistent(
 }
 }  // namespace
 
+CheckpointEnvelopeProbe ProbeCheckpointEnvelope(
+    const std::uint8_t* bytes,
+    std::size_t size
+) noexcept
+{
+    if (bytes == nullptr || size < 12U)
+        return CheckpointEnvelopeProbe::Invalid;
+    Reader reader(bytes, size);
+    std::uint8_t magic[4] = {0U, 0U, 0U, 0U};
+    std::uint32_t wireVersion = 0U;
+    std::uint32_t payloadKind = 0U;
+    if (!reader.ReadBytes(magic, sizeof(magic)) ||
+        !reader.ReadU32(wireVersion) ||
+        !reader.ReadU32(payloadKind))
+    {
+        return CheckpointEnvelopeProbe::Invalid;
+    }
+    if (std::memcmp(magic, kWireMagic, sizeof(kWireMagic)) != 0 ||
+        wireVersion != CheckpointWireVersion)
+    {
+        return CheckpointEnvelopeProbe::Invalid;
+    }
+    switch (payloadKind)
+    {
+    case CheckpointPayloadKindMmdR12C:
+        return CheckpointEnvelopeProbe::MmdR12C;
+    case CheckpointPayloadKindGenericR18:
+        return CheckpointEnvelopeProbe::GenericR18;
+    default:
+        return CheckpointEnvelopeProbe::UnknownPayloadKind;
+    }
+}
+
 std::vector<std::uint8_t> SerializeCheckpoint(
     const FrameCheckpoint& checkpoint,
     const CheckpointSerializationOptions& options

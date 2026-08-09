@@ -1,7 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/application.hpp"
+#include "glfw_lifetime.hpp"
 #include <GLFW/glfw3.h>
-#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -9,32 +9,13 @@ namespace wisteria
 {
 namespace
 {
-std::mutex GlfwLifecycleMutex;
-std::size_t GlfwApplicationCount = 0U;
-
-bool AcquireGlfw()
-{
-    std::lock_guard<std::mutex> lock(GlfwLifecycleMutex);
-    if (GlfwApplicationCount == 0U && !glfwInit())
-        return false;
-    ++GlfwApplicationCount;
-    return true;
-}
-
-void ReleaseGlfw() noexcept
-{
-    std::lock_guard<std::mutex> lock(GlfwLifecycleMutex);
-    if (GlfwApplicationCount == 0U)
-        return;
-    --GlfwApplicationCount;
-    if (GlfwApplicationCount == 0U)
-        glfwTerminate();
-}
+using wisteria::platform::AcquireGlfwLifetime;
+using wisteria::platform::ReleaseGlfwLifetime;
 }
 
 Application::Application()
 {
-    if (!AcquireGlfw())
+    if (!AcquireGlfwLifetime())
         throw std::runtime_error("GLFW initialization failed");
 
     this->glfwInitialized = true;
@@ -323,7 +304,7 @@ void Application::Shutdown() noexcept
         glfwMakeContextCurrent(nullptr);
         GraphicsDevice::SetCurrentContext(nullptr);
         GraphicsDevice::SetCurrentShareGroup(nullptr);
-        ReleaseGlfw();
+        ReleaseGlfwLifetime();
         this->glfwInitialized = false;
     }
 }

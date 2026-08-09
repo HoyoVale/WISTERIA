@@ -8,6 +8,7 @@
 #include "wisteria/runtime/model_backend.hpp"
 #include "wisteria/mmd/mmd_presentation.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
+#include "wisteria/platform/application.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_stable_render.h"
 #endif
@@ -12283,11 +12284,421 @@ void TestStableRenderAbiGeneric()
 
     std::filesystem::remove_all(outputDir, ignored);
     Require(
+        wisteria_stable_entity_destroy(context, entity) ==
+            WISTERIA_STATUS_OK,
+        "stable render entity destroy failed"
+    );
+    Require(
         wisteria_stable_render_session_destroy(
             context,
             renderSession
         ) == WISTERIA_STATUS_OK,
         "stable render session destroy failed"
+    );
+    wisteria_stable_context_destroy(context);
+}
+
+void TestR19StableRenderOwnershipLifecycle()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "ownership context create failed"
+    );
+    WisteriaRuntimeCreationOptionsV1 runtimeOptions;
+    memset(&runtimeOptions, 0, sizeof(runtimeOptions));
+    runtimeOptions.struct_size = sizeof(runtimeOptions);
+    runtimeOptions.struct_version = 1U;
+    runtimeOptions.compatibility = WISTERIA_PROFILE_ID_RAW;
+    runtimeOptions.fixed_time_step = 1.0f / 120.0f;
+    runtimeOptions.max_sub_steps = 10;
+    runtimeOptions.gravity[1] = -98.0f;
+    runtimeOptions.physics_enabled = 1;
+
+    WisteriaEntity entity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(modelPath).c_str(),
+            &entity
+        ) == WISTERIA_STATUS_OK,
+        "ownership entity create failed"
+    );
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(context, entity) ==
+            WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_replay_exact(context, entity, 1U) ==
+                WISTERIA_STATUS_OK,
+        "ownership entity deterministic prepare failed"
+    );
+
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession firstSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &firstSession
+        ) == WISTERIA_STATUS_OK,
+        "ownership first session create failed"
+    );
+
+    // R1.9 v1: one active render session per stable context.
+    WisteriaRenderSession secondSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &secondSession
+        ) == WISTERIA_STATUS_ALREADY_EXISTS && secondSession == 0U,
+        "ownership second session was not rejected"
+    );
+
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+    std::uint64_t bufferSize = 0U;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            firstSession,
+            entity,
+            &camera,
+            32U,
+            32U,
+            nullptr,
+            &bufferSize
+        ) == WISTERIA_STATUS_OK,
+        "ownership render failed"
+    );
+
+    // Session destroy while the entity is bound must be rejected; the
+    // entity must be destroyed first (its GPU resources need the owning
+    // context current).
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            firstSession
+        ) == WISTERIA_STATUS_INVALID_STATE,
+        "ownership session destroy with bound entity was accepted"
+    );
+    Require(
+        wisteria_stable_entity_destroy(context, entity) ==
+            WISTERIA_STATUS_OK,
+        "ownership entity destroy failed"
+    );
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            firstSession
+        ) == WISTERIA_STATUS_OK,
+        "ownership session destroy after entity failed"
+    );
+
+    // Invalid-handle size query must fail, not return STATUS_OK.
+    bufferSize = 0U;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            0xDEADBEEFU,
+            entity,
+            &camera,
+            32U,
+            32U,
+            nullptr,
+            &bufferSize
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "ownership garbage session size query was accepted"
+    );
+    wisteria_stable_context_destroy(context);
+}
+
+void TestR19StableStaticCapabilitiesAndUnicodePath()
+{
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "static context create failed"
+    );
+    WisteriaRuntimeCreationOptionsV1 runtimeOptions;
+    memset(&runtimeOptions, 0, sizeof(runtimeOptions));
+    runtimeOptions.struct_size = sizeof(runtimeOptions);
+    runtimeOptions.struct_version = 1U;
+    runtimeOptions.compatibility = WISTERIA_PROFILE_ID_RAW;
+    runtimeOptions.fixed_time_step = 1.0f / 120.0f;
+    runtimeOptions.max_sub_steps = 10;
+    runtimeOptions.gravity[1] = -98.0f;
+    runtimeOptions.physics_enabled = 1;
+
+    // Static asset: entity is creatable without a runtime, and capabilities
+    // must report STATIC + NONE profile/payload, never MMD metadata.
+    WisteriaEntity staticEntity = 0U;
+    const std::filesystem::path staticPath =
+        FixturePath("pbr-quad-gltf");
+    RequireCoreAsset("pbr-quad-gltf");
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(staticPath).c_str(),
+            &staticEntity
+        ) == WISTERIA_STATUS_OK,
+        "static entity create failed"
+    );
+    WisteriaRuntimeCapabilitiesV1 capabilities;
+    memset(&capabilities, 0, sizeof(capabilities));
+    capabilities.struct_size = sizeof(capabilities);
+    capabilities.struct_version = 1U;
+    Require(
+        wisteria_stable_entity_capabilities(
+            context,
+            staticEntity,
+            &capabilities
+        ) == WISTERIA_STATUS_OK,
+        "static capabilities failed"
+    );
+    Require(
+        capabilities.runtime_backend_id ==
+                WISTERIA_BACKEND_ID_STATIC &&
+            capabilities.deterministic_profile_id ==
+                WISTERIA_DETERMINISTIC_PROFILE_NONE &&
+            capabilities.checkpoint_payload_kind ==
+                WISTERIA_CHECKPOINT_PAYLOAD_KIND_NONE &&
+            capabilities.capability_flags == 0U,
+        "static capabilities reported contradictory MMD metadata"
+    );
+
+    // Unicode UTF-8 path (Windows must not corrupt the path with NULs).
+    const std::filesystem::path sourceModel =
+        FixturePath("animated-triangle-gltf");
+    const std::filesystem::path unicodeDir =
+        std::filesystem::temp_directory_path() /
+        std::filesystem::path(
+            std::u8string(u8"wisteria_测试模型")
+        );
+    std::error_code ignored;
+    std::filesystem::create_directories(unicodeDir, ignored);
+    const std::filesystem::path unicodeModel =
+        unicodeDir /
+        std::filesystem::path(
+            std::u8string(u8"animated_三角形.gltf")
+        );
+    std::filesystem::copy_file(
+        sourceModel,
+        unicodeModel,
+        std::filesystem::copy_options::overwrite_existing,
+        ignored
+    );
+    Require(
+        std::filesystem::is_regular_file(unicodeModel),
+        "unicode model copy failed"
+    );
+    WisteriaEntity unicodeEntity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(unicodeModel).c_str(),
+            &unicodeEntity
+        ) == WISTERIA_STATUS_OK,
+        "unicode path entity create failed"
+    );
+    std::uint64_t fingerprint = 0U;
+    Require(
+        wisteria_stable_entity_asset_fingerprint(
+            context,
+            unicodeEntity,
+            &fingerprint
+        ) == WISTERIA_STATUS_OK && fingerprint != 0U,
+        "unicode path fingerprint failed"
+    );
+
+    wisteria_stable_entity_destroy(context, unicodeEntity);
+    wisteria_stable_entity_destroy(context, staticEntity);
+    std::filesystem::remove_all(unicodeDir, ignored);
+    wisteria_stable_context_destroy(context);
+}
+
+void TestR19StableRenderSequenceFailureState()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "failure context create failed"
+    );
+    WisteriaRuntimeCreationOptionsV1 runtimeOptions;
+    memset(&runtimeOptions, 0, sizeof(runtimeOptions));
+    runtimeOptions.struct_size = sizeof(runtimeOptions);
+    runtimeOptions.struct_version = 1U;
+    runtimeOptions.compatibility = WISTERIA_PROFILE_ID_RAW;
+    runtimeOptions.fixed_time_step = 1.0f / 120.0f;
+    runtimeOptions.max_sub_steps = 10;
+    runtimeOptions.gravity[1] = -98.0f;
+    runtimeOptions.physics_enabled = 1;
+    WisteriaEntity entity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(modelPath).c_str(),
+            &entity
+        ) == WISTERIA_STATUS_OK,
+        "failure entity create failed"
+    );
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession renderSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &renderSession
+        ) == WISTERIA_STATUS_OK,
+        "failure session create failed"
+    );
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+
+    // Output "directory" is actually a file: RenderRange fails after the
+    // directory creation step, and the wrapper must still sync the session's
+    // failure cursor before propagating the exception.
+    const std::filesystem::path outputFile =
+        std::filesystem::temp_directory_path() /
+        "wisteria_stable_render_fail";
+    {
+        std::ofstream stream(outputFile, std::ios::binary);
+        stream << "not a directory";
+    }
+    WisteriaSequenceOptionsV1 sequenceOptions;
+    memset(&sequenceOptions, 0, sizeof(sequenceOptions));
+    sequenceOptions.struct_size = sizeof(sequenceOptions);
+    sequenceOptions.struct_version = 1U;
+    sequenceOptions.start_frame = 0U;
+    sequenceOptions.end_frame = 2U;
+    sequenceOptions.width = 32U;
+    sequenceOptions.height = 32U;
+    sequenceOptions.overwrite_policy = 0U;
+    sequenceOptions.write_png = 1U;
+    sequenceOptions.write_raw = 0U;
+    std::uint64_t lastCommitted = 99U;
+    const std::uint32_t status =
+        wisteria_stable_render_session_sequence_range(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            PathUtf8(outputFile).c_str(),
+            &sequenceOptions,
+            &lastCommitted
+        );
+    Require(
+        status != WISTERIA_STATUS_OK,
+        "failure sequence range unexpectedly succeeded"
+    );
+    std::int32_t failed = -1;
+    Require(
+        wisteria_stable_render_session_sequence_failed(
+            context,
+            renderSession,
+            &failed
+        ) == WISTERIA_STATUS_OK && failed == 1,
+        "sequence failure cursor was not synchronized"
+    );
+    std::filesystem::remove(outputFile);
+
+    wisteria_stable_entity_destroy(context, entity);
+    wisteria_stable_render_session_destroy(context, renderSession);
+    wisteria_stable_context_destroy(context);
+}
+
+void TestR19GlfwLifetimeSharedWithApplication()
+{
+    // Application and the GLFW-hidden render provider share one process-
+    // global GLFW lifetime: destroying one must never terminate GLFW for
+    // the other.
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "glfw-lifetime context create failed"
+    );
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession renderSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &renderSession
+        ) == WISTERIA_STATUS_OK,
+        "glfw-lifetime session create failed"
+    );
+
+    {
+        wisteria::Application application;
+    }  // Application destroyed; hidden session must stay alive.
+
+    // Render session still works (size query path requires a live GLFW).
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+    std::uint64_t bufferSize = 0U;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            0U,
+            &camera,
+            16U,
+            16U,
+            nullptr,
+            &bufferSize
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "glfw-lifetime render handle validation failed"
+    );
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            renderSession
+        ) == WISTERIA_STATUS_OK,
+        "glfw-lifetime session destroy failed"
     );
     wisteria_stable_context_destroy(context);
 }
@@ -12393,6 +12804,22 @@ int main()
     failures += !RunTest(
         "R1.9 stable render ABI generic",
         TestStableRenderAbiGeneric
+    );
+    failures += !RunTest(
+        "R1.9 stable render ownership lifecycle",
+        TestR19StableRenderOwnershipLifecycle
+    );
+    failures += !RunTest(
+        "R1.9 stable static capabilities + unicode path",
+        TestR19StableStaticCapabilitiesAndUnicodePath
+    );
+    failures += !RunTest(
+        "R1.9 stable render sequence failure state",
+        TestR19StableRenderSequenceFailureState
+    );
+    failures += !RunTest(
+        "R1.9 GLFW lifetime shared with Application",
+        TestR19GlfwLifetimeSharedWithApplication
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
