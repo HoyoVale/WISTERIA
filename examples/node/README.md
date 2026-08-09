@@ -4,6 +4,25 @@
 流程与 Python 示例一致：加载模型/动作 → 配置物理 → 步进 N 帧 →
 顶点诊断 → pause/resume。
 
+## Stable ABI smoke（R1.9 Phase 0E）
+
+`stable_smoke.js` 通过 `binding_stable.cc` 只调用冻结的 stable 面
+（`wisteria_stable_runtime.h` + `wisteria_stable_render.h`）：
+Generic entity → capabilities → exact step/replay → checkpoint →
+RenderSession 单帧 RGBA8 → status 语义（NOT_FOUND/UNSUPPORTED）→
+last_error。
+
+```bash
+cd examples/node
+npm run build-stable     # 或 node-gyp rebuild（同时构建两个插件）
+cd ../..
+node examples/node/stable_smoke.js
+```
+
+这是 0E 的非阻塞 compatibility smoke（normative acceptance 是 Python
+ctypes，见 `script/stable_abi_ctypes_test.py`）；环境缺少 node-gyp /
+VS Build Tools 时不阻塞 R1.9 closure。
+
 ## 构建
 
 需要 Node.js（>= 12）与 node-gyp（Windows 需要 VS Build Tools）。

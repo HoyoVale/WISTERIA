@@ -615,6 +615,21 @@ if(BUILD_TESTING)
         wisteria.stable-checkpoint-cross-process-generic PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+    # R1.9 Phase 0E: Python ctypes is the normative stable-ABI acceptance
+    # (Decision 5). Pure standard-library ctypes; no pip dependencies.
+    add_test(
+        NAME wisteria.stable-abi-ctypes
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/script/stable_abi_ctypes_test.py
+            --lib $<TARGET_FILE:wisteria_native>
+            --generic-model
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/animated_triangle.gltf
+            --static-model
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/pbr_quad.gltf
+    )
+    set_tests_properties(wisteria.stable-abi-ctypes PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     if(WISTERIA_TEST_FULL_ASSETS)
         add_test(
             NAME wisteria.stable-checkpoint-cross-process-full

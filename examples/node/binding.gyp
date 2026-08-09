@@ -14,6 +14,21 @@
           "AdditionalOptions": [ "/std:c++17" ]
         }
       }
+    },
+    {
+      "target_name": "wisteria_stable_demo",
+      "sources": [ "binding_stable.cc" ],
+      "cflags": [ "-std=c++17", "-fexceptions" ],
+      "cflags_cc": [ "-std=c++17", "-fexceptions" ],
+      "xcode_settings": {
+        "CLANG_CXX_LANGUAGE_STANDARD": "c++17"
+      },
+      "msvs_settings": {
+        "VCCLCompilerTool": {
+          "ExceptionHandling": 1,
+          "AdditionalOptions": [ "/std:c++17" ]
+        }
+      }
     }
   ]
 }

@@ -5,6 +5,7 @@
   "description": "WISTERIA native C ABI demo through Node N-API",
   "scripts": {
     "build": "node-gyp rebuild",
+    "build-stable": "node-gyp rebuild",
     "demo": "node native_mmd_demo.js"
   }
 }
