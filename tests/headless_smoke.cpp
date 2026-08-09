@@ -13,7 +13,6 @@
 #include "wisteria/rendering/graphics_device.hpp"
 #include "wisteria/rendering/headless_render_session.hpp"
 #include "wisteria/rendering/light.hpp"
-#include "wisteria/runtime/mmd_runtime_model.hpp"
 #include "wisteria/scene/offline_frame_sequence.hpp"
 #include "wisteria/scene/scene.hpp"
 
@@ -248,9 +247,10 @@ bool RunSessionProbe(bool forceSoftware)
     }
 }
 
-// R1.7 Phase 0D: OfflineFrameSequence on a zero-window session. Renders a
-// deterministic 0..2 sequence (PMX fixture + visible Box.glb) through the
-// session's renderer and verifies PNGs, manifest and A/B checkpoints.
+// R1.7 Phase 0D + R1.8 Phase 0D: OfflineFrameSequence on a zero-window
+// session. Renders a deterministic 0..2 sequence through the GENERIC runtime
+// (animated_triangle.gltf + visible Box.glb) and verifies PNGs, manifest
+// and A/B checkpoints, proving the sequence orchestration is backend-neutral.
 bool RunSequenceProbe(bool forceSoftware)
 {
     wisteria::HeadlessContextOptions options;
@@ -270,9 +270,9 @@ bool RunSequenceProbe(bool forceSoftware)
         wisteria::HeadlessRenderSession session(std::move(context));
         wisteria::ResourceManager& resources = session.GetResources();
 
-        wisteria::ModelAsset& pmxModel = resources.LoadModel(
-            "r17::seqPmx",
-            "tests/data/pmx_physics.pmx"
+        wisteria::ModelAsset& genericModel = resources.LoadModel(
+            "r17::seqGeneric",
+            "tests/data/animated_triangle.gltf"
         );
         wisteria::ModelAsset& boxModel = resources.LoadModel(
             "r17::seqBox",
@@ -285,18 +285,19 @@ bool RunSequenceProbe(bool forceSoftware)
             .Color = glm::vec3(1.0f, 0.96f, 0.92f),
             .Intensity = 1.0f
         });
-        wisteria::Entity& entity = scene.InstantiateModel(pmxModel);
+        wisteria::Entity& entity = scene.InstantiateModel(genericModel);
         scene.InstantiateModel(boxModel);
 
         wisteria::ModelInstance& instance = entity.GetModelInstance();
-        auto* runtime = dynamic_cast<wisteria::MmdRuntimeModel*>(
-            instance.TryGetRuntime()
-        );
-        if (runtime == nullptr)
+        wisteria::IModelRuntimeDriver* runtime =
+            instance.TryGetRuntime();
+        if (runtime == nullptr ||
+            !runtime->Capabilities().deterministic.supportsExactFrameStepping)
         {
             std::fprintf(
                 stderr,
-                "[headless-smoke] FAIL: sequence lost the MMD runtime\n"
+                "[headless-smoke] FAIL: sequence lost the generic "
+                "deterministic runtime\n"
             );
             return false;
         }

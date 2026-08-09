@@ -4,6 +4,7 @@
 #include "wisteria/rendering/bmp_writer.hpp"
 #include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/runtime/wisteria_generic_runtime_driver.hpp"
+#include "wisteria/scene/offline_frame_sequence.hpp"
 #include "wisteria/vendor/stb_image.h"
 
 #include <fstream>
@@ -1784,6 +1785,71 @@ void TestR18GenericCheckpointRejections()
     );
 }
 
+void TestR18SequenceBackendNeutralGate()
+{
+    // R1.8 Phase 0D: OfflineFrameSequence accepts IModelRuntimeDriver and
+    // gates on deterministic capability + checkpoint surface.
+    ModelAsset timelineModel("r18-sequence-neutral");
+    ConfigureR18GenericTimelineAsset(timelineModel);
+    auto timelineRuntime = CreateR18GenericRuntime(timelineModel);
+    ModelInstance timelineInstance(
+        timelineModel,
+        std::move(timelineRuntime)
+    );
+    Scene scene;
+    Renderer renderer;
+    OfflineFrameSequenceConfig config;
+    config.outputDirectory =
+        std::filesystem::temp_directory_path() / "wisteria_r18_gate";
+    config.writePng = true;
+    config.writeRaw = false;
+    bool accepted = true;
+    try
+    {
+        OfflineFrameSequence sequence(
+            scene,
+            renderer,
+            *timelineInstance.TryGetRuntime(),
+            timelineInstance,
+            config
+        );
+    }
+    catch (const std::exception&)
+    {
+        accepted = false;
+    }
+    Require(
+        accepted,
+        "R1.8 generic deterministic runtime was rejected by the sequence"
+    );
+
+    ModelAsset plainModel("r18-sequence-plain");
+    plainModel.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    auto plainRuntime =
+        std::make_unique<WisteriaGenericRuntimeDriver>(plainModel);
+    (void)plainRuntime->Initialize();
+    ModelInstance plainInstance(plainModel, std::move(plainRuntime));
+    bool rejected = false;
+    try
+    {
+        OfflineFrameSequence sequence(
+            scene,
+            renderer,
+            *plainInstance.TryGetRuntime(),
+            plainInstance,
+            config
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected = true;
+    }
+    Require(
+        rejected,
+        "R1.8 non-deterministic runtime passed the sequence capability gate"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -1874,6 +1940,10 @@ int main()
     failures += !RunTest(
         "R1.8 generic checkpoint rejections",
         TestR18GenericCheckpointRejections
+    );
+    failures += !RunTest(
+        "R1.8 sequence backend-neutral gate",
+        TestR18SequenceBackendNeutralGate
     );
     return failures == 0 ? 0 : 1;
 }

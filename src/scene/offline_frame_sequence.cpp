@@ -4,6 +4,7 @@
 #include "wisteria/common/png_encoder.hpp"
 #include "wisteria/mmd/mmd_determinism.hpp"
 #include "wisteria/mmd/mmd_presentation.hpp"
+#include "wisteria/runtime/mmd_runtime_model.hpp"
 #include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/scene/scene.hpp"
 
@@ -177,7 +178,7 @@ bool TruncateJsonlTail(const std::filesystem::path& path)
 OfflineFrameSequence::OfflineFrameSequence(
     Scene& scene,
     Renderer& renderer,
-    MmdRuntimeModel& runtime,
+    IModelRuntimeDriver& runtime,
     ModelInstance& modelInstance,
     OfflineFrameSequenceConfig config
 )
@@ -189,7 +190,7 @@ OfflineFrameSequence::OfflineFrameSequence(
 {
     if (this->config.outputDirectory.empty())
         throw std::invalid_argument("Offline sequence output directory is empty");
-    if (modelInstance.TryGetMmdRuntime() != &runtime)
+    if (modelInstance.TryGetRuntime() != &runtime)
     {
         throw std::invalid_argument(
             "ModelInstance runtime does not match the sequence driver"
@@ -199,6 +200,34 @@ OfflineFrameSequence::OfflineFrameSequence(
     {
         throw std::invalid_argument(
             "At least one persistent output format must be enabled"
+        );
+    }
+    // R1.8 Phase 0D capability gate: exact stepping + checkpoint surface are
+    // required; capability/interface divergence is a backend contract
+    // violation and fails loudly instead of silently falling back.
+    if (!runtime.Capabilities().deterministic.supportsExactFrameStepping)
+    {
+        throw std::invalid_argument(
+            "Offline sequence requires deterministic exact frame stepping"
+        );
+    }
+    this->stepper = dynamic_cast<IDeterministicFrameStepper*>(&runtime);
+    if (this->stepper == nullptr)
+    {
+        throw std::logic_error(
+            "backend capability/interface contract violation: exact "
+            "stepping advertised but IDeterministicFrameStepper missing"
+        );
+    }
+    this->mmdRuntime = dynamic_cast<MmdRuntimeModel*>(&runtime);
+    this->genericCheckpoint =
+        dynamic_cast<IDeterministicCheckpoint*>(&runtime);
+    if (this->mmdRuntime == nullptr &&
+        this->genericCheckpoint == nullptr)
+    {
+        throw std::invalid_argument(
+            "Offline sequence requires a checkpoint-capable runtime "
+            "(Saba R1.2C or Generic R1.8)"
         );
     }
 }
@@ -293,26 +322,119 @@ std::optional<MotionFrameIndex> OfflineFrameSequence::LastCommittedFrame()
 
 void OfflineFrameSequence::StepTo(MotionFrameIndex target)
 {
-    auto* stepper = dynamic_cast<IDeterministicFrameStepper*>(this->runtime);
-    if (stepper == nullptr)
-    {
-        this->Fail("runtime does not implement deterministic stepping");
-        return;
-    }
-    if (stepper->PrepareFrameZero({}) != TimelineStatus::Ok)
+    if (this->stepper->PrepareFrameZero({}) != TimelineStatus::Ok)
     {
         this->Fail("PrepareFrameZero failed");
         return;
     }
     for (MotionFrameIndex frame = 1U; frame <= target; ++frame)
     {
-        if (stepper->StepMotionFrameExact(frame, {}) != TimelineStatus::Ok)
+        if (this->stepper->StepMotionFrameExact(frame, {}) !=
+            TimelineStatus::Ok)
         {
             this->Fail("sequential pre-roll failed at frame " +
                 std::to_string(frame));
             return;
         }
     }
+}
+
+TimelineStatus OfflineFrameSequence::CaptureCheckpoint(
+    CheckpointData& output
+) const
+{
+    if (this->genericCheckpoint != nullptr)
+    {
+        GenericRuntimeCheckpoint generic;
+        const TimelineStatus status =
+            this->genericCheckpoint->CreateCheckpoint(generic);
+        if (status == TimelineStatus::Ok)
+            output = std::move(generic);
+        return status;
+    }
+    if (this->mmdRuntime != nullptr)
+    {
+        FrameCheckpoint mmd;
+        const TimelineStatus status =
+            this->mmdRuntime->CreateCheckpoint(mmd);
+        if (status == TimelineStatus::Ok)
+            output = std::move(mmd);
+        return status;
+    }
+    return TimelineStatus::UnsupportedReplayProfile;
+}
+
+TimelineStatus OfflineFrameSequence::RestoreCheckpoint(
+    const CheckpointData& checkpoint
+)
+{
+    if (std::holds_alternative<GenericRuntimeCheckpoint>(checkpoint))
+    {
+        if (this->genericCheckpoint == nullptr)
+            return TimelineStatus::InvalidCheckpoint;
+        return this->genericCheckpoint->RestoreCheckpoint(
+            std::get<GenericRuntimeCheckpoint>(checkpoint)
+        );
+    }
+    if (this->mmdRuntime == nullptr)
+        return TimelineStatus::InvalidCheckpoint;
+    return this->mmdRuntime->RestoreCheckpoint(
+        std::get<FrameCheckpoint>(checkpoint)
+    );
+}
+
+std::vector<std::uint8_t> OfflineFrameSequence::SerializeCheckpoint(
+    const CheckpointData& checkpoint
+) const
+{
+    if (std::holds_alternative<GenericRuntimeCheckpoint>(checkpoint))
+    {
+        return ::wisteria::SerializeGenericCheckpoint(
+            std::get<GenericRuntimeCheckpoint>(checkpoint)
+        );
+    }
+    return ::wisteria::SerializeCheckpoint(
+        std::get<FrameCheckpoint>(checkpoint)
+    );
+}
+
+TimelineStatus OfflineFrameSequence::DeserializeCheckpoint(
+    const std::uint8_t* bytes,
+    std::size_t size,
+    CheckpointData& output
+) const
+{
+    if (this->genericCheckpoint != nullptr)
+    {
+        GenericRuntimeCheckpoint generic;
+        const TimelineStatus status =
+            ::wisteria::DeserializeGenericCheckpoint(
+                bytes,
+                size,
+                {},
+                generic
+            );
+        if (status == TimelineStatus::Ok)
+            output = std::move(generic);
+        return status;
+    }
+    FrameCheckpoint mmd;
+    const TimelineStatus status =
+        ::wisteria::DeserializeCheckpoint(bytes, size, {}, mmd);
+    if (status == TimelineStatus::Ok)
+        output = std::move(mmd);
+    return status;
+}
+
+MotionFrameIndex OfflineFrameSequence::CheckpointFrame(
+    const CheckpointData& checkpoint
+) noexcept
+{
+    if (std::holds_alternative<GenericRuntimeCheckpoint>(checkpoint))
+    {
+        return std::get<GenericRuntimeCheckpoint>(checkpoint).frame;
+    }
+    return std::get<FrameCheckpoint>(checkpoint).frame;
 }
 
 void OfflineFrameSequence::RenderRange(
@@ -329,8 +451,11 @@ void OfflineFrameSequence::RenderRange(
             this->Fail("sequence frame range is outside the supported domain");
             return;
         }
-        // Deterministic sequences require non-looping playback.
-        this->runtime->SetMotionLooping(false);
+        // Deterministic sequences require non-looping playback. Saba needs
+        // the explicit MMD-side flag; Generic derives looping from the
+        // ReplayConfig (default loopMotion=false) passed to every step.
+        if (this->mmdRuntime != nullptr)
+            this->mmdRuntime->SetMotionLooping(false);
         std::error_code directoryError;
         std::filesystem::create_directories(
             this->config.outputDirectory,
@@ -362,11 +487,10 @@ void OfflineFrameSequence::RenderRange(
             this->CommitFrame(frame);
             if (frame != end)
             {
-                auto* stepper =
-                    dynamic_cast<IDeterministicFrameStepper*>(
-                        this->runtime
-                    );
-                if (stepper->StepMotionFrameExact(frame + 1U, {}) !=
+                if (this->stepper->StepMotionFrameExact(
+                        frame + 1U,
+                        {}
+                    ) !=
                     TimelineStatus::Ok)
                 {
                     this->Fail("exact step failed at frame " +
@@ -394,8 +518,8 @@ void OfflineFrameSequence::Resume(MotionFrameIndex end)
             this->Fail("resume target is outside the supported domain");
             return;
         }
-        // Deterministic sequences require non-looping playback.
-        this->runtime->SetMotionLooping(false);
+        if (this->mmdRuntime != nullptr)
+            this->mmdRuntime->SetMotionLooping(false);
         if (!std::filesystem::is_regular_file(this->ManifestPath()))
         {
             this->Fail("no manifest to resume from");
@@ -430,24 +554,22 @@ void OfflineFrameSequence::Resume(MotionFrameIndex end)
             this->Fail("checkpoint wire hash mismatch");
             return;
         }
-        FrameCheckpoint checkpoint;
-        if (DeserializeCheckpoint(
+        CheckpointData checkpoint;
+        if (this->DeserializeCheckpoint(
                 wire.data(),
                 wire.size(),
-                {},
                 checkpoint
             ) != TimelineStatus::Ok)
         {
             this->Fail("checkpoint wire deserialize failed");
             return;
         }
-        if (checkpoint.frame != record->frame)
+        if (CheckpointFrame(checkpoint) != record->frame)
         {
             this->Fail("checkpoint frame does not match committed record");
             return;
         }
-        if (this->runtime->RestoreCheckpoint(checkpoint) !=
-            TimelineStatus::Ok)
+        if (this->RestoreCheckpoint(checkpoint) != TimelineStatus::Ok)
         {
             this->Fail("checkpoint restore failed");
             return;
@@ -457,13 +579,11 @@ void OfflineFrameSequence::Resume(MotionFrameIndex end)
         if (record->frame >= end)
             return;
 
-        auto* stepper =
-            dynamic_cast<IDeterministicFrameStepper*>(this->runtime);
         for (MotionFrameIndex frame = record->frame + 1U;
              frame <= end;
              ++frame)
         {
-            if (stepper->StepMotionFrameExact(frame, {}) !=
+            if (this->stepper->StepMotionFrameExact(frame, {}) !=
                 TimelineStatus::Ok)
             {
                 this->Fail("resume step failed at frame " +
@@ -485,12 +605,17 @@ void OfflineFrameSequence::ApplyPresentation(
     OfflineRenderRequest& request
 ) const
 {
+    // R1.8 Phase 0D: MMD camera/light tracks are MMD-specific; generic
+    // runtimes have no VMD tracks and keep the explicit host presentation.
+    if (this->mmdRuntime == nullptr)
+        return;
+
     // Same-frame camera sample decides whether the projection must be
     // rebuilt from the applied FOV (perspective) or kept at fallback.
     const std::optional<CameraTrackSample> cameraSample =
-        this->runtime->SampleCameraMotion(static_cast<float>(frame));
+        this->mmdRuntime->SampleCameraMotion(static_cast<float>(frame));
     const bool cameraApplied = ApplyMmdCameraFrame(
-        *this->runtime,
+        *this->mmdRuntime,
         static_cast<float>(frame),
         request.camera,
         this->config.renderRequest.camera.GetParam()
@@ -519,7 +644,7 @@ void OfflineFrameSequence::ApplyPresentation(
             light.Intensity()
         };
         ApplyMmdLightFrame(
-            *this->runtime,
+            *this->mmdRuntime,
             static_cast<float>(frame),
             light,
             fallback
@@ -877,20 +1002,20 @@ OfflineFrameSequence::RenderAndPersist(MotionFrameIndex frame)
     }
 
     // 4. Persist checkpoint with the alternate-slot invariant.
-    FrameCheckpoint checkpoint;
-    if (this->runtime->CreateCheckpoint(checkpoint) !=
-        TimelineStatus::Ok)
+    CheckpointData checkpoint;
+    if (this->CaptureCheckpoint(checkpoint) != TimelineStatus::Ok)
     {
         this->Fail("checkpoint capture failed at frame " +
             std::to_string(frame));
         return record;
     }
-    if (checkpoint.frame != frame)
+    if (CheckpointFrame(checkpoint) != frame)
     {
         this->Fail("checkpoint frame mismatch");
         return record;
     }
-    const std::vector<std::uint8_t> wire = SerializeCheckpoint(checkpoint);
+    const std::vector<std::uint8_t> wire =
+        this->SerializeCheckpoint(checkpoint);
     record.checkpointWireHash = HashBytes(wire);
     if (rewriteOnly && !skipCheckpointRewrite &&
         record.checkpointWireHash != committed->checkpointWireHash)

@@ -223,6 +223,25 @@ UnsupportedDeterministicState，绝不悄悄丢状态）：
   - 其他 payload schema 未捕获的可变 Animator 状态
 ```
 
+### Phase 0D 范围（已批准）
+
+```text
+1. OfflineFrameSequence 构造签名改为 IModelRuntimeDriver&
+2. capability 门控：
+   supportsExactFrameStepping == false → 构造明确失败
+   capability true + IDeterministicFrameStepper cast 失败
+     → backend contract violation（logic_error，绝不静默回退）
+3. checkpoint 按 payload kind 分派：
+   MmdRuntimeModel（FrameCheckpoint / kind 1）
+   IDeterministicCheckpoint（GenericRuntimeCheckpoint / kind 2）
+4. MMD camera/light presentation 只对 mmdRuntime 生效；
+   Generic 保留显式 host presentation
+5. 零窗口 Generic 序列：headless_smoke sequence probe 改用
+   animated_triangle.gltf（Generic 确定性运行时）跑 RenderRange(0..2)
+6. 测试：后端无关门控（timeline 接受 / plain 拒绝）
+7. 回归：R1.6 MMD 序列（render-fbo）、跨进程 checkpoint 不变
+```
+
 ## 5. 阶段计划
 
 ```text
@@ -230,7 +249,7 @@ Phase 0A  契约（本文档）——五项决策 + subset 冻结          ✅ C
 Phase 0B  Generic PrepareFrameZero / StepMotionFrameExact + capability
           ✅ CLOSED
 Phase 0C  Generic snapshot/restore + checkpoint payload kind 2          ✅ CLOSED
-Phase 0D  OfflineFrameSequence 运行时无关化 + 零窗口 Generic 序列
+Phase 0D  OfflineFrameSequence 运行时无关化 + 零窗口 Generic 序列   ✅ CLOSED
 Phase 0E  四矩阵 + Final Closure
 ```
 

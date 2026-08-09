@@ -1,9 +1,12 @@
 #pragma once
 
 #include "wisteria/rendering/offline_render.hpp"
-#include "wisteria/runtime/mmd_runtime_model.hpp"
+#include "wisteria/runtime/checkpoint.hpp"
+#include "wisteria/runtime/generic_checkpoint.hpp"
 #include "wisteria/runtime/model_instance.hpp"
+#include "wisteria/runtime/runtime_model_base.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -11,9 +14,11 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 namespace wisteria
 {
+class MmdRuntimeModel;
 class Renderer;
 class Scene;
 
@@ -40,10 +45,13 @@ struct OfflineFrameSequenceConfig
     std::string scenePresentationIdentity;
 };
 
-// Deterministic batch frame-sequence orchestration (R1.6 Phase 0E).
-// v1 scope: exactly one deterministic MMD driver (Saba + R1.2C checkpoint).
+// Deterministic batch frame-sequence orchestration (R1.6 Phase 0E;
+// R1.8 Phase 0D backend-neutral).
 // The session borrows Scene / Renderer / runtime / ModelInstance; it owns
 // the output directory, JSONL manifest, checkpoint persistence and cursor.
+// The runtime is gated by capability + interface: exact frame stepping and a
+// checkpoint surface (Saba R1.2C FrameCheckpoint or Generic R1.8 kind 2)
+// are required; anything else is an explicit construction failure.
 // Any frame-transaction failure is fail-stop: the session refuses further
 // work and must be reopened (resume from last committed frame).
 class OfflineFrameSequence
@@ -52,7 +60,7 @@ public:
     OfflineFrameSequence(
         Scene& scene,
         Renderer& renderer,
-        MmdRuntimeModel& runtime,
+        IModelRuntimeDriver& runtime,
         ModelInstance& modelInstance,
         OfflineFrameSequenceConfig config
     );
@@ -71,6 +79,9 @@ public:
     bool Failed() const noexcept;
 
 private:
+    using CheckpointData =
+        std::variant<FrameCheckpoint, GenericRuntimeCheckpoint>;
+
     struct FrameRecord
     {
         MotionFrameIndex frame = 0U;
@@ -93,6 +104,19 @@ private:
 
     void Fail(const std::string& message);
     void StepTo(MotionFrameIndex target);
+    TimelineStatus CaptureCheckpoint(CheckpointData& output) const;
+    TimelineStatus RestoreCheckpoint(const CheckpointData& checkpoint);
+    std::vector<std::uint8_t> SerializeCheckpoint(
+        const CheckpointData& checkpoint
+    ) const;
+    TimelineStatus DeserializeCheckpoint(
+        const std::uint8_t* bytes,
+        std::size_t size,
+        CheckpointData& output
+    ) const;
+    static MotionFrameIndex CheckpointFrame(
+        const CheckpointData& checkpoint
+    ) noexcept;
     void CommitFrame(MotionFrameIndex frame);
     FrameRecord RenderAndPersist(MotionFrameIndex frame);
     void ApplyPresentation(
@@ -114,7 +138,10 @@ private:
 
     Scene* scene = nullptr;
     Renderer* renderer = nullptr;
-    MmdRuntimeModel* runtime = nullptr;
+    IModelRuntimeDriver* runtime = nullptr;
+    IDeterministicFrameStepper* stepper = nullptr;
+    MmdRuntimeModel* mmdRuntime = nullptr;
+    IDeterministicCheckpoint* genericCheckpoint = nullptr;
     ModelInstance* modelInstance = nullptr;
     OfflineFrameSequenceConfig config;
     std::optional<MotionFrameIndex> lastCommitted;
