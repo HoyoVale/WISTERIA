@@ -1,6 +1,6 @@
 # R1.9 Final Micro Patch II 基线（2026-08-10）
 
-> 状态：**IMPLEMENTED / VALIDATED**；0E HOLD 至 ChatGPT 复审通过。
+> 状态：**COMPLETED**；2026-08-10 ChatGPT 复审通过，R1.9 Final Closure ✅。
 > 依据：ChatGPT 对 `b865be9 — R1.9 0A–0D fixup` 的代码级复审，
 > 0B/0D APPROVED WITH FINAL MICRO PATCH、0E HOLD。
 
@@ -60,10 +60,10 @@ ABI safety matrix：94 legacy + 30 stable（导出面不变）
 
 ```text
 R1.9 0A  CLOSED ✅
-R1.9 0B  FINAL MICRO PATCH II APPLIED（待复审）
+R1.9 0B  CLOSED ✅（Final Micro Patch II 已复审通过）
 R1.9 0C  CLOSED ✅
-R1.9 0D  FINAL MICRO PATCH II APPLIED（待复审）
-R1.9 0E  HOLD
+R1.9 0D  CLOSED ✅（Final Micro Patch II 已复审通过）
+R1.9 0E  CLOSED ✅（R1.9 Final Closure — 2026-08-10）
 ```
 
 ## 5. 复审注意事项

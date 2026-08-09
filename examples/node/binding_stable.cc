@@ -1,9 +1,9 @@
 // WISTERIA Stable Runtime/Render C ABI - Node N-API addon (R1.9 Phase 0E).
 //
 // Non-blocking compatibility smoke: loads wisteria_native at runtime and
-// exposes the frozen stable surface to JavaScript. It intentionally speaks
-// only the stable headers (wisteria_stable_runtime.h + render.h), never the
-// legacy v0.7 surface.
+// exposes the frozen stable surface to JavaScript. It intentionally mirrors
+// only the stable ABI surface (wisteria_stable_runtime.h + render.h), never
+// the legacy v0.7 surface.
 
 #include <node_api.h>
 

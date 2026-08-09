@@ -1,6 +1,7 @@
 # R1.9 Phase 0E — ABI Compatibility Matrix + Final Closure（2026-08-10）
 
-> 状态：**IMPLEMENTED / VALIDATED**；0E CLOSED 待 ChatGPT 最终盖章。
+> 状态：**CLOSED**；Final Closure approved — 2026-08-10
+> （ChatGPT 对 `5d62ebd — R1.9 0E` + 0E Closure 审计包复审通过）。
 > 前置：Final Micro Patch II（`daba47c`）四矩阵全绿。
 
 ## 1. 0E 验收面（契约 §5 / Decision 5）
@@ -69,10 +70,12 @@ Node（smoke）      stable 面跨语言可调用、状态码可见             
 
 ```text
 R1.9 0A  CLOSED ✅（契约分类表冻结）
-R1.9 0B  CLOSED ✅（Final Micro Patch II 已实施并回归）
+R1.9 0B  CLOSED ✅（Final Fix + Micro Fix + Micro Patch II）
 R1.9 0C  CLOSED ✅（Generic payload kind 2 跨进程）
-R1.9 0D  CLOSED ✅（Final Micro Patch II 已实施并回归）
-R1.9 0E  IMPLEMENTED / VALIDATED（待 ChatGPT 盖章）
+R1.9 0D  CLOSED ✅（Final Fix + Micro Fix + Micro Patch II）
+R1.9 0E  CLOSED ✅（ABI compatibility matrix + Final Closure）
+
+R1.9 FINAL CLOSURE ✅（tag `r1.9-final-closure`）
 ```
 
 ## 6. 遗留债务（不阻塞）

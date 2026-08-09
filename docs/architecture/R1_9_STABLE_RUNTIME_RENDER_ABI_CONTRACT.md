@@ -1,7 +1,8 @@
 # R1.9 — Stable Runtime / Render C ABI（契约草案 Phase 0A）
 
-> 状态：**FROZEN v1.0；0A–0D CLOSED、0E IMPLEMENTED / VALIDATED
-> （待 ChatGPT 最终盖章，2026-08-10）**
+> 状态：**FROZEN v1.0；R1.9 CLOSED
+> （Phase 0A–0E CLOSED ✅，Final Closure approved — 2026-08-10，
+> tag `r1.9-final-closure`）**
 > 前置：R1.8 CLOSED（tag `r1.8-final-closure`，四矩阵全绿）。
 > R1.7 native-Linux hardware gate 为独立 validation debt，
 > 不阻塞 R1.9 开发（真机条件具备时补跑 `script/verify_r17_native_linux.sh`）。
@@ -169,16 +170,16 @@ video encoding / FFmpeg / Audio
 
 ```text
 Phase 0A  契约（本文档）——分类表冻结 + 边界           ✅ CLOSED
-Phase 0B  Runtime / capability C ABI                  ⚠️ APPROVED W/ MICRO PATCH II
+Phase 0B  Runtime / capability C ABI                  ✅ CLOSED
           backend-neutral entity + capability 映射 +
           morph override + asset fingerprint
 Phase 0C  Deterministic stepping + checkpoint C ABI        ✅ CLOSED
           Generic exact step/replay + payload kind 2 +
           跨进程 checkpoint（Generic）
-Phase 0D  Render / offline execution C ABI              ⚠️ APPROVED W/ MICRO PATCH II
+Phase 0D  Render / offline execution C ABI              ✅ CLOSED
           wisteria_stable_render.h + RenderSession +
           单帧 RenderOffline + OfflineFrameSequence C 面
-Phase 0E  ABI compatibility matrix + Final Closure      ⏳ IMPLEMENTED
+Phase 0E  ABI compatibility matrix + Final Closure      ✅ CLOSED
           C smoke + 跨进程 + Python ctypes（normative）+
           Node N-API smoke + 四矩阵（详见
           docs/validation/R1_9_PHASE0E_CLOSURE_20260810.md）
@@ -388,4 +389,4 @@ P0-3  status 语义（backend-neutral）：
 ```
 
 > 详细验证见 `docs/validation/R1_9_FINAL_MICRO_PATCH_II_20260810.md`。
-> 0E HOLD 待 ChatGPT 对 Micro Patch II 复审通过后解除。
+> 0E HOLD 已于 2026-08-10 ChatGPT 复审通过后解除（R1.9 Final Closure）。
