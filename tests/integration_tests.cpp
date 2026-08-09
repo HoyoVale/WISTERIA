@@ -12740,6 +12740,186 @@ void TestR19StableStaticCapabilitiesAndUnicodePath()
     wisteria_stable_context_destroy(context);
 }
 
+void TestR19StableStatusSemantics()
+{
+    // R1.9 Final Micro Patch II: NOT_FOUND must mean "handle does not
+    // exist", never "entity exists but lacks the requested backend".
+    // Existing-but-unsupported entities must report UNSUPPORTED.
+    const std::filesystem::path genericPath =
+        FixturePath("animated-triangle-gltf");
+    const std::filesystem::path staticPath =
+        FixturePath("pbr-quad-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+    RequireCoreAsset("pbr-quad-gltf");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "status-semantics context create failed"
+    );
+    WisteriaRuntimeCreationOptionsV1 runtimeOptions;
+    memset(&runtimeOptions, 0, sizeof(runtimeOptions));
+    runtimeOptions.struct_size = sizeof(runtimeOptions);
+    runtimeOptions.struct_version = 1U;
+    runtimeOptions.compatibility = WISTERIA_PROFILE_ID_RAW;
+    runtimeOptions.fixed_time_step = 1.0f / 120.0f;
+    runtimeOptions.max_sub_steps = 10;
+    runtimeOptions.gravity[1] = -98.0f;
+    runtimeOptions.physics_enabled = 1;
+
+    WisteriaEntity genericEntity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(genericPath).c_str(),
+            &genericEntity
+        ) == WISTERIA_STATUS_OK,
+        "status generic entity create failed"
+    );
+    WisteriaEntity staticEntity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(staticPath).c_str(),
+            &staticEntity
+        ) == WISTERIA_STATUS_OK,
+        "status static entity create failed"
+    );
+
+    // Generic entity: load_motion is MMD-only -> UNSUPPORTED, not NOT_FOUND.
+    Require(
+        wisteria_stable_entity_load_motion(
+            context,
+            genericEntity,
+            "does-not-matter.vmd"
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "generic load_motion should be UNSUPPORTED"
+    );
+
+    // Static entity has a valid handle but no runtime: every runtime-only
+    // operation must report UNSUPPORTED instead of pretending the handle
+    // does not exist.
+    Require(
+        wisteria_stable_entity_set_morph_override(
+            context,
+            staticEntity,
+            "blink",
+            0.5f
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "static morph override should be UNSUPPORTED"
+    );
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(
+            context,
+            staticEntity
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "static prepare_frame_zero should be UNSUPPORTED"
+    );
+    Require(
+        wisteria_stable_entity_step_exact(
+            context,
+            staticEntity,
+            1U
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "static step_exact should be UNSUPPORTED"
+    );
+    Require(
+        wisteria_stable_entity_replay_exact(
+            context,
+            staticEntity,
+            1U
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "static replay_exact should be UNSUPPORTED"
+    );
+    WisteriaCheckpoint unusedCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_create(
+            context,
+            staticEntity,
+            &unusedCheckpoint
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "static checkpoint create should be UNSUPPORTED"
+    );
+
+    // Static entity + deterministic sequence -> UNSUPPORTED.
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession renderSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &renderSession
+        ) == WISTERIA_STATUS_OK,
+        "status session create failed"
+    );
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+    WisteriaSequenceOptionsV1 sequenceOptions;
+    memset(&sequenceOptions, 0, sizeof(sequenceOptions));
+    sequenceOptions.struct_size = sizeof(sequenceOptions);
+    sequenceOptions.struct_version = 1U;
+    sequenceOptions.start_frame = 0U;
+    sequenceOptions.end_frame = 2U;
+    sequenceOptions.width = 32U;
+    sequenceOptions.height = 32U;
+    sequenceOptions.overwrite_policy = 0U;
+    sequenceOptions.write_png = 1U;
+    sequenceOptions.write_raw = 0U;
+    std::uint64_t lastCommitted = 99U;
+    const std::filesystem::path unusedDir =
+        std::filesystem::temp_directory_path() /
+        "wisteria_status_unused";
+    Require(
+        wisteria_stable_render_session_sequence_range(
+            context,
+            renderSession,
+            staticEntity,
+            &camera,
+            PathUtf8(unusedDir).c_str(),
+            &sequenceOptions,
+            &lastCommitted
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "static sequence should be UNSUPPORTED"
+    );
+
+    // Garbage handle: NOT_FOUND is reserved for handles that do not exist.
+    Require(
+        wisteria_stable_entity_step_exact(
+            context,
+            0xDEADBEEFU,
+            1U
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "garbage entity should be NOT_FOUND"
+    );
+    WisteriaCheckpoint garbageCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_create(
+            context,
+            0xDEADBEEFU,
+            &garbageCheckpoint
+        ) == WISTERIA_STATUS_NOT_FOUND,
+        "garbage checkpoint create should be NOT_FOUND"
+    );
+
+    wisteria_stable_entity_destroy(context, staticEntity);
+    wisteria_stable_entity_destroy(context, genericEntity);
+    wisteria_stable_render_session_destroy(context, renderSession);
+    wisteria_stable_context_destroy(context);
+}
+
 void TestR19StableRenderSequenceFailureState()
 {
     const std::filesystem::path modelPath =
@@ -13182,6 +13362,10 @@ int main()
     failures += !RunTest(
         "R1.9 stable render sequence failure state",
         TestR19StableRenderSequenceFailureState
+    );
+    failures += !RunTest(
+        "R1.9 stable status semantics",
+        TestR19StableStatusSemantics
     );
     failures += !RunTest(
         "R1.9 GLFW lifetime shared with Application",

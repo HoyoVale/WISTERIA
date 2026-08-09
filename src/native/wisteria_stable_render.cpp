@@ -378,7 +378,6 @@ std::uint32_t wisteria_stable_render_session_render(
             );
             return WISTERIA_STATUS_INVALID_STATE;
         }
-        entry->ownerRenderSession = session;
 
         auto scene = std::make_unique<Scene>();
         scene->CreateDirectionalLight(DirectionalLightData{
@@ -388,16 +387,21 @@ std::uint32_t wisteria_stable_render_session_render(
         });
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
+        EntityBorrowGuard guard(*entry, *scene, renderEntity);
         Scene::BindModelInstanceParts(
             renderEntity,
             renderEntity.GetModelInstance()
         );
-        EntityBorrowGuard guard(*entry, *scene, renderEntity);
         ModelInstance& instance = renderEntity.GetModelInstance();
         // R1.9 Final Micro Fix: exact stepping changed the runtime state
         // without touching the render cache; publish before rendering.
         if (instance.TryGetRuntime() != nullptr)
             instance.PublishCurrentRuntimeFrame();
+        // Commit GPU ownership only after all CPU-only setup succeeded and
+        // immediately before the first real GPU operation.  If any setup
+        // above throws, the EntityBorrowGuard restores the ModelInstance and
+        // the entity is never permanently bound to this session.
+        entry->ownerRenderSession = session;
 
         const Rgba8Frame frame =
             sessionIterator->second->session->RenderOffline(
@@ -469,15 +473,21 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
         });
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
+        EntityBorrowGuard guard(*entry, *scene, renderEntity);
         Scene::BindModelInstanceParts(
             renderEntity,
             renderEntity.GetModelInstance()
         );
-        EntityBorrowGuard guard(*entry, *scene, renderEntity);
         ModelInstance& instance = renderEntity.GetModelInstance();
         IModelRuntimeDriver* runtime = instance.TryGetRuntime();
         if (runtime == nullptr)
-            return WISTERIA_STATUS_INVALID_STATE;
+        {
+            TrySetError(
+                &ctx,
+                "entity has no compatible runtime for sequence rendering"
+            );
+            return WISTERIA_STATUS_UNSUPPORTED;
+        }
         const ModelRuntimeCapabilities capabilities =
             runtime->Capabilities();
         if (!capabilities.deterministic.supportsExactFrameStepping ||
@@ -500,7 +510,6 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
             );
             return WISTERIA_STATUS_INVALID_STATE;
         }
-        entry->ownerRenderSession = session;
 
         OfflineFrameSequenceConfig config;
         config.outputDirectory = PathFromUtf8(output_dir_utf8);
@@ -522,6 +531,9 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
             config
         );
         renderSession->MakeCurrent();
+        // Commit GPU ownership only after all CPU-only setup succeeded and
+        // immediately before the first real GPU operation.
+        entry->ownerRenderSession = session;
         try
         {
             sequence.RenderRange(
@@ -593,15 +605,21 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
         });
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
+        EntityBorrowGuard guard(*entry, *scene, renderEntity);
         Scene::BindModelInstanceParts(
             renderEntity,
             renderEntity.GetModelInstance()
         );
-        EntityBorrowGuard guard(*entry, *scene, renderEntity);
         ModelInstance& instance = renderEntity.GetModelInstance();
         IModelRuntimeDriver* runtime = instance.TryGetRuntime();
         if (runtime == nullptr)
-            return WISTERIA_STATUS_INVALID_STATE;
+        {
+            TrySetError(
+                &ctx,
+                "entity has no compatible runtime for sequence rendering"
+            );
+            return WISTERIA_STATUS_UNSUPPORTED;
+        }
         const ModelRuntimeCapabilities capabilities =
             runtime->Capabilities();
         if (!capabilities.deterministic.supportsExactFrameStepping ||
@@ -624,7 +642,6 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
             );
             return WISTERIA_STATUS_INVALID_STATE;
         }
-        entry->ownerRenderSession = session;
 
         OfflineFrameSequenceConfig config;
         config.outputDirectory = PathFromUtf8(output_dir_utf8);
@@ -646,6 +663,9 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
             config
         );
         renderSession->MakeCurrent();
+        // Commit GPU ownership only after all CPU-only setup succeeded and
+        // immediately before the first real GPU operation.
+        entry->ownerRenderSession = session;
         try
         {
             sequence.Resume(options->end_frame);

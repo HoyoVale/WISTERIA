@@ -200,13 +200,15 @@ std::uint32_t StableNotFound(
 
 MmdRuntimeModel* RequireStableMmd(
     Context& context,
-    WisteriaEntity handle
+    WisteriaEntity handle,
+    std::uint32_t& out_status
 )
 {
     StableEntityEntry* entry = FindStableEntity(context, handle);
     if (entry == nullptr)
     {
         TrySetError(&context, "unknown stable entity handle");
+        out_status = WISTERIA_STATUS_NOT_FOUND;
         return nullptr;
     }
     auto* mmd = entry->modelInstance != nullptr
@@ -220,24 +222,44 @@ MmdRuntimeModel* RequireStableMmd(
             &context,
             "stable v1 requires an MMD-compatible runtime"
         );
+        out_status = WISTERIA_STATUS_UNSUPPORTED;
+    }
+    else
+    {
+        out_status = WISTERIA_STATUS_OK;
     }
     return mmd;
 }
 
 IModelRuntimeDriver* RequireStableRuntime(
     Context& context,
-    WisteriaEntity handle
+    WisteriaEntity handle,
+    std::uint32_t& out_status
 )
 {
     StableEntityEntry* entry = FindStableEntity(context, handle);
     if (entry == nullptr)
     {
         TrySetError(&context, "unknown stable entity handle");
+        out_status = WISTERIA_STATUS_NOT_FOUND;
         return nullptr;
     }
-    return entry->modelInstance != nullptr
+    IModelRuntimeDriver* runtime = entry->modelInstance != nullptr
         ? entry->modelInstance->TryGetRuntime()
         : nullptr;
+    if (runtime == nullptr)
+    {
+        TrySetError(
+            &context,
+            "entity has no compatible runtime for this operation"
+        );
+        out_status = WISTERIA_STATUS_UNSUPPORTED;
+    }
+    else
+    {
+        out_status = WISTERIA_STATUS_OK;
+    }
+    return runtime;
 }
 
 RuntimeCompatibilityProfile MapCompatibilityProfile(
@@ -672,9 +694,11 @@ std::uint32_t wisteria_stable_entity_set_morph_override(
                 "morph override weight must be finite"
             );
         }
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         if (!runtime->SetMorphOverride(morph_name_utf8, weight))
         {
             TrySetError(
@@ -702,9 +726,11 @@ std::uint32_t wisteria_stable_entity_clear_morph_override(
                 "morph_name_utf8 must not be null"
             );
         }
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         runtime->ClearMorphOverride(morph_name_utf8);
         return WISTERIA_STATUS_OK;
     });
@@ -717,9 +743,11 @@ std::uint32_t wisteria_stable_entity_clear_all_morph_overrides(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         runtime->ClearAllMorphOverrides();
         return WISTERIA_STATUS_OK;
     });
@@ -766,9 +794,11 @@ std::uint32_t wisteria_stable_entity_load_motion(
                 "vmd_path_utf8 must not be null"
             );
         }
-        MmdRuntimeModel* mmd = RequireStableMmd(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        MmdRuntimeModel* mmd =
+            RequireStableMmd(ctx, entity, lookupStatus);
         if (mmd == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         const std::filesystem::path vmdPath =
             PathFromUtf8(vmd_path_utf8);
         if (!mmd->LoadMotion(vmdPath))
@@ -787,9 +817,11 @@ std::uint32_t wisteria_stable_entity_unload_motion(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
-        MmdRuntimeModel* mmd = RequireStableMmd(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        MmdRuntimeModel* mmd =
+            RequireStableMmd(ctx, entity, lookupStatus);
         if (mmd == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         mmd->ClearMotion();
         return WISTERIA_STATUS_OK;
     });
@@ -802,9 +834,11 @@ std::uint32_t wisteria_stable_entity_prepare_frame_zero(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         if (auto* mmd = dynamic_cast<MmdRuntimeModel*>(runtime))
         {
             // The frozen deterministic profile forbids looping; entering the
@@ -829,9 +863,11 @@ std::uint32_t wisteria_stable_entity_step_exact(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         if (frame > StableMaxFrameFor(*runtime))
         {
             TrySetError(
@@ -858,9 +894,11 @@ std::uint32_t wisteria_stable_entity_replay_exact(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         if (target > StableMaxFrameFor(*runtime))
         {
             TrySetError(
@@ -901,9 +939,11 @@ std::uint32_t wisteria_stable_entity_set_preview_frame(
 {
     return InvokeAbi(context, [&](Context& ctx)
     {
-        MmdRuntimeModel* mmd = RequireStableMmd(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        MmdRuntimeModel* mmd =
+            RequireStableMmd(ctx, entity, lookupStatus);
         if (mmd == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         if (!std::isfinite(frame) || frame < 0.0)
         {
             return StableInvalidArgument(
@@ -931,9 +971,11 @@ std::uint32_t wisteria_stable_checkpoint_create(
                 "out_checkpoint must not be null"
             );
         }
-        IModelRuntimeDriver* runtime = RequireStableRuntime(ctx, entity);
+        std::uint32_t lookupStatus = WISTERIA_STATUS_OK;
+        IModelRuntimeDriver* runtime =
+            RequireStableRuntime(ctx, entity, lookupStatus);
         if (runtime == nullptr)
-            return WISTERIA_STATUS_NOT_FOUND;
+            return lookupStatus;
         const WisteriaCheckpoint handle =
             static_cast<WisteriaCheckpoint>(AllocateOpaqueHandle());
         if (auto* generic =

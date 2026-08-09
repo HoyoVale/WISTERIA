@@ -1,6 +1,6 @@
 # R1.9 — Stable Runtime / Render C ABI（契约草案 Phase 0A）
 
-> 状态：**FROZEN v1.0；0A CLOSED、0B/0D FINAL MICRO FIX APPLIED（待复审）、
+> 状态：**FROZEN v1.0；0A CLOSED、0B/0D FINAL MICRO PATCH II APPLIED（待复审）、
 > 0E HOLD（2026-08-10）**
 > 前置：R1.8 CLOSED（tag `r1.8-final-closure`，四矩阵全绿）。
 > R1.7 native-Linux hardware gate 为独立 validation debt，
@@ -169,13 +169,13 @@ video encoding / FFmpeg / Audio
 
 ```text
 Phase 0A  契约（本文档）——分类表冻结 + 边界           ✅ CLOSED
-Phase 0B  Runtime / capability C ABI                  ✅ CLOSED
+Phase 0B  Runtime / capability C ABI                  ⚠️ APPROVED W/ MICRO PATCH II
           backend-neutral entity + capability 映射 +
           morph override + asset fingerprint
 Phase 0C  Deterministic stepping + checkpoint C ABI        ✅ CLOSED
           Generic exact step/replay + payload kind 2 +
           跨进程 checkpoint（Generic）
-Phase 0D  Render / offline execution C ABI              ✅ CLOSED
+Phase 0D  Render / offline execution C ABI              ⚠️ APPROVED W/ MICRO PATCH II
           wisteria_stable_render.h + RenderSession +
           单帧 RenderOffline + OfflineFrameSequence C 面
 Phase 0E  ABI compatibility matrix + Final Closure
@@ -357,3 +357,33 @@ P0-3  Static entity 始终创建 ModelInstance（runtime=null）；
 9.    ctest：三个 tier 测试统一 WORKING_DIRECTORY=source root
        （修复 ctest 下 shader 相对路径解析）
 ```
+
+### Final Micro Patch II（2026-08-10 ChatGPT 复审 `b865be9` 后，已实施）
+
+```text
+P0-1  borrow transaction 异常安全：
+       EntityBorrowGuard 在 SetModelInstance 之后、
+       BindModelInstanceParts 之前建立；三个路径统一
+       （single render / sequence_range / sequence_resume）
+P0-2  GPU ownership commit 时机：
+       ownerRenderSession 移到所有 CPU-only setup 成功之后、
+       紧挨第一次真实 GPU operation 之前（单帧 = RenderOffline 前；
+       sequence = MakeCurrent 成功后、RenderRange/Resume 前）
+P0-3  status 语义（backend-neutral）：
+       NOT_FOUND 只表示 handle 不存在；
+       存在 entity 但无对应 backend/runtime → UNSUPPORTED；
+       存在 runtime 但无 deterministic profile → UNSUPPORTED_REPLAY_PROFILE；
+       checkpoint 与 backend 不兼容 → INVALID_CHECKPOINT
+4.    RequireStableRuntime / RequireStableMmd 增加 out_status：
+       10 个 runtime 调用点 + 2 个 sequence 路径逐处区分；
+       Static + step/replay/checkpoint-create/sequence → UNSUPPORTED
+5.    新增 negative-status 集成测试 TestR19StableStatusSemantics：
+       Generic+load_motion、Static+morph/prepare/step/replay/
+       checkpoint-create/sequence → UNSUPPORTED；
+       garbage entity → NOT_FOUND
+6.    回归证据：Windows CORE 9/9、Windows FULL 10/10、
+       WSL CORE 11/11、WSL FULL 12/12；ABI 94 legacy + 30 stable 不变
+```
+
+> 详细验证见 `docs/validation/R1_9_FINAL_MICRO_PATCH_II_20260810.md`。
+> 0E HOLD 待 ChatGPT 对 Micro Patch II 复审通过后解除。
