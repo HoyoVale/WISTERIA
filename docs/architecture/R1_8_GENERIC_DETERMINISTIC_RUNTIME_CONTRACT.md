@@ -1,7 +1,6 @@
 # R1.8 — Generic Deterministic Runtime（契约草案）
 
-> 状态：**FROZEN v1.0（2026-08-09，五项决策 + deterministic subset 已拍板）；
-> Phase 0A CLOSED**
+> 状态：**FROZEN v1.0 + R1.8 CLOSED（2026-08-09，Phase 0A–0E 四矩阵验证通过）**
 > 前置：R1.7 Phase 0A–0D CLOSED，0E native-Linux gate 进行中；
 > R1.6 确定性/checkpoint 基础设施已冻结。
 > 方向：把 Saba MMD 特有能力（exact step / checkpoint / restore / replay）
@@ -250,7 +249,7 @@ Phase 0B  Generic PrepareFrameZero / StepMotionFrameExact + capability
           ✅ CLOSED
 Phase 0C  Generic snapshot/restore + checkpoint payload kind 2          ✅ CLOSED
 Phase 0D  OfflineFrameSequence 运行时无关化 + 零窗口 Generic 序列   ✅ CLOSED
-Phase 0E  四矩阵 + Final Closure
+Phase 0E  四矩阵 + Final Closure                                   ✅ CLOSED
 ```
 
 ### Final Fix（2026-08-09 代码复审后，已实施；0E HOLD 至复审通过）
