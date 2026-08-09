@@ -9,6 +9,7 @@
 
 #include <fstream>
 #include <functional>
+#include <limits>
 
 namespace
 {
@@ -1178,7 +1179,10 @@ void TestEnvironmentResourceAndSceneBinding()
 }
 
 // R1.8 Phase 0B helpers.
-void ConfigureR18GenericTimelineAsset(ModelAsset& model)
+void ConfigureR18GenericTimelineAsset(
+    ModelAsset& model,
+    float rootEndX = 2.0f
+)
 {
     Bone root;
     root.name = "root";
@@ -1205,7 +1209,7 @@ void ConfigureR18GenericTimelineAsset(ModelAsset& model)
     });
     translationKeys.push_back(VectorKeyframe{
         .time = 1.0f,
-        .value = glm::vec3(2.0f, 0.0f, 0.0f)
+        .value = glm::vec3(rootEndX, 0.0f, 0.0f)
     });
     std::vector<AnimationTrack> tracks;
     tracks.emplace_back(0U, translationKeys);
@@ -1302,6 +1306,26 @@ void TestR18GenericPrepareFrameZeroAndExactStep()
         fresh->StepMotionFrameExact(1U, drifted) ==
             TimelineStatus::DeterminismViolation,
         "R1.8 config drift was accepted"
+    );
+    ReplayConfig loopDrift = config;
+    loopDrift.loopMotion = true;
+    Require(
+        fresh->StepMotionFrameExact(1U, loopDrift) ==
+            TimelineStatus::DeterminismViolation,
+        "R1.8 loopMotion drift (false -> true) was accepted"
+    );
+
+    auto loopPrepared = CreateR18GenericRuntime(model);
+    ReplayConfig loopingConfig{30U, 120U, 0U, true};
+    Require(
+        loopPrepared->PrepareFrameZero(loopingConfig) ==
+            TimelineStatus::Ok,
+        "R1.8 looping prepare failed"
+    );
+    Require(
+        loopPrepared->StepMotionFrameExact(1U, config) ==
+            TimelineStatus::DeterminismViolation,
+        "R1.8 loopMotion drift (true -> false) was accepted"
     );
 }
 
@@ -1770,6 +1794,59 @@ void TestR18GenericCheckpointRejections()
             TimelineStatus::InvalidCheckpoint,
         "R1.8 unknown morph override was accepted"
     );
+    invalid = checkpoint;
+    invalid.canonicalTime = std::numeric_limits<float>::quiet_NaN();
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 NaN canonical time was accepted in-memory"
+    );
+    invalid = checkpoint;
+    invalid.playing = false;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 paused (playing=false) checkpoint was accepted"
+    );
+    invalid = checkpoint;
+    invalid.clipClamped = !invalid.clipClamped;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 inconsistent clipClamped state was accepted"
+    );
+    invalid = checkpoint;
+    invalid.pendingRootMotion.translation.x =
+        std::numeric_limits<float>::quiet_NaN();
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 NaN pending root delta was accepted in-memory"
+    );
+    invalid = checkpoint;
+    invalid.pendingRootMotion.rotation.x = 5.0f;
+    Require(
+        runtime->RestoreCheckpoint(invalid) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 degenerate root rotation was accepted"
+    );
+
+    // Root bone selection must survive restore even when root motion is
+    // currently disabled.
+    auto boneRuntime = CreateR18GenericRuntime(model);
+    GenericRuntimeCheckpoint boneConfig = checkpoint;
+    boneConfig.rootMotionEnabled = false;
+    boneConfig.rootMotionBoneIndex = 0U;
+    Require(
+        boneRuntime->RestoreCheckpoint(boneConfig) == TimelineStatus::Ok,
+        "R1.8 disabled-root-motion checkpoint restore failed"
+    );
+    Require(
+        boneRuntime->TryGetAnimator()->RootMotionBone().has_value() &&
+            *boneRuntime->TryGetAnimator()->RootMotionBone() == 0U &&
+            !boneRuntime->TryGetAnimator()->IsRootMotionEnabled(),
+        "R1.8 root bone selection was lost by restore"
+    );
 
     // Capture while out of subset must fail explicitly.
     auto transient = CreateR18GenericRuntime(model);
@@ -1782,6 +1859,107 @@ void TestR18GenericCheckpointRejections()
         transient->CreateCheckpoint(output) ==
             TimelineStatus::UnsupportedDeterministicState,
         "R1.8 out-of-subset capture was accepted"
+    );
+}
+
+void TestR18GenericFingerprintSemantics()
+{
+    // Two assets with identical metadata (name / duration / track count)
+    // but different animation key data must have different fingerprints.
+    ModelAsset modelA("r18-fingerprint-a");
+    ConfigureR18GenericTimelineAsset(modelA, 2.0f);
+    ModelAsset modelB("r18-fingerprint-b");
+    ConfigureR18GenericTimelineAsset(modelB, 1.0f);
+
+    auto runtimeA = CreateR18GenericRuntime(modelA);
+    const ReplayConfig config{30U, 120U, 0U, false};
+    Require(
+        runtimeA->PrepareFrameZero(config) == TimelineStatus::Ok,
+        "R1.8 fingerprint prepare failed"
+    );
+    Require(
+        runtimeA->StepMotionFrameExact(1U, config) == TimelineStatus::Ok,
+        "R1.8 fingerprint step failed"
+    );
+    GenericRuntimeCheckpoint checkpoint;
+    Require(
+        runtimeA->CreateCheckpoint(checkpoint) == TimelineStatus::Ok,
+        "R1.8 fingerprint capture failed"
+    );
+
+    auto runtimeB = CreateR18GenericRuntime(modelB);
+    Require(
+        runtimeB->RestoreCheckpoint(checkpoint) ==
+            TimelineStatus::InvalidCheckpoint,
+        "R1.8 fingerprint did not distinguish animation key data"
+    );
+}
+
+void TestR18SequenceRootMotionBoundary()
+{
+    ModelAsset model("r18-sequence-root-motion");
+    ConfigureR18GenericTimelineAsset(model);
+    Scene scene;
+    Renderer renderer;
+    OfflineFrameSequenceConfig config;
+    config.outputDirectory =
+        std::filesystem::temp_directory_path() /
+        "wisteria_r18_root_motion";
+    config.writePng = true;
+    config.writeRaw = false;
+
+    // Enabled at construction: ctor must reject.
+    auto enabledRuntime = CreateR18GenericRuntime(model);
+    enabledRuntime->TryGetAnimator()->SetRootMotionBone(0U);
+    enabledRuntime->TryGetAnimator()->SetRootMotionEnabled(true);
+    ModelInstance enabledInstance(model, std::move(enabledRuntime));
+    bool ctorRejected = false;
+    try
+    {
+        OfflineFrameSequence sequence(
+            scene,
+            renderer,
+            *enabledInstance.TryGetRuntime(),
+            enabledInstance,
+            config
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        ctorRejected = true;
+    }
+    Require(
+        ctorRejected,
+        "R1.8 sequence accepted enabled root motion at construction"
+    );
+
+    // Enabled after construction: RenderRange must fail-stop.
+    auto lateRuntime = CreateR18GenericRuntime(model);
+    ModelInstance lateInstance(model, std::move(lateRuntime));
+    OfflineFrameSequence sequence(
+        scene,
+        renderer,
+        *lateInstance.TryGetRuntime(),
+        lateInstance,
+        config
+    );
+    auto* generic = dynamic_cast<WisteriaGenericRuntimeDriver*>(
+        lateInstance.TryGetRuntime()
+    );
+    generic->TryGetAnimator()->SetRootMotionBone(0U);
+    generic->TryGetAnimator()->SetRootMotionEnabled(true);
+    bool rangeRejected = false;
+    try
+    {
+        sequence.RenderRange(0U, 2U);
+    }
+    catch (const std::runtime_error&)
+    {
+        rangeRejected = true;
+    }
+    Require(
+        rangeRejected,
+        "R1.8 sequence accepted root motion during RenderRange"
     );
 }
 
@@ -1944,6 +2122,14 @@ int main()
     failures += !RunTest(
         "R1.8 sequence backend-neutral gate",
         TestR18SequenceBackendNeutralGate
+    );
+    failures += !RunTest(
+        "R1.8 generic fingerprint semantics",
+        TestR18GenericFingerprintSemantics
+    );
+    failures += !RunTest(
+        "R1.8 sequence root-motion boundary",
+        TestR18SequenceRootMotionBoundary
     );
     return failures == 0 ? 0 : 1;
 }

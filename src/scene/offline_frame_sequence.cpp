@@ -202,13 +202,32 @@ OfflineFrameSequence::OfflineFrameSequence(
             "At least one persistent output format must be enabled"
         );
     }
-    // R1.8 Phase 0D capability gate: exact stepping + checkpoint surface are
-    // required; capability/interface divergence is a backend contract
-    // violation and fails loudly instead of silently falling back.
-    if (!runtime.Capabilities().deterministic.supportsExactFrameStepping)
+    // R1.8 Final Fix capability gate: the deterministic capability struct is
+    // the authoritative source and the full sequence surface is required.
+    const ModelRuntimeCapabilities capabilities = runtime.Capabilities();
+    const DeterministicBackendCapabilities& deterministic =
+        capabilities.deterministic;
+    if (!deterministic.supportsExactFrameStepping ||
+        !deterministic.supportsCheckpointCapture ||
+        !deterministic.supportsCheckpointRestore ||
+        !deterministic.supportsReplayFromCheckpoint)
     {
         throw std::invalid_argument(
-            "Offline sequence requires deterministic exact frame stepping"
+            "Offline sequence requires the full deterministic capability "
+            "surface (exact stepping + checkpoint capture/restore/replay)"
+        );
+    }
+    const CheckpointBackendCapabilities& mirror = capabilities.checkpoint;
+    if (mirror.supportsCheckpointCapture !=
+            deterministic.supportsCheckpointCapture ||
+        mirror.supportsCheckpointRestore !=
+            deterministic.supportsCheckpointRestore ||
+        mirror.supportsReplayFromCheckpoint !=
+            deterministic.supportsReplayFromCheckpoint)
+    {
+        throw std::logic_error(
+            "backend contract violation: checkpoint capability mirror "
+            "diverged from the deterministic source"
         );
     }
     this->stepper = dynamic_cast<IDeterministicFrameStepper*>(&runtime);
@@ -228,6 +247,17 @@ OfflineFrameSequence::OfflineFrameSequence(
         throw std::invalid_argument(
             "Offline sequence requires a checkpoint-capable runtime "
             "(Saba R1.2C or Generic R1.8)"
+        );
+    }
+    // R1.8 Final Fix: the sequence does not yet checkpoint Entity/world
+    // transforms, so enabled generic root motion is rejected explicitly
+    // instead of being silently dropped.
+    if (this->genericCheckpoint != nullptr &&
+        this->genericCheckpoint->IsDeterministicRootMotionEnabled())
+    {
+        throw std::invalid_argument(
+            "Generic offline sequence v1 does not support enabled root "
+            "motion (Entity/world-transform checkpoint is out of scope)"
         );
     }
 }
@@ -275,6 +305,7 @@ std::string OfflineFrameSequence::SessionIdentity() const
     };
     const std::uint64_t build = CurrentBuildCompatibilityId();
     fold(&build, sizeof(build));
+    foldString(this->runtime->BackendName());
     fold(&this->config.renderRequest.width, sizeof(std::uint32_t));
     fold(&this->config.renderRequest.height, sizeof(std::uint32_t));
     const CameraParam& camera = this->config.renderRequest.camera.GetParam();
@@ -446,6 +477,14 @@ void OfflineFrameSequence::RenderRange(
     {
         if (this->failed)
             this->Fail("sequence is already failed");
+        if (this->genericCheckpoint != nullptr &&
+            this->genericCheckpoint->IsDeterministicRootMotionEnabled())
+        {
+            this->Fail(
+                "generic root motion is not supported in offline sequence v1"
+            );
+            return;
+        }
         if (start > end || end > kMaxSequenceFrame)
         {
             this->Fail("sequence frame range is outside the supported domain");
@@ -513,6 +552,14 @@ void OfflineFrameSequence::Resume(MotionFrameIndex end)
     {
         if (this->failed)
             this->Fail("sequence is already failed");
+        if (this->genericCheckpoint != nullptr &&
+            this->genericCheckpoint->IsDeterministicRootMotionEnabled())
+        {
+            this->Fail(
+                "generic root motion is not supported in offline sequence v1"
+            );
+            return;
+        }
         if (end > kMaxSequenceFrame)
         {
             this->Fail("resume target is outside the supported domain");
@@ -711,7 +758,7 @@ void OfflineFrameSequence::WriteSessionRecord()
     session["buildCompatibilityId"] = CurrentBuildCompatibilityId();
     session["width"] = this->config.renderRequest.width;
     session["height"] = this->config.renderRequest.height;
-    session["backend"] = "saba-mmd";
+    session["backend"] = this->runtime->BackendName();
     if (!AppendDurable(this->ManifestPath(), session.dump()))
     {
         this->Fail("cannot durably write session record");

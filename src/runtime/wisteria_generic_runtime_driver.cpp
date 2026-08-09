@@ -41,6 +41,100 @@ void FnvU32Generic(std::uint64_t& state, std::uint32_t value) noexcept
         state *= 1099511628211ULL;
     }
 }
+
+// R1.8 Final Fix: stable, platform-independent explicit byte encoding of
+// immutable runtime semantics for the asset fingerprint.
+class FingerprintBuilder
+{
+public:
+    void Bytes(const void* data, std::size_t size)
+    {
+        this->state = FnvBytesGeneric(
+            static_cast<const std::uint8_t*>(data),
+            size
+        ) ^ this->state;
+        this->state *= 1099511628211ULL;
+    }
+
+    void U8(std::uint8_t value)
+    {
+        Bytes(&value, sizeof(value));
+    }
+
+    void Bool(bool value)
+    {
+        U8(value ? 1U : 0U);
+    }
+
+    void U32(std::uint32_t value)
+    {
+        for (int shift = 0; shift < 32; shift += 8)
+            U8(static_cast<std::uint8_t>((value >> shift) & 0xFFU));
+    }
+
+    void U64(std::uint64_t value)
+    {
+        for (int shift = 0; shift < 64; shift += 8)
+            U8(static_cast<std::uint8_t>((value >> shift) & 0xFFU));
+    }
+
+    void F32(float value)
+    {
+        std::uint32_t bits = 0U;
+        std::memcpy(&bits, &value, sizeof(bits));
+        U32(bits);
+    }
+
+    void String(std::string_view value)
+    {
+        U64(value.size());
+        Bytes(value.data(), value.size());
+    }
+
+    void Vec2(const glm::vec2& value)
+    {
+        F32(value.x);
+        F32(value.y);
+    }
+
+    void Vec3(const glm::vec3& value)
+    {
+        F32(value.x);
+        F32(value.y);
+        F32(value.z);
+    }
+
+    void Vec4(const glm::vec4& value)
+    {
+        F32(value.x);
+        F32(value.y);
+        F32(value.z);
+        F32(value.w);
+    }
+
+    void Quat(const glm::quat& value)
+    {
+        F32(value.x);
+        F32(value.y);
+        F32(value.z);
+        F32(value.w);
+    }
+
+    void Interpolation(const KeyframeInterpolation& interpolation)
+    {
+        U32(static_cast<std::uint32_t>(interpolation.mode));
+        Vec2(interpolation.controlPoint1);
+        Vec2(interpolation.controlPoint2);
+    }
+
+    std::uint64_t Result() const noexcept
+    {
+        return this->state;
+    }
+
+private:
+    std::uint64_t state = 14695981039346656037ULL;
+};
 }  // namespace
 
 WisteriaGenericRuntimeDriver::WisteriaGenericRuntimeDriver(
@@ -218,7 +312,8 @@ TimelineStatus WisteriaGenericRuntimeDriver::StepMotionFrameExact(
         return TimelineStatus::InvalidState;
     if (config.motionFps != this->frozenConfig.motionFps ||
         config.physicsHz != this->frozenConfig.physicsHz ||
-        config.warmupFrames != this->frozenConfig.warmupFrames)
+        config.warmupFrames != this->frozenConfig.warmupFrames ||
+        config.loopMotion != this->frozenConfig.loopMotion)
     {
         return TimelineStatus::DeterminismViolation;
     }
@@ -269,42 +364,183 @@ ModelRuntimeCapabilities WisteriaGenericRuntimeDriver::Capabilities() const
 std::uint64_t WisteriaGenericRuntimeDriver::ComputeAssetFingerprint()
     const noexcept
 {
-    std::uint64_t state = 14695981039346656037ULL;
     if (this->asset == nullptr)
-        return state;
+        return FingerprintBuilder().Result();
+
+    FingerprintBuilder fp;
+    fp.String("wisteria-generic/runtime/v1");
+
     const Skeleton* skeleton = this->asset->TryGetSkeleton();
-    FnvU32Generic(
-        state,
-        skeleton != nullptr
-            ? static_cast<std::uint32_t>(skeleton->BoneCount())
-            : 0U
-    );
+    if (skeleton != nullptr)
+    {
+        fp.U32(static_cast<std::uint32_t>(skeleton->BoneCount()));
+        for (std::size_t index = 0U; index < skeleton->BoneCount(); ++index)
+        {
+            const Bone& bone = skeleton->BoneAt(
+                static_cast<BoneIndex>(index)
+            );
+            fp.String(bone.name);
+            fp.U32(bone.parentIndex);
+            for (glm::length_t column = 0U; column < 4U; ++column)
+            {
+                for (glm::length_t row = 0U; row < 4U; ++row)
+                    fp.F32(bone.bindLocalMatrix[column][row]);
+            }
+        }
+    }
+    else
+    {
+        fp.U32(0U);
+    }
+
     const MorphSet* morphSet = this->asset->TryGetMorphSet();
-    FnvU32Generic(
-        state,
-        morphSet != nullptr
-            ? static_cast<std::uint32_t>(morphSet->MorphCount())
-            : 0U
-    );
-    for (std::size_t index = 0U; index < this->asset->AnimationClipCount();
+    if (morphSet != nullptr)
+    {
+        fp.U32(static_cast<std::uint32_t>(morphSet->MorphCount()));
+        for (const MorphDefinition& definition : morphSet->Definitions())
+        {
+            fp.String(definition.name);
+            fp.U32(static_cast<std::uint32_t>(definition.category));
+            fp.U32(static_cast<std::uint32_t>(definition.kind));
+            fp.U32(static_cast<std::uint32_t>(
+                definition.groupMembers.size()
+            ));
+            for (const GroupMorphMember& member : definition.groupMembers)
+            {
+                fp.U32(member.morphIndex);
+                fp.F32(member.weight);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.flipMembers.size()
+            ));
+            for (const FlipMorphMember& member : definition.flipMembers)
+            {
+                fp.U32(member.morphIndex);
+                fp.F32(member.weight);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.boneOffsets.size()
+            ));
+            for (const BoneMorphOffset& offset : definition.boneOffsets)
+            {
+                fp.U32(offset.boneIndex);
+                fp.Vec3(offset.translation);
+                fp.Quat(offset.rotation);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.materialOffsets.size()
+            ));
+            for (const MaterialMorphOffset& offset :
+                 definition.materialOffsets)
+            {
+                fp.U32(offset.materialIndex);
+                fp.U32(static_cast<std::uint32_t>(offset.operation));
+                fp.Vec4(offset.diffuse);
+                fp.Vec3(offset.specular);
+                fp.F32(offset.shininess);
+                fp.Vec3(offset.ambient);
+                fp.Vec4(offset.edgeColor);
+                fp.F32(offset.edgeSize);
+                fp.Vec4(offset.textureFactor);
+                fp.Vec4(offset.sphereTextureFactor);
+                fp.Vec4(offset.toonTextureFactor);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                definition.impulseOffsets.size()
+            ));
+            for (const ImpulseMorphOffset& offset :
+                 definition.impulseOffsets)
+            {
+                fp.U32(offset.rigidBodyIndex);
+                fp.Bool(offset.local);
+                fp.Vec3(offset.velocity);
+                fp.Vec3(offset.torque);
+            }
+        }
+    }
+    else
+    {
+        fp.U32(0U);
+    }
+
+    fp.U32(static_cast<std::uint32_t>(
+        this->asset->AnimationClipCount()
+    ));
+    for (std::size_t index = 0U;
+         index < this->asset->AnimationClipCount();
          ++index)
     {
         const AnimationClip& clip = this->asset->AnimationClipAt(index);
-        state = FnvBytesGeneric(
-            reinterpret_cast<const std::uint8_t*>(clip.Name().data()),
-            clip.Name().size()
-        ) ^ state;
-        state *= 1099511628211ULL;
-        std::uint32_t durationBits = 0U;
-        const float duration = clip.Duration();
-        std::memcpy(&durationBits, &duration, sizeof(durationBits));
-        FnvU32Generic(state, durationBits);
-        FnvU32Generic(
-            state,
-            static_cast<std::uint32_t>(clip.TrackCount())
-        );
+        fp.String(clip.Name());
+        fp.F32(clip.Duration());
+        fp.U32(static_cast<std::uint32_t>(clip.TrackCount()));
+        for (const AnimationTrack& track : clip.Tracks())
+        {
+            fp.U32(track.Bone());
+            fp.U32(static_cast<std::uint32_t>(
+                track.TranslationKeys().size()
+            ));
+            for (const VectorKeyframe& key : track.TranslationKeys())
+            {
+                fp.F32(key.time);
+                fp.Vec3(key.value);
+                for (const KeyframeInterpolation& interpolation :
+                     key.interpolation)
+                {
+                    fp.Interpolation(interpolation);
+                }
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                track.RotationKeys().size()
+            ));
+            for (const QuaternionKeyframe& key : track.RotationKeys())
+            {
+                fp.F32(key.time);
+                fp.Quat(key.value);
+                fp.Interpolation(key.interpolation);
+            }
+            fp.U32(static_cast<std::uint32_t>(
+                track.ScaleKeys().size()
+            ));
+            for (const VectorKeyframe& key : track.ScaleKeys())
+            {
+                fp.F32(key.time);
+                fp.Vec3(key.value);
+                for (const KeyframeInterpolation& interpolation :
+                     key.interpolation)
+                {
+                    fp.Interpolation(interpolation);
+                }
+            }
+        }
+        fp.U32(static_cast<std::uint32_t>(
+            clip.MorphWeightTrackCount()
+        ));
+        for (const MorphWeightTrack& track : clip.MorphWeightTracks())
+        {
+            fp.U32(track.Morph());
+            fp.U32(static_cast<std::uint32_t>(track.Keys().size()));
+            for (const FloatKeyframe& key : track.Keys())
+            {
+                fp.F32(key.time);
+                fp.F32(key.value);
+            }
+        }
+        fp.U32(static_cast<std::uint32_t>(
+            clip.MmdIkStateTrackCount()
+        ));
+        for (const MmdIkStateTrack& track : clip.MmdIkStateTracks())
+        {
+            fp.U32(track.ControllerBone());
+            fp.U32(static_cast<std::uint32_t>(track.Keys().size()));
+            for (const BoolKeyframe& key : track.Keys())
+            {
+                fp.F32(key.time);
+                fp.Bool(key.value);
+            }
+        }
     }
-    return state;
+    return fp.Result();
 }
 
 void WisteriaGenericRuntimeDriver::ApplyPersistentMorphOverrides()
@@ -476,6 +712,35 @@ TimelineStatus WisteriaGenericRuntimeDriver::RestoreCheckpoint(
             }
         }
     }
+    // R1.8 Final Fix: in-memory restore performs the same semantic
+    // validation as the wire decoder (public RestoreCheckpoint must not
+    // trust callers to have gone through the wire).
+    if (!std::isfinite(checkpoint.canonicalTime) ||
+        checkpoint.canonicalTime < 0.0f ||
+        !checkpoint.playing)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    const RootMotionDelta& pending = checkpoint.pendingRootMotion;
+    if (!std::isfinite(pending.translation.x) ||
+        !std::isfinite(pending.translation.y) ||
+        !std::isfinite(pending.translation.z) ||
+        !std::isfinite(pending.rotation.x) ||
+        !std::isfinite(pending.rotation.y) ||
+        !std::isfinite(pending.rotation.z) ||
+        !std::isfinite(pending.rotation.w))
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
+    const float quaternionNorm =
+        pending.rotation.x * pending.rotation.x +
+        pending.rotation.y * pending.rotation.y +
+        pending.rotation.z * pending.rotation.z +
+        pending.rotation.w * pending.rotation.w;
+    if (std::abs(quaternionNorm - 1.0f) > 0.001f)
+    {
+        return TimelineStatus::InvalidCheckpoint;
+    }
 
     this->Reset();
     this->animator->Play(
@@ -483,16 +748,15 @@ TimelineStatus WisteriaGenericRuntimeDriver::RestoreCheckpoint(
         true
     );
     this->animator->SetLooping(checkpoint.looping);
-    if (checkpoint.rootMotionEnabled)
+    if (checkpoint.rootMotionBoneIndex.has_value())
     {
         this->animator->SetRootMotionBone(
             static_cast<BoneIndex>(*checkpoint.rootMotionBoneIndex)
         );
-        this->animator->SetRootMotionEnabled(true);
     }
-    else
+    if (checkpoint.rootMotionEnabled)
     {
-        this->animator->ClearRootMotionBone();
+        this->animator->SetRootMotionEnabled(true);
     }
     if (!this->animator->IsDeterministicSubsetCompatible())
         return TimelineStatus::UnsupportedDeterministicState;
@@ -507,6 +771,11 @@ TimelineStatus WisteriaGenericRuntimeDriver::RestoreCheckpoint(
                : std::min(frameTime, duration))
         : 0.0f;
     if (std::abs(checkpoint.canonicalTime - expectedTime) > 0.0001f)
+        return TimelineStatus::InvalidCheckpoint;
+    const bool expectedClamped =
+        !checkpoint.looping &&
+        expectedTime >= duration - 0.0001f;
+    if (checkpoint.clipClamped != expectedClamped)
         return TimelineStatus::InvalidCheckpoint;
 
     this->animator->EvaluateCanonicalFrame(
@@ -549,6 +818,13 @@ TimelineStatus WisteriaGenericRuntimeDriver::ReplayFromCheckpoint(
             return status;
     }
     return TimelineStatus::Ok;
+}
+
+bool WisteriaGenericRuntimeDriver::IsDeterministicRootMotionEnabled()
+    const noexcept
+{
+    return this->animator != nullptr &&
+        this->animator->IsRootMotionEnabled();
 }
 
 bool WisteriaGenericRuntimeDriver::NeedsDynamicVertexUpload() const noexcept

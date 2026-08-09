@@ -5,9 +5,11 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #if defined(WISTERIA_ENABLE_EGL)
@@ -111,6 +113,35 @@ using GetPlatformDisplayEXTProc = EGLDisplay(EGLAPIENTRY*)(
 const char* NullableString(const char* value)
 {
     return value != nullptr ? value : "";
+}
+
+// Multiple headless sessions may obtain the same EGLDisplay (same platform
+// parameters / device). eglTerminate invalidates every context of that
+// display, so the provider reference-counts displays and only terminates
+// the last owner.
+std::mutex gEglDisplayMutex;
+std::unordered_map<EGLDisplay, std::size_t> gEglDisplayRefCounts;
+
+void AcquireEglDisplay(EGLDisplay display) noexcept
+{
+    std::lock_guard<std::mutex> lock(gEglDisplayMutex);
+    ++gEglDisplayRefCounts[display];
+}
+
+// Returns true when this release must terminate the display (last owner).
+bool ReleaseEglDisplay(EGLDisplay display) noexcept
+{
+    std::lock_guard<std::mutex> lock(gEglDisplayMutex);
+    const auto iterator = gEglDisplayRefCounts.find(display);
+    if (iterator == gEglDisplayRefCounts.end())
+        return false;
+    if (iterator->second > 1U)
+    {
+        --iterator->second;
+        return false;
+    }
+    gEglDisplayRefCounts.erase(iterator);
+    return true;
 }
 
 class EglHeadlessContext final : public IHeadlessContext
@@ -350,6 +381,7 @@ private:
             return;
         if (!eglInitialize(candidate, nullptr, nullptr))
             return;
+        AcquireEglDisplay(candidate);
         this->display = candidate;
         this->platformName = std::move(name);
         this->softwareSelected = software;
@@ -614,7 +646,8 @@ private:
         }
         if (this->displayInitialized)
         {
-            eglTerminate(this->display);
+            if (ReleaseEglDisplay(this->display))
+                eglTerminate(this->display);
             this->displayInitialized = false;
         }
         GraphicsDevice::SetCurrentContext(nullptr);

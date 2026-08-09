@@ -92,6 +92,7 @@ public:
         const GenericRuntimeCheckpoint& checkpoint,
         MotionFrameIndex target
     ) override;
+    bool IsDeterministicRootMotionEnabled() const noexcept override;
     ModelRuntimeCapabilities Capabilities() const override;
 
     // R1.8 persistent morph overrides.

@@ -253,6 +253,32 @@ Phase 0D  OfflineFrameSequence 运行时无关化 + 零窗口 Generic 序列   �
 Phase 0E  四矩阵 + Final Closure
 ```
 
+### Final Fix（2026-08-09 代码复审后，已实施；0E HOLD 至复审通过）
+
+```text
+1. StepMotionFrameExact 把 loopMotion 纳入 frozen ReplayConfig
+   一致性检查（双向漂移均 DeterminismViolation）
+2. Generic RestoreCheckpoint 完整语义校验（in-memory 与 wire 同标准）：
+   canonicalTime finite / playing==true / clipClamped 与帧域一致 /
+   pending root delta finite / rotation 单位四元数 /
+   root bone 选择在 enabled=false 时保留
+3. assetFingerprint 强化为 immutable runtime-semantic fingerprint：
+   skeleton topology（name/parent/bind matrix）、morph 定义全量、
+   clip/track/key 数据（含插值曲线），稳定显式字节编码
+4. OfflineFrameSequence capability 门控要求完整 deterministic 表面
+   （exact stepping + checkpoint capture/restore/replay），
+   且 checkpoint legacy mirror 必须与 deterministic 一致
+5. manifest backend 改为 runtime.BackendName()，
+   backend identity 折入 SessionIdentity
+6. OfflineFrameSequence v1 明确 root-motion 边界：
+   Generic root motion enabled → 构造/RenderRange/Resume 显式拒绝
+7. Generic Resume 真验证：A RenderRange(0..2) → B 新 runtime
+   Resume(4) → C from-start 0..4；frame4 PNG 字节 + runtime state
+   一致；manifest 记录 wisteria-generic
+8. EGL display 引用计数：多 headless session 共享同一 EGLDisplay，
+   仅最后 owner eglTerminate
+```
+
 ## 6. 成功标准
 
 ```text

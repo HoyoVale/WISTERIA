@@ -60,5 +60,11 @@ public:
         const GenericRuntimeCheckpoint& checkpoint,
         MotionFrameIndex target
     ) = 0;
+
+    // R1.8 Final Fix: sequence-level root-motion boundary. Generic runtime
+    // root motion is deterministic and checkpointed, but the offline
+    // sequence does not yet checkpoint Entity/world transforms, so the
+    // sequence rejects enabled root motion instead of silently dropping it.
+    virtual bool IsDeterministicRootMotionEnabled() const noexcept = 0;
 };
 }  // namespace wisteria

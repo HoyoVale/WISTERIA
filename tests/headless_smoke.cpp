@@ -21,11 +21,13 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -248,15 +250,27 @@ bool RunSessionProbe(bool forceSoftware)
 }
 
 // R1.7 Phase 0D + R1.8 Phase 0D: OfflineFrameSequence on a zero-window
-// session. Renders a deterministic 0..2 sequence through the GENERIC runtime
-// (animated_triangle.gltf + visible Box.glb) and verifies PNGs, manifest
-// and A/B checkpoints, proving the sequence orchestration is backend-neutral.
-bool RunSequenceProbe(bool forceSoftware)
+// session. Renders deterministic sequences through the GENERIC runtime
+// (animated_triangle.gltf + visible Box.glb) and verifies:
+//   A: RenderRange(0..2) -> PNGs, manifest, A/B checkpoints
+//   B: fresh runtime Resume(4) -> kind-2 restore + frames 3/4
+//   C: fresh runtime from-start RenderRange(0..4)
+//   B/C frame-4 PNG bytes + runtime state identical
+struct GenericSession
+{
+    std::unique_ptr<wisteria::IHeadlessContext> context;
+    std::unique_ptr<wisteria::HeadlessRenderSession> session;
+    std::unique_ptr<wisteria::Scene> scene;
+    wisteria::Entity* entity = nullptr;
+    wisteria::IModelRuntimeDriver* runtime = nullptr;
+};
+
+bool CreateGenericSession(bool forceSoftware, GenericSession& output)
 {
     wisteria::HeadlessContextOptions options;
     options.forceSoftware = forceSoftware;
-    auto context = wisteria::CreateHeadlessContext(options);
-    if (context == nullptr)
+    output.context = wisteria::CreateHeadlessContext(options);
+    if (output.context == nullptr)
     {
         std::fprintf(
             stderr,
@@ -264,35 +278,37 @@ bool RunSequenceProbe(bool forceSoftware)
         );
         return false;
     }
-
     try
     {
-        wisteria::HeadlessRenderSession session(std::move(context));
-        wisteria::ResourceManager& resources = session.GetResources();
-
+        output.session = std::make_unique<wisteria::HeadlessRenderSession>(
+            std::move(output.context)
+        );
+        wisteria::ResourceManager& resources =
+            output.session->GetResources();
         wisteria::ModelAsset& genericModel = resources.LoadModel(
-            "r17::seqGeneric",
+            "r18::seqGeneric",
             "tests/data/animated_triangle.gltf"
         );
         wisteria::ModelAsset& boxModel = resources.LoadModel(
-            "r17::seqBox",
+            "r18::seqBox",
             "tests/assets/models/Box.glb"
         );
-
-        wisteria::Scene scene;
-        scene.CreateDirectionalLight(wisteria::DirectionalLightData{
-            .Direction = {-0.35f, -0.75f, -0.45f},
-            .Color = glm::vec3(1.0f, 0.96f, 0.92f),
-            .Intensity = 1.0f
-        });
-        wisteria::Entity& entity = scene.InstantiateModel(genericModel);
-        scene.InstantiateModel(boxModel);
-
-        wisteria::ModelInstance& instance = entity.GetModelInstance();
-        wisteria::IModelRuntimeDriver* runtime =
-            instance.TryGetRuntime();
-        if (runtime == nullptr ||
-            !runtime->Capabilities().deterministic.supportsExactFrameStepping)
+        output.scene = std::make_unique<wisteria::Scene>();
+        output.scene->CreateDirectionalLight(
+            wisteria::DirectionalLightData{
+                .Direction = {-0.35f, -0.75f, -0.45f},
+                .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+                .Intensity = 1.0f
+            }
+        );
+        wisteria::Entity& entity =
+            output.scene->InstantiateModel(genericModel);
+        output.scene->InstantiateModel(boxModel);
+        output.entity = &entity;
+        output.runtime = entity.GetModelInstance().TryGetRuntime();
+        if (output.runtime == nullptr ||
+            !output.runtime->Capabilities()
+                 .deterministic.supportsExactFrameStepping)
         {
             std::fprintf(
                 stderr,
@@ -301,6 +317,51 @@ bool RunSequenceProbe(bool forceSoftware)
             );
             return false;
         }
+        return true;
+    }
+    catch (const std::exception& error)
+    {
+        std::fprintf(
+            stderr,
+            "[headless-smoke] FAIL: generic session creation: %s\n",
+            error.what()
+        );
+        return false;
+    }
+}
+
+std::vector<std::uint8_t> ReadFileBytes(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>()
+    );
+}
+
+bool FilesEqual(
+    const std::filesystem::path& left,
+    const std::filesystem::path& right
+)
+{
+    const std::vector<std::uint8_t> leftBytes = ReadFileBytes(left);
+    const std::vector<std::uint8_t> rightBytes = ReadFileBytes(right);
+    return leftBytes == rightBytes;
+}
+
+bool RunSequenceProbe(bool forceSoftware)
+{
+    try
+    {
+        const std::filesystem::path dirB =
+            std::filesystem::temp_directory_path() /
+            "wisteria_headless_seq_b";
+        const std::filesystem::path dirC =
+            std::filesystem::temp_directory_path() /
+            "wisteria_headless_seq_c";
+        std::error_code ignored;
+        std::filesystem::remove_all(dirB, ignored);
+        std::filesystem::remove_all(dirC, ignored);
 
         wisteria::OfflineRenderRequest baseRequest;
         baseRequest.width = 64U;
@@ -318,54 +379,165 @@ bool RunSequenceProbe(bool forceSoftware)
             100.0f
         );
 
-        const std::filesystem::path outputDir =
-            std::filesystem::temp_directory_path() /
-            "wisteria_headless_seq";
-        std::error_code ignored;
-        std::filesystem::remove_all(outputDir, ignored);
+        // Session A: from-start RenderRange(0..2).
+        GenericSession sessionA;
+        if (!CreateGenericSession(forceSoftware, sessionA))
+            return false;
+        wisteria::OfflineFrameSequenceConfig configB;
+        configB.outputDirectory = dirB;
+        configB.renderRequest = baseRequest;
+        configB.writePng = true;
+        configB.writeRaw = false;
+        configB.overwritePolicy = wisteria::SequenceOverwritePolicy::Reject;
+        {
+            wisteria::OfflineFrameSequence sequence(
+                *sessionA.scene,
+                sessionA.session->GetRenderer(),
+                *sessionA.runtime,
+                sessionA.entity->GetModelInstance(),
+                configB
+            );
+            sessionA.session->MakeCurrent();
+            sequence.RenderRange(0U, 2U);
+            if (sequence.Failed() ||
+                sequence.LastCommittedFrame().value_or(99U) != 2U ||
+                !std::filesystem::is_regular_file(
+                    dirB / "00000000.png"
+                ) ||
+                !std::filesystem::is_regular_file(
+                    dirB / "00000002.png"
+                ) ||
+                !std::filesystem::is_regular_file(
+                    dirB / "manifest.jsonl"
+                ) ||
+                !std::filesystem::is_regular_file(
+                    dirB / "checkpoint-A.bin"
+                ) ||
+                !std::filesystem::is_regular_file(
+                    dirB / "checkpoint-B.bin"
+                ))
+            {
+                std::fprintf(
+                    stderr,
+                    "[headless-smoke] FAIL: generic RenderRange 0..2\n"
+                );
+                return false;
+            }
+        }
+        // Destroy A's scene (GPU resources) before the session.
+        sessionA.scene.reset();
+        sessionA.session.reset();
 
-        wisteria::OfflineFrameSequenceConfig config;
-        config.outputDirectory = outputDir;
-        config.renderRequest = baseRequest;
-        config.writePng = true;
-        config.writeRaw = false;
-        config.overwritePolicy = wisteria::SequenceOverwritePolicy::Reject;
+        // Session B: fresh runtime + Resume(4) on the same directory.
+        GenericSession sessionB;
+        if (!CreateGenericSession(forceSoftware, sessionB))
+            return false;
+        {
+            wisteria::OfflineFrameSequence sequence(
+                *sessionB.scene,
+                sessionB.session->GetRenderer(),
+                *sessionB.runtime,
+                sessionB.entity->GetModelInstance(),
+                configB
+            );
+            sessionB.session->MakeCurrent();
+            sequence.Resume(4U);
+            if (sequence.Failed() ||
+                sequence.LastCommittedFrame().value_or(99U) != 4U ||
+                !std::filesystem::is_regular_file(
+                    dirB / "00000003.png"
+                ) ||
+                !std::filesystem::is_regular_file(
+                    dirB / "00000004.png"
+                ))
+            {
+                std::fprintf(
+                    stderr,
+                    "[headless-smoke] FAIL: generic Resume 3..4\n"
+                );
+                return false;
+            }
+        }
 
-        wisteria::OfflineFrameSequence sequence(
-            scene,
-            session.GetRenderer(),
-            *runtime,
-            instance,
-            config
-        );
-        session.MakeCurrent();
-        sequence.RenderRange(0U, 2U);
+        // Session C: fresh runtime + from-start RenderRange(0..4).
+        GenericSession sessionC;
+        if (!CreateGenericSession(forceSoftware, sessionC))
+            return false;
+        wisteria::OfflineFrameSequenceConfig configC = configB;
+        configC.outputDirectory = dirC;
+        {
+            wisteria::OfflineFrameSequence sequence(
+                *sessionC.scene,
+                sessionC.session->GetRenderer(),
+                *sessionC.runtime,
+                sessionC.entity->GetModelInstance(),
+                configC
+            );
+            sessionC.session->MakeCurrent();
+            sequence.RenderRange(0U, 4U);
+            if (sequence.Failed() ||
+                sequence.LastCommittedFrame().value_or(99U) != 4U ||
+                !std::filesystem::is_regular_file(
+                    dirC / "00000004.png"
+                ))
+            {
+                std::fprintf(
+                    stderr,
+                    "[headless-smoke] FAIL: generic from-start 0..4\n"
+                );
+                return false;
+            }
+        }
 
-        const bool committed =
-            !sequence.Failed() &&
-            sequence.LastCommittedFrame().value_or(99U) == 2U;
-        const bool persisted =
-            std::filesystem::is_regular_file(outputDir / "00000000.png") &&
-            std::filesystem::is_regular_file(outputDir / "00000002.png") &&
-            std::filesystem::is_regular_file(outputDir / "manifest.jsonl") &&
-            std::filesystem::is_regular_file(outputDir / "checkpoint-A.bin") &&
-            std::filesystem::is_regular_file(outputDir / "checkpoint-B.bin");
-        std::filesystem::remove_all(outputDir, ignored);
-
-        if (!committed || !persisted)
+        // Resume vs from-start: frame 4 PNG bytes + runtime state identical.
+        if (!FilesEqual(dirB / "00000004.png", dirC / "00000004.png"))
         {
             std::fprintf(
                 stderr,
-                "[headless-smoke] FAIL: sequence probe "
-                "(committed=%d persisted=%d)\n",
-                committed ? 1 : 0,
-                persisted ? 1 : 0
+                "[headless-smoke] FAIL: resume frame-4 pixels differ\n"
             );
             return false;
         }
+        const glm::mat4 poseB =
+            sessionB.runtime->TryGetPose()->LocalMatrix(0U);
+        const glm::mat4 poseC =
+            sessionC.runtime->TryGetPose()->LocalMatrix(0U);
+        if (poseB != poseC)
+        {
+            std::fprintf(
+                stderr,
+                "[headless-smoke] FAIL: resume runtime pose differs\n"
+            );
+            return false;
+        }
+
+        // Manifest must report the actual backend.
+        const std::string manifest = [&]()
+        {
+            std::ifstream stream(dirB / "manifest.jsonl");
+            std::string line;
+            std::getline(stream, line);
+            return line;
+        }();
+        if (manifest.find("wisteria-generic") == std::string::npos)
+        {
+            std::fprintf(
+                stderr,
+                "[headless-smoke] FAIL: manifest backend is not "
+                "wisteria-generic\n"
+            );
+            return false;
+        }
+
+        sessionB.scene.reset();
+        sessionB.session.reset();
+        sessionC.scene.reset();
+        sessionC.session.reset();
+        std::filesystem::remove_all(dirB, ignored);
+        std::filesystem::remove_all(dirC, ignored);
         std::printf(
             "[headless-smoke] sequence probe PASS "
-            "(frames 0..2, manifest + A/B checkpoints)\n"
+            "(RenderRange + fresh Resume + from-start equivalence)\n"
         );
         return true;
     }
