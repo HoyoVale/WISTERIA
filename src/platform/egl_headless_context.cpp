@@ -1,6 +1,10 @@
 #include "wisteria/common/pch.hpp"
 
 #include "wisteria/platform/headless_context.hpp"
+#include "wisteria/rendering/graphics_device.hpp"
+
+#include <GLFW/glfw3.h>
+#include <glad/gl.h>
 
 #include <cstdio>
 #include <cstring>
@@ -16,8 +20,6 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <dlfcn.h>
-
-#include "wisteria/rendering/graphics_device.hpp"
 
 #include <glad/gl.h>
 
@@ -685,6 +687,217 @@ private:
 
 #endif  // WISTERIA_ENABLE_EGL
 
+// R1.9 Phase 0D: GLFW hidden-window provider. Used on Windows (no EGL) and
+// as a fallback on Linux when EGL is unavailable. It still respects the R1.7
+// factory invariant: CreateHeadlessContext returns with no native context
+// current and no tracker registered.
+namespace wisteria
+{
+namespace
+{
+bool HasExtensionLocal(std::string_view extensions, std::string_view name)
+{
+    std::size_t position = 0U;
+    while (position <= extensions.size())
+    {
+        const std::size_t end = extensions.find(' ', position);
+        const std::size_t length =
+            (end == std::string_view::npos) ? extensions.size() - position
+                                            : end - position;
+        if (extensions.substr(position, length) == name)
+            return true;
+        if (end == std::string_view::npos)
+            break;
+        position = end + 1U;
+    }
+    return false;
+}
+
+const char* NullableLocal(const char* value) noexcept
+{
+    return value != nullptr ? value : "";
+}
+
+std::mutex gGlfwHiddenMutex;
+std::size_t gGlfwHiddenCount = 0U;
+
+void AcquireGlfwHidden()
+{
+    std::lock_guard<std::mutex> lock(gGlfwHiddenMutex);
+    if (gGlfwHiddenCount == 0U && glfwInit() != GLFW_TRUE)
+        throw std::runtime_error("GLFW initialization failed");
+    ++gGlfwHiddenCount;
+}
+
+void ReleaseGlfwHidden() noexcept
+{
+    std::lock_guard<std::mutex> lock(gGlfwHiddenMutex);
+    if (gGlfwHiddenCount == 0U)
+        return;
+    --gGlfwHiddenCount;
+    if (gGlfwHiddenCount == 0U)
+        glfwTerminate();
+}
+
+bool RendererIsSoftware(std::string_view renderer) noexcept
+{
+    return HasExtensionLocal(renderer, "llvmpipe") ||
+        HasExtensionLocal(renderer, "softpipe") ||
+        HasExtensionLocal(renderer, "swrast");
+}
+
+class GlfwHeadlessContext final : public IHeadlessContext
+{
+public:
+    explicit GlfwHeadlessContext(const HeadlessContextOptions& options)
+    {
+        AcquireGlfwHidden();
+        try
+        {
+            glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, options.major);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, options.minor);
+            glfwWindowHint(
+                GLFW_OPENGL_PROFILE,
+                GLFW_OPENGL_CORE_PROFILE
+            );
+            this->window = glfwCreateWindow(
+                1,
+                1,
+                "WISTERIA headless",
+                nullptr,
+                nullptr
+            );
+            if (this->window == nullptr)
+            {
+                throw std::runtime_error(
+                    "GLFW hidden window creation failed"
+                );
+            }
+            glfwMakeContextCurrent(this->window);
+            if (gladLoadGL(glfwGetProcAddress) == 0)
+            {
+                throw std::runtime_error(
+                    "gladLoadGL failed on GLFW hidden context"
+                );
+            }
+            this->glVendor = NullableLocal(
+                reinterpret_cast<const char*>(glGetString(GL_VENDOR))
+            );
+            this->glRenderer = NullableLocal(
+                reinterpret_cast<const char*>(glGetString(GL_RENDERER))
+            );
+            this->glVersion = NullableLocal(
+                reinterpret_cast<const char*>(glGetString(GL_VERSION))
+            );
+            if (options.forceSoftware && !this->IsSoftware())
+            {
+                throw std::runtime_error(
+                    "forceSoftware: GLFW hidden renderer is not software"
+                );
+            }
+            // Factory invariant: return with no context current.
+            glfwMakeContextCurrent(nullptr);
+            wisteria::GraphicsDevice::SetCurrentContext(nullptr);
+            wisteria::GraphicsDevice::SetCurrentShareGroup(nullptr);
+        }
+        catch (...)
+        {
+            if (this->window != nullptr)
+                glfwDestroyWindow(this->window);
+            ReleaseGlfwHidden();
+            throw;
+        }
+    }
+
+    ~GlfwHeadlessContext() override
+    {
+        if (this->window != nullptr)
+        {
+            glfwMakeContextCurrent(nullptr);
+            glfwDestroyWindow(this->window);
+        }
+        wisteria::GraphicsDevice::SetCurrentContext(nullptr);
+        wisteria::GraphicsDevice::SetCurrentShareGroup(nullptr);
+        ReleaseGlfwHidden();
+    }
+
+    GlfwHeadlessContext(const GlfwHeadlessContext&) = delete;
+    GlfwHeadlessContext& operator=(const GlfwHeadlessContext&) = delete;
+
+    void MakeCurrent() override
+    {
+        glfwMakeContextCurrent(this->window);
+        wisteria::GraphicsDevice::SetCurrentContext(this->window);
+        wisteria::GraphicsDevice::SetCurrentShareGroup(this->window);
+    }
+
+    void ReleaseCurrent() override
+    {
+        glfwMakeContextCurrent(nullptr);
+        wisteria::GraphicsDevice::SetCurrentContext(nullptr);
+        wisteria::GraphicsDevice::SetCurrentShareGroup(nullptr);
+    }
+
+    GraphicsContextToken ContextToken() const noexcept override
+    {
+        return this->window;
+    }
+
+    GraphicsShareGroupToken ShareGroupToken() const noexcept override
+    {
+        return this->window;
+    }
+
+    std::string_view ProviderName() const noexcept override
+    {
+        return "GLFW-hidden";
+    }
+
+    std::string_view PlatformName() const noexcept override
+    {
+        return "hidden-window";
+    }
+
+    std::string_view EglVersion() const noexcept override
+    {
+        return "-";
+    }
+
+    std::string_view EglVendor() const noexcept override
+    {
+        return "-";
+    }
+
+    std::string_view Vendor() const noexcept override
+    {
+        return this->glVendor;
+    }
+
+    std::string_view Renderer() const noexcept override
+    {
+        return this->glRenderer;
+    }
+
+    std::string_view Version() const noexcept override
+    {
+        return this->glVersion;
+    }
+
+    bool IsSoftware() const noexcept override
+    {
+        return RendererIsSoftware(this->glRenderer);
+    }
+
+private:
+    GLFWwindow* window = nullptr;
+    std::string glVendor;
+    std::string glRenderer;
+    std::string glVersion;
+};
+}  // namespace
+}  // namespace wisteria
+
 namespace wisteria
 {
 std::unique_ptr<IHeadlessContext> CreateHeadlessContext(
@@ -707,12 +920,23 @@ std::unique_ptr<IHeadlessContext> CreateHeadlessContext(
     }
 #else
     (void)options;
-    std::fprintf(
-        stderr,
-        "[headless] EGL provider not built "
-        "(WISTERIA_ENABLE_EGL undefined)\n"
-    );
-    return nullptr;
 #endif
+    // Fallback / Windows provider. forceSoftware keeps its strict semantics:
+    // never silently fall back to a context that is not software.
+    if (options.forceSoftware)
+        return nullptr;
+    try
+    {
+        return std::make_unique<GlfwHeadlessContext>(options);
+    }
+    catch (const std::exception& error)
+    {
+        std::fprintf(
+            stderr,
+            "[headless] GLFW-hidden provider failed: %s\n",
+            error.what()
+        );
+        return nullptr;
+    }
 }
 }  // namespace wisteria

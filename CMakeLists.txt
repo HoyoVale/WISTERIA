@@ -380,6 +380,7 @@ if(WISTERIA_BUILD_NATIVE)
         src/native/native_common.cpp
         src/native/native_model.cpp
         src/native/native_scene.cpp
+        src/native/wisteria_stable_render.cpp
         src/native/wisteria_stable_runtime.cpp
         src/native/native_window.cpp
         src/native/windows_path.cpp
@@ -580,6 +581,23 @@ if(BUILD_TESTING)
             --require-n1
     )
     set_tests_properties(wisteria.stable-checkpoint-cross-process PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    # R1.9 Phase 0C: Generic payload kind 2 cross-process checkpoint. The
+    # same stable surface drives a glTF/Generic entity with no VMD; N and
+    # N+1 wire bytes must match across two processes.
+    add_test(
+        NAME wisteria.stable-checkpoint-cross-process-generic
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/script/stable_checkpoint_cross_process_test.py
+            $<TARGET_FILE:wisteria_stable_checkpoint_cli>
+            animated-triangle-gltf
+            -
+            --frame 30
+            --require-n1
+    )
+    set_tests_properties(
+        wisteria.stable-checkpoint-cross-process-generic PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     if(WISTERIA_TEST_FULL_ASSETS)

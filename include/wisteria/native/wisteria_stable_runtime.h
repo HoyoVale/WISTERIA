@@ -47,6 +47,12 @@ extern "C" {
 #define WISTERIA_CHECKPOINT_PAYLOAD_SCHEMA_MMD_R12C 1u
 #define WISTERIA_DETERMINISTIC_PROFILE_COLD_STEP_V1 1u
 
+/* R1.9 Phase 0B: Generic R1.8 backend / payload identity (additive) */
+#define WISTERIA_BACKEND_ID_WISTERIA_GENERIC 2u
+#define WISTERIA_CHECKPOINT_PAYLOAD_KIND_GENERIC_R18 2u
+#define WISTERIA_CHECKPOINT_PAYLOAD_SCHEMA_GENERIC_R18 1u
+#define WISTERIA_DETERMINISTIC_PROFILE_GENERIC_V1 2u
+
 /* --- opaque handles --------------------------------------------------- */
 
 typedef uint64_t WisteriaStableContext;
@@ -75,6 +81,7 @@ typedef uint64_t WisteriaCheckpoint;
 #define WISTERIA_STATUS_INVALID_SNAPSHOT 14u
 #define WISTERIA_STATUS_POISONED 15u
 #define WISTERIA_STATUS_NO_PHYSICS 16u
+#define WISTERIA_STATUS_UNSUPPORTED 17u
 
 /* --- backend / semantic profile / capability ids --------------------- */
 
@@ -175,6 +182,28 @@ WISTERIA_STABLE_API uint32_t wisteria_stable_entity_capabilities(
     WisteriaStableContext context,
     WisteriaEntity entity,
     WisteriaRuntimeCapabilitiesV1* capabilities);
+
+/* R1.9 Phase 0B: persistent morph overrides (backend-neutral) */
+WISTERIA_STABLE_API uint32_t wisteria_stable_entity_set_morph_override(
+    WisteriaStableContext context,
+    WisteriaEntity entity,
+    const char* morph_name_utf8,
+    float weight);
+
+WISTERIA_STABLE_API uint32_t wisteria_stable_entity_clear_morph_override(
+    WisteriaStableContext context,
+    WisteriaEntity entity,
+    const char* morph_name_utf8);
+
+WISTERIA_STABLE_API uint32_t wisteria_stable_entity_clear_all_morph_overrides(
+    WisteriaStableContext context,
+    WisteriaEntity entity);
+
+/* R1.9 Phase 0B: immutable asset identity (ModelAsset fingerprint) */
+WISTERIA_STABLE_API uint32_t wisteria_stable_entity_asset_fingerprint(
+    WisteriaStableContext context,
+    WisteriaEntity entity,
+    uint64_t* out_fingerprint);
 
 WISTERIA_STABLE_API uint32_t wisteria_stable_entity_load_motion(
     WisteriaStableContext context,

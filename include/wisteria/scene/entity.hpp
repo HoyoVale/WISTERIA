@@ -70,6 +70,9 @@ public:
     ModelInstance& GetModelInstance();
     const ModelInstance& GetModelInstance() const;
     void SetModelInstance(std::unique_ptr<ModelInstance> instance);
+    // R1.9 Phase 0D: borrow the instance back after rendering a Scene that
+    // temporarily adopted it (stable render session pattern).
+    std::unique_ptr<ModelInstance> TakeModelInstance();
 
     bool HasPose() const noexcept;
     Pose* TryGetPose() noexcept;

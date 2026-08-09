@@ -21,6 +21,9 @@ HEADER = ROOT / "include" / "wisteria" / "native" / "wisteria_native.h"
 STABLE_HEADER = (
     ROOT / "include" / "wisteria" / "native" / "wisteria_stable_runtime.h"
 )
+RENDER_HEADER = (
+    ROOT / "include" / "wisteria" / "native" / "wisteria_stable_render.h"
+)
 NATIVE_DIR = ROOT / "src" / "native"
 MATRIX = ROOT / "docs" / "architecture" / "C_ABI_SAFETY_MATRIX.md"
 
@@ -159,7 +162,10 @@ def main() -> int:
     args = parser.parse_args()
 
     functions = exported_functions(HEADER)
-    stable_functions = exported_functions(STABLE_HEADER)
+    stable_functions = (
+        exported_functions(STABLE_HEADER) +
+        exported_functions(RENDER_HEADER)
+    )
     sources = {
         path.name: path.read_text(encoding="utf-8")
         for path in NATIVE_DIR.glob("*.cpp")
@@ -174,7 +180,7 @@ def main() -> int:
             rows.append(
                 (
                     function,
-                    "wisteria_stable_runtime.h (declared-only)",
+                    "stable header (declared-only)",
                     "DECLARED_ONLY",
                 )
             )

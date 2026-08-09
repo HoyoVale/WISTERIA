@@ -588,36 +588,49 @@ void OfflineFrameSequence::Resume(MotionFrameIndex end)
         // resumable and refreshes LastCommittedFrame().
         const std::filesystem::path checkpointPath =
             this->CheckpointPath(record->checkpointSlot);
-        std::ifstream checkpointStream(checkpointPath, std::ios::binary);
-        if (!checkpointStream)
-        {
-            this->Fail("persisted checkpoint is missing for frame " +
-                std::to_string(record->frame));
-            return;
-        }
-        const std::vector<std::uint8_t> wire{
-            std::istreambuf_iterator<char>(checkpointStream),
-            std::istreambuf_iterator<char>()
-        };
-        if (HashBytes(wire) != record->checkpointWireHash)
-        {
-            this->Fail("checkpoint wire hash mismatch");
-            return;
-        }
         CheckpointData checkpoint;
-        if (this->DeserializeCheckpoint(
-                wire.data(),
-                wire.size(),
-                checkpoint
-            ) != TimelineStatus::Ok)
         {
-            this->Fail("checkpoint wire deserialize failed");
-            return;
-        }
-        if (CheckpointFrame(checkpoint) != record->frame)
-        {
-            this->Fail("checkpoint frame does not match committed record");
-            return;
+            // The stream must close before the stepping loop below: on
+            // Windows the CRT opens without FILE_SHARE_DELETE, so an open
+            // read handle blocks replacing this checkpoint later in the same
+            // resume (ERROR_ACCESS_DENIED).
+            std::ifstream checkpointStream(
+                checkpointPath,
+                std::ios::binary
+            );
+            if (!checkpointStream)
+            {
+                this->Fail(
+                    "persisted checkpoint is missing for frame " +
+                    std::to_string(record->frame)
+                );
+                return;
+            }
+            const std::vector<std::uint8_t> wire{
+                std::istreambuf_iterator<char>(checkpointStream),
+                std::istreambuf_iterator<char>()
+            };
+            if (HashBytes(wire) != record->checkpointWireHash)
+            {
+                this->Fail("checkpoint wire hash mismatch");
+                return;
+            }
+            if (this->DeserializeCheckpoint(
+                    wire.data(),
+                    wire.size(),
+                    checkpoint
+                ) != TimelineStatus::Ok)
+            {
+                this->Fail("checkpoint wire deserialize failed");
+                return;
+            }
+            if (CheckpointFrame(checkpoint) != record->frame)
+            {
+                this->Fail(
+                    "checkpoint frame does not match committed record"
+                );
+                return;
+            }
         }
         if (this->RestoreCheckpoint(checkpoint) != TimelineStatus::Ok)
         {
@@ -732,8 +745,16 @@ void OfflineFrameSequence::WriteArtifactAtomic(
     }
     if (!AtomicReplace(temporary, finalPath))
     {
+#if defined(_WIN32)
+        this->Fail(
+            "cannot atomically commit artifact: " +
+            finalPath.string() + " (error " +
+            std::to_string(GetLastError()) + ")"
+        );
+#else
         this->Fail("cannot atomically commit artifact: " +
             finalPath.string());
+#endif
     }
 }
 

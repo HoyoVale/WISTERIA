@@ -16,8 +16,8 @@
 
 | 状态 | 数量 |
 | ---- | ---- |
-| 总计 | 113 |
-| INVOKE_ABI | 108 |
+| 总计 | 124 |
+| INVOKE_ABI | 119 |
 | GUARDED | 0 |
 | RAW_TRY | 2 |
 | PROVEN_NO_THROW_LEAF | 3 |
@@ -146,6 +146,20 @@
 
 `native_window.cpp`：0/20 GUARDED
 
+## wisteria_stable_render.cpp
+
+| 函数 | 状态 |
+| ---- | ---- |
+| `wisteria_stable_render_session_create` | INVOKE_ABI |
+| `wisteria_stable_render_session_destroy` | INVOKE_ABI |
+| `wisteria_stable_render_session_render` | INVOKE_ABI |
+| `wisteria_stable_render_session_sequence_failed` | INVOKE_ABI |
+| `wisteria_stable_render_session_sequence_last_committed` | INVOKE_ABI |
+| `wisteria_stable_render_session_sequence_range` | INVOKE_ABI |
+| `wisteria_stable_render_session_sequence_resume` | INVOKE_ABI |
+
+`wisteria_stable_render.cpp`：0/7 GUARDED
+
 ## wisteria_stable_runtime.cpp
 
 | 函数 | 状态 |
@@ -159,18 +173,22 @@
 | `wisteria_stable_context_create` | RAW_TRY |
 | `wisteria_stable_context_destroy` | INVOKE_ABI |
 | `wisteria_stable_context_info` | INVOKE_ABI |
+| `wisteria_stable_entity_asset_fingerprint` | INVOKE_ABI |
 | `wisteria_stable_entity_capabilities` | INVOKE_ABI |
+| `wisteria_stable_entity_clear_all_morph_overrides` | INVOKE_ABI |
+| `wisteria_stable_entity_clear_morph_override` | INVOKE_ABI |
 | `wisteria_stable_entity_create` | INVOKE_ABI |
 | `wisteria_stable_entity_destroy` | INVOKE_ABI |
 | `wisteria_stable_entity_load_motion` | INVOKE_ABI |
 | `wisteria_stable_entity_prepare_frame_zero` | INVOKE_ABI |
 | `wisteria_stable_entity_replay_exact` | INVOKE_ABI |
+| `wisteria_stable_entity_set_morph_override` | INVOKE_ABI |
 | `wisteria_stable_entity_set_preview_frame` | INVOKE_ABI |
 | `wisteria_stable_entity_step_exact` | INVOKE_ABI |
 | `wisteria_stable_entity_unload_motion` | INVOKE_ABI |
 | `wisteria_stable_last_error` | INVOKE_ABI |
 
-`wisteria_stable_runtime.cpp`：0/19 GUARDED
+`wisteria_stable_runtime.cpp`：0/23 GUARDED
 
 ## 生成
 

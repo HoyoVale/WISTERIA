@@ -183,6 +183,11 @@ void Entity::SetModelInstance(std::unique_ptr<ModelInstance> instance)
     this->modelInstance = std::move(instance);
 }
 
+std::unique_ptr<ModelInstance> Entity::TakeModelInstance()
+{
+    return std::move(this->modelInstance);
+}
+
 bool Entity::HasPose() const noexcept
 {
     return this->TryGetPose() != nullptr;

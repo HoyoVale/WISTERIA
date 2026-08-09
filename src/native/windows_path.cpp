@@ -20,7 +20,10 @@ std::wstring WisteriaNativeUtf8ToWide(const char* utf8)
     );
     if (wideLength <= 0)
         return {};
-    std::wstring wide(static_cast<std::size_t>(wideLength), L'\0');
+    // MultiByteToWideChar with -1 includes the null terminator; the path
+    // must not carry an embedded NUL character (it corrupts operator/ and
+    // string() comparisons on MSVC).
+    std::wstring wide(static_cast<std::size_t>(wideLength - 1), L'\0');
     if (MultiByteToWideChar(
             CP_UTF8,
             MB_ERR_INVALID_CHARS,

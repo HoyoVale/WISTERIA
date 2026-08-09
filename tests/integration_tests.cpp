@@ -8,6 +8,9 @@
 #include "wisteria/runtime/model_backend.hpp"
 #include "wisteria/mmd/mmd_presentation.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
+#if defined(WISTERIA_TEST_NATIVE_ABI)
+#include "wisteria/native/wisteria_stable_render.h"
+#endif
 #include <Saba/Model/MMD/MMDCamera.h>
 #include <Saba/Model/MMD/PMXFile.h>
 #include "trace_jsonl.hpp"
@@ -11865,6 +11868,430 @@ void TestR17WindowReleaseClearsTrackers()
 }
 #endif  // WISTERIA_TEST_NATIVE_ABI
 
+void TestStableRuntimeGenericAbi()
+{
+    // R1.9 Phase 0B: stable entity is backend-neutral. A glTF asset selects
+    // the Generic runtime automatically; capabilities report backend id 2 /
+    // payload kind 2, and exact step / replay / checkpoint work through the
+    // same stable surface.
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK &&
+            context != 0U,
+        "stable generic context create failed"
+    );
+
+    WisteriaRuntimeCreationOptionsV1 options;
+    memset(&options, 0, sizeof(options));
+    options.struct_size = sizeof(options);
+    options.struct_version = 1U;
+    options.compatibility = WISTERIA_PROFILE_ID_RAW;
+    options.fixed_time_step = 1.0f / 120.0f;
+    options.max_sub_steps = 10;
+    options.gravity[1] = -98.0f;
+    options.physics_enabled = 1;
+
+    const auto createEntity = [&](WisteriaEntity* out)
+    {
+        return wisteria_stable_entity_create(
+            context,
+            &options,
+            PathUtf8(modelPath).c_str(),
+            out
+        );
+    };
+
+    WisteriaEntity entity = 0U;
+    Require(
+        createEntity(&entity) == WISTERIA_STATUS_OK && entity != 0U,
+        "stable generic entity create failed"
+    );
+
+    WisteriaRuntimeCapabilitiesV1 capabilities;
+    memset(&capabilities, 0, sizeof(capabilities));
+    capabilities.struct_size = sizeof(capabilities);
+    capabilities.struct_version = 1U;
+    Require(
+        wisteria_stable_entity_capabilities(
+            context,
+            entity,
+            &capabilities
+        ) == WISTERIA_STATUS_OK,
+        "stable generic capabilities failed"
+    );
+    Require(
+        capabilities.runtime_backend_id ==
+                WISTERIA_BACKEND_ID_WISTERIA_GENERIC &&
+            capabilities.checkpoint_payload_kind ==
+                WISTERIA_CHECKPOINT_PAYLOAD_KIND_GENERIC_R18 &&
+            capabilities.deterministic_profile_id ==
+                WISTERIA_DETERMINISTIC_PROFILE_GENERIC_V1 &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_DETERMINISTIC_EXACT_FRAME) != 0U &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_CHECKPOINT_CAPTURE) != 0U &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_CHECKPOINT_RESTORE) != 0U &&
+            (capabilities.capability_flags &
+                WISTERIA_CAP_SUPPORTS_REPLAY_FROM_CHECKPOINT) != 0U &&
+            capabilities.max_deterministic_motion_frame == (1ULL << 20),
+        "stable generic capabilities mismatch"
+    );
+
+    std::uint64_t fingerprint = 0U;
+    Require(
+        wisteria_stable_entity_asset_fingerprint(
+            context,
+            entity,
+            &fingerprint
+        ) == WISTERIA_STATUS_OK && fingerprint != 0U,
+        "stable generic asset fingerprint failed"
+    );
+
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(context, entity) ==
+            WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_step_exact(context, entity, 1U) ==
+                WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_step_exact(context, entity, 2U) ==
+                WISTERIA_STATUS_OK,
+        "stable generic exact stepping failed"
+    );
+    Require(
+        wisteria_stable_entity_replay_exact(context, entity, 3U) ==
+            WISTERIA_STATUS_OK,
+        "stable generic replay_exact failed"
+    );
+
+    WisteriaCheckpoint checkpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_create(
+            context,
+            entity,
+            &checkpoint
+        ) == WISTERIA_STATUS_OK && checkpoint != 0U,
+        "stable generic checkpoint create failed"
+    );
+    WisteriaCheckpointInfoV1 info;
+    memset(&info, 0, sizeof(info));
+    info.struct_size = sizeof(info);
+    info.struct_version = 1U;
+    Require(
+        wisteria_stable_checkpoint_info(context, checkpoint, &info) ==
+            WISTERIA_STATUS_OK,
+        "stable generic checkpoint info failed"
+    );
+    Require(
+        info.frame == 3U &&
+            info.payload_kind ==
+                WISTERIA_CHECKPOINT_PAYLOAD_KIND_GENERIC_R18 &&
+            info.payload_schema ==
+                WISTERIA_CHECKPOINT_PAYLOAD_SCHEMA_GENERIC_R18 &&
+            info.physics_tick == 0U &&
+            info.build_compatibility_id == CurrentBuildCompatibilityId(),
+        "stable generic checkpoint info mismatch"
+    );
+
+    std::uint64_t wireSize = 0U;
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            checkpoint,
+            nullptr,
+            &wireSize
+        ) == WISTERIA_STATUS_OK && wireSize > 0U,
+        "stable generic serialize size query failed"
+    );
+    std::vector<std::uint8_t> wire(static_cast<std::size_t>(wireSize));
+    Require(
+        wisteria_stable_checkpoint_serialize(
+            context,
+            checkpoint,
+            wire.data(),
+            &wireSize
+        ) == WISTERIA_STATUS_OK,
+        "stable generic serialize failed"
+    );
+
+    WisteriaCheckpoint decodedCheckpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_deserialize(
+            context,
+            wire.data(),
+            wire.size(),
+            &decodedCheckpoint
+        ) == WISTERIA_STATUS_OK && decodedCheckpoint != 0U,
+        "stable generic deserialize failed"
+    );
+
+    WisteriaEntity restoredEntity = 0U;
+    Require(
+        createEntity(&restoredEntity) == WISTERIA_STATUS_OK,
+        "stable generic second entity create failed"
+    );
+    Require(
+        wisteria_stable_checkpoint_restore(
+            context,
+            decodedCheckpoint,
+            restoredEntity
+        ) == WISTERIA_STATUS_OK,
+        "stable generic checkpoint restore failed"
+    );
+
+    // Morph overrides: glTF triangle has no morphs -> explicit unsupported.
+    Require(
+        wisteria_stable_entity_set_morph_override(
+            context,
+            entity,
+            "blink",
+            0.5f
+        ) == WISTERIA_STATUS_UNSUPPORTED,
+        "stable generic morph override should be unsupported without morphs"
+    );
+    Require(
+        wisteria_stable_entity_clear_morph_override(
+            context,
+            entity,
+            "blink"
+        ) == WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_clear_all_morph_overrides(
+                context,
+                entity
+            ) == WISTERIA_STATUS_OK,
+        "stable generic morph override clear failed"
+    );
+
+    wisteria_stable_context_destroy(context);
+}
+
+void TestStableRenderAbiGeneric()
+{
+    // R1.9 Phase 0D: stable render session exposes single-frame
+    // RenderOffline -> RGBA8 and OfflineFrameSequence range/resume for a
+    // Generic stable entity, using the exact borrowed runtime state.
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "stable render context create failed"
+    );
+
+    WisteriaRuntimeCreationOptionsV1 runtimeOptions;
+    memset(&runtimeOptions, 0, sizeof(runtimeOptions));
+    runtimeOptions.struct_size = sizeof(runtimeOptions);
+    runtimeOptions.struct_version = 1U;
+    runtimeOptions.compatibility = WISTERIA_PROFILE_ID_RAW;
+    runtimeOptions.fixed_time_step = 1.0f / 120.0f;
+    runtimeOptions.max_sub_steps = 10;
+    runtimeOptions.gravity[1] = -98.0f;
+    runtimeOptions.physics_enabled = 1;
+
+    WisteriaEntity entity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(modelPath).c_str(),
+            &entity
+        ) == WISTERIA_STATUS_OK,
+        "stable render entity create failed"
+    );
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(context, entity) ==
+                WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_replay_exact(context, entity, 3U) ==
+                WISTERIA_STATUS_OK,
+        "stable render entity deterministic prepare/replay failed"
+    );
+
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession renderSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &renderSession
+        ) == WISTERIA_STATUS_OK && renderSession != 0U,
+        "stable render session create failed"
+    );
+
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[0] = 0.0f;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.target[1] = 0.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+
+    const std::uint32_t width = 64U;
+    const std::uint32_t height = 64U;
+    const std::uint64_t required =
+        static_cast<std::uint64_t>(width) * height * 4U;
+    std::uint64_t bufferSize = 0U;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            width,
+            height,
+            nullptr,
+            &bufferSize
+        ) == WISTERIA_STATUS_OK && bufferSize == required,
+        "stable render size query failed"
+    );
+    std::vector<std::uint8_t> firstFrame(
+        static_cast<std::size_t>(required),
+        0U
+    );
+    std::uint64_t filled = required;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            width,
+            height,
+            firstFrame.data(),
+            &filled
+        ) == WISTERIA_STATUS_OK && filled == required,
+        "stable render fill failed"
+    );
+    std::vector<std::uint8_t> secondFrame(
+        static_cast<std::size_t>(required),
+        0U
+    );
+    filled = required;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            width,
+            height,
+            secondFrame.data(),
+            &filled
+        ) == WISTERIA_STATUS_OK,
+        "stable render second fill failed"
+    );
+    Require(
+        firstFrame == secondFrame,
+        "stable single-frame render is not deterministic"
+    );
+
+    const std::filesystem::path outputDir =
+        std::filesystem::temp_directory_path() /
+        "wisteria_stable_render_seq";
+    std::error_code ignored;
+    std::filesystem::remove_all(outputDir, ignored);
+
+    WisteriaSequenceOptionsV1 sequenceOptions;
+    memset(&sequenceOptions, 0, sizeof(sequenceOptions));
+    sequenceOptions.struct_size = sizeof(sequenceOptions);
+    sequenceOptions.struct_version = 1U;
+    sequenceOptions.start_frame = 0U;
+    sequenceOptions.end_frame = 2U;
+    sequenceOptions.width = width;
+    sequenceOptions.height = height;
+    sequenceOptions.overwrite_policy = 0U;  // Reject
+    sequenceOptions.write_png = 1U;
+    sequenceOptions.write_raw = 0U;
+
+    std::uint64_t lastCommitted = 99U;
+    const std::uint32_t rangeStatus =
+        wisteria_stable_render_session_sequence_range(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            PathUtf8(outputDir).c_str(),
+            &sequenceOptions,
+            &lastCommitted
+        );
+    Require(
+        rangeStatus == WISTERIA_STATUS_OK && lastCommitted == 2U,
+        "stable sequence range failed"
+    );
+    Require(
+        std::filesystem::is_regular_file(outputDir / "00000000.png") &&
+            std::filesystem::is_regular_file(outputDir / "00000002.png") &&
+            std::filesystem::is_regular_file(outputDir / "manifest.jsonl") &&
+            std::filesystem::is_regular_file(
+                outputDir / "checkpoint-A.bin"
+            ) &&
+            std::filesystem::is_regular_file(
+                outputDir / "checkpoint-B.bin"
+            ),
+        "stable sequence artifacts are incomplete"
+    );
+
+    sequenceOptions.end_frame = 4U;
+    lastCommitted = 99U;
+    const std::uint32_t resumeStatus =
+        wisteria_stable_render_session_sequence_resume(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            PathUtf8(outputDir).c_str(),
+            &sequenceOptions,
+            &lastCommitted
+        );
+    Require(
+        resumeStatus == WISTERIA_STATUS_OK && lastCommitted == 4U,
+        "stable sequence resume failed"
+    );
+    Require(
+        std::filesystem::is_regular_file(outputDir / "00000003.png") &&
+            std::filesystem::is_regular_file(outputDir / "00000004.png"),
+        "stable sequence resume artifacts are missing"
+    );
+
+    std::uint64_t observedLastCommitted = 99U;
+    std::int32_t failed = -1;
+    Require(
+        wisteria_stable_render_session_sequence_last_committed(
+            context,
+            renderSession,
+            &observedLastCommitted
+        ) == WISTERIA_STATUS_OK && observedLastCommitted == 4U &&
+            wisteria_stable_render_session_sequence_failed(
+                context,
+                renderSession,
+                &failed
+            ) == WISTERIA_STATUS_OK && failed == 0,
+        "stable sequence cursor/failed state mismatch"
+    );
+
+    std::filesystem::remove_all(outputDir, ignored);
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            renderSession
+        ) == WISTERIA_STATUS_OK,
+        "stable render session destroy failed"
+    );
+    wisteria_stable_context_destroy(context);
+}
+
 int main()
 {
     int failures = 0;
@@ -11958,6 +12385,14 @@ int main()
     failures += !RunTest(
         "R1.4 stable ABI runtime E2E",
         TestStableRuntimeAbiE2E
+    );
+    failures += !RunTest(
+        "R1.9 stable ABI generic runtime",
+        TestStableRuntimeGenericAbi
+    );
+    failures += !RunTest(
+        "R1.9 stable render ABI generic",
+        TestStableRenderAbiGeneric
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
