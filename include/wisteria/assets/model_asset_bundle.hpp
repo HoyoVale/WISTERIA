@@ -4,6 +4,7 @@
 #include "wisteria/assets/model_asset.hpp"
 #include "wisteria/rendering/material.hpp"
 #include "wisteria/rendering/mesh.hpp"
+#include "wisteria/rendering/program_cache.hpp"
 #include "wisteria/rendering/texture.hpp"
 
 #include <filesystem>
@@ -37,6 +38,7 @@ ModelAssetBundle BuildModelAssetBundle(
     ModelBackendKind backendKind,
     const std::filesystem::path& sourcePath,
     const std::string& name,
-    GraphicsDevice* device
+    GraphicsDevice* device,
+    std::shared_ptr<ProgramCache> programCache
 );
 }  // namespace wisteria

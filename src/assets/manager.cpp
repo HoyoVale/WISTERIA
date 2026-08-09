@@ -515,7 +515,8 @@ ModelAsset& ResourceManager::LoadModel(
         backendKind,
         normalizedModelPath,
         name,
-        this->graphicsDevice
+        this->graphicsDevice,
+        this->programCache
     );
 
     // Reserve first and then commit. If any insertion still fails, erase only

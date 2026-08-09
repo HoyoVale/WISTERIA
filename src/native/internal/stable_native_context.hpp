@@ -17,6 +17,9 @@
 #include <vector>
 #include <variant>
 
+#include <cstdio>
+#include <exception>
+
 namespace wisteria::native
 {
 struct StableEntityEntry
@@ -78,8 +81,16 @@ struct StableContextState
             }
             catch (const std::exception&)
             {
-                // Context loss during process teardown: skip rather than
-                // terminate; remaining GL teardown is best-effort.
+                // R1.9 Final Micro Fix: fail-stop, matching the frozen
+                // HeadlessRenderSession teardown rule. Without the owning
+                // context current, attached stable meshes/materials would
+                // call glDelete* with no valid context.
+                std::fprintf(
+                    stderr,
+                    "[stable] FATAL: render session MakeCurrent failed "
+                    "during context teardown; aborting without GL teardown\n"
+                );
+                std::terminate();
             }
         }
     }

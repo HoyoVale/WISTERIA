@@ -443,7 +443,8 @@ std::uint32_t wisteria_stable_entity_create(
             backendKind,
             modelPath,
             model_path_utf8,
-            nullptr
+            nullptr,
+            std::make_shared<ProgramCache>()
         );
         auto entry = std::make_unique<StableEntityEntry>();
         entry->meshes = std::move(bundle.meshes);
@@ -472,13 +473,13 @@ std::uint32_t wisteria_stable_entity_create(
         }
 
         entry->asset = std::move(bundle.asset);
-        if (runtime != nullptr)
-        {
-            entry->modelInstance = std::make_unique<ModelInstance>(
-                *entry->asset,
-                std::move(runtime)
-            );
-        }
+        // Static entities carry a ModelInstance with a null runtime; the
+        // stable entity always owns one so lifecycle code never special-cases
+        // a missing ModelInstance pointer.
+        entry->modelInstance = std::make_unique<ModelInstance>(
+            *entry->asset,
+            std::move(runtime)
+        );
         const WisteriaEntity handle =
             static_cast<WisteriaEntity>(AllocateOpaqueHandle());
         ctx.stable->entities.emplace(handle, std::move(entry));
@@ -1010,11 +1011,20 @@ std::uint32_t wisteria_stable_checkpoint_restore(
             TrySetError(&ctx, "unknown stable entity handle");
             return WISTERIA_STATUS_NOT_FOUND;
         }
+        IModelRuntimeDriver* runtime = entry->modelInstance != nullptr
+            ? entry->modelInstance->TryGetRuntime()
+            : nullptr;
+        if (runtime == nullptr)
+        {
+            TrySetError(
+                &ctx,
+                "static entity has no runtime to restore a checkpoint into"
+            );
+            return WISTERIA_STATUS_INVALID_CHECKPOINT;
+        }
         const auto& value = checkpointIterator->second;
         if (StableCheckpointFrame(value) >
-            StableMaxFrameFor(
-                *entry->modelInstance->TryGetRuntime()
-            ))
+            StableMaxFrameFor(*runtime))
         {
             TrySetError(
                 &ctx,
@@ -1025,7 +1035,7 @@ std::uint32_t wisteria_stable_checkpoint_restore(
         if (std::holds_alternative<GenericRuntimeCheckpoint>(value))
         {
             auto* generic = dynamic_cast<IDeterministicCheckpoint*>(
-                entry->modelInstance->TryGetRuntime()
+                runtime
             );
             if (generic == nullptr)
                 return WISTERIA_STATUS_INVALID_CHECKPOINT;
@@ -1036,9 +1046,7 @@ std::uint32_t wisteria_stable_checkpoint_restore(
             );
         }
         MmdRuntimeModel* mmd =
-            dynamic_cast<MmdRuntimeModel*>(
-                entry->modelInstance->TryGetRuntime()
-            );
+            dynamic_cast<MmdRuntimeModel*>(runtime);
         if (mmd == nullptr)
             return WISTERIA_STATUS_INVALID_CHECKPOINT;
         const FrameCheckpoint& frameCheckpoint =

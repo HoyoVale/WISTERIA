@@ -1,7 +1,7 @@
 # R1.9 — Stable Runtime / Render C ABI（契约草案 Phase 0A）
 
-> 状态：**FROZEN v1.0；0A CLOSED、0B/0D FINAL FIX APPLIED（待复审）、
-> 0E HOLD（2026-08-09）**
+> 状态：**FROZEN v1.0；0A CLOSED、0B/0D FINAL MICRO FIX APPLIED（待复审）、
+> 0E HOLD（2026-08-10）**
 > 前置：R1.8 CLOSED（tag `r1.8-final-closure`，四矩阵全绿）。
 > R1.7 native-Linux hardware gate 为独立 validation debt，
 > 不阻塞 R1.9 开发（真机条件具备时补跑 `script/verify_r17_native_linux.sh`）。
@@ -330,4 +330,30 @@ Additional ABI invariants
 8. 0C 前瞻：ProbeCheckpointEnvelope（engine-owned header parser）；
    malformed → INVALID_CHECKPOINT；unknown kind → UNSUPPORTED
 9. 文档：KEEP 14→19；GLFW-hidden 描述为 compatibility provider
+```
+
+### Final Micro Fix（2026-08-10 复审后，已实施）
+
+```text
+P0-1  Stable Render 真正挂载 RenderParts：
+       抽 engine-owned Scene::BindModelInstanceParts（ResolveMesh），
+       Scene::InstantiateModel 与 stable borrow 共用
+P0-2  单帧 fill 前 ModelInstance::PublishCurrentRuntimeFrame()；
+       size query 不 publish、不绑定 owner
+P0-3  Static entity 始终创建 ModelInstance（runtime=null）；
+       checkpoint restore 对 null runtime 显式
+       INVALID_CHECKPOINT（禁止解引用）
+4.    ownerRenderSession 只在真实 GPU fill/sequence 前设置；
+       size query / too-small / unsupported 无副作用
+5.    StableContextState teardown：MakeCurrent 失败 → fail-stop
+       （与 HeadlessRenderSession 一致）
+6.    ProbeCheckpointEnvelope 验证完整 common envelope
+       （header + payload size + build id + checksum）；
+       truncated unknown → INVALID_CHECKPOINT
+7.    ModelAssetBundle 接收共享 ProgramCache；
+       ResourceManager 继续用 GraphicsDevice::Programs()
+8.    像素正确性测试：非背景、帧间变化、stable==engine、
+       Static render、Static checkpoint restore 拒绝
+9.    ctest：三个 tier 测试统一 WORKING_DIRECTORY=source root
+       （修复 ctest 下 shader 相对路径解析）
 ```

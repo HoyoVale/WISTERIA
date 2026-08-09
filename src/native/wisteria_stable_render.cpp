@@ -356,16 +356,6 @@ std::uint32_t wisteria_stable_render_session_render(
                 "unknown stable entity handle"
             );
         }
-        if (entry->ownerRenderSession.has_value() &&
-            *entry->ownerRenderSession != session)
-        {
-            TrySetError(
-                &ctx,
-                "entity is bound to a different render session"
-            );
-            return WISTERIA_STATUS_INVALID_STATE;
-        }
-        entry->ownerRenderSession = session;
         if (rgba == nullptr)
         {
             *in_out_size = required;
@@ -379,11 +369,35 @@ std::uint32_t wisteria_stable_render_session_render(
                 "render buffer is too small"
             );
         }
+        if (entry->ownerRenderSession.has_value() &&
+            *entry->ownerRenderSession != session)
+        {
+            TrySetError(
+                &ctx,
+                "entity is bound to a different render session"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
+        entry->ownerRenderSession = session;
 
         auto scene = std::make_unique<Scene>();
+        scene->CreateDirectionalLight(DirectionalLightData{
+            .Direction = {-0.35f, -0.75f, -0.45f},
+            .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+            .Intensity = 1.0f
+        });
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
+        Scene::BindModelInstanceParts(
+            renderEntity,
+            renderEntity.GetModelInstance()
+        );
         EntityBorrowGuard guard(*entry, *scene, renderEntity);
+        ModelInstance& instance = renderEntity.GetModelInstance();
+        // R1.9 Final Micro Fix: exact stepping changed the runtime state
+        // without touching the render cache; publish before rendering.
+        if (instance.TryGetRuntime() != nullptr)
+            instance.PublishCurrentRuntimeFrame();
 
         const Rgba8Frame frame =
             sessionIterator->second->session->RenderOffline(
@@ -446,20 +460,19 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
                 "unknown stable entity handle"
             );
         }
-        if (entry->ownerRenderSession.has_value() &&
-            *entry->ownerRenderSession != session)
-        {
-            TrySetError(
-                &ctx,
-                "entity is bound to a different render session"
-            );
-            return WISTERIA_STATUS_INVALID_STATE;
-        }
-        entry->ownerRenderSession = session;
 
         auto scene = std::make_unique<Scene>();
+        scene->CreateDirectionalLight(DirectionalLightData{
+            .Direction = {-0.35f, -0.75f, -0.45f},
+            .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+            .Intensity = 1.0f
+        });
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
+        Scene::BindModelInstanceParts(
+            renderEntity,
+            renderEntity.GetModelInstance()
+        );
         EntityBorrowGuard guard(*entry, *scene, renderEntity);
         ModelInstance& instance = renderEntity.GetModelInstance();
         IModelRuntimeDriver* runtime = instance.TryGetRuntime();
@@ -478,6 +491,16 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
             );
             return WISTERIA_STATUS_UNSUPPORTED;
         }
+        if (entry->ownerRenderSession.has_value() &&
+            *entry->ownerRenderSession != session)
+        {
+            TrySetError(
+                &ctx,
+                "entity is bound to a different render session"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
+        entry->ownerRenderSession = session;
 
         OfflineFrameSequenceConfig config;
         config.outputDirectory = PathFromUtf8(output_dir_utf8);
@@ -561,20 +584,19 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
                 "unknown stable entity handle"
             );
         }
-        if (entry->ownerRenderSession.has_value() &&
-            *entry->ownerRenderSession != session)
-        {
-            TrySetError(
-                &ctx,
-                "entity is bound to a different render session"
-            );
-            return WISTERIA_STATUS_INVALID_STATE;
-        }
-        entry->ownerRenderSession = session;
 
         auto scene = std::make_unique<Scene>();
+        scene->CreateDirectionalLight(DirectionalLightData{
+            .Direction = {-0.35f, -0.75f, -0.45f},
+            .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+            .Intensity = 1.0f
+        });
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
+        Scene::BindModelInstanceParts(
+            renderEntity,
+            renderEntity.GetModelInstance()
+        );
         EntityBorrowGuard guard(*entry, *scene, renderEntity);
         ModelInstance& instance = renderEntity.GetModelInstance();
         IModelRuntimeDriver* runtime = instance.TryGetRuntime();
@@ -593,6 +615,16 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
             );
             return WISTERIA_STATUS_UNSUPPORTED;
         }
+        if (entry->ownerRenderSession.has_value() &&
+            *entry->ownerRenderSession != session)
+        {
+            TrySetError(
+                &ctx,
+                "entity is bound to a different render session"
+            );
+            return WISTERIA_STATUS_INVALID_STATE;
+        }
+        entry->ownerRenderSession = session;
 
         OfflineFrameSequenceConfig config;
         config.outputDirectory = PathFromUtf8(output_dir_utf8);

@@ -462,6 +462,9 @@ if(BUILD_TESTING)
             target_compile_options(wisteria_${TIER}_tests PRIVATE /utf-8)
         endif()
         add_test(NAME wisteria.${TIER} COMMAND wisteria_${TIER}_tests)
+        set_tests_properties(wisteria.${TIER} PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
     endforeach()
     # The linked-body A/B semantic test drives Bullet directly (the engine
     # wrappers intentionally hide bt* from public headers).

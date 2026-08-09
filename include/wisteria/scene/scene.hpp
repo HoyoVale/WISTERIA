@@ -64,6 +64,15 @@ public:
     bool RemoveEntity(const Entity& entity);
     void ClearEntities() noexcept;
 
+    // R1.9 Final Micro Fix: engine-owned bridge that mounts a ModelAsset's
+    // RenderParts onto an Entity which already owns a ModelInstance.
+    // Scene::InstantiateModel and the stable render borrow path share this
+    // code so neither pipeline can silently drop RenderParts.
+    static void BindModelInstanceParts(
+        Entity& entity,
+        ModelInstance& instance
+    );
+
     PointLight& CreatePointLight(const PointLightData& data = {});
     bool RemovePointLight(const PointLight& light);
     void ClearPointLights() noexcept;

@@ -995,24 +995,33 @@ CheckpointEnvelopeProbe ProbeCheckpointEnvelope(
     std::size_t size
 ) noexcept
 {
-    if (bytes == nullptr || size < 12U)
+    if (bytes == nullptr || size < CheckpointWireHeaderSize)
         return CheckpointEnvelopeProbe::Invalid;
     Reader reader(bytes, size);
-    std::uint8_t magic[4] = {0U, 0U, 0U, 0U};
-    std::uint32_t wireVersion = 0U;
-    std::uint32_t payloadKind = 0U;
-    if (!reader.ReadBytes(magic, sizeof(magic)) ||
-        !reader.ReadU32(wireVersion) ||
-        !reader.ReadU32(payloadKind))
+    EnvelopeHeader header;
+    if (!ReadEnvelopeHeader(reader, {}, header))
     {
         return CheckpointEnvelopeProbe::Invalid;
     }
-    if (std::memcmp(magic, kWireMagic, sizeof(kWireMagic)) != 0 ||
-        wireVersion != CheckpointWireVersion)
+    // FNV-1a64 over the whole buffer with the checksum field zeroed; no
+    // allocation inside this noexcept probe.
+    constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t kPrime = 1099511628211ULL;
+    std::uint64_t state = kOffsetBasis;
+    for (std::size_t index = 0U; index < size; ++index)
     {
-        return CheckpointEnvelopeProbe::Invalid;
+        const std::uint8_t byte =
+            (index >= CheckpointWireHeaderSize - 8U &&
+             index < CheckpointWireHeaderSize)
+                ? 0U
+                : bytes[index];
+        state ^= byte;
+        state *= kPrime;
     }
-    switch (payloadKind)
+    if (state != header.checksum)
+        return CheckpointEnvelopeProbe::Invalid;
+
+    switch (header.payloadKind)
     {
     case CheckpointPayloadKindMmdR12C:
         return CheckpointEnvelopeProbe::MmdR12C;

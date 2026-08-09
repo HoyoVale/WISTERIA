@@ -8,6 +8,9 @@
 #include "wisteria/runtime/model_backend.hpp"
 #include "wisteria/mmd/mmd_presentation.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
+#include "wisteria/platform/headless_context.hpp"
+#include "wisteria/rendering/headless_render_session.hpp"
+#include "wisteria/rendering/offline_render.hpp"
 #include "wisteria/platform/application.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_stable_render.h"
@@ -12197,6 +12200,45 @@ void TestStableRenderAbiGeneric()
         firstFrame == secondFrame,
         "stable single-frame render is not deterministic"
     );
+    const bool hasContent = std::any_of(
+        firstFrame.begin(),
+        firstFrame.end(),
+        [](std::uint8_t byte) { return byte != 0U; }
+    );
+    Require(
+        hasContent,
+        "stable render produced only background pixels (RenderParts missing?)"
+    );
+    for (std::uint64_t frame = 4U; frame <= 30U; ++frame)
+    {
+        Require(
+            wisteria_stable_entity_step_exact(context, entity, frame) ==
+                WISTERIA_STATUS_OK,
+            "stable render frame-change step failed"
+        );
+    }
+    std::vector<std::uint8_t> laterFrame(
+        static_cast<std::size_t>(required),
+        0U
+    );
+    filled = required;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            width,
+            height,
+            laterFrame.data(),
+            &filled
+        ) == WISTERIA_STATUS_OK,
+        "stable render later-frame fill failed"
+    );
+    Require(
+        laterFrame != firstFrame,
+        "stable render did not change with the exact frame"
+    );
 
     const std::filesystem::path outputDir =
         std::filesystem::temp_directory_path() /
@@ -12387,6 +12429,43 @@ void TestR19StableRenderOwnershipLifecycle()
         "ownership render failed"
     );
 
+    // Size query is side-effect free: no GPU objects and no owner binding,
+    // so the session can be destroyed afterwards.
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            firstSession
+        ) == WISTERIA_STATUS_OK,
+        "ownership size-query session destroy failed"
+    );
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &firstSession
+        ) == WISTERIA_STATUS_OK,
+        "ownership session recreate failed"
+    );
+    const std::uint64_t fillBytes = 32U * 32U * 4U;
+    std::vector<std::uint8_t> pixels(
+        static_cast<std::size_t>(fillBytes),
+        0U
+    );
+    std::uint64_t filled = fillBytes;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            firstSession,
+            entity,
+            &camera,
+            32U,
+            32U,
+            pixels.data(),
+            &filled
+        ) == WISTERIA_STATUS_OK,
+        "ownership fill render failed"
+    );
+
     // Session destroy while the entity is bound must be rejected; the
     // entity must be destroyed first (its GPU resources need the owning
     // context current).
@@ -12528,8 +12607,135 @@ void TestR19StableStaticCapabilitiesAndUnicodePath()
         "unicode path fingerprint failed"
     );
 
+    // Static single-frame render (runtime == null) must work, be
+    // deterministic, and actually contain pixels.
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession renderSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &renderSession
+        ) == WISTERIA_STATUS_OK,
+        "static render session create failed"
+    );
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+    const std::uint64_t staticBytes = 64U * 64U * 4U;
+    std::vector<std::uint8_t> staticFrameA(
+        static_cast<std::size_t>(staticBytes),
+        0U
+    );
+    std::uint64_t staticFilled = staticBytes;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            staticEntity,
+            &camera,
+            64U,
+            64U,
+            staticFrameA.data(),
+            &staticFilled
+        ) == WISTERIA_STATUS_OK,
+        "static render failed"
+    );
+    std::vector<std::uint8_t> staticFrameB(
+        static_cast<std::size_t>(staticBytes),
+        0U
+    );
+    staticFilled = staticBytes;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            staticEntity,
+            &camera,
+            64U,
+            64U,
+            staticFrameB.data(),
+            &staticFilled
+        ) == WISTERIA_STATUS_OK &&
+            staticFrameA == staticFrameB &&
+            std::any_of(
+                staticFrameA.begin(),
+                staticFrameA.end(),
+                [](std::uint8_t byte) { return byte != 0U; }
+            ),
+        "static render is not deterministic or has no content"
+    );
+
+    // Checkpoint restore into a static entity must be explicitly rejected,
+    // never a null-runtime dereference.
+    WisteriaEntity animatedEntity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(FixturePath("animated-triangle-gltf")).c_str(),
+            &animatedEntity
+        ) == WISTERIA_STATUS_OK,
+        "static test animated entity create failed"
+    );
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(
+            context,
+            animatedEntity
+        ) == WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_replay_exact(
+                context,
+                animatedEntity,
+                2U
+            ) == WISTERIA_STATUS_OK,
+        "static test animated prepare failed"
+    );
+    WisteriaCheckpoint checkpoint = 0U;
+    Require(
+        wisteria_stable_checkpoint_create(
+            context,
+            animatedEntity,
+            &checkpoint
+        ) == WISTERIA_STATUS_OK,
+        "static test checkpoint create failed"
+    );
+    Require(
+        wisteria_stable_checkpoint_restore(
+            context,
+            checkpoint,
+            staticEntity
+        ) == WISTERIA_STATUS_INVALID_CHECKPOINT,
+        "static checkpoint restore did not reject null runtime"
+    );
+    wisteria_stable_checkpoint_destroy(context, checkpoint);
+    wisteria_stable_entity_destroy(context, animatedEntity);
+
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            renderSession
+        ) == WISTERIA_STATUS_INVALID_STATE,
+        "static session destroy with bound entity was accepted"
+    );
     wisteria_stable_entity_destroy(context, unicodeEntity);
     wisteria_stable_entity_destroy(context, staticEntity);
+    Require(
+        wisteria_stable_render_session_destroy(
+            context,
+            renderSession
+        ) == WISTERIA_STATUS_OK,
+        "static session destroy after entity failed"
+    );
     std::filesystem::remove_all(unicodeDir, ignored);
     wisteria_stable_context_destroy(context);
 }
@@ -12703,6 +12909,166 @@ void TestR19GlfwLifetimeSharedWithApplication()
     wisteria_stable_context_destroy(context);
 }
 
+void TestR19StableRenderPixelsMatchEngine()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-triangle-gltf");
+    RequireCoreAsset("animated-triangle-gltf");
+    constexpr std::uint32_t width = 64U;
+    constexpr std::uint32_t height = 64U;
+    const std::uint64_t byteCount =
+        static_cast<std::uint64_t>(width) * height * 4U;
+
+    WisteriaRenderCameraV1 camera;
+    memset(&camera, 0, sizeof(camera));
+    camera.struct_size = sizeof(camera);
+    camera.struct_version = 1U;
+    camera.position[1] = 3.0f;
+    camera.position[2] = 3.0f;
+    camera.up[1] = 1.0f;
+    camera.vertical_fov_degrees = 45.0f;
+    camera.near_clip = 0.1f;
+    camera.far_clip = 100.0f;
+
+    // Stable path.
+    WisteriaStableContext context = 0U;
+    Require(
+        wisteria_stable_context_create(&context) == WISTERIA_STATUS_OK,
+        "pixels context create failed"
+    );
+    WisteriaRuntimeCreationOptionsV1 runtimeOptions;
+    memset(&runtimeOptions, 0, sizeof(runtimeOptions));
+    runtimeOptions.struct_size = sizeof(runtimeOptions);
+    runtimeOptions.struct_version = 1U;
+    runtimeOptions.compatibility = WISTERIA_PROFILE_ID_RAW;
+    runtimeOptions.fixed_time_step = 1.0f / 120.0f;
+    runtimeOptions.max_sub_steps = 10;
+    runtimeOptions.gravity[1] = -98.0f;
+    runtimeOptions.physics_enabled = 1;
+    WisteriaEntity entity = 0U;
+    Require(
+        wisteria_stable_entity_create(
+            context,
+            &runtimeOptions,
+            PathUtf8(modelPath).c_str(),
+            &entity
+        ) == WISTERIA_STATUS_OK,
+        "pixels stable entity create failed"
+    );
+    Require(
+        wisteria_stable_entity_prepare_frame_zero(context, entity) ==
+                WISTERIA_STATUS_OK &&
+            wisteria_stable_entity_replay_exact(context, entity, 3U) ==
+                WISTERIA_STATUS_OK,
+        "pixels stable prepare failed"
+    );
+    WisteriaRenderSessionOptionsV1 sessionOptions;
+    memset(&sessionOptions, 0, sizeof(sessionOptions));
+    sessionOptions.struct_size = sizeof(sessionOptions);
+    sessionOptions.struct_version = 1U;
+    WisteriaRenderSession renderSession = 0U;
+    Require(
+        wisteria_stable_render_session_create(
+            context,
+            &sessionOptions,
+            &renderSession
+        ) == WISTERIA_STATUS_OK,
+        "pixels stable session create failed"
+    );
+    std::vector<std::uint8_t> stableBytes(
+        static_cast<std::size_t>(byteCount),
+        0U
+    );
+    std::uint64_t stableFilled = byteCount;
+    Require(
+        wisteria_stable_render_session_render(
+            context,
+            renderSession,
+            entity,
+            &camera,
+            width,
+            height,
+            stableBytes.data(),
+            &stableFilled
+        ) == WISTERIA_STATUS_OK,
+        "pixels stable render failed"
+    );
+
+    // Engine path: ResourceManager + Scene::InstantiateModel + exact replay.
+    auto provider = wisteria::CreateHeadlessContext({});
+    Require(
+        provider != nullptr,
+        "pixels engine provider unavailable"
+    );
+    wisteria::HeadlessRenderSession engineSession(std::move(provider));
+    wisteria::ResourceManager resources;
+    resources.BindGraphicsDevice(engineSession.GetGraphicsDevice());
+    wisteria::ModelAsset& model = resources.LoadModel(
+        "r19::engineTri",
+        modelPath
+    );
+    wisteria::Scene scene;
+    scene.CreateDirectionalLight(wisteria::DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+        .Intensity = 1.0f
+    });
+    wisteria::Entity& engineEntity = scene.InstantiateModel(model);
+    auto* stepper = dynamic_cast<wisteria::IDeterministicFrameStepper*>(
+        engineEntity.GetModelInstance().TryGetRuntime()
+    );
+    Require(stepper != nullptr, "pixels engine runtime is not deterministic");
+    Require(
+        stepper->PrepareFrameZero({}) == wisteria::TimelineStatus::Ok,
+        "pixels engine prepare failed"
+    );
+    for (wisteria::MotionFrameIndex frame = 1U; frame <= 3U; ++frame)
+    {
+        Require(
+            stepper->StepMotionFrameExact(frame, {}) ==
+                wisteria::TimelineStatus::Ok,
+            "pixels engine step failed"
+        );
+    }
+    engineEntity.GetModelInstance().PublishCurrentRuntimeFrame();
+
+    wisteria::OfflineRenderRequest request;
+    request.width = width;
+    request.height = height;
+    request.camera = wisteria::Camera(wisteria::CameraParam{
+        .Position = glm::vec3(
+            camera.position[0],
+            camera.position[1],
+            camera.position[2]
+        ),
+        .Target = glm::vec3(
+            camera.target[0],
+            camera.target[1],
+            camera.target[2]
+        ),
+        .Up = glm::vec3(camera.up[0], camera.up[1], camera.up[2]),
+        .VerticalFovDegrees = camera.vertical_fov_degrees,
+        .NearClip = camera.near_clip,
+        .FarClip = camera.far_clip
+    });
+    request.projection = glm::perspective(
+        glm::radians(camera.vertical_fov_degrees),
+        static_cast<float>(width) / static_cast<float>(height),
+        camera.near_clip,
+        camera.far_clip
+    );
+    const wisteria::Rgba8Frame engineFrame =
+        engineSession.RenderOffline(scene, request);
+    Require(
+        engineFrame.pixels == stableBytes,
+        "stable render pixels differ from the native engine render"
+    );
+
+    wisteria_stable_entity_destroy(context, entity);
+    wisteria_stable_render_session_destroy(context, renderSession);
+    wisteria_stable_context_destroy(context);
+}
+
 int main()
 {
     int failures = 0;
@@ -12820,6 +13186,10 @@ int main()
     failures += !RunTest(
         "R1.9 GLFW lifetime shared with Application",
         TestR19GlfwLifetimeSharedWithApplication
+    );
+    failures += !RunTest(
+        "R1.9 stable render pixels match engine",
+        TestR19StableRenderPixelsMatchEngine
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

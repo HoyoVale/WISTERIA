@@ -1,7 +1,6 @@
 #include "wisteria/common/pch.hpp"
 
 #include "wisteria/assets/model_asset_bundle.hpp"
-#include "wisteria/rendering/program_cache.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -14,9 +13,12 @@ ModelAssetBundle BuildModelAssetBundle(
     ModelBackendKind backendKind,
     const std::filesystem::path& sourcePath,
     const std::string& name,
-    GraphicsDevice* device
+    GraphicsDevice* device,
+    std::shared_ptr<ProgramCache> programCache
 )
 {
+    if (programCache == nullptr)
+        throw std::invalid_argument("program cache must not be null");
     if (textures.size() != imported.textures.size())
     {
         throw std::invalid_argument(
@@ -68,7 +70,6 @@ ModelAssetBundle BuildModelAssetBundle(
     ModelAssetBundle bundle;
 
     // Materials: full texture bindings, not a single default material.
-    const auto programCache = std::make_shared<ProgramCache>();
     bundle.materials.reserve(imported.materials.size());
     for (const ImportedMaterialData& source : imported.materials)
     {

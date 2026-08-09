@@ -407,10 +407,19 @@ Entity& Scene::InstantiateModel(
     Entity& entity = this->CreateEntity(transform);
     entity.SetModelInstance(std::move(instance));
 
-    for (const RenderPart& part : model.Parts())
+    BindModelInstanceParts(entity, instanceReference);
+    return entity;
+}
+
+void Scene::BindModelInstanceParts(
+    Entity& entity,
+    ModelInstance& instance
+)
+{
+    for (const RenderPart& part : instance.Asset().Parts())
     {
         entity.AddRenderPart(
-            instanceReference.ResolveMesh(part.GetMesh()),
+            instance.ResolveMesh(part.GetMesh()),
             part.GetMaterial(),
             part.LocalTransform(),
             // R1.5 Phase 0D: asset semantics are never rewritten. A backend
@@ -419,7 +428,6 @@ Entity& Scene::InstantiateModel(
             part.MorphMaterialIndex()
         );
     }
-    return entity;
 }
 
 bool Scene::RemoveEntity(const Entity& entity)
