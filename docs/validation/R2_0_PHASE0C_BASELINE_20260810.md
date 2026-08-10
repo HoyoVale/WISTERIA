@@ -328,6 +328,23 @@ environment_gpu_resource.cpp 零 fstream/stb 引用
 
 明确不做：Environment dedup/cache identity（6B）、PipelineVariant（Step 7）。
 
+### Decode Source Authority Closure（2026-08-11 ChatGPT 复审 `e2242ad` 后）
+
+```text
+1. CreateEnvironmentCubemap() source selection 改为只读 prepared payload：
+   equirectangularImage != nullptr → equirectangular
+   否则 → procedural sky
+   （path 不再是 GPU source discriminator；
+    内存/网络/asset-system 来源可在 path 为空时提供 image）
+2. environment.hpp 注释精确化：
+   prepared source authority（image present → equirect；absent →
+   procedural）；path 仅 CPU preparation/provenance，backend 不读
+3. 新增 adversarial：path empty + non-null malformed image
+   （1x1 但 rgb 仅 2 floats）→ Attach 进入 equirectangular 校验 →
+   invalid_argument → 不落入 procedural → rollback clean
+   （PendingDeleteCount == 0）
+```
+
 ## 3. 复审注意事项
 
 1. Mesh 公共头不再持有 VBO/EBO（GPU 细节移出 CPU asset）；

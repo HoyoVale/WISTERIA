@@ -32,10 +32,11 @@ std::shared_ptr<const EnvironmentHdrImage> DecodeEquirectangularHdr(
 
 struct EnvironmentMapData
 {
-    // An empty path creates a small procedural HDR sky. A file path is
-    // interpreted as an equirectangular HDR/LDR image. After CPU
-    // preparation, equirectangularImage carries the decoded pixels; the
-    // path remains as provenance/diagnostic metadata only.
+    // Prepared source authority:
+    //   equirectangularImage != nullptr -> equirectangular image
+    //   no prepared image                -> procedural sky
+    // equirectangularPath is used only by CPU preparation/provenance; the
+    // GPU backend does not inspect it.
     std::filesystem::path equirectangularPath;
     std::shared_ptr<const EnvironmentHdrImage> equirectangularImage;
     unsigned int environmentResolution = 128;

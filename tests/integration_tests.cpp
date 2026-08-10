@@ -14068,6 +14068,46 @@ void TestR2EnvironmentGpuLifetime()
         wrongShareGroupEnvironment->IsAttached(),
         "r2-env attach failed after switching to owning share group"
     );
+
+    // Decode Source Authority: the prepared payload, not the path, selects
+    // the source. A malformed in-memory image (empty path, non-null payload)
+    // must reach the equirectangular validation and reject; it must NOT fall
+    // back to the procedural sky.
+    {
+        sessionA.MakeCurrent();
+        auto image = std::make_shared<wisteria::EnvironmentHdrImage>();
+        image->width = 1U;
+        image->height = 1U;
+        image->rgb = {1.0f, 1.0f};  // invalid: needs width*height*3 = 3
+        wisteria::EnvironmentMapData memoryData;
+        memoryData.equirectangularImage = image;
+        memoryData.environmentResolution = 32U;
+        memoryData.irradianceResolution = 16U;
+        memoryData.prefilterResolution = 16U;
+        memoryData.prefilterMipLevels = 5U;
+        memoryData.brdfResolution = 64U;
+        auto environment = std::make_unique<wisteria::EnvironmentMap>(
+            memoryData,
+            &cacheA
+        );
+        bool payloadRejected = false;
+        try
+        {
+            environment->Attach();
+        }
+        catch (const std::invalid_argument&)
+        {
+            payloadRejected = true;
+        }
+        Require(
+            payloadRejected && !environment->IsAttached(),
+            "r2-env prepared payload must be the source authority"
+        );
+    }
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-env source-authority rejection left pending deletes"
+    );
 }
 
 int main()

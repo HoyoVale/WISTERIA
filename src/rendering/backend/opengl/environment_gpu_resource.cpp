@@ -409,10 +409,14 @@ void EnvironmentMapGpuResource::CreateGeometry()
 
 void EnvironmentMapGpuResource::CreateEnvironmentCubemap()
 {
-    if (this->data.equirectangularPath.empty())
-        this->CreateProceduralCubemap();
-    else
+    // Source authority is the prepared CPU payload, never the provenance
+    // path. An in-memory/network/asset-system source may provide
+    // equirectangularImage with an empty path; absence of a prepared image
+    // selects the procedural sky.
+    if (this->data.equirectangularImage != nullptr)
         this->CreateEquirectangularCubemap();
+    else
+        this->CreateProceduralCubemap();
 }
 
 void EnvironmentMapGpuResource::CreateProceduralCubemap()
