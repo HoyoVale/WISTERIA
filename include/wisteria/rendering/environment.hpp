@@ -1,8 +1,10 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <memory>
+#include <vector>
 
 namespace wisteria
 {
@@ -12,11 +14,30 @@ class VAO;
 class EnvironmentMapGpuResource;
 class RenderResourceCache;
 
+// R2.0 Phase 0C: backend-neutral decoded HDR source. Produced by CPU
+// preparation (environment_decode.cpp); the OpenGL realization only uploads
+// it. rgb is tightly packed width*height*3 floats.
+struct EnvironmentHdrImage
+{
+    std::uint32_t width = 0U;
+    std::uint32_t height = 0U;
+    std::vector<float> rgb;
+};
+
+// CPU preparation: file IO + stb_image HDR decode. Never called from the
+// OpenGL backend. Throws std::runtime_error on missing/corrupt input.
+std::shared_ptr<const EnvironmentHdrImage> DecodeEquirectangularHdr(
+    const std::filesystem::path& filePath
+);
+
 struct EnvironmentMapData
 {
     // An empty path creates a small procedural HDR sky. A file path is
-    // interpreted as an equirectangular HDR/LDR image.
+    // interpreted as an equirectangular HDR/LDR image. After CPU
+    // preparation, equirectangularImage carries the decoded pixels; the
+    // path remains as provenance/diagnostic metadata only.
     std::filesystem::path equirectangularPath;
+    std::shared_ptr<const EnvironmentHdrImage> equirectangularImage;
     unsigned int environmentResolution = 128;
     unsigned int irradianceResolution = 32;
     unsigned int prefilterResolution = 128;

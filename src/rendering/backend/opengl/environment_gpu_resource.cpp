@@ -8,10 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <fstream>
-#include <limits>
 #include <stdexcept>
-#include "wisteria/vendor/stb_image.h"
 #include <utility>
 #include <vector>
 
@@ -175,33 +172,6 @@ private:
     GLboolean blend = GL_FALSE;
 };
 
-std::vector<std::uint8_t> ReadBinaryFile(
-    const std::filesystem::path& filePath
-)
-{
-    std::ifstream stream(filePath, std::ios::binary | std::ios::ate);
-    if (!stream)
-        throw std::runtime_error("Cannot open environment image: " + filePath.string());
-
-    const std::streampos end = stream.tellg();
-    if (end <= 0)
-        throw std::runtime_error("Environment image is empty: " + filePath.string());
-    if (static_cast<std::uintmax_t>(end) >
-        static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max()))
-    {
-        throw std::length_error("Environment image is too large");
-    }
-
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(end));
-    stream.seekg(0, std::ios::beg);
-    stream.read(
-        reinterpret_cast<char*>(bytes.data()),
-        static_cast<std::streamsize>(bytes.size())
-    );
-    if (!stream)
-        throw std::runtime_error("Cannot read environment image: " + filePath.string());
-    return bytes;
-}
 }  // namespace
 
 EnvironmentMapGpuResource::EnvironmentMapGpuResource(
@@ -529,31 +499,23 @@ void EnvironmentMapGpuResource::CreateProceduralCubemap()
 
 void EnvironmentMapGpuResource::CreateEquirectangularCubemap()
 {
-    const std::vector<std::uint8_t> bytes =
-        ReadBinaryFile(this->data.equirectangularPath);
-    if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        throw std::length_error("Environment image is too large for stb_image");
-
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    std::unique_ptr<float, decltype(&stbi_image_free)> pixels(
-        stbi_loadf_from_memory(
-            bytes.data(),
-            static_cast<int>(bytes.size()),
-            &width,
-            &height,
-            &channels,
-            3
-        ),
-        stbi_image_free
-    );
-    if (pixels == nullptr)
+    // CPU preparation already decoded the source (R2.0 0C Decode Split);
+    // this realization only uploads width/height/RGB floats.
+    if (this->data.equirectangularImage == nullptr)
     {
-        const char* reason = stbi_failure_reason();
-        throw std::runtime_error(
-            "Cannot decode environment image: " +
-            std::string(reason != nullptr ? reason : "unknown stb_image error")
+        throw std::logic_error(
+            "Environment equirectangular source is not prepared"
+        );
+    }
+    const EnvironmentHdrImage& image = *this->data.equirectangularImage;
+    const std::size_t expectedPixels =
+        static_cast<std::size_t>(image.width) *
+        static_cast<std::size_t>(image.height) * 3U;
+    if (image.width == 0U || image.height == 0U ||
+        image.rgb.size() != expectedPixels)
+    {
+        throw std::invalid_argument(
+            "Environment HDR image dimensions do not match its payload"
         );
     }
 
@@ -569,12 +531,12 @@ void EnvironmentMapGpuResource::CreateEquirectangularCubemap()
             GL_TEXTURE_2D,
             0,
             GL_RGB16F,
-            width,
-            height,
+            static_cast<GLsizei>(image.width),
+            static_cast<GLsizei>(image.height),
             0,
             GL_RGB,
             GL_FLOAT,
-            pixels.get()
+            image.rgb.data()
         );
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);

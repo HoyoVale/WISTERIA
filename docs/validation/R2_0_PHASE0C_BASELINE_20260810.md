@@ -256,10 +256,11 @@ P0-2.3 Attach rollback transaction：
 
 P0-2.4 adversarial tests（TestR2EnvironmentGpuLifetime）：
   1. owning context current 销毁 → immediate，PendingDeleteCount == 0
-  2. 另一独立 session context 销毁 → owning device 队列（shared +
-     context-local 均入 pending）
-  3. 另一 session flush A 队列 → 不释放（非 A share group / 非 A exact
-     context）
+  2. 另一独立 session current 时析构 → remaining shared resources 进入
+     owning device pending queue（成功 Attach 已释放 capture FBO/VAO 等
+     临时 context-local 对象；context-local correctness 由 DeleteResource
+     contract + partial-construction rollback 路径验证）
+  3. 另一 session flush A 队列 → 不释放（非 A share group）
   4. owning flush → 全部清空
   5. corrupted HDR attach 失败 → 临时 GPU allocation（geometry/FBO/RBO/
      cubemap）之后 decode 抛错 → 原子回滚，无 pending 残留
@@ -288,6 +289,44 @@ RenderResourceCache dedup（6B）、PipelineVariant（Step 7）。
    - DeleteResource 统一限定 managed cache path；
      null-cache raw GL fallback 保留至 0C Final Review
 ```
+
+## 13. Environment CPU Decode Split（2026-08-10，P0-2 CLOSED 后）
+
+```text
+include/wisteria/rendering/environment.hpp
+  - EnvironmentHdrImage（neutral）：width/height + tightly packed RGB floats
+  - EnvironmentMapData.equirectangularImage（shared_ptr<const>）：
+    CPU source；path 降级为 provenance/diagnostic metadata
+  - DecodeEquirectangularHdr() 声明（CPU preparation）
+
+src/rendering/environment_decode.cpp（新增）
+  - ReadBinaryFile + stbi_loadf_from_memory 从 OpenGL backend 移出
+
+src/rendering/environment.cpp
+  - PrepareEnvironmentData()：构造时 CPU decode（file IO + HDR）
+    → 失败在 CPU preparation 阶段（构造抛）
+
+src/rendering/backend/opengl/environment_gpu_resource.cpp
+  - CreateEquirectangularCubemap 只接收 width/height/RGB floats
+    （glTexImage2D upload）；不再 include <fstream>/stb_image.h
+
+tests（TestR2EnvironmentGpuLifetime 更新）
+  - corrupted HDR → CPU 构造失败（GPU work 前）
+  - 新增 GPU partial-construction rollback injection：
+    procedural sky + 空 WISTERIA_ASSET_ROOT → geometry/FBO/RBO/procedural
+    cubemap 已创建后 shader 加载失败 → Release 原子回滚（owning context
+    → PendingDeleteCount == 0）——P0-2 rollback gate 不因 decode 搬移丢失
+```
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+environment_gpu_resource.cpp 零 fstream/stb 引用
+```
+
+明确不做：Environment dedup/cache identity（6B）、PipelineVariant（Step 7）。
 
 ## 3. 复审注意事项
 

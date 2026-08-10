@@ -203,6 +203,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/backend/opengl/render_resource_cache.cpp
     src/rendering/backend/opengl/texture_gpu_resource.cpp
     src/rendering/ebo.cpp
+    src/rendering/environment_decode.cpp
     src/rendering/environment.cpp
     src/rendering/framebuffer.cpp
     src/rendering/frame_readback.cpp

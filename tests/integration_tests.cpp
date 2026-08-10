@@ -13931,11 +13931,8 @@ void TestR2EnvironmentGpuLifetime()
         "r2-env owning context flush did not clear"
     );
 
-    // P0-2.4: attach failure must roll back atomically and leave no pending
-    // leftovers. Corrupted HDR input fails during source preparation AFTER
-    // temporary GPU allocation (geometry/FBO/RBO/cubemap already created),
-    // so this verifies partial-construction rollback under the new
-    // shared/context-local ownership split.
+    // P0-2.4 (after Decode Split): corrupted HDR input now fails during CPU
+    // preparation (EnvironmentMap construction), before any GPU work.
     const std::filesystem::path badFile =
         std::filesystem::temp_directory_path() / "wisteria_r2_bad_env.hdr";
     {
@@ -13951,22 +13948,22 @@ void TestR2EnvironmentGpuLifetime()
         badData.prefilterResolution = 16U;
         badData.prefilterMipLevels = 5U;
         badData.brdfResolution = 64U;
-        auto environment = std::make_unique<wisteria::EnvironmentMap>(
-            badData,
-            &cacheA
-        );
         bool rejected = false;
         try
         {
-            environment->Attach();
+            auto environment = std::make_unique<wisteria::EnvironmentMap>(
+                badData,
+                &cacheA
+            );
+            (void)environment;
         }
         catch (const std::runtime_error&)
         {
             rejected = true;
         }
         Require(
-            rejected && !environment->IsAttached(),
-            "r2-env corrupt input must reject attach"
+            rejected,
+            "r2-env corrupt input must reject CPU preparation"
         );
     }
     Require(
@@ -13974,6 +13971,69 @@ void TestR2EnvironmentGpuLifetime()
         "r2-env attach failure left pending deletes"
     );
     std::filesystem::remove(badFile);
+
+    // P0-2.4 (GPU partial-construction rollback, preserved after Decode
+    // Split): procedural sky + empty shader root creates geometry/FBO/RBO/
+    // procedural cubemap first, then fails when the convolution shader
+    // cannot be loaded. Release() must roll back all partially allocated
+    // GPU objects under the owning context.
+    const std::filesystem::path emptyShaderRoot =
+        std::filesystem::temp_directory_path() / "wisteria_r2_empty_shaders";
+    std::error_code ignored;
+    std::filesystem::create_directories(emptyShaderRoot, ignored);
+    const auto setTestEnvVar = [](const char* name, const char* value)
+    {
+#ifdef _WIN32
+        _putenv_s(name, value != nullptr ? value : "");
+#else
+        if (value != nullptr)
+            setenv(name, value, 1);
+        else
+            unsetenv(name);
+#endif
+    };
+    const char* previousAssetRoot = std::getenv("WISTERIA_ASSET_ROOT");
+    const std::string savedAssetRoot =
+        previousAssetRoot != nullptr ? previousAssetRoot : "";
+    {
+        wisteria::EnvironmentMapData proceduralData;
+        proceduralData.environmentResolution = 32U;
+        proceduralData.irradianceResolution = 16U;
+        proceduralData.prefilterResolution = 16U;
+        proceduralData.prefilterMipLevels = 5U;
+        proceduralData.brdfResolution = 64U;
+
+        sessionA.MakeCurrent();
+        setTestEnvVar(
+            "WISTERIA_ASSET_ROOT",
+            emptyShaderRoot.string().c_str()
+        );
+        auto environment = std::make_unique<wisteria::EnvironmentMap>(
+            proceduralData,
+            &cacheA
+        );
+        bool attachRejected = false;
+        try
+        {
+            environment->Attach();
+        }
+        catch (const std::runtime_error&)
+        {
+            attachRejected = true;
+        }
+        if (savedAssetRoot.empty())
+            setTestEnvVar("WISTERIA_ASSET_ROOT", nullptr);
+        else
+            setTestEnvVar("WISTERIA_ASSET_ROOT", savedAssetRoot.c_str());
+        Require(
+            attachRejected && !environment->IsAttached(),
+            "r2-env partial GPU construction must fail and roll back"
+        );
+    }
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-env partial GPU rollback left pending deletes"
+    );
 
     // P0-2 closure: creation provenance. An Environment realized through
     // cache/device A must reject Attach while session B is current, before

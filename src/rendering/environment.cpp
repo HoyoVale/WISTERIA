@@ -22,6 +22,20 @@ unsigned int MaximumMipLevels(unsigned int resolution)
     }
     return levels;
 }
+
+EnvironmentMapData PrepareEnvironmentData(EnvironmentMapData data)
+{
+    // CPU preparation: file IO + HDR decode happen here, never in the
+    // OpenGL backend. The decoded image is shared through the data so the
+    // GPU realization receives width/height/RGB floats only.
+    if (data.equirectangularImage == nullptr &&
+        !data.equirectangularPath.empty())
+    {
+        data.equirectangularImage =
+            DecodeEquirectangularHdr(data.equirectangularPath);
+    }
+    return data;
+}
 }  // namespace
 
 EnvironmentMapData EnvironmentMapData::ProceduralSky()
@@ -45,7 +59,7 @@ EnvironmentMap::EnvironmentMap(
     EnvironmentMapData data,
     RenderResourceCache* cache
 )
-    : data(std::move(data)),
+    : data(PrepareEnvironmentData(std::move(data))),
       gpu(std::make_unique<EnvironmentMapGpuResource>(
           this->data,
           cache
