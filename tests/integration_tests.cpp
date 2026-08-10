@@ -13867,6 +13867,43 @@ void TestR2EnvironmentGpuLifetime()
     wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
     (void)cacheB;
 
+    struct ScopedEnvVar
+    {
+        std::string name;
+        std::string saved;
+        bool hadValue = false;
+
+        ScopedEnvVar(const char* variable, const char* value)
+            : name(variable)
+        {
+            const char* previous = std::getenv(name.c_str());
+            this->hadValue = previous != nullptr;
+            if (this->hadValue)
+                this->saved = previous;
+            Set(this->name, value);
+        }
+
+        ~ScopedEnvVar()
+        {
+            Set(
+                this->name,
+                this->hadValue ? this->saved.c_str() : nullptr
+            );
+        }
+
+        static void Set(const std::string& variable, const char* value)
+        {
+#ifdef _WIN32
+            _putenv_s(variable.c_str(), value != nullptr ? value : "");
+#else
+            if (value != nullptr)
+                setenv(variable.c_str(), value, 1);
+            else
+                unsetenv(variable.c_str());
+#endif
+        }
+    };
+
     wisteria::EnvironmentMapData smallData;
     smallData.environmentResolution = 32U;
     smallData.irradianceResolution = 16U;
@@ -13874,8 +13911,9 @@ void TestR2EnvironmentGpuLifetime()
     smallData.prefilterMipLevels = 5U;
     smallData.brdfResolution = 64U;
 
-    // P0-2.3: normal teardown with the owning context current deletes
-    // immediately (no pending leftovers).
+    // P0-2.3: with a cache, the shared realization lives as long as the
+    // cache entry; releasing it (cache.Clear) with the owning context
+    // current deletes immediately (no pending leftovers).
     {
         sessionA.MakeCurrent();
         auto environment = std::make_unique<wisteria::EnvironmentMap>(
@@ -13887,15 +13925,16 @@ void TestR2EnvironmentGpuLifetime()
             environment->IsAttached(),
             "r2-env normal attach failed"
         );
+        cacheA.Clear();
     }
     Require(
         sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
         "r2-env normal teardown left pending deletes"
     );
 
-    // P0-2.1: destroyed while another session's context is current, the
-    // owning device queues its shared objects; context-local objects are
-    // bound to the exact context captured at attach (R1.7 contract).
+    // P0-2.1: cache entry released while another session's context is
+    // current, the owning device queues its shared objects; context-local
+    // objects are bound to the exact context captured at attach.
     {
         sessionA.MakeCurrent();
         auto environment = std::make_unique<wisteria::EnvironmentMap>(
@@ -13908,7 +13947,8 @@ void TestR2EnvironmentGpuLifetime()
             "r2-env sibling attach failed"
         );
         sessionB.MakeCurrent();
-    }  // environment destroyed while B is current
+        cacheA.Clear();  // realization released while B is current
+    }
     Require(
         sessionA.GetGraphicsDevice().PendingDeleteCount() > 0U,
         "r2-env non-owning destroy must queue deletions"
@@ -13981,20 +14021,6 @@ void TestR2EnvironmentGpuLifetime()
         std::filesystem::temp_directory_path() / "wisteria_r2_empty_shaders";
     std::error_code ignored;
     std::filesystem::create_directories(emptyShaderRoot, ignored);
-    const auto setTestEnvVar = [](const char* name, const char* value)
-    {
-#ifdef _WIN32
-        _putenv_s(name, value != nullptr ? value : "");
-#else
-        if (value != nullptr)
-            setenv(name, value, 1);
-        else
-            unsetenv(name);
-#endif
-    };
-    const char* previousAssetRoot = std::getenv("WISTERIA_ASSET_ROOT");
-    const std::string savedAssetRoot =
-        previousAssetRoot != nullptr ? previousAssetRoot : "";
     {
         wisteria::EnvironmentMapData proceduralData;
         proceduralData.environmentResolution = 32U;
@@ -14004,7 +14030,7 @@ void TestR2EnvironmentGpuLifetime()
         proceduralData.brdfResolution = 64U;
 
         sessionA.MakeCurrent();
-        setTestEnvVar(
+        ScopedEnvVar shaderRoot(
             "WISTERIA_ASSET_ROOT",
             emptyShaderRoot.string().c_str()
         );
@@ -14021,10 +14047,6 @@ void TestR2EnvironmentGpuLifetime()
         {
             attachRejected = true;
         }
-        if (savedAssetRoot.empty())
-            setTestEnvVar("WISTERIA_ASSET_ROOT", nullptr);
-        else
-            setTestEnvVar("WISTERIA_ASSET_ROOT", savedAssetRoot.c_str());
         Require(
             attachRejected && !environment->IsAttached(),
             "r2-env partial GPU construction must fail and roll back"
@@ -14107,6 +14129,126 @@ void TestR2EnvironmentGpuLifetime()
     Require(
         sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
         "r2-env source-authority rejection left pending deletes"
+    );
+}
+
+void TestR2EnvironmentCacheIdentity()
+{
+    // R2.0 Phase 0C 6B: environment realization identity = prepared source
+    // payload + GPU generation parameters. Provenance path, intensity and
+    // drawSkybox must NOT affect identity; different devices never share.
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-env-id providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+    wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
+
+    auto decoded = std::make_shared<wisteria::EnvironmentHdrImage>();
+    decoded->width = 2U;
+    decoded->height = 2U;
+    decoded->rgb = std::vector<float>(2U * 2U * 3U, 0.5f);
+
+    const auto makeData = [&](const std::filesystem::path& path,
+                              unsigned int prefilterResolution,
+                              unsigned int brdfResolution,
+                              float intensity)
+    {
+        wisteria::EnvironmentMapData data;
+        data.equirectangularImage = decoded;
+        data.equirectangularPath = path;
+        data.environmentResolution = 32U;
+        data.irradianceResolution = 16U;
+        data.prefilterResolution = prefilterResolution;
+        data.prefilterMipLevels = 5U;
+        data.brdfResolution = brdfResolution;
+        data.intensity = intensity;
+        return data;
+    };
+
+    // Same payload + different provenance path + different intensity ->
+    // one shared realization on the same device.
+    sessionA.MakeCurrent();
+    auto environmentA = std::make_unique<wisteria::EnvironmentMap>(
+        makeData("a.hdr", 16U, 64U, 1.0f),
+        &cacheA
+    );
+    auto environmentB = std::make_unique<wisteria::EnvironmentMap>(
+        makeData("b.hdr", 16U, 64U, 2.0f),
+        &cacheA
+    );
+    Require(
+        cacheA.EnvironmentCount() == 1U,
+        "r2-env-id provenance path/intensity must not affect identity"
+    );
+    environmentA->Attach();
+    Require(
+        environmentB->IsAttached(),
+        "r2-env-id same identity must share the realization"
+    );
+
+    // Different generation parameters (prefilter/BRDF resolution) -> new
+    // realization.
+    auto environmentC = std::make_unique<wisteria::EnvironmentMap>(
+        makeData("a.hdr", 32U, 64U, 1.0f),
+        &cacheA
+    );
+    auto environmentD = std::make_unique<wisteria::EnvironmentMap>(
+        makeData("a.hdr", 16U, 128U, 1.0f),
+        &cacheA
+    );
+    Require(
+        cacheA.EnvironmentCount() == 3U,
+        "r2-env-id generation parameters must differentiate realizations"
+    );
+
+    // Procedural vs decoded source never mix.
+    wisteria::EnvironmentMapData proceduralData;
+    proceduralData.environmentResolution = 32U;
+    proceduralData.irradianceResolution = 16U;
+    proceduralData.prefilterResolution = 16U;
+    proceduralData.prefilterMipLevels = 5U;
+    proceduralData.brdfResolution = 64U;
+    auto procedural = std::make_unique<wisteria::EnvironmentMap>(
+        proceduralData,
+        &cacheA
+    );
+    Require(
+        cacheA.EnvironmentCount() == 4U,
+        "r2-env-id procedural and decoded sources must not mix"
+    );
+
+    // Different RenderDevice never shares: device B gets its own entry for
+    // the same identity.
+    sessionB.MakeCurrent();
+    auto environmentOnB = std::make_unique<wisteria::EnvironmentMap>(
+        makeData("a.hdr", 16U, 64U, 1.0f),
+        &cacheB
+    );
+    Require(
+        cacheB.EnvironmentCount() == 1U,
+        "r2-env-id cross-device realizations must be per-device"
+    );
+    environmentOnB->Attach();
+
+    // A->B->A round trip: re-resolving on device A returns A's entry.
+    sessionA.MakeCurrent();
+    auto environmentBackOnA = std::make_unique<wisteria::EnvironmentMap>(
+        makeData("a.hdr", 16U, 64U, 1.0f),
+        &cacheA
+    );
+    Require(
+        cacheA.EnvironmentCount() == 4U,
+        "r2-env-id A->B->A must reacquire A's shared entry"
+    );
+    environmentBackOnA->Attach();
+    Require(
+        environmentBackOnA->IsAttached(),
+        "r2-env-id A reacquire attach failed"
     );
 }
 
@@ -14255,6 +14397,10 @@ int main()
     failures += !RunTest(
         "R2.0 environment GPU lifetime",
         TestR2EnvironmentGpuLifetime
+    );
+    failures += !RunTest(
+        "R2.0 environment cache identity",
+        TestR2EnvironmentCacheIdentity
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

@@ -345,6 +345,58 @@ environment_gpu_resource.cpp 零 fstream/stb 引用
    （PendingDeleteCount == 0）
 ```
 
+## 14. 6B Complete Adversarial Gates（2026-08-11）
+
+```text
+1. Environment per-device realization/cache：
+   RenderResourceCache::AcquireEnvironment(data)（共享）+ 
+   CreateInstanceEnvironment（独立）
+   identity = prepared source payload（decoded rgb hash + w/h 或 procedural）
+   + environment/irradiance/prefilter resolution + prefilterMipLevels +
+   brdfResolution；不含 provenance path / intensity / drawSkybox
+   EnvironmentMap 持 shared_ptr<EnvironmentMapGpuResource>；
+   生命周期随 cache（P0-2 pending 测试相应改为 cache.Clear() 触发）
+
+2. Environment identity adversarials（TestR2EnvironmentCacheIdentity）：
+   - 同 payload + 不同 path + 不同 intensity → 同 device 共享（count 1）
+   - 不同 prefilter/BRDF resolution → 不共享
+   - procedural vs decoded → 永不混合
+   - 不同 RenderDevice → 各自 entry
+   - A->B->A 重新解析 → A 复用自身 entry
+
+3. Mesh/Texture cache identity hardening：
+   hash/descriptor string 降级为 lookup accelerator：
+   - staticMeshes：vector<entry>，命中 hash 后 MeshDataEqual 精确比较
+     （vertices/indices/layout 全字段）
+   - textures：vector<entry>，命中 key 后 TextureDataEqual 精确比较
+     （file path / payload bytes / dims / colorSpace）
+   - 文件 texture 路径用 lexically_normal 规范化
+   - Linear/sRGB 分离保留
+
+4. watchpoint 收掉：
+   - DecodeEquirectangularHdr：decode 后显式 width>0 && height>0 +
+     width*height*3 checked-size
+   - WISTERIA_ASSET_ROOT 测试改 ScopedEnvVar RAII guard
+
+5. final adversarial matrix（保留并集中）：
+   static Mesh same-device sharing / dynamic instance isolation /
+   Mesh A->B->A / Texture Linear/sRGB / wrong-device rejection /
+   Environment same-device dedup / cross-device isolation /
+   wrong-share-group creation rejection / partial GPU rollback /
+   cache clear+lifetime / neutral compile + ABI 94/30
+```
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+```
+
+6B 不做：Material ProgramCache per-device cleanup、PipelineVariant、
+shader semantic abstraction、RenderFramePacket、RenderGraph、Vulkan、
+stable ABI 修改（分别属 Step 7 / 0D / R2.1）。
+
 ## 3. 复审注意事项
 
 1. Mesh 公共头不再持有 VBO/EBO（GPU 细节移出 CPU asset）；

@@ -30,12 +30,14 @@ std::shared_ptr<TextureGpuResource> RenderResourceCache::AcquireTexture(
 )
 {
     const std::string key = TextureKey(data);
-    const auto iterator = this->textures.find(key);
-    if (iterator != this->textures.end())
-        return iterator->second;
+    for (const TextureEntry& entry : this->textures)
+    {
+        if (entry.key == key && TextureDataEqual(entry.data, data))
+            return entry.realization;
+    }
 
     auto realization = std::make_shared<TextureGpuResource>(this->device);
-    this->textures.emplace(key, realization);
+    this->textures.push_back(TextureEntry{key, data, realization});
     return realization;
 }
 
@@ -44,12 +46,34 @@ std::shared_ptr<MeshGpuResource> RenderResourceCache::AcquireStaticMesh(
 )
 {
     const std::uint64_t key = DataHash(data);
-    const auto iterator = this->staticMeshes.find(key);
-    if (iterator != this->staticMeshes.end())
-        return iterator->second;
+    for (const StaticMeshEntry& entry : this->staticMeshes)
+    {
+        if (entry.hash == key && MeshDataEqual(entry.data, data))
+            return entry.realization;
+    }
 
     auto realization = std::make_shared<MeshGpuResource>(this->device);
-    this->staticMeshes.emplace(key, realization);
+    this->staticMeshes.push_back(
+        StaticMeshEntry{key, data, realization}
+    );
+    return realization;
+}
+
+std::shared_ptr<EnvironmentMapGpuResource>
+RenderResourceCache::AcquireEnvironment(
+    const EnvironmentMapData& data
+)
+{
+    const std::string key = EnvironmentKey(data);
+    const auto iterator = this->environments.find(key);
+    if (iterator != this->environments.end())
+        return iterator->second;
+
+    auto realization = std::make_shared<EnvironmentMapGpuResource>(
+        data,
+        this
+    );
+    this->environments.emplace(key, realization);
     return realization;
 }
 
@@ -69,6 +93,14 @@ std::shared_ptr<TextureGpuResource> RenderResourceCache::CreateInstanceTexture(
     return std::make_shared<TextureGpuResource>(this->device);
 }
 
+std::shared_ptr<EnvironmentMapGpuResource>
+RenderResourceCache::CreateInstanceEnvironment(
+    const EnvironmentMapData& data
+)
+{
+    return std::make_shared<EnvironmentMapGpuResource>(data, this);
+}
+
 GraphicsDevice* RenderResourceCache::Device() const noexcept
 {
     return this->device;
@@ -78,6 +110,7 @@ void RenderResourceCache::Clear() noexcept
 {
     this->textures.clear();
     this->staticMeshes.clear();
+    this->environments.clear();
 }
 
 std::size_t RenderResourceCache::TextureCount() const noexcept
@@ -90,12 +123,17 @@ std::size_t RenderResourceCache::StaticMeshCount() const noexcept
     return this->staticMeshes.size();
 }
 
+std::size_t RenderResourceCache::EnvironmentCount() const noexcept
+{
+    return this->environments.size();
+}
+
 std::string RenderResourceCache::TextureKey(const TextureData& data)
 {
     const char* colorSpace =
         data.colorSpace == TextureColorSpace::Srgb ? ":srgb" : ":linear";
     if (data.IsFile())
-        return "file:" + data.filePath.string() + colorSpace;
+        return "file:" + data.filePath.lexically_normal().string() + colorSpace;
 
     const std::uint64_t hash = Fnv1a64Bytes(
         data.data.data(),
@@ -106,6 +144,74 @@ std::string RenderResourceCache::TextureKey(const TextureData& data)
     if (data.IsRgba8())
         stream << ":rgba8:" << data.width << "x" << data.height;
     return stream.str();
+}
+
+std::string RenderResourceCache::EnvironmentKey(
+    const EnvironmentMapData& data
+)
+{
+    std::ostringstream stream;
+    if (data.equirectangularImage != nullptr)
+    {
+        const EnvironmentHdrImage& image = *data.equirectangularImage;
+        const std::uint64_t hash = Fnv1a64Bytes(
+            reinterpret_cast<const std::uint8_t*>(image.rgb.data()),
+            image.rgb.size() * sizeof(float)
+        );
+        stream << "eq:" << std::hex << hash
+               << ":w" << image.width << ":h" << image.height;
+    }
+    else
+    {
+        stream << "proc";
+    }
+    stream << ":env" << data.environmentResolution
+           << ":irr" << data.irradianceResolution
+           << ":pre" << data.prefilterResolution
+           << ":mip" << data.prefilterMipLevels
+           << ":brdf" << data.brdfResolution;
+    return stream.str();
+}
+
+bool RenderResourceCache::MeshDataEqual(
+    const DefaultModelData& left,
+    const DefaultModelData& right
+)
+{
+    if (left.vertices != right.vertices ||
+        left.indices != right.indices ||
+        left.layout.size() != right.layout.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.layout.size(); ++index)
+    {
+        const Layout& a = left.layout[index];
+        const Layout& b = right.layout[index];
+        if (a.name != b.name ||
+            a.size != b.size ||
+            a.format != b.format ||
+            a.normalized != b.normalized ||
+            a.integer != b.integer ||
+            a.location != b.location ||
+            a.semantic != b.semantic)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RenderResourceCache::TextureDataEqual(
+    const TextureData& left,
+    const TextureData& right
+)
+{
+    return left.filePath == right.filePath &&
+        left.data == right.data &&
+        left.width == right.width &&
+        left.height == right.height &&
+        left.colorSpace == right.colorSpace;
 }
 
 std::uint64_t RenderResourceCache::DataHash(

@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <limits>
+#include <cstdint>
 #include <stdexcept>
 #include "wisteria/vendor/stb_image.h"
 #include <utility>
@@ -70,6 +71,21 @@ std::shared_ptr<const EnvironmentHdrImage> DecodeEquirectangularHdr(
         throw std::runtime_error(
             "Cannot decode environment image: " +
             std::string(reason != nullptr ? reason : "unknown stb_image error")
+        );
+    }
+    if (width <= 0 || height <= 0)
+    {
+        throw std::runtime_error(
+            "Environment image decoder returned non-positive dimensions"
+        );
+    }
+    const std::uint64_t width64 = static_cast<std::uint64_t>(width);
+    const std::uint64_t height64 = static_cast<std::uint64_t>(height);
+    const std::uint64_t pixelCount = width64 * height64;
+    if (pixelCount > std::numeric_limits<std::size_t>::max() / 3U)
+    {
+        throw std::length_error(
+            "Environment image pixel count is too large"
         );
     }
 

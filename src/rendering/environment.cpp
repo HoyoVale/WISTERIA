@@ -2,6 +2,7 @@
 #include <cmath>
 #include <utility>
 #include "backend/opengl/environment_gpu_resource.hpp"
+#include "backend/opengl/render_resource_cache.hpp"
 
 namespace wisteria
 {
@@ -59,12 +60,19 @@ EnvironmentMap::EnvironmentMap(
     EnvironmentMapData data,
     RenderResourceCache* cache
 )
-    : data(PrepareEnvironmentData(std::move(data))),
-      gpu(std::make_unique<EnvironmentMapGpuResource>(
-          this->data,
-          cache
-      ))
+    : data(PrepareEnvironmentData(std::move(data)))
 {
+    if (cache != nullptr)
+    {
+        this->gpu = cache->AcquireEnvironment(this->data);
+    }
+    else
+    {
+        this->gpu = std::make_shared<EnvironmentMapGpuResource>(
+            this->data,
+            nullptr
+        );
+    }
     if (!IsPowerOfTwo(this->data.environmentResolution) ||
         !IsPowerOfTwo(this->data.irradianceResolution) ||
         !IsPowerOfTwo(this->data.prefilterResolution) ||

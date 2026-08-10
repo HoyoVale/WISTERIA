@@ -93,6 +93,7 @@ private:
     EnvironmentMapData data;
     // R2.0 Phase 0C Step 5: GPU realization (IBL cubemaps, BRDF LUT, skybox
     // program/geometry) lives outside the semantic EnvironmentMapData.
-    std::unique_ptr<EnvironmentMapGpuResource> gpu;
+    // 6B: shared per-device realization when a cache is provided.
+    std::shared_ptr<EnvironmentMapGpuResource> gpu;
 };
 }  // namespace wisteria
