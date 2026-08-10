@@ -13800,7 +13800,6 @@ void TestR2RenderResourceCache()
         "r2-cache second provider unavailable"
     );
     wisteria::HeadlessRenderSession secondSession(std::move(secondProvider));
-    secondSession.MakeCurrent();
     wisteria::RenderResourceCache& secondCache =
         secondSession.GetRenderCache();
     auto crossDeviceMesh = std::make_shared<wisteria::Mesh>(
@@ -13809,14 +13808,17 @@ void TestR2RenderResourceCache()
         std::vector<wisteria::MeshMorphTarget>{},
         std::vector<std::uint32_t>{}
     );
-    // Device A attaches first.
+    // Device A current -> resolve A -> attach.
+    session.MakeCurrent();
     crossDeviceMesh->SetRenderCache(&cache);
     crossDeviceMesh->Attach();
     Require(
         crossDeviceMesh->IsAttached(),
         "r2-cache device A attach failed"
     );
-    // Device B re-resolves; both caches hold distinct realizations.
+    // Device B current -> re-resolve B -> attach. The GL objects are created
+    // under B's share group, not A's (current-context order matters).
+    secondSession.MakeCurrent();
     crossDeviceMesh->SetRenderCache(&secondCache);
     crossDeviceMesh->Attach();
     Require(
@@ -13828,6 +13830,20 @@ void TestR2RenderResourceCache()
         cache.StaticMeshCount() == 1U &&
             secondCache.StaticMeshCount() == 1U,
         "r2-cache cross-device realizations must be per-device"
+    );
+    // Device A current -> reacquire A: the cache must hand back A's already
+    // attached realization, proving CPU Mesh -> Device A -> realization A ->
+    // Device B -> realization B -> Device A round-trip resolution.
+    session.MakeCurrent();
+    crossDeviceMesh->SetRenderCache(&cache);
+    Require(
+        crossDeviceMesh->IsAttached(),
+        "r2-cache device A reacquire after device B attach failed"
+    );
+    Require(
+        cache.StaticMeshCount() == 1U &&
+            secondCache.StaticMeshCount() == 1U,
+        "r2-cache A->B->A round trip must keep per-device realizations"
     );
 }
 

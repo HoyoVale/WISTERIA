@@ -171,7 +171,7 @@ Step 7 pipeline semantic cleanup：
 
 ```text
 Blocker A（per-device realization ownership）：
-  Mesh/Texture/Material 的 SetRenderCache 允许跨 device 切换：
+  Mesh/Texture resource realization 的 SetRenderCache 允许跨 device 切换：
   - asset（static）：重新解析当前 cache 的共享 realization，
     即使另一 device 的 realization 已 attach（旧 cache 持有旧
     realization，A/B GPU state 不共享）
@@ -179,6 +179,9 @@ Blocker A（per-device realization ownership）：
     （instance 生命周期绑定一个 render session/device）
   新增 cross-device Mesh 测试：Device A attach 后 Device B 重新解析，
   两个 cache 各 1 个 realization
+  Material 边界：public neutral header 完成；
+  Material pipeline/program per-device realization 明确留待 Step 7
+  （ProgramCache 目前仍来自首次绑定 device——见 §10 注）
 
 Blocker B（Texture cache identity）：
   TextureKey 加入 TextureColorSpace（file: path+cs /
@@ -197,6 +200,30 @@ Windows CORE 12/12、Windows FULL 13/13
 WSL CORE 14/14、WSL FULL 15/15
 ABI 94 legacy + 30 stable
 render-assets-neutral-compile PASS（model 不再依赖 RenderDevice）
+```
+
+### 注：Material per-device 口径（2026-08-10 ChatGPT 复审 `b4a3ad3`）
+
+Material 的 `programCache` 来自 `ResourceManager::BindGraphicsDevice()`，
+即首次绑定 device 的 ProgramCache；`SetRenderCache(B)` 会重建
+MaterialGpuResource，但 program 仍从原 ProgramCache acquire。
+因此 **Material pipeline per-device realization 尚未成立**，属于
+Step 7（Material/Pipeline semantic cleanup）范围，不计入 6A。
+
+## 11. 6A Closure Micro Fix（2026-08-10 ChatGPT 复审 `b4a3ad3` 后）
+
+```text
+1. cross-device Mesh 测试 current-context 顺序修正：
+   A.MakeCurrent → resolve/attach A
+   → B.MakeCurrent → resolve/attach B
+   → A.MakeCurrent → reacquire A（A->B->A 回环验证）
+   （原测试在 B context current 下执行 A attach，GL buffer 可能创建在
+     B share group，测试未证明其声称的东西）
+2. 文档口径：6A = Mesh/Texture resource realization ownership；
+   Material public neutral boundary 完成、pipeline realization → Step 7
+3. 非阻塞记录：Texture::SetRenderCache(nullptr) 与 Mesh 行为不一致
+   （保留最后 realization vs 清空）；后续统一
+   SetRenderCache(nullptr) 语义（detach resolver / 保留 realization）
 ```
 
 ## 3. 复审注意事项
