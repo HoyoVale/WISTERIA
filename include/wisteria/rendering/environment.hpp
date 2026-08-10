@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <glad/gl.h>
 #include <glm/glm.hpp>
 #include <memory>
 

@@ -12,6 +12,7 @@
 #include "wisteria/rendering/headless_render_session.hpp"
 #include "wisteria/rendering/offline_render.hpp"
 #include "wisteria/platform/application.hpp"
+#include "rendering/backend/opengl/render_resource_cache.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_stable_render.h"
 #endif
@@ -13609,7 +13610,7 @@ void TestR2MeshGpuRealizationSplit()
         0U,
         {},
         {},
-        &device
+        &session.GetRenderCache()
     );
     Require(
         assetMesh.Data().vertices == staticVertices,
@@ -13664,6 +13665,102 @@ void TestR2MeshGpuRealizationSplit()
     Require(
         instanceA->VertexCount() == 3U && instanceB->VertexCount() == 3U,
         "r2-mesh instance vertex count mismatch"
+    );
+}
+
+void TestR2RenderResourceCache()
+{
+    // R2.0 Phase 0C Step 6: per-device shared realization cache. Static
+    // assets share one realization per device; instance clones never enter
+    // the cache (runtime-deformed geometry stays instance-local).
+    auto provider = wisteria::CreateHeadlessContext({});
+    Require(
+        provider != nullptr,
+        "r2-cache provider unavailable"
+    );
+    wisteria::HeadlessRenderSession session(std::move(provider));
+    session.MakeCurrent();
+    wisteria::GraphicsDevice& device = session.GetGraphicsDevice();
+    wisteria::RenderResourceCache& cache = session.GetRenderCache();
+
+    // Texture: identical payload shares one realization; a second payload
+    // creates a second entry.
+    std::vector<std::uint8_t> pixelsA(4U * 4U * 4U, 7U);
+    std::vector<std::uint8_t> pixelsB(4U * 4U * 4U, 9U);
+    wisteria::TextureData textureDataA =
+        wisteria::TextureData::FromRgba8(4, 4, std::move(pixelsA));
+    wisteria::TextureData textureDataB =
+        wisteria::TextureData::FromRgba8(4, 4, std::move(pixelsB));
+    auto textureA = std::make_shared<wisteria::Texture>(
+        textureDataA,
+        &cache
+    );
+    auto textureB = std::make_shared<wisteria::Texture>(
+        textureDataA,
+        &cache
+    );
+    auto textureC = std::make_shared<wisteria::Texture>(
+        textureDataB,
+        &cache
+    );
+    Require(
+        cache.TextureCount() == 2U,
+        "r2-cache texture sharing count mismatch"
+    );
+    textureA->Attach();
+    Require(
+        textureB->IsAttached(),
+        "r2-cache shared texture realization not reused"
+    );
+
+    // Static mesh: identical data shares one realization.
+    wisteria::DefaultModelData meshData;
+    meshData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    meshData.vertices = {
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    meshData.indices = {0U, 1U, 2U};
+    auto meshA = std::make_shared<wisteria::Mesh>(
+        meshData,
+        0U,
+        std::vector<wisteria::MeshMorphTarget>{},
+        std::vector<std::uint32_t>{},
+        &cache
+    );
+    auto meshB = std::make_shared<wisteria::Mesh>(
+        meshData,
+        0U,
+        std::vector<wisteria::MeshMorphTarget>{},
+        std::vector<std::uint32_t>{},
+        &cache
+    );
+    Require(
+        cache.StaticMeshCount() == 1U,
+        "r2-cache static mesh sharing count mismatch"
+    );
+    meshA->Attach();
+    Require(
+        meshB->IsAttached(),
+        "r2-cache shared mesh realization not reused"
+    );
+
+    // Instance clone never enters the cache: dynamic geometry stays
+    // instance-local even though it references the same asset data.
+    std::unique_ptr<wisteria::Mesh> instance = meshA->CloneForInstance();
+    instance->Attach();
+    Require(
+        cache.StaticMeshCount() == 1U,
+        "r2-cache instance clone must not be cached"
+    );
+    Require(
+        instance->IsAttached(),
+        "r2-cache instance clone attach failed"
     );
 }
 
@@ -13804,6 +13901,10 @@ int main()
     failures += !RunTest(
         "R2.0 mesh GPU realization split",
         TestR2MeshGpuRealizationSplit
+    );
+    failures += !RunTest(
+        "R2.0 render resource cache",
+        TestR2RenderResourceCache
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

@@ -46,6 +46,11 @@ void ResourceManager::BindGraphicsDevice(GraphicsDevice& device)
     this->programCache = device.Programs();
 }
 
+void ResourceManager::SetRenderCache(RenderResourceCache& cache)
+{
+    this->renderCache = &cache;
+}
+
 Mesh& ResourceManager::CreateMesh(
     const std::string& name,
     const DefaultModelData& data,
@@ -61,7 +66,7 @@ Mesh& ResourceManager::CreateMesh(
         requiredBoneCount,
         std::move(morphTargets),
         std::vector<std::uint32_t>{},
-        this->graphicsDevice
+        this->renderCache
     );
     Mesh& result = *resource;
     this->meshes.emplace(name, std::move(resource));
@@ -79,7 +84,7 @@ Material& ResourceManager::CreateMaterial(
     auto material = std::make_unique<Material>(
         data,
         this->programCache,
-        this->graphicsDevice
+        this->renderCache
     );
     Material& result = *material;
     this->materials.emplace(name, std::move(material));
@@ -125,7 +130,10 @@ std::shared_ptr<Texture> ResourceManager::CreateTextureShared(
 
     if (texture == nullptr)
     {
-        texture = std::make_shared<Texture>(std::move(data));
+        texture = std::make_shared<Texture>(
+            std::move(data),
+            this->renderCache
+        );
         createdTexture = true;
     }
 
@@ -160,7 +168,7 @@ Material& ResourceManager::CreateMaterial(
         data,
         std::move(bindings),
         this->programCache,
-        this->graphicsDevice
+        this->renderCache
     );
     Material& result = *material;
     this->materials.emplace(name, std::move(material));
@@ -263,7 +271,7 @@ ModelAsset& ResourceManager::CreateModel(
             data,
             std::move(bindings),
             this->programCache,
-            this->graphicsDevice
+            this->renderCache
         ));
     }
 
@@ -276,7 +284,7 @@ ModelAsset& ResourceManager::CreateModel(
             imported.meshes[index].requiredBoneCount,
             std::move(imported.meshes[index].morphTargets),
             std::move(imported.meshes[index].sourceVertexIndices),
-            this->graphicsDevice
+            this->renderCache
         ));
     }
 
@@ -496,13 +504,19 @@ ModelAsset& ResourceManager::LoadModel(
 
             if (texture == nullptr)
             {
-                texture = std::make_shared<Texture>(std::move(source));
+                texture = std::make_shared<Texture>(
+                    std::move(source),
+                    this->renderCache
+                );
                 newExternalTextures.emplace(cacheKey, texture);
             }
         }
         else
         {
-            texture = std::make_shared<Texture>(std::move(source));
+            texture = std::make_shared<Texture>(
+                std::move(source),
+                this->renderCache
+            );
         }
 
         importedTextures.push_back(std::move(texture));
@@ -515,7 +529,7 @@ ModelAsset& ResourceManager::LoadModel(
         backendKind,
         normalizedModelPath,
         name,
-        this->graphicsDevice,
+        this->renderCache,
         this->programCache
     );
 

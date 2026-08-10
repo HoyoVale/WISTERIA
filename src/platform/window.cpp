@@ -1,5 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/window.hpp"
+#include "wisteria/rendering/graphics_device.hpp"
 #include <glad/gl.h>
 #include <cstring>
 #include <iostream>

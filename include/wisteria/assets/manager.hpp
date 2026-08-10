@@ -17,6 +17,7 @@
 namespace wisteria
 {
 class Application;
+class RenderResourceCache;
 
 struct TexturePathKey
 {
@@ -54,6 +55,10 @@ public:
     // every material created here shares the device's shader program cache.
     // Resources still release through the device's context rules.
     void BindGraphicsDevice(GraphicsDevice& device);
+    // R2.0 Phase 0C 6A: per-device shared realization cache used when
+    // creating mesh/texture/material assets. CPU-only when unset (assets
+    // can be cache-bound later via SetRenderCache).
+    void SetRenderCache(RenderResourceCache& cache);
 
     Mesh& CreateMesh(
         const std::string& name,
@@ -140,6 +145,7 @@ public:
 
 private:
     GraphicsDevice* graphicsDevice = nullptr;
+    RenderResourceCache* renderCache = nullptr;
     std::shared_ptr<ProgramCache> programCache =
         std::make_shared<ProgramCache>();
     std::unordered_map<std::string, std::unique_ptr<Mesh>> meshes;

@@ -3,6 +3,7 @@
 #include "wisteria/rendering/vao.hpp"
 #include "wisteria/animation/pose.hpp"
 #include "backend/opengl/mesh_gpu_resource.hpp"
+#include "backend/opengl/render_resource_cache.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -38,7 +39,7 @@ glm::vec3 CalculateBoundsCenter(const DefaultModelData& data)
     {
         if (!foundPosition && attribute.name == "position")
         {
-            if (attribute.type != FLOAT || attribute.size < 3)
+            if (attribute.format != FLOAT || attribute.size < 3)
             {
                 throw std::invalid_argument(
                     "Mesh position must contain at least three FLOAT components"
@@ -47,7 +48,7 @@ glm::vec3 CalculateBoundsCenter(const DefaultModelData& data)
             positionOffsetBytes = strideBytes;
             foundPosition = true;
         }
-        strideBytes += attribute.size * DataTypeSize(attribute.type);
+        strideBytes += attribute.size * DataTypeSize(attribute.format);
     }
     if (!foundPosition || strideBytes == 0 ||
         data.VertexBytes() % strideBytes != 0)
@@ -86,7 +87,7 @@ std::size_t CalculateVertexCount(const DefaultModelData& data)
         return 0U;
     std::size_t strideBytes = 0U;
     for (const Layout& attribute : data.layout)
-        strideBytes += attribute.size * DataTypeSize(attribute.type);
+        strideBytes += attribute.size * DataTypeSize(attribute.format);
     if (strideBytes == 0U || data.VertexBytes() % strideBytes != 0U)
         throw std::invalid_argument("Mesh vertex data does not match its layout");
     return data.VertexBytes() / strideBytes;
@@ -99,18 +100,21 @@ Mesh::Mesh(
     std::size_t requiredBoneCount,
     std::vector<MeshMorphTarget> morphTargets,
     std::vector<std::uint32_t> sourceVertexIndices,
-    GraphicsDevice* device
+    RenderResourceCache* cache
 )
-    : device(device),
-      data(std::move(data)),
+    : data(std::move(data)),
       morphTargets(std::move(morphTargets)),
       requiredBoneCount(requiredBoneCount),
-      sourceVertexIndices(std::move(sourceVertexIndices))
+      sourceVertexIndices(std::move(sourceVertexIndices)),
+      cache(cache)
 {
-    // The GPU realization is created unconditionally; device may be null in
-    // stable render composition paths where attach happens later under a
-    // current context (legacy VBO/EBO behavior).
-    this->gpu = std::make_unique<MeshGpuResource>(device);
+    // Static assets may share one per-device realization; instance clones
+    // never do (CloneForInstance passes no cache), so runtime-deformed
+    // geometry stays instance-local.
+    if (this->cache != nullptr)
+        this->gpu = this->cache->AcquireStaticMesh(this->data);
+    else
+        this->gpu = std::make_shared<MeshGpuResource>(nullptr);
     const auto hasAttribute = [this](const char* name)
     {
         return std::any_of(
@@ -148,26 +152,26 @@ Mesh::Mesh(
         {
             if (attribute.name == "position")
             {
-                if (attribute.type != FLOAT || attribute.size < 3U)
+                if (attribute.format != FLOAT || attribute.size < 3U)
                     throw std::invalid_argument("Skinned Mesh position layout is invalid");
                 positionOffset = strideBytes;
                 foundPosition = true;
             }
             else if (attribute.name == "boneIndices")
             {
-                if (attribute.type != FLOAT || attribute.size != 4U)
+                if (attribute.format != FLOAT || attribute.size != 4U)
                     throw std::invalid_argument("Skinned Mesh bone index layout is invalid");
                 boneIndexOffset = strideBytes;
                 foundBoneIndices = true;
             }
             else if (attribute.name == "boneWeights")
             {
-                if (attribute.type != FLOAT || attribute.size != 4U)
+                if (attribute.format != FLOAT || attribute.size != 4U)
                     throw std::invalid_argument("Skinned Mesh bone weight layout is invalid");
                 boneWeightOffset = strideBytes;
                 foundBoneWeights = true;
             }
-            strideBytes += attribute.size * DataTypeSize(attribute.type);
+            strideBytes += attribute.size * DataTypeSize(attribute.format);
         }
         if (!foundPosition || !foundBoneIndices || !foundBoneWeights ||
             strideBytes == 0U)
@@ -317,13 +321,34 @@ std::size_t Mesh::VertexCount() const noexcept
 
 std::unique_ptr<Mesh> Mesh::CloneForInstance() const
 {
-    return std::make_unique<Mesh>(
+    auto clone = std::make_unique<Mesh>(
         this->data,
         this->requiredBoneCount,
         this->morphTargets,
         this->sourceVertexIndices,
-        this->device
+        this->cache
     );
+    clone->instanceLocal = true;
+    // Instance clones must own a distinct realization: runtime-deformed
+    // geometry must never share the static cache entry.
+    if (this->cache != nullptr)
+        clone->gpu = this->cache->CreateInstanceMesh(this->data);
+    else
+        clone->gpu = std::make_shared<MeshGpuResource>(nullptr);
+    return clone;
+}
+
+void Mesh::SetRenderCache(RenderResourceCache* nextCache)
+{
+    if (this->gpu != nullptr && this->gpu->IsAttached())
+        return;
+    this->cache = nextCache;
+    if (this->cache == nullptr)
+        return;
+    if (this->instanceLocal)
+        this->gpu = this->cache->CreateInstanceMesh(this->data);
+    else
+        this->gpu = this->cache->AcquireStaticMesh(this->data);
 }
 
 std::vector<float> Mesh::RebuildInterleavedVertices(

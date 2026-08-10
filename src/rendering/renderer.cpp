@@ -39,6 +39,11 @@ private:
 
 Renderer::Renderer(RenderDevice* renderDevice)
     : device(OpenGlRenderDevice::GraphicsDeviceFrom(renderDevice)),
+      renderCache(
+          renderDevice != nullptr
+              ? &dynamic_cast<OpenGlRenderDevice*>(renderDevice)->RenderCache()
+              : nullptr
+      ),
       oitFramebuffer(this->device),
       shadowFramebuffer(this->device)
 {

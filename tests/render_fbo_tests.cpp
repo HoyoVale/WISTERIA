@@ -12,6 +12,8 @@
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/rendering/primitives/cube.hpp"
 #include "wisteria/scene/scene.hpp"
+#include "rendering/backend/opengl/render_resource_cache.hpp"
+#include "rendering/backend/opengl/texture_gpu_resource.hpp"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -526,15 +528,14 @@ int main()
             deferredDevice.SetShareGroupToken(window);
             GraphicsDevice::SetCurrentShareGroup(window);
             {
-                Texture immediate(
-                    TextureData::FromRgba8(
-                        2,
-                        2,
-                        std::vector<std::uint8_t>(16U, 255U)
-                    ),
-                    &deferredDevice
+                const std::vector<std::uint8_t> pixels(16U, 255U);
+                TextureGpuResource immediate(&deferredDevice);
+                immediate.UploadDecodedPixels(
+                    pixels.data(),
+                    2,
+                    2,
+                    wisteria::TextureColorSpace::Srgb
                 );
-                immediate.Attach();
             }
             Require(
                 deferredDevice.PendingDeleteCount() == 0U,
@@ -543,15 +544,14 @@ int main()
 
             GraphicsDevice::SetCurrentShareGroup(nullptr);
             {
-                Texture queued(
-                    TextureData::FromRgba8(
-                        2,
-                        2,
-                        std::vector<std::uint8_t>(16U, 255U)
-                    ),
-                    &deferredDevice
+                const std::vector<std::uint8_t> pixels(16U, 255U);
+                TextureGpuResource queued(&deferredDevice);
+                queued.UploadDecodedPixels(
+                    pixels.data(),
+                    2,
+                    2,
+                    wisteria::TextureColorSpace::Srgb
                 );
-                queued.Attach();
             }
             Require(
                 deferredDevice.PendingDeleteCount() == 1U,
@@ -679,8 +679,10 @@ int main()
         // dangle; a later mesh at the same address rebuilds the VAO.
         {
             GraphicsDevice cacheDevice;
+            RenderResourceCache cache(&cacheDevice);
             ResourceManager cacheResources;
             cacheResources.BindGraphicsDevice(cacheDevice);
+            cacheResources.SetRenderCache(cache);
             Camera camera(CameraParam{
                 .Position = {0.0f, 3.0f, 3.0f},
                 .Target = {0.0f, 0.0f, 0.0f},
@@ -706,7 +708,7 @@ int main()
                 Material groundMaterial(
                     groundData,
                     std::make_shared<ProgramCache>(),
-                    &cacheDevice
+                    &cache
                 );
                 scene.CreateEntity(*mesh, groundMaterial);
                 sceneFramebuffer.Clear(glm::vec4(0.2f, 0.2f, 0.2f, 1.0f));
@@ -727,7 +729,7 @@ int main()
                 0U,
                 std::vector<MeshMorphTarget>{},
                 std::vector<std::uint32_t>{},
-                &cacheDevice
+                &cache
             );
             renderMesh();
             mesh.reset();
@@ -736,7 +738,7 @@ int main()
                 0U,
                 std::vector<MeshMorphTarget>{},
                 std::vector<std::uint32_t>{},
-                &cacheDevice
+                &cache
             );
             renderMesh();
             std::printf(

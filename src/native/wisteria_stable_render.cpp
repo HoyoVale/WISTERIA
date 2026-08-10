@@ -210,6 +210,27 @@ private:
     StableEntityEntry& entry;
     Entity& entity;
 };
+
+// R2.0 Phase 0C 6A: stable entity assets are created CPU-only (before any
+// render session exists); bind the session's per-device cache before the
+// first GPU touch so meshes/materials can acquire realizations.
+void BindEntityRenderCache(
+    StableEntityEntry& entry,
+    HeadlessRenderSession& session
+)
+{
+    RenderResourceCache& cache = session.GetRenderCache();
+    for (const auto& mesh : entry.meshes)
+    {
+        if (mesh != nullptr)
+            mesh->SetRenderCache(&cache);
+    }
+    for (const auto& material : entry.materials)
+    {
+        if (material != nullptr)
+            material->SetRenderCache(&cache);
+    }
+}
 }  // namespace
 
 extern "C"
@@ -385,6 +406,7 @@ std::uint32_t wisteria_stable_render_session_render(
             .Color = glm::vec3(1.0f, 0.96f, 0.92f),
             .Intensity = 1.0f
         });
+        BindEntityRenderCache(*entry, *sessionIterator->second->session);
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
         EntityBorrowGuard guard(*entry, *scene, renderEntity);
@@ -471,6 +493,7 @@ std::uint32_t wisteria_stable_render_session_sequence_range(
             .Color = glm::vec3(1.0f, 0.96f, 0.92f),
             .Intensity = 1.0f
         });
+        BindEntityRenderCache(*entry, *sessionIterator->second->session);
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
         EntityBorrowGuard guard(*entry, *scene, renderEntity);
@@ -603,6 +626,7 @@ std::uint32_t wisteria_stable_render_session_sequence_resume(
             .Color = glm::vec3(1.0f, 0.96f, 0.92f),
             .Intensity = 1.0f
         });
+        BindEntityRenderCache(*entry, *sessionIterator->second->session);
         Entity& renderEntity = scene->CreateEntity();
         renderEntity.SetModelInstance(std::move(entry->modelInstance));
         EntityBorrowGuard guard(*entry, *scene, renderEntity);

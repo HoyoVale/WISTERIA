@@ -31,6 +31,7 @@ HeadlessRenderSession::HeadlessRenderSession(
     }
     GraphicsDevice& graphicsDevice = openGl->LegacyGraphicsDevice();
     this->resources.BindGraphicsDevice(graphicsDevice);
+    this->resources.SetRenderCache(openGl->RenderCache());
     graphicsDevice.SetShareGroupToken(this->context->ShareGroupToken());
 }
 
@@ -96,6 +97,14 @@ GraphicsDevice& HeadlessRenderSession::GetGraphicsDevice() noexcept
 RenderDevice& HeadlessRenderSession::GetRenderDevice() noexcept
 {
     return *this->renderDevice;
+}
+
+RenderResourceCache& HeadlessRenderSession::GetRenderCache() noexcept
+{
+    auto* openGl = dynamic_cast<OpenGlRenderDevice*>(
+        this->renderDevice.get()
+    );
+    return openGl->RenderCache();
 }
 
 ResourceManager& HeadlessRenderSession::GetResources() noexcept

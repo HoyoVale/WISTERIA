@@ -14,6 +14,8 @@
 
 namespace wisteria
 {
+class RenderResourceCache;
+
 // R1.9 Final Fix: engine-owned CPU assembly of an ImportedModelData into a
 // ModelAsset plus its meshes, materials and textures. ResourceManager and
 // the stable C ABI reuse this single pipeline so material/texture channels
@@ -38,7 +40,7 @@ ModelAssetBundle BuildModelAssetBundle(
     ModelBackendKind backendKind,
     const std::filesystem::path& sourcePath,
     const std::string& name,
-    GraphicsDevice* device,
+    RenderResourceCache* cache,
     std::shared_ptr<ProgramCache> programCache
 );
 }  // namespace wisteria

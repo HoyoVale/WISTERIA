@@ -1,7 +1,6 @@
 #pragma once
-#include "wisteria/rendering/shader.hpp"
-#include "wisteria/rendering/program_cache.hpp"
 #include "wisteria/core/asset_paths.hpp"
+#include "wisteria/rendering/shader_path.hpp"
 #include "wisteria/rendering/texture.hpp"
 #include <string>
 #include <cstddef>
@@ -12,6 +11,9 @@
 namespace wisteria
 {
 class MaterialGpuResource;
+class Program;
+class ProgramCache;
+class RenderResourceCache;
 
 enum class TransformUniformMode
 {
@@ -201,25 +203,29 @@ class Material{
 public:
     explicit Material(
         const MaterialData& _data = {},
-        GraphicsDevice* device = nullptr
+        RenderResourceCache* cache = nullptr
     );
     Material(
         const MaterialData& data,
         std::shared_ptr<ProgramCache> programCache,
-        GraphicsDevice* device = nullptr
+        RenderResourceCache* cache = nullptr
     );
     Material(
         const MaterialData& data,
         MaterialTextureBindings textureBindings,
-        GraphicsDevice* device = nullptr
+        RenderResourceCache* cache = nullptr
     );
     Material(
         const MaterialData& data,
         MaterialTextureBindings textureBindings,
         std::shared_ptr<ProgramCache> programCache,
-        GraphicsDevice* device = nullptr
+        RenderResourceCache* cache = nullptr
     );
     ~Material();
+
+    // R2.0 Phase 0C 6A: attach a per-device cache after CPU-only creation.
+    // No-op once a realization is attached.
+    void SetRenderCache(RenderResourceCache* cache);
 
     void Attach();
     void Bind();
@@ -264,10 +270,12 @@ public:
     void SetOcclusionStrength(float occlusionStrength) noexcept;
 
 private:
-    GraphicsDevice* device = nullptr;
     // R2.0 Phase 0C Step 4: GPU/pipeline realization lives outside the
     // semantic MaterialData (program cache, compiled program, bindings).
     std::unique_ptr<MaterialGpuResource> gpu;
     MaterialData data;
+    std::shared_ptr<ProgramCache> programCache;
+    MaterialTextureBindings textures;
+    RenderResourceCache* cache = nullptr;
 };
 }  // namespace wisteria

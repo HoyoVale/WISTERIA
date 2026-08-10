@@ -1,8 +1,7 @@
 #pragma once
 #include "wisteria/rendering/model.hpp"
 #include "wisteria/animation/morph.hpp"
-#include "wisteria/rendering/vbo.hpp"
-#include "wisteria/rendering/ebo.hpp"
+#include "wisteria/rendering/vertex_layout.hpp"
 #include "wisteria/physics/physics_types.hpp"
 #include <array>
 #include <cstdint>
@@ -17,6 +16,8 @@ class VAO;
 class Pose;
 class Mesh;
 class MeshGpuResource;
+class RenderResourceCache;
+class GraphicsDevice;
 
 // Called by the Renderer with the owning window's GL context current. Used by
 // CPU-skinned models (Saba) to upload vertices at the correct time/context.
@@ -29,7 +30,7 @@ public:
         std::size_t requiredBoneCount = 0,
         std::vector<MeshMorphTarget> morphTargets = {},
         std::vector<std::uint32_t> sourceVertexIndices = {},
-        GraphicsDevice* device = nullptr
+        RenderResourceCache* cache = nullptr
     );
     ~Mesh();
 
@@ -50,6 +51,16 @@ public:
     std::size_t VertexCount() const noexcept;
 
     std::unique_ptr<Mesh> CloneForInstance() const;
+
+    // R2.0 Phase 0C 6A: attach a per-device cache after CPU-only creation
+    // (stable entity assets are created before any render session exists).
+    // No-op once a realization is attached.
+    void SetRenderCache(RenderResourceCache* cache);
+
+    // R2.0 Phase 0C (P0-4): explicit realization class. Static assets may
+    // enter the shared per-device cache; instance clones must never do so.
+    // Never inferred from runtime state (e.g. HasDynamicVertexSource).
+    bool IsInstanceLocal() const noexcept { return this->instanceLocal; }
 
     // CPU-skinning bridge (Saba BDEF/SDEF/QDEF): uploads skinned
     // positions/normals every frame without rebuilding the whole VBO.
@@ -117,13 +128,14 @@ private:
     };
 
     DefaultModelData data;
-    // Owning-device association for clone-time realization creation (0C
-    // transition; RenderResourceCache replaces this in a later 0C step).
-    GraphicsDevice* device = nullptr;
     // R2.0 Phase 0C: the GPU realization lives outside the CPU asset.
     // Instance clones own their own realization so runtime-deformed
     // geometry is never shared between ModelInstances.
-    std::unique_ptr<MeshGpuResource> gpu;
+    // Shared realization for static assets (per-device cache) or
+    // instance-owned for runtime-deformed clones.
+    std::shared_ptr<MeshGpuResource> gpu;
+    RenderResourceCache* cache = nullptr;
+    bool instanceLocal = false;
     glm::vec3 localBoundsCenter{0.0f};
     std::vector<MeshMorphTarget> morphTargets;
     std::vector<SkinningDebugVertex> skinningDebugVertices;

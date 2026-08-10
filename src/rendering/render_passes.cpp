@@ -19,6 +19,11 @@ void Renderer::DrawPart(
 {
     Mesh& mesh = part.GetMesh();
     Material& material = part.GetMaterial();
+    if (this->renderCache != nullptr)
+    {
+        mesh.SetRenderCache(this->renderCache);
+        material.SetRenderCache(this->renderCache);
+    }
     mesh.Attach();
     if (mesh.DynamicVertexProvider())
         mesh.DynamicVertexProvider()(mesh);
@@ -403,6 +408,8 @@ void Renderer::RenderShadowPass(
         if (!command.part->GetMaterial().CastsSelfShadow())
             continue;
         Mesh& mesh = command.part->GetMesh();
+        if (this->renderCache != nullptr)
+            mesh.SetRenderCache(this->renderCache);
         mesh.Attach();
         if (mesh.DynamicVertexProvider())
             mesh.DynamicVertexProvider()(mesh);
@@ -524,6 +531,8 @@ void Renderer::RenderGroundShadowPass(
     const auto drawFlattened = [&](const RenderCommand& command)
     {
         Mesh& mesh = command.part->GetMesh();
+        if (this->renderCache != nullptr)
+            mesh.SetRenderCache(this->renderCache);
         mesh.Attach();
         if (mesh.DynamicVertexProvider())
             mesh.DynamicVertexProvider()(mesh);

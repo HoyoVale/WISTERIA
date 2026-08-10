@@ -22,6 +22,7 @@ class MorphState;
 class Pose;
 class VAO;
 class RenderDevice;
+class RenderResourceCache;
 
 // Defined in src/rendering/renderer_internal.hpp; forward-declared here so
 // private pass methods can reference command lists in the public header.
@@ -197,6 +198,10 @@ private:
     int shadowMapSize = 2048;
     int shadowPcfRadius = 1;
     float shadowBias = 0.003f;
+    // R2.0 Phase 0C 6A: per-device cache propagated to CPU-created assets
+    // right before their first GPU touch (the Renderer owns the composition
+    // moment; assets may have been created before any session existed).
+    RenderResourceCache* renderCache = nullptr;
     bool independentBlendSupported = false;
     std::size_t maximumSkinningMatrices = 0;
     const Pose* uploadedPose = nullptr;

@@ -3,6 +3,7 @@
 #include "material_gpu_resource.hpp"
 
 #include "wisteria/rendering/program_cache.hpp"
+#include "render_resource_cache.hpp"
 #include "wisteria/rendering/shader.hpp"
 
 #include <stdexcept>
@@ -13,9 +14,9 @@ MaterialGpuResource::MaterialGpuResource(
     const MaterialData&,
     MaterialTextureBindings nextTextures,
     std::shared_ptr<ProgramCache> nextProgramCache,
-    GraphicsDevice* nextDevice
+    RenderResourceCache* cache
 )
-    : device(nextDevice),
+    : device(cache != nullptr ? cache->Device() : nullptr),
       programCache(std::move(nextProgramCache)),
       textures(std::move(nextTextures))
 {
@@ -77,6 +78,11 @@ bool MaterialGpuResource::HasTexture(
 ) const noexcept
 {
     return this->textures.contains(uniformName);
+}
+
+bool MaterialGpuResource::IsAttached() const noexcept
+{
+    return this->program != nullptr;
 }
 
 Program& MaterialGpuResource::GetProgram()

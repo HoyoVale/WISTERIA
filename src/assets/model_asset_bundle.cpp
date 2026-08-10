@@ -13,7 +13,7 @@ ModelAssetBundle BuildModelAssetBundle(
     ModelBackendKind backendKind,
     const std::filesystem::path& sourcePath,
     const std::string& name,
-    GraphicsDevice* device,
+    RenderResourceCache* cache,
     std::shared_ptr<ProgramCache> programCache
 )
 {
@@ -146,7 +146,7 @@ ModelAssetBundle BuildModelAssetBundle(
                 data,
                 std::move(bindings),
                 programCache,
-                device
+                cache
             )
         );
     }
@@ -170,7 +170,7 @@ ModelAssetBundle BuildModelAssetBundle(
                 meshData.requiredBoneCount,
                 std::move(meshData.morphTargets),
                 std::move(meshData.sourceVertexIndices),
-                device
+                cache
             )
         );
     }

@@ -37,6 +37,9 @@ Application::Application()
     GraphicsDevice& graphicsDevice =
         LegacyGraphicsDevice(*this->renderDevice);
     this->resources.BindGraphicsDevice(graphicsDevice);
+    this->resources.SetRenderCache(
+        dynamic_cast<OpenGlRenderDevice&>(*this->renderDevice).RenderCache()
+    );
     this->windowManager.SetRenderDevice(*this->renderDevice);
     this->windowManager.SetGraphicsDevice(graphicsDevice);
 }
@@ -342,6 +345,12 @@ void Application::Shutdown() noexcept
         {
             graphicsDevice.ReleaseAll();
             this->resources.Clear();
+            // R2.0 Phase 0C 6A: shared realizations outlive ResourceManager
+            // objects; clear them while a context is still current, before
+            // the last window (and its context) is destroyed.
+            dynamic_cast<OpenGlRenderDevice&>(*this->renderDevice)
+                .RenderCache()
+                .Clear();
         }
     }
 

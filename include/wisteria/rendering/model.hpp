@@ -1,13 +1,12 @@
 #pragma once
 
 #include "wisteria/rendering/render_device.hpp"
+#include "wisteria/rendering/vertex_layout.hpp"
 
 #include <glm/glm.hpp>
 
 #include <type_traits>
 #include <vector>
-
-#include "wisteria/rendering/vbo.hpp"
 
 namespace wisteria
 {

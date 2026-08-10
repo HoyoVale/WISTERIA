@@ -4,6 +4,8 @@
 
 #include "wisteria/rendering/graphics_device.hpp"
 
+#include "render_resource_cache.hpp"
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -23,7 +25,7 @@ namespace wisteria
 class OpenGlRenderDevice final : public RenderDevice
 {
 public:
-    OpenGlRenderDevice() = default;
+    OpenGlRenderDevice();
     ~OpenGlRenderDevice() override;
 
     OpenGlRenderDevice(const OpenGlRenderDevice&) = delete;
@@ -71,6 +73,10 @@ public:
         RenderDevice* renderDevice
     ) noexcept;
 
+    // R2.0 Phase 0C Step 6: per-device shared realization cache (static
+    // assets only; runtime-deformed instances never consult it).
+    RenderResourceCache& RenderCache() noexcept;
+
 private:
     enum class ResourceKind
     {
@@ -94,6 +100,7 @@ private:
     void Erase(std::uint64_t id) noexcept;
 
     GraphicsDevice graphicsDevice;
+    RenderResourceCache renderCache;
     RenderDeviceCapabilities capabilities;
     bool capabilitiesValid = false;
     std::uint64_t nextHandle = 1U;

@@ -9,7 +9,7 @@ namespace
 {
 MaterialTextureBindings BuildTextureBindings(
     const MaterialData& data,
-    GraphicsDevice* device
+    RenderResourceCache* cache
 )
 {
     MaterialTextureBindings bindings;
@@ -17,7 +17,7 @@ MaterialTextureBindings BuildTextureBindings(
     {
         bindings.emplace(
             uniformName,
-            std::make_shared<Texture>(source, device)
+            std::make_shared<Texture>(source, cache)
         );
     }
     return bindings;
@@ -25,12 +25,12 @@ MaterialTextureBindings BuildTextureBindings(
 
 }
 
-Material::Material(const MaterialData& _data, GraphicsDevice* device)
+Material::Material(const MaterialData& _data, RenderResourceCache* cache)
     : Material(
           _data,
-          BuildTextureBindings(_data, device),
+          BuildTextureBindings(_data, cache),
           std::make_shared<ProgramCache>(),
-          device
+          cache
       )
 {
 }
@@ -38,13 +38,13 @@ Material::Material(const MaterialData& _data, GraphicsDevice* device)
 Material::Material(
     const MaterialData& data,
     std::shared_ptr<ProgramCache> programCache,
-    GraphicsDevice* device
+    RenderResourceCache* cache
 )
     : Material(
           data,
-          BuildTextureBindings(data, device),
+          BuildTextureBindings(data, cache),
           std::move(programCache),
-          device
+          cache
       )
 {
 }
@@ -52,13 +52,13 @@ Material::Material(
 Material::Material(
     const MaterialData& data,
     MaterialTextureBindings textureBindings,
-    GraphicsDevice* device
+    RenderResourceCache* cache
 )
     : Material(
           data,
           std::move(textureBindings),
           std::make_shared<ProgramCache>(),
-          device
+          cache
       )
 {
 }
@@ -67,16 +67,12 @@ Material::Material(
     const MaterialData& data,
     MaterialTextureBindings textureBindings,
     std::shared_ptr<ProgramCache> programCache,
-    GraphicsDevice* device
+    RenderResourceCache* cache
 )
-    : device(device),
-      gpu(std::make_unique<MaterialGpuResource>(
-          data,
-          std::move(textureBindings),
-          std::move(programCache),
-          device
-      )),
-      data(data)
+    : data(data),
+      programCache(std::move(programCache)),
+      textures(std::move(textureBindings)),
+      cache(cache)
 {
     if (!std::isfinite(this->data.alphaCutoff))
         throw std::invalid_argument("Material alpha cutoff must be finite");
@@ -141,32 +137,82 @@ Material::Material(
         glm::vec4(1.0f)
     );
     this->data.edgeSize = glm::max(this->data.edgeSize, 0.0f);
+
+    this->gpu = std::make_unique<MaterialGpuResource>(
+        this->data,
+        this->textures,
+        this->programCache,
+        this->cache
+    );
 }
 
 Material::~Material() = default;
 
+void Material::SetRenderCache(RenderResourceCache* nextCache)
+{
+    if (this->gpu != nullptr && this->gpu->IsAttached())
+        return;
+    this->cache = nextCache;
+    if (this->cache == nullptr)
+        return;
+    for (const auto& [uniformName, texture] : this->textures)
+        texture->SetRenderCache(this->cache);
+    this->gpu = std::make_unique<MaterialGpuResource>(
+        this->data,
+        this->textures,
+        this->programCache,
+        this->cache
+    );
+}
+
 void Material::Attach()
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Material without a RenderResourceCache cannot attach"
+        );
+    }
     this->gpu->Attach(this->data);
 }
 
 void Material::Bind()
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Material without a RenderResourceCache cannot bind"
+        );
+    }
     this->gpu->Bind();
 }
 
 void Material::Unbind()
 {
+    if (this->gpu == nullptr)
+        return;
     this->gpu->Unbind();
 }
 
 Program& Material::GetProgram()
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Material without a RenderResourceCache cannot provide a program"
+        );
+    }
     return this->gpu->GetProgram();
 }
 
 const Program& Material::GetProgram() const
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Material without a RenderResourceCache cannot provide a program"
+        );
+    }
     return this->gpu->GetProgram();
 }
 
@@ -287,7 +333,7 @@ void Material::SetReceivesGroundShadow(bool enabled) noexcept
 
 bool Material::HasTexture(const std::string& uniformName) const noexcept
 {
-    return this->gpu->HasTexture(uniformName);
+    return this->textures.contains(uniformName);
 }
 
 const ShaderInterface& Material::Interface() const noexcept

@@ -200,6 +200,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/backend/opengl/mesh_gpu_resource.cpp
     src/rendering/backend/opengl/material_gpu_resource.cpp
     src/rendering/backend/opengl/environment_gpu_resource.cpp
+    src/rendering/backend/opengl/render_resource_cache.cpp
     src/rendering/backend/opengl/texture_gpu_resource.cpp
     src/rendering/ebo.cpp
     src/rendering/environment.cpp
@@ -483,6 +484,9 @@ if(BUILD_TESTING)
     )
     if(WISTERIA_BUILD_NATIVE)
         target_link_libraries(wisteria_integration_tests PRIVATE wisteria_native)
+        target_include_directories(wisteria_integration_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
         target_compile_definitions(wisteria_integration_tests PRIVATE
             WISTERIA_TEST_NATIVE_ABI=1
         )
@@ -528,6 +532,29 @@ if(BUILD_TESTING)
         COMMAND wisteria_render_device_neutral_compile
     )
 
+    # R2.0 Phase 0C Step 6A: CPU asset headers (model/mesh/texture/material/
+    # environment) must compile without any OpenGL/Vulkan dependency. Links
+    # nothing (std only), so glad can never leak in transitively.
+    add_executable(wisteria_render_assets_neutral_compile
+        tests/render_assets_neutral_compile.cpp
+    )
+    target_include_directories(wisteria_render_assets_neutral_compile PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/glm
+    )
+    target_compile_features(
+        wisteria_render_assets_neutral_compile PRIVATE cxx_std_20
+    )
+    if(MSVC)
+        target_compile_options(
+            wisteria_render_assets_neutral_compile PRIVATE /utf-8
+        )
+    endif()
+    add_test(
+        NAME wisteria.render-assets-neutral-compile
+        COMMAND wisteria_render_assets_neutral_compile
+    )
+
     # Minimal render regression: creates a real GL context and verifies that
     # the engine SceneFramebuffer clears and reads back two consecutive
     # frames. Skips when no display backend is available (Linux NULL build).
@@ -535,6 +562,9 @@ if(BUILD_TESTING)
     target_link_libraries(wisteria_render_tests PRIVATE
         wisteria_core
         glfw
+    )
+    target_include_directories(wisteria_render_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
     target_compile_definitions(wisteria_render_tests PRIVATE
         GLFW_INCLUDE_NONE

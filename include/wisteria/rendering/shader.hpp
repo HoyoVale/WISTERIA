@@ -1,5 +1,6 @@
 #pragma once
 #include "wisteria/core/asset_paths.hpp"
+#include "wisteria/rendering/shader_path.hpp"
 #include <string>
 #include <filesystem>
 #include <glad/gl.h>
@@ -10,11 +11,6 @@
 
 namespace wisteria
 {
-struct Path{
-    std::string VertexPath = wisteria::assets::Shader("basicTex.vert");
-    std::string FragmentPath = wisteria::assets::Shader("basicTex.frag");
-};
-
 class Shader{
 public:
     Shader(

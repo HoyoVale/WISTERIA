@@ -69,6 +69,11 @@ GLenum MapWrap(TextureWrap wrap) noexcept
 
 OpenGlRenderDevice::~OpenGlRenderDevice() = default;
 
+OpenGlRenderDevice::OpenGlRenderDevice()
+    : renderCache(&this->graphicsDevice)
+{
+}
+
 RenderBackendId OpenGlRenderDevice::BackendId() const noexcept
 {
     return RenderBackendId::OpenGL;
@@ -503,6 +508,11 @@ GraphicsDevice* OpenGlRenderDevice::GraphicsDeviceFrom(
         return nullptr;
     auto* openGl = dynamic_cast<OpenGlRenderDevice*>(renderDevice);
     return openGl != nullptr ? &openGl->graphicsDevice : nullptr;
+}
+
+RenderResourceCache& OpenGlRenderDevice::RenderCache() noexcept
+{
+    return this->renderCache;
 }
 
 const OpenGlRenderDevice::ResourceEntry* OpenGlRenderDevice::Find(

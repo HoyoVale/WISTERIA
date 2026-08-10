@@ -1,6 +1,8 @@
 # R2.0 Phase 0C — CPU Asset / GPU Realization Split 基线（2026-08-10）
 
-> 状态：**IN PROGRESS — Step 1..5 IMPLEMENTED / VALIDATED**
+> 状态：**Step 1..7 IMPLEMENTED / VALIDATED（0C 主体完成，待 ChatGPT 复审）**
+> 更新（2026-08-10 复审后 6A/6B/Step 7 重开）：
+> **6A Neutral Asset Boundary 大部分完成**，6B/Step 7 剩余项见 §9。
 > 前置：R2.0 0B CLOSED（`d05f2a6`）。
 > 范围：Mesh / Texture / Material / EnvironmentMap 的 CPU asset 与 GPU
 > realization 分离；per-device RenderResourceCache；动态 geometry 实例隔离。
@@ -47,16 +49,122 @@ TestR2MeshGpuRealizationSplit：
   ABI 94 legacy + 30 stable
 ```
 
-## 2. 0C 剩余子步（规划）
+## 2. Step 6 — RenderResourceCache（已完成）
 
 ```text
-Step 6  RenderResourceCache：
-        per RenderDevice 的 static/shared realization 归并；
-        dynamic 仍按 ModelInstance 隔离（0B/0C 契约）
+src/rendering/backend/opengl/render_resource_cache.hpp/.cpp（新增）
+  RenderResourceCache（per RenderDevice）：
+  - AcquireTexture：TextureData 身份（file path / payload FNV-1a）→
+    共享 TextureGpuResource
+  - AcquireStaticMesh：vertices/indices/layout FNV-1a → 共享
+    MeshGpuResource
+  - Clear / TextureCount / StaticMeshCount
 
-Step 7  ShaderStageDesc 再审（0C/0D watchpoint）：
-        backend 负责 shader/pipeline realization，
-        neutral 层不得出现 if (OpenGL) GLSL else SPIR-V
+OpenGlRenderDevice：持有 renderCache + RenderCache()（OpenGL internal）
+HeadlessRenderSession：GetRenderCache()（OpenGL backend accessor）
+
+Mesh / Texture：
+  - 构造新增 RenderResourceCache* cache = nullptr：
+    cache 非空 → 共享 realization（shared_ptr）；
+    cache 为空 → instance-local（默认，所有现有调用不变）
+  - CloneForInstance 不传 cache → 动态实例永远独立
+
+tests：TestR2RenderResourceCache
+  - 相同 TextureData → 1 个 realization，Attach 后两 Texture 均 attached
+  - 不同 payload → 2 个 realization
+  - 相同静态 Mesh 数据 → 1 个 realization，Attach 后共享
+  - CloneForInstance → 不进入 cache（StaticMeshCount 保持 1）
+```
+
+生产接入点说明：ResourceManager / ModelAssetBundle / stable entity 创建
+资产时还没有 device/session 关联（entity 创建早于 render session），
+因此 0C 内共享 cache 只作为能力 + 验证面存在；生产路径接入随 0D
+（Renderer 迁移）一起完成。动态隔离在 0C 已由 CloneForInstance 保证。
+
+## 3. Step 7 — ShaderStageDesc 再审（已完成）
+
+```text
+include/wisteria/rendering/render_device.hpp
+  - ShaderStageDesc.source 注释强化：
+    source 语言由 backend 拥有（OpenGL=GLSL / R2.1 Vulkan=SPIR-V）；
+    neutral 层禁止 if (OpenGL) GLSL else SPIR-V 分支
+  - 新增 PipelineVariant / PipelineVariantKey：
+    PbrMetallicRoughness / MmdToon / ShadowDepth / GroundShadow /
+    Skybox / OitComposite / Present
+    0D RenderGraph/pipeline realization 据此选择 backend pipeline，
+    不再通过 neutral 层运送 GLSL
+  - 0B/0C 保持 GraphicsPipelineDesc.stages 为工作面（不破坏现有）
+```
+
+裁决记录：shader/pipeline realization 属于 backend；neutral 层只持有
+语义 variant key。这是 0A 冻结 watchpoint 的正式关闭条件。
+
+## 9. 复审后重开（2026-08-10）：6A Neutral Asset Boundary
+
+ChatGPT 复审 `f6c29f6`：Steps 1-5 物理拆分 APPROVED，但架构闭合
+NOT YET。按 6A → 6B → Step 7 路线执行。
+
+### 6A 已完成（本基线更新）
+
+```text
+include/wisteria/rendering/vertex_layout.hpp（新增，0 glad）
+  VertexFormat（Float32/Int32/Uint32/Uint8）
+  VertexSemantic（Position/Normal/TexCoord/BoneIndices/BoneWeights/
+                  MorphPosition/MorphUv0/Custom）
+  VertexAttribute / VertexLayout
+  legacy 别名：Layout/DataType/FLOAT/INT/UINT/UCHAR（兼容旧代码）
+
+vbo.hpp：Layout/DataType 定义移出（OpenGL wrapper 只留 VBO）
+model.hpp / mesh.hpp：脱离 vbo.hpp/ebo.hpp（include vertex_layout.hpp）
+shader_path.hpp（新增）：Path（VertexPath/FragmentPath）移出 GL 头
+material.hpp：脱离 shader.hpp/program_cache.hpp（前向声明）
+texture.hpp：移除 glad/GLuint/GetTexture
+environment.hpp：移除 glad
+
+Mesh/Texture/Material 构造：GraphicsDevice* → RenderResourceCache*
+  - cache 非空 → 共享 realization（AcquireStatic/Texture）
+  - cache 空 → instance-local placeholder（device null，延迟 Attach）
+  - SetRenderCache()：首次 GPU touch 前由 Renderer/stable 路径绑定
+  - Mesh 显式 instanceLocal 标记（P0-4：不推断自运行状态）
+RenderResourceCache：持 GraphicsDevice*；AcquireTexture/AcquireStaticMesh
+  （共享）+ CreateInstanceTexture/CreateInstanceMesh（独立不缓存）
+ResourceManager：SetRenderCache()；创建资产传 cache
+组合根：HeadlessRenderSession/Application 绑定 resources cache；
+  Application::Shutdown 在 context 有效窗口内 Clear cache
+Renderer：持有 renderCache，DrawPart/shadow 路径在 Attach 前
+  SetRenderCache（stable/engine 资产可延迟绑定）
+stable render：BindEntityRenderCache() 三条路径绑定 session cache
+
+静态 Gate：
+  wisteria.render-assets-neutral-compile（新增，PASS）
+  只 include model/mesh/texture/material/environment + 不链接 glad
+```
+
+### 验证（6A 更新后）
+
+```text
+Windows CORE 12/12、Windows FULL 13/13
+WSL CORE 14/14、WSL FULL 15/15
+ABI 94 legacy + 30 stable
+render-assets-neutral-compile / render-device-neutral-compile PASS
+```
+
+### 6A/6B/Step 7 剩余项（下轮）
+
+```text
+P0-2 Environment GPU lifetime 接 R1.7：
+  EnvironmentMapGpuResource 增加 GraphicsDevice/RenderResourceCache；
+  shared 资源（texture/buffer/program）走 DeleteResource；
+  context-local（VAO/FBO）按 owner 分离或 cache key 含 context
+Environment CPU decode 分离：
+  文件 IO + stb_image HDR decode 移出 OpenGL backend
+Step 7 pipeline semantic cleanup：
+  MaterialData.shaderFilePath/ShaderInterface/uniform 契约 →
+  PipelineVariantKey；legacy custom GLSL 关进 OpenGL legacy compatibility
+6B adversarial gates：
+  同 static Mesh 两个 RenderDevice → realization 不同
+  CreateTextureShared → 非 owning context destroy → pending delete
+  Environment shared/context-local ownership 分别验证
 ```
 
 ## 3. 复审注意事项

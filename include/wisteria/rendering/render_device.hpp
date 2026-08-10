@@ -210,15 +210,40 @@ enum class ShaderStage : std::uint8_t
 struct ShaderStageDesc
 {
     ShaderStage stage = ShaderStage::Vertex;
-    // Backend-defined source language (0B: GLSL; R2.1 Vulkan: SPIR-V).
+    // The source language is owned by the backend implementation:
+    // OpenGL accepts GLSL, Vulkan (R2.1) accepts SPIR-V. The neutral layer
+    // must NEVER branch "if (OpenGL) GLSL else SPIR-V" (0C Step 7): pipeline
+    // realization selection belongs to the backend.
     std::string_view source;
-    // 0B: informational only; OpenGL backend compiles the fixed main entry.
+    // Informational only in 0B/0C; OpenGL backend compiles the fixed main.
     std::string_view entryPoint;
+};
+
+// R2.0 Phase 0C Step 7: engine-semantic built-in pipeline variant key.
+// 0D RenderGraph/pipeline realization will select backend pipelines from
+// this key instead of shipping GLSL through the neutral layer. 0B/0C keep
+// GraphicsPipelineDesc.stages as the working surface.
+enum class PipelineVariant : std::uint8_t
+{
+    PbrMetallicRoughness,
+    MmdToon,
+    ShadowDepth,
+    GroundShadow,
+    Skybox,
+    OitComposite,
+    Present
+};
+
+struct PipelineVariantKey
+{
+    PipelineVariant variant = PipelineVariant::PbrMetallicRoughness;
+    // 0C: reserved for future semantic flags (alpha mode, skinning, morph).
+    std::uint32_t flags = 0U;
 };
 
 struct GraphicsPipelineDesc
 {
-    // Diagnostics only in 0B; layout/pipeline state is 0C/0D (additive).
+    // Diagnostics only in 0B/0C; layout/pipeline state is 0C/0D (additive).
     std::string_view label;
     std::vector<ShaderStageDesc> stages;
 };

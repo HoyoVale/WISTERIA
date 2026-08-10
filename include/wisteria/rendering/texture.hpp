@@ -1,8 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
-#include <glad/gl.h>
-#include "wisteria/rendering/graphics_device.hpp"
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -10,6 +9,7 @@
 namespace wisteria
 {
 class TextureGpuResource;
+class RenderResourceCache;
 
 enum class TextureColorSpace
 {
@@ -49,7 +49,7 @@ class Texture{
 public:
     explicit Texture(
         TextureData data = {},
-        GraphicsDevice* device = nullptr
+        RenderResourceCache* cache = nullptr
     );
     ~Texture();
 
@@ -74,14 +74,15 @@ public:
         unsigned int unit = 0
     );
 
-    // R2.0 Phase 0C Step 3: the GL texture object now lives in the GPU
-    // realization; this accessor is retained for existing callers only.
-    GLuint GetTexture() const noexcept;
+    // R2.0 Phase 0C 6A: attach a per-device cache after CPU-only creation.
+    // No-op once a realization is attached.
+    void SetRenderCache(RenderResourceCache* cache);
+
     bool IsAttached() const noexcept;
     TextureColorSpace ColorSpace() const noexcept;
 private:
-    GraphicsDevice* device = nullptr;
     TextureData data;
-    std::unique_ptr<TextureGpuResource> gpu;
+    std::shared_ptr<TextureGpuResource> gpu;
+    RenderResourceCache* cache = nullptr;
 };
 }  // namespace wisteria

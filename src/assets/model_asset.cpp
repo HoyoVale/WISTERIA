@@ -302,7 +302,7 @@ std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
         {
             fp.String(layout.name);
             fp.U32(layout.size);
-            fp.U32(static_cast<std::uint32_t>(layout.type));
+            fp.U32(static_cast<std::uint32_t>(layout.format));
             fp.Bool(layout.normalized);
             fp.Bool(layout.integer);
             fp.U32(layout.location);

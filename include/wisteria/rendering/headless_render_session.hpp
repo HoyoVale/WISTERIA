@@ -10,6 +10,8 @@
 
 namespace wisteria
 {
+class RenderResourceCache;
+
 // R1.7 Phase 0D: zero-window composition root for offline rendering.
 //
 //   HeadlessRenderSession
@@ -38,6 +40,9 @@ public:
 
     GraphicsDevice& GetGraphicsDevice() noexcept;
     RenderDevice& GetRenderDevice() noexcept;
+    // OpenGL-backend-internal: per-device shared realization cache (0C
+    // Step 6). Only meaningful for the OpenGL backend.
+    RenderResourceCache& GetRenderCache() noexcept;
     ResourceManager& GetResources() noexcept;
     Renderer& GetRenderer() noexcept;
     IHeadlessContext& GetContext() noexcept;

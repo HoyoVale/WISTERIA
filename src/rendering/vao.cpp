@@ -61,13 +61,13 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
         if (attribute.size == 0 || attribute.size > 4)
             throw std::invalid_argument("Vertex attribute size must be between 1 and 4");
 
-        if (attribute.integer && attribute.type == FLOAT)
+        if (attribute.integer && attribute.format == FLOAT)
             throw std::invalid_argument("Integer shader attributes cannot use FLOAT storage");
 
         if (attribute.integer && attribute.normalized)
             throw std::invalid_argument("Integer shader attributes cannot be normalized");
 
-        strideBytes += attribute.size * ParseTypeSize(attribute.type);
+        strideBytes += attribute.size * ParseTypeSize(attribute.format);
     }
 
     if (strideBytes > static_cast<std::size_t>(std::numeric_limits<GLsizei>::max()))
@@ -103,7 +103,7 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
             glVertexAttribIPointer(
                 index,
                 static_cast<GLint>(attribute.size),
-                ParseType(attribute.type),
+                ParseType(attribute.format),
                 stride,
                 offset
             );
@@ -113,7 +113,7 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
             glVertexAttribPointer(
                 index,
                 static_cast<GLint>(attribute.size),
-                ParseType(attribute.type),
+                ParseType(attribute.format),
                 attribute.normalized ? GL_TRUE : GL_FALSE,
                 stride,
                 offset
@@ -122,7 +122,7 @@ void VAO::BindBuffer(VBO& vbo, const std::vector<Layout>& layout)
 
         this->attribList[index] = attribute.name;
         nextAutomaticIndex = std::max(nextAutomaticIndex, index + 1U);
-        offsetBytes += attribute.size * ParseTypeSize(attribute.type);
+        offsetBytes += attribute.size * ParseTypeSize(attribute.format);
     }
     this->index = nextAutomaticIndex;
 }

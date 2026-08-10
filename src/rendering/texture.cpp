@@ -6,6 +6,7 @@
 #include "wisteria/vendor/stb_image.h"
 #include <utility>
 #include "backend/opengl/texture_gpu_resource.hpp"
+#include "backend/opengl/render_resource_cache.hpp"
 
 namespace wisteria
 {
@@ -63,22 +64,46 @@ bool TextureData::IsRgba8() const noexcept
         this->height > 0 && !this->data.empty();
 }
 
-Texture::Texture(TextureData data, GraphicsDevice* device)
-    : device(device),
-      data(std::move(data)),
-      gpu(std::make_unique<TextureGpuResource>(device))
+Texture::Texture(
+    TextureData data,
+    RenderResourceCache* cache
+)
+    : data(std::move(data)),
+      cache(cache)
 {
+    if (this->cache != nullptr)
+        this->gpu = this->cache->AcquireTexture(this->data);
+    else
+        this->gpu = std::make_shared<TextureGpuResource>(nullptr);
 }
 
 Texture::~Texture() = default;
 
+void Texture::SetRenderCache(RenderResourceCache* nextCache)
+{
+    if (this->gpu != nullptr && this->gpu->IsAttached())
+        return;
+    this->cache = nextCache;
+    if (this->cache == nullptr)
+        return;
+    this->gpu = this->cache->AcquireTexture(this->data);
+}
+
 void Texture::Bind(unsigned int unit)
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Texture without a RenderResourceCache cannot bind"
+        );
+    }
     this->gpu->Bind(unit);
 }
 
 void Texture::Unbind(unsigned int unit)
 {
+    if (this->gpu == nullptr)
+        return;
     this->gpu->Unbind(unit);
 }
 
@@ -117,6 +142,12 @@ void Texture::UploadEncoded(
     unsigned int unit
 )
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Texture without a RenderResourceCache cannot upload"
+        );
+    }
     if (encodedData.empty())
         throw std::invalid_argument("Encoded texture data must not be empty");
     if (encodedData.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
@@ -162,6 +193,12 @@ void Texture::UploadRgba8(
     unsigned int unit
 )
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Texture without a RenderResourceCache cannot upload"
+        );
+    }
     if (width <= 0 || height <= 0)
         throw std::invalid_argument("RGBA texture dimensions must be positive");
 
@@ -182,6 +219,12 @@ void Texture::UploadRgba8(
 
 void Texture::Attach()
 {
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Texture without a RenderResourceCache cannot attach"
+        );
+    }
     if (this->gpu->IsAttached())
         return;
 
@@ -197,7 +240,7 @@ void Texture::Attach()
 
 bool Texture::IsAttached() const noexcept
 {
-    return this->gpu->IsAttached();
+    return this->gpu != nullptr && this->gpu->IsAttached();
 }
 
 TextureColorSpace Texture::ColorSpace() const noexcept
@@ -205,8 +248,4 @@ TextureColorSpace Texture::ColorSpace() const noexcept
     return this->data.colorSpace;
 }
 
-GLuint Texture::GetTexture() const noexcept
-{
-    return this->gpu->Id();
-}
 }  // namespace wisteria

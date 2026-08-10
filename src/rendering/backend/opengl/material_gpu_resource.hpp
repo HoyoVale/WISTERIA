@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wisteria/rendering/material.hpp"
+#include "render_resource_cache.hpp"
 
 #include <memory>
 
@@ -19,13 +20,14 @@ public:
         const MaterialData& data,
         MaterialTextureBindings textureBindings,
         std::shared_ptr<ProgramCache> programCache,
-        GraphicsDevice* device
+        RenderResourceCache* cache
     );
 
     void Attach(const MaterialData& data);
     void Bind();
     void Unbind();
     bool HasTexture(const std::string& uniformName) const noexcept;
+    bool IsAttached() const noexcept;
     Program& GetProgram();
     const Program& GetProgram() const;
 
