@@ -13735,6 +13735,30 @@ void TestR2RenderResourceCache()
         cache.TextureCount() == 3U,
         "r2-cache color space must differentiate realizations"
     );
+    // Normalized-equivalent file paths must share one realization: the
+    // accelerator key AND the exact-equality comparison both normalize.
+    wisteria::TextureData pathTextureA =
+        wisteria::TextureData::FromFile(
+            "textures/../assets/shared.png",
+            wisteria::TextureColorSpace::Linear
+        );
+    wisteria::TextureData pathTextureB =
+        wisteria::TextureData::FromFile(
+            "assets/shared.png",
+            wisteria::TextureColorSpace::Linear
+        );
+    auto texturePathA = std::make_shared<wisteria::Texture>(
+        pathTextureA,
+        &cache
+    );
+    auto texturePathB = std::make_shared<wisteria::Texture>(
+        pathTextureB,
+        &cache
+    );
+    Require(
+        cache.TextureCount() == 4U,
+        "r2-cache normalized-equivalent paths must share a realization"
+    );
     textureA->Attach();
     Require(
         textureB->IsAttached(),
@@ -13925,6 +13949,10 @@ void TestR2EnvironmentGpuLifetime()
             environment->IsAttached(),
             "r2-env normal attach failed"
         );
+        // Facade destroyed first: the cache becomes the sole owner, then
+        // Clear() actually releases the realization (owning context
+        // current -> immediate delete).
+        environment.reset();
         cacheA.Clear();
     }
     Require(
@@ -13947,7 +13975,10 @@ void TestR2EnvironmentGpuLifetime()
             "r2-env sibling attach failed"
         );
         sessionB.MakeCurrent();
-        cacheA.Clear();  // realization released while B is current
+        // Facade destroyed first; Clear() now releases the last reference
+        // while B is current -> pending queue.
+        environment.reset();
+        cacheA.Clear();
     }
     Require(
         sessionA.GetGraphicsDevice().PendingDeleteCount() > 0U,
@@ -14156,7 +14187,8 @@ void TestR2EnvironmentCacheIdentity()
     const auto makeData = [&](const std::filesystem::path& path,
                               unsigned int prefilterResolution,
                               unsigned int brdfResolution,
-                              float intensity)
+                              float intensity,
+                              bool drawSkybox = true)
     {
         wisteria::EnvironmentMapData data;
         data.equirectangularImage = decoded;
@@ -14167,18 +14199,19 @@ void TestR2EnvironmentCacheIdentity()
         data.prefilterMipLevels = 5U;
         data.brdfResolution = brdfResolution;
         data.intensity = intensity;
+        data.drawSkybox = drawSkybox;
         return data;
     };
 
-    // Same payload + different provenance path + different intensity ->
-    // one shared realization on the same device.
+    // Same payload + different provenance path + different intensity +
+    // different drawSkybox -> one shared realization on the same device.
     sessionA.MakeCurrent();
     auto environmentA = std::make_unique<wisteria::EnvironmentMap>(
         makeData("a.hdr", 16U, 64U, 1.0f),
         &cacheA
     );
     auto environmentB = std::make_unique<wisteria::EnvironmentMap>(
-        makeData("b.hdr", 16U, 64U, 2.0f),
+        makeData("b.hdr", 16U, 64U, 2.0f, false),
         &cacheA
     );
     Require(
@@ -14249,6 +14282,35 @@ void TestR2EnvironmentCacheIdentity()
     Require(
         environmentBackOnA->IsAttached(),
         "r2-env-id A reacquire attach failed"
+    );
+
+    // Invalid generation parameters must be rejected BEFORE touching the
+    // cache (transactional): a failed constructor never pollutes it.
+    sessionA.MakeCurrent();
+    wisteria::EnvironmentMapData invalidData = makeData(
+        "a.hdr",
+        16U,
+        64U,
+        1.0f
+    );
+    invalidData.environmentResolution = 3U;  // not a power of two
+    bool invalidRejected = false;
+    try
+    {
+        auto rejected = std::make_unique<wisteria::EnvironmentMap>(
+            invalidData,
+            &cacheA
+        );
+        (void)rejected;
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidRejected = true;
+    }
+    Require(
+        invalidRejected &&
+            cacheA.EnvironmentCount() == 4U,
+        "r2-env-id rejected constructor must not pollute the cache"
     );
 }
 

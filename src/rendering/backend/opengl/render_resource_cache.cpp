@@ -65,15 +65,19 @@ RenderResourceCache::AcquireEnvironment(
 )
 {
     const std::string key = EnvironmentKey(data);
-    const auto iterator = this->environments.find(key);
-    if (iterator != this->environments.end())
-        return iterator->second;
+    for (const EnvironmentEntry& entry : this->environments)
+    {
+        if (entry.key == key && EnvironmentGpuDataEqual(entry.data, data))
+            return entry.realization;
+    }
 
     auto realization = std::make_shared<EnvironmentMapGpuResource>(
         data,
         this
     );
-    this->environments.emplace(key, realization);
+    this->environments.push_back(
+        EnvironmentEntry{key, data, realization}
+    );
     return realization;
 }
 
@@ -207,11 +211,39 @@ bool RenderResourceCache::TextureDataEqual(
     const TextureData& right
 )
 {
-    return left.filePath == right.filePath &&
+    return left.filePath.lexically_normal() ==
+            right.filePath.lexically_normal() &&
         left.data == right.data &&
         left.width == right.width &&
         left.height == right.height &&
         left.colorSpace == right.colorSpace;
+}
+
+bool RenderResourceCache::EnvironmentGpuDataEqual(
+    const EnvironmentMapData& left,
+    const EnvironmentMapData& right
+)
+{
+    if (left.equirectangularImage == nullptr ||
+        right.equirectangularImage == nullptr)
+    {
+        // Procedural source: both must be procedural.
+        return left.equirectangularImage == nullptr &&
+            right.equirectangularImage == nullptr;
+    }
+    const EnvironmentHdrImage& a = *left.equirectangularImage;
+    const EnvironmentHdrImage& b = *right.equirectangularImage;
+    if (a.width != b.width || a.height != b.height ||
+        a.rgb != b.rgb)
+    {
+        return false;
+    }
+    return left.environmentResolution == right.environmentResolution &&
+        left.irradianceResolution == right.irradianceResolution &&
+        left.prefilterResolution == right.prefilterResolution &&
+        left.prefilterMipLevels == right.prefilterMipLevels &&
+        left.brdfResolution == right.brdfResolution;
+    // Provenance path / intensity / drawSkybox are intentionally ignored.
 }
 
 std::uint64_t RenderResourceCache::DataHash(

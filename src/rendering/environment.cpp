@@ -62,17 +62,6 @@ EnvironmentMap::EnvironmentMap(
 )
     : data(PrepareEnvironmentData(std::move(data)))
 {
-    if (cache != nullptr)
-    {
-        this->gpu = cache->AcquireEnvironment(this->data);
-    }
-    else
-    {
-        this->gpu = std::make_shared<EnvironmentMapGpuResource>(
-            this->data,
-            nullptr
-        );
-    }
     if (!IsPowerOfTwo(this->data.environmentResolution) ||
         !IsPowerOfTwo(this->data.irradianceResolution) ||
         !IsPowerOfTwo(this->data.prefilterResolution) ||
@@ -92,6 +81,20 @@ EnvironmentMap::EnvironmentMap(
     }
     if (!std::isfinite(this->data.intensity) || this->data.intensity < 0.0f)
         throw std::invalid_argument("Environment intensity must be finite and non-negative");
+
+    // Validate BEFORE touching the cache: a rejected object must never
+    // pollute the shared realization table (6B P0-2).
+    if (cache != nullptr)
+    {
+        this->gpu = cache->AcquireEnvironment(this->data);
+    }
+    else
+    {
+        this->gpu = std::make_shared<EnvironmentMapGpuResource>(
+            this->data,
+            nullptr
+        );
+    }
 }
 
 EnvironmentMap::~EnvironmentMap() = default;

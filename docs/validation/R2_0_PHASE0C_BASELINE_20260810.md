@@ -362,7 +362,9 @@ environment_gpu_resource.cpp 零 fstream/stb 引用
    - 不同 prefilter/BRDF resolution → 不共享
    - procedural vs decoded → 永不混合
    - 不同 RenderDevice → 各自 entry
-   - A->B->A 重新解析 → A 复用自身 entry
+   - A->B->A 重新解析（same semantic Environment data across devices）→
+     A 复用自身 entry（注意：是不同 EnvironmentMap facade 的 cache
+     resolution，不是同一 facade 的跨设备迁移）
 
 3. Mesh/Texture cache identity hardening：
    hash/descriptor string 降级为 lookup accelerator：
@@ -396,6 +398,29 @@ ABI 94 legacy + 30 stable
 6B 不做：Material ProgramCache per-device cleanup、PipelineVariant、
 shader semantic abstraction、RenderFramePacket、RenderGraph、Vulkan、
 stable ABI 修改（分别属 Step 7 / 0D / R2.1）。
+
+### 6B Final Fix（2026-08-11 ChatGPT 复审 `fa88c0f` 后）
+
+```text
+P0-1 EnvironmentKey → lookup accelerator：
+  environments 改 entry vector；命中 key 后 EnvironmentGpuDataEqual
+  精确比较（source kind、image width/height、exact rgb payload、
+  env/irr/pref/mip/brdf resolution）；忽略 path/intensity/drawSkybox
+P0-2 EnvironmentMap 校验前置：
+  Prepare → Validate（power-of-two/mip/intensity）→ Acquire；
+  被拒构造不再污染 cache（EnvironmentCount 不变）
+P1-1 TextureDataEqual 比较 lexically_normal 后的路径
+P1-2 cache lifetime 测试语义修正：
+  facade 先销毁 → cache 为唯一 owner → Clear() 真正触发 release；
+  Clear() 是放弃 cache ownership/reuse authority，
+  不强制杀死仍被 facade 持有的 realization
+新增测试：
+  - invalid constructor 不增加 EnvironmentCount
+  - normalized-equivalent texture paths 共享
+  - drawSkybox 排除于 identity（同 payload 不同 drawSkybox → 共享）
+  - cache-sole-owner Clear under wrong context → pending
+文档：A->B->A 描述修正为 same semantic data 的 cache resolution
+```
 
 ## 3. 复审注意事项
 

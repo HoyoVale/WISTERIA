@@ -78,6 +78,10 @@ private:
         const TextureData& left,
         const TextureData& right
     );
+    static bool EnvironmentGpuDataEqual(
+        const EnvironmentMapData& left,
+        const EnvironmentMapData& right
+    );
 
     struct StaticMeshEntry
     {
@@ -91,6 +95,12 @@ private:
         TextureData data;
         std::shared_ptr<TextureGpuResource> realization;
     };
+    struct EnvironmentEntry
+    {
+        std::string key;
+        EnvironmentMapData data;
+        std::shared_ptr<EnvironmentMapGpuResource> realization;
+    };
 
     GraphicsDevice* device = nullptr;
     // 6B: hash/key strings are lookup accelerators, NOT final equality
@@ -98,9 +108,6 @@ private:
     // collision. Small caches -> linear search over the pre-filtered set.
     std::vector<StaticMeshEntry> staticMeshes;
     std::vector<TextureEntry> textures;
-    std::unordered_map<
-        std::string,
-        std::shared_ptr<EnvironmentMapGpuResource>
-    > environments;
+    std::vector<EnvironmentEntry> environments;
 };
 }  // namespace wisteria
