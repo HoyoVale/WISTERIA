@@ -70,7 +70,7 @@ GLenum MapWrap(TextureWrap wrap) noexcept
 OpenGlRenderDevice::~OpenGlRenderDevice() = default;
 
 OpenGlRenderDevice::OpenGlRenderDevice()
-    : renderCache(&this->graphicsDevice)
+    : renderCache(this->graphicsDevice)
 {
 }
 

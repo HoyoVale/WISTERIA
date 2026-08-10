@@ -187,7 +187,7 @@ Material::Material(
     // textures to the per-device cache (Step 7 Stage 2 + closure micro-fix).
     if (this->cache != nullptr)
     {
-        this->programCache = this->cache->Device()->Programs();
+        this->programCache = this->cache->Device().Programs();
         for (const auto& [uniformName, texture] : this->textures)
             texture->SetRenderCache(this->cache);
     }
@@ -210,7 +210,7 @@ void Material::SetRenderCache(RenderResourceCache* nextCache)
     this->cache = nextCache;
     if (this->cache == nullptr)
         return;
-    this->programCache = this->cache->Device()->Programs();
+    this->programCache = this->cache->Device().Programs();
     for (const auto& [uniformName, texture] : this->textures)
         texture->SetRenderCache(this->cache);
     this->gpu = std::make_unique<MaterialGpuResource>(

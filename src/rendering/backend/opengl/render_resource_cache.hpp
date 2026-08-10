@@ -24,7 +24,9 @@ namespace wisteria
 class RenderResourceCache
 {
 public:
-    explicit RenderResourceCache(GraphicsDevice* device);
+    // 0C Final Review: the cache is ALWAYS device-backed. A reference (not
+    // a nullable pointer) makes this a type-level invariant.
+    explicit RenderResourceCache(GraphicsDevice& device);
 
     // Shared realization for a texture asset (identity = file path or
     // encoded/RGBA8 payload hash). Callers keep the shared_ptr for as long
@@ -59,7 +61,7 @@ public:
         const EnvironmentMapData& data
     );
 
-    GraphicsDevice* Device() const noexcept;
+    GraphicsDevice& Device() const noexcept;
 
     void Clear() noexcept;
     std::size_t TextureCount() const noexcept;

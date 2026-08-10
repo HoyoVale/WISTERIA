@@ -683,7 +683,7 @@ int main()
             // Material realization requires the owning share group current.
             cacheDevice.SetShareGroupToken(window);
             GraphicsDevice::SetCurrentShareGroup(window);
-            RenderResourceCache cache(&cacheDevice);
+            RenderResourceCache cache(cacheDevice);
             ResourceManager cacheResources;
             cacheResources.BindGraphicsDevice(cacheDevice);
             cacheResources.SetRenderCache(cache);

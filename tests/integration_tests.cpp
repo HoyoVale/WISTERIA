@@ -14546,6 +14546,7 @@ void TestR2MaterialProgramRealization()
 
     // A current: program compiles into device A's ProgramCache.
     sessionA.MakeCurrent();
+    const std::size_t programsOnABeforeAttach = deviceA.ProgramCount();
     wisteria::Material material(
         materialData,
         std::make_shared<wisteria::ProgramCache>(),
@@ -14554,21 +14555,26 @@ void TestR2MaterialProgramRealization()
     material.Attach();
     (void)material.GetProgram();
     Require(
-        deviceA.ProgramCount() >= 1U,
-        "r2-material-program device A must own its program"
+        deviceA.ProgramCount() == programsOnABeforeAttach + 1U,
+        "r2-material-program device A must compile exactly one program"
     );
 
     // B current: SetRenderCache(B) must re-resolve a device-local
     // ProgramCache; the program compiles into B's cache, not A's.
     sessionB.MakeCurrent();
+    const std::size_t programsOnBBeforeAttach = deviceB.ProgramCount();
+    const std::size_t programsOnABeforeB = deviceA.ProgramCount();
     material.SetRenderCache(&cacheB);
     material.Attach();
     (void)material.GetProgram();
     Require(
-        deviceB.ProgramCount() >= 1U,
-        "r2-material-program device B must compile its own program"
+        deviceB.ProgramCount() == programsOnBBeforeAttach + 1U,
+        "r2-material-program device B must compile exactly one program"
     );
-    const std::size_t programsOnA = deviceA.ProgramCount();
+    Require(
+        deviceA.ProgramCount() == programsOnABeforeB,
+        "r2-material-program device A must not compile while B attaches"
+    );
 
     // A current: re-resolving on A reuses A's program (no new compile).
     sessionA.MakeCurrent();
@@ -14576,7 +14582,7 @@ void TestR2MaterialProgramRealization()
     material.Attach();
     (void)material.GetProgram();
     Require(
-        deviceA.ProgramCount() == programsOnA,
+        deviceA.ProgramCount() == programsOnABeforeB,
         "r2-material-program A->B->A must reacquire A's program"
     );
 
@@ -14588,6 +14594,8 @@ void TestR2MaterialProgramRealization()
         &cacheA
     );
     sessionB.MakeCurrent();
+    const std::size_t programsOnABeforeReject = deviceA.ProgramCount();
+    const std::size_t programsOnBBeforeReject = deviceB.ProgramCount();
     bool wrongShareGroupRejected = false;
     try
     {
@@ -14600,6 +14608,11 @@ void TestR2MaterialProgramRealization()
     Require(
         wrongShareGroupRejected,
         "r2-material-program wrong-share-group attach must be rejected"
+    );
+    Require(
+        deviceA.ProgramCount() == programsOnABeforeReject &&
+            deviceB.ProgramCount() == programsOnBBeforeReject,
+        "r2-material-program rejected attach must not compile any program"
     );
 
     // Transactional attach: a texture that fails to attach must leave the

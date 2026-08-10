@@ -43,7 +43,7 @@ MaterialGpuResource::MaterialGpuResource(
     std::shared_ptr<ProgramCache> nextProgramCache,
     RenderResourceCache* cache
 )
-    : device(cache != nullptr ? cache->Device() : nullptr),
+    : device(cache != nullptr ? &cache->Device() : nullptr),
       programCache(std::move(nextProgramCache)),
       textures(std::move(nextTextures))
 {

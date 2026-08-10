@@ -20,8 +20,8 @@ std::uint64_t Fnv1a64Bytes(const std::uint8_t* bytes, std::size_t size)
 }
 }  // namespace
 
-RenderResourceCache::RenderResourceCache(GraphicsDevice* nextDevice)
-    : device(nextDevice)
+RenderResourceCache::RenderResourceCache(GraphicsDevice& nextDevice)
+    : device(&nextDevice)
 {
 }
 
@@ -105,9 +105,9 @@ RenderResourceCache::CreateInstanceEnvironment(
     return std::make_shared<EnvironmentMapGpuResource>(data, this);
 }
 
-GraphicsDevice* RenderResourceCache::Device() const noexcept
+GraphicsDevice& RenderResourceCache::Device() const noexcept
 {
-    return this->device;
+    return *this->device;
 }
 
 void RenderResourceCache::Clear() noexcept

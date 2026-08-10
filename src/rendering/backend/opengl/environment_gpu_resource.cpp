@@ -179,7 +179,7 @@ EnvironmentMapGpuResource::EnvironmentMapGpuResource(
     RenderResourceCache* cache
 )
     : data(std::move(nextData)),
-      device(cache != nullptr ? cache->Device() : nullptr)
+      device(cache != nullptr ? &cache->Device() : nullptr)
 {
 }
 
