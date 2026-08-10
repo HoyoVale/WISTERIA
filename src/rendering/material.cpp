@@ -47,7 +47,7 @@ void ValidateMaterialVariant(const MaterialData& data)
 
 MaterialTextureBindings BuildTextureBindings(
     const MaterialData& data,
-    RenderResourceCache* cache
+    RenderResourceCache* /*cache*/
 )
 {
     MaterialTextureBindings bindings;
@@ -55,7 +55,10 @@ MaterialTextureBindings BuildTextureBindings(
     {
         bindings.emplace(
             uniformName,
-            std::make_shared<Texture>(source, cache)
+            // Textures are created cache-free: cache resolution happens
+            // only AFTER all CPU validation succeeds, so a rejected
+            // Material never pollutes the RenderResourceCache.
+            std::make_shared<Texture>(source, nullptr)
         );
     }
     return bindings;
@@ -176,15 +179,18 @@ Material::Material(
     );
     this->data.edgeSize = glm::max(this->data.edgeSize, 0.0f);
 
-    // Validate BEFORE creating the realization/cache entry: a rejected
-    // material must never leave a half-constructed gpu behind.
+    // Validate BEFORE any cache resolution: a rejected material must never
+    // leave subordinate texture/realization cache entries behind.
     ValidateMaterialVariant(this->data);
 
-    // Managed materials resolve their ProgramCache from the cache's owning
-    // GraphicsDevice; an explicitly passed cache is never carried across
-    // devices (Step 7 Stage 2: per-device program realization).
+    // After validation, resolve the device-local ProgramCache and bind
+    // textures to the per-device cache (Step 7 Stage 2 + closure micro-fix).
     if (this->cache != nullptr)
+    {
         this->programCache = this->cache->Device()->Programs();
+        for (const auto& [uniformName, texture] : this->textures)
+            texture->SetRenderCache(this->cache);
+    }
 
     this->gpu = std::make_unique<MaterialGpuResource>(
         this->data,

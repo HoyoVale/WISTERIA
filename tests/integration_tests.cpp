@@ -14473,6 +14473,55 @@ void TestR2MaterialPipelineVariant()
         flagsRejected,
         "r2-material reserved variant flags must be rejected"
     );
+
+    // Construction transaction: a rejected Material with NON-empty default
+    // texture sources must not pollute the RenderResourceCache (texture
+    // cache resolution happens only after validation).
+    wisteria::MaterialData defaultTexturesMismatch;
+    defaultTexturesMismatch.pipelineVariant.variant =
+        wisteria::PipelineVariant::MmdToon;  // shadingModel stays PBR
+    const std::size_t textureCountBeforeMismatch = cache.TextureCount();
+    bool defaultMismatchRejected = false;
+    try
+    {
+        wisteria::Material defaultMismatch(
+            defaultTexturesMismatch,
+            &cache
+        );
+        (void)defaultMismatch;
+    }
+    catch (const std::invalid_argument&)
+    {
+        defaultMismatchRejected = true;
+    }
+    Require(
+        defaultMismatchRejected &&
+            cache.TextureCount() == textureCountBeforeMismatch,
+        "r2-material rejected variant must not pollute texture cache"
+    );
+
+    wisteria::MaterialData defaultTexturesNan;
+    defaultTexturesNan.roughnessFactor =
+        std::numeric_limits<float>::quiet_NaN();
+    const std::size_t textureCountBeforeNan = cache.TextureCount();
+    bool defaultNanRejected = false;
+    try
+    {
+        wisteria::Material defaultNan(
+            defaultTexturesNan,
+            &cache
+        );
+        (void)defaultNan;
+    }
+    catch (const std::invalid_argument&)
+    {
+        defaultNanRejected = true;
+    }
+    Require(
+        defaultNanRejected &&
+            cache.TextureCount() == textureCountBeforeNan,
+        "r2-material rejected scalar must not pollute texture cache"
+    );
 }
 
 void TestR2MaterialProgramRealization()

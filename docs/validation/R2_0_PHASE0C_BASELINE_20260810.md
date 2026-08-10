@@ -395,6 +395,45 @@ Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
 ABI 94 legacy + 30 stable
 ```
 
+### Step 7 Closure Micro-Fix（2026-08-11 ChatGPT 复审 `d59132f` 后）
+
+```text
+Blocker：Material validation 晚于 Texture cache side effect
+  - BuildTextureBindings 之前用 cache 创建 Texture → AcquireTexture
+    在 ValidateMaterialVariant / scalar validation 之前执行 →
+    被拒 Material 污染 RenderResourceCache
+  - 现有 mismatch/pass/flags 测试全部 textureSources.clear() 屏蔽了路径
+
+修复（construction transaction 完整顺序）：
+  MaterialData
+    → CPU validation / normalization（finite/clamp/ValidateMaterialVariant）
+    → programCache = cache->Device()->Programs()
+    → textures SetRenderCache(cache)（此时才触 cache）
+    → MaterialGpuResource
+  BuildTextureBindings 构造 cache-free Texture（nullptr cache），
+  cache resolution 全部移到 validation 成功后
+
+新增 adversarial（默认非空 textureSources）：
+  - MmdToon variant / PBR shading mismatch → reject + TextureCount 不变
+  - roughnessFactor = NaN → reject + TextureCount 不变
+```
+
+非阻塞 watchpoint（0C Final Review 确认）：
+
+```text
+RenderResourceCache 内部 invariant：永远 device-backed
+  （Device() 直接解引用；构造器/断言应明确保证）
+A->B->A gate 可加强为记录 B attach 前 ProgramCount 再精确断言；
+wrong-share-group gate 可断言 A/B ProgramCount 均不变化
+```
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+```
+
 ### Step 7 Stage 2 — Program / Pipeline Realization Closure（2026-08-11）
 
 ```text
