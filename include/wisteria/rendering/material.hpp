@@ -11,6 +11,8 @@
 
 namespace wisteria
 {
+class MaterialGpuResource;
+
 enum class TransformUniformMode
 {
     SeparateModelViewProjection,
@@ -217,7 +219,7 @@ public:
         std::shared_ptr<ProgramCache> programCache,
         GraphicsDevice* device = nullptr
     );
-    ~Material() = default;
+    ~Material();
 
     void Attach();
     void Bind();
@@ -263,9 +265,9 @@ public:
 
 private:
     GraphicsDevice* device = nullptr;
-    std::shared_ptr<ProgramCache> programCache;
-    std::shared_ptr<Program> program;
-    MaterialTextureBindings textures;
+    // R2.0 Phase 0C Step 4: GPU/pipeline realization lives outside the
+    // semantic MaterialData (program cache, compiled program, bindings).
+    std::unique_ptr<MaterialGpuResource> gpu;
     MaterialData data;
 };
 }  // namespace wisteria

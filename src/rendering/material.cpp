@@ -1,6 +1,7 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/rendering/material.hpp"
 #include <cmath>
+#include "backend/opengl/material_gpu_resource.hpp"
 
 namespace wisteria
 {
@@ -69,19 +70,14 @@ Material::Material(
     GraphicsDevice* device
 )
     : device(device),
-      programCache(std::move(programCache)),
-      textures(std::move(textureBindings)),
+      gpu(std::make_unique<MaterialGpuResource>(
+          data,
+          std::move(textureBindings),
+          std::move(programCache),
+          device
+      )),
       data(data)
 {
-    if (this->programCache == nullptr)
-        throw std::invalid_argument("Material program cache must not be null");
-    for (const auto& [uniformName, texture] : this->textures)
-    {
-        if (uniformName.empty())
-            throw std::invalid_argument("Texture uniform name must not be empty");
-        if (texture == nullptr)
-            throw std::invalid_argument("Material texture binding must not be null");
-    }
     if (!std::isfinite(this->data.alphaCutoff))
         throw std::invalid_argument("Material alpha cutoff must be finite");
     if (!std::isfinite(this->data.normalScale))
@@ -147,62 +143,31 @@ Material::Material(
     this->data.edgeSize = glm::max(this->data.edgeSize, 0.0f);
 }
 
+Material::~Material() = default;
+
 void Material::Attach()
 {
-    if (this->program != nullptr)
-        return;
-
-    this->program = this->programCache->Acquire(
-        this->data.shaderFilePath.VertexPath,
-        this->data.shaderFilePath.FragmentPath
-    );
-    for (const auto& [uniformName, texture] : this->textures)
-        texture->Attach();
+    this->gpu->Attach(this->data);
 }
 
 void Material::Bind()
 {
-    if (this->program == nullptr)
-        throw std::logic_error("Material must be attached before binding");
-
-    this->program->Use();
-
-    unsigned int unit = 0;
-    for (const auto& [uniformName, texture] : this->textures)
-    {
-        texture->Bind(unit);
-        this->program->UniformTex(uniformName, unit);
-        ++unit;
-    }
+    this->gpu->Bind();
 }
 
 void Material::Unbind()
 {
-    unsigned int unit = 0;
-    for (const auto& [uniformName, texture] : this->textures)
-    {
-        texture->Unbind(unit);
-        ++unit;
-    }
-
-    if (this->program != nullptr)
-        this->program->unUse();
+    this->gpu->Unbind();
 }
 
 Program& Material::GetProgram()
 {
-    if (this->program == nullptr)
-        throw std::logic_error("Material must be attached before getting program");
-
-    return *this->program;
+    return this->gpu->GetProgram();
 }
 
 const Program& Material::GetProgram() const
 {
-    if (this->program == nullptr)
-        throw std::logic_error("Material must be attached before getting program");
-
-    return *this->program;
+    return this->gpu->GetProgram();
 }
 
 const glm::vec3& Material::SpecularColor() const noexcept
@@ -322,7 +287,7 @@ void Material::SetReceivesGroundShadow(bool enabled) noexcept
 
 bool Material::HasTexture(const std::string& uniformName) const noexcept
 {
-    return this->textures.contains(uniformName);
+    return this->gpu->HasTexture(uniformName);
 }
 
 const ShaderInterface& Material::Interface() const noexcept

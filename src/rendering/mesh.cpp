@@ -2,6 +2,7 @@
 #include "wisteria/rendering/mesh.hpp"
 #include "wisteria/rendering/vao.hpp"
 #include "wisteria/animation/pose.hpp"
+#include "backend/opengl/mesh_gpu_resource.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -106,6 +107,10 @@ Mesh::Mesh(
       requiredBoneCount(requiredBoneCount),
       sourceVertexIndices(std::move(sourceVertexIndices))
 {
+    // The GPU realization is created unconditionally; device may be null in
+    // stable render composition paths where attach happens later under a
+    // current context (legacy VBO/EBO behavior).
+    this->gpu = std::make_unique<MeshGpuResource>(device);
     const auto hasAttribute = [this](const char* name)
     {
         return std::any_of(
@@ -257,59 +262,32 @@ Mesh::Mesh(
     }
 }
 
+Mesh::~Mesh() = default;
+
 void Mesh::Attach()
 {
-    if (this->attached)
-        return;
-
-    auto nextVbo = std::make_unique<VBO>(this->device);
-    auto nextEbo = std::make_unique<EBO>(this->device);
-
-    nextVbo->Upload(
-        this->data.vertices.data(),
-        this->data.VertexBytes()
-    );
-    nextEbo->Upload(
-        this->data.indices.data(),
-        this->data.IndexBytes()
-    );
-
-    this->vbo.swap(nextVbo);
-    this->ebo.swap(nextEbo);
-    this->attached = true;
+    if (this->gpu == nullptr)
+    {
+        throw std::logic_error(
+            "Mesh without a GraphicsDevice cannot attach GPU resources"
+        );
+    }
+    this->gpu->Attach(this->data);
 }
 
 void Mesh::ConfigureVertexArray(VAO& vao)
 {
-    if (!this->attached)
-    {
-        throw std::logic_error(
-            "Mesh buffers must be attached before configuring a vertex array"
-        );
-    }
-
-    vao.Bind();
-    vao.BindBuffer(*this->vbo, this->data.layout);
-    this->ebo->Bind();
-    vao.unBind();
+    this->gpu->ConfigureVertexArray(vao, this->data);
 }
 
 void Mesh::Draw()
 {
-    if (!this->attached)
-        throw std::logic_error("Mesh must be attached before drawing");
-
-    glDrawElements(
-        GL_TRIANGLES,
-        static_cast<GLsizei>(this->data.IndexCount()),
-        this->data.IndexGLType(),
-        nullptr
-    );
+    this->gpu->Draw(this->data);
 }
 
 bool Mesh::IsAttached() const noexcept
 {
-    return this->attached;
+    return this->gpu != nullptr && this->gpu->IsAttached();
 }
 
 std::size_t Mesh::IndexCount() const noexcept
@@ -463,19 +441,9 @@ void Mesh::UploadDynamicFrame(
         uvs
     );
     this->dynamicVertexSource = true;
-    if (!this->attached || this->vbo == nullptr)
+    if (this->gpu == nullptr)
         return;
-
-    glBindBuffer(GL_ARRAY_BUFFER, this->vbo->GetVBO());
-    glBufferSubData(
-        GL_ARRAY_BUFFER,
-        0,
-        static_cast<GLsizeiptr>(
-            updatedVertices.size() * sizeof(float)
-        ),
-        updatedVertices.data()
-    );
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    this->gpu->UploadDynamicFrame(updatedVertices);
 }
 
 void Mesh::UploadDynamicVertices(

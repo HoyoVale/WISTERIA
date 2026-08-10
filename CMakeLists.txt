@@ -197,6 +197,10 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/camera.cpp
     src/rendering/bmp_writer.cpp
     src/rendering/backend/opengl/open_gl_render_device.cpp
+    src/rendering/backend/opengl/mesh_gpu_resource.cpp
+    src/rendering/backend/opengl/material_gpu_resource.cpp
+    src/rendering/backend/opengl/environment_gpu_resource.cpp
+    src/rendering/backend/opengl/texture_gpu_resource.cpp
     src/rendering/ebo.cpp
     src/rendering/environment.cpp
     src/rendering/framebuffer.cpp

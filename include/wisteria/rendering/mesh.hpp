@@ -16,6 +16,7 @@ namespace wisteria
 class VAO;
 class Pose;
 class Mesh;
+class MeshGpuResource;
 
 // Called by the Renderer with the owning window's GL context current. Used by
 // CPU-skinned models (Saba) to upload vertices at the correct time/context.
@@ -30,7 +31,7 @@ public:
         std::vector<std::uint32_t> sourceVertexIndices = {},
         GraphicsDevice* device = nullptr
     );
-    ~Mesh() = default;
+    ~Mesh();
 
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
@@ -115,16 +116,19 @@ private:
         glm::vec4 boneWeights{0.0f};
     };
 
-    GraphicsDevice* device = nullptr;
     DefaultModelData data;
-    std::unique_ptr<VBO> vbo;
-    std::unique_ptr<EBO> ebo;
+    // Owning-device association for clone-time realization creation (0C
+    // transition; RenderResourceCache replaces this in a later 0C step).
+    GraphicsDevice* device = nullptr;
+    // R2.0 Phase 0C: the GPU realization lives outside the CPU asset.
+    // Instance clones own their own realization so runtime-deformed
+    // geometry is never shared between ModelInstances.
+    std::unique_ptr<MeshGpuResource> gpu;
     glm::vec3 localBoundsCenter{0.0f};
     std::vector<MeshMorphTarget> morphTargets;
     std::vector<SkinningDebugVertex> skinningDebugVertices;
     std::size_t vertexCount = 0U;
     std::size_t requiredBoneCount = 0;
-    bool attached = false;
     bool dynamicVertexSource = false;
     MeshDynamicVertexProvider dynamicVertexProvider;
     std::shared_ptr<const void> lifetimeToken =

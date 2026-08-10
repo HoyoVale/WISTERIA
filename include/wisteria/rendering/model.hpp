@@ -1,12 +1,12 @@
 #pragma once
 
+#include "wisteria/rendering/render_device.hpp"
+
 #include <glm/glm.hpp>
 
 #include <type_traits>
 #include <vector>
 
-#include "wisteria/rendering/ebo.hpp"
-#include "wisteria/rendering/vao.hpp"
 #include "wisteria/rendering/vbo.hpp"
 
 namespace wisteria
@@ -40,13 +40,15 @@ struct ModelData {
         return indices.size();
     }
 
-    static constexpr GLenum IndexGLType() noexcept {
+    // R2.0 Phase 0C Step 2: engine-semantic index format. The OpenGL backend
+    // maps this to GL_UNSIGNED_*; the CPU asset layer never exposes GLenum.
+    static constexpr IndexFormat IndexFormatValue() noexcept {
         if constexpr (sizeof(IndexType) == 1)
-            return GL_UNSIGNED_BYTE;
+            return IndexFormat::Uint8;
         else if constexpr (sizeof(IndexType) == 2)
-            return GL_UNSIGNED_SHORT;
+            return IndexFormat::Uint16;
         else
-            return GL_UNSIGNED_INT;
+            return IndexFormat::Uint32;
     }
 };
 

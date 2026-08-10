@@ -10,6 +10,7 @@ namespace wisteria
 class Program;
 class Shader;
 class VAO;
+class EnvironmentMapGpuResource;
 
 struct EnvironmentMapData
 {
@@ -64,33 +65,9 @@ public:
     const EnvironmentMapData& Data() const noexcept;
 
 private:
-    void CreateGeometry();
-    void CreateEnvironmentCubemap();
-    void CreateProceduralCubemap();
-    void CreateEquirectangularCubemap();
-    void CreateIrradianceMap();
-    void CreatePrefilterMap();
-    void CreateBrdfLut();
-    void CreateSkyboxProgram();
-    void RenderCube() const;
-    void RenderQuad() const;
-    void ReleaseCaptureResources() noexcept;
-    void Release() noexcept;
-
-private:
     EnvironmentMapData data;
-    GLuint environmentCubemap = 0;
-    GLuint irradianceCubemap = 0;
-    GLuint prefilterCubemap = 0;
-    GLuint brdfLut = 0;
-    GLuint captureFramebuffer = 0;
-    GLuint captureRenderbuffer = 0;
-    GLuint cubeVao = 0;
-    GLuint cubeVbo = 0;
-    GLuint quadVao = 0;
-    GLuint quadVbo = 0;
-    std::unique_ptr<Shader> skyboxShader;
-    std::unique_ptr<Program> skyboxProgram;
-    bool attached = false;
+    // R2.0 Phase 0C Step 5: GPU realization (IBL cubemaps, BRDF LUT, skybox
+    // program/geometry) lives outside the semantic EnvironmentMapData.
+    std::unique_ptr<EnvironmentMapGpuResource> gpu;
 };
 }  // namespace wisteria

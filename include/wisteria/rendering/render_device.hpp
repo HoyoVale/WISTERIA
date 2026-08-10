@@ -156,6 +156,16 @@ struct BufferDesc
     BufferUsage usage = BufferUsage::Vertex;
 };
 
+// Engine-semantic index format (0C Step 2). The OpenGL backend maps
+// Uint16 -> GL_UNSIGNED_SHORT, Uint32 -> GL_UNSIGNED_INT, etc.; the CPU
+// asset layer never exposes GLenum.
+enum class IndexFormat : std::uint8_t
+{
+    Uint8,
+    Uint16,
+    Uint32
+};
+
 enum class TextureFormat : std::uint8_t
 {
     Rgba8,

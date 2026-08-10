@@ -474,15 +474,16 @@ OpenGL default implementation（R2 初期保持不动）
 Phase 0A  Contract（本文档）+ R1_TO_R2_BOUNDARY_AUDIT.md
           只写文档与代码 inventory，不写代码
 
-Phase 0B  RenderDevice foundation                ✅ IMPLEMENTED / VALIDATED
+Phase 0B  RenderDevice foundation                ✅ CLOSED
           RenderDevice / RenderDeviceCapabilities /
           backend-neutral resource handles/descriptors
           OpenGlRenderDevice（迁移/包入 GraphicsDevice）
           Gate：现有 OpenGL 行为完全不变 +
                 No-GL public-header compile test
-          （详见 docs/validation/R2_0_PHASE0B_BASELINE_20260810.md）
+          （2026-08-10 ChatGPT 复审 `d05f2a6` 通过；
+          详见 docs/validation/R2_0_PHASE0B_BASELINE_20260810.md）
 
-Phase 0C  CPU asset / GPU realization split
+Phase 0C  CPU asset / GPU realization split       ▶ AUTHORIZED
           Mesh / Texture / Material / EnvironmentMap
           Gate：PBR + MMD Toon + Textures + Morph + Skinning +
                 Environment + Shadow + OIT 现有 pixel/golden 不变

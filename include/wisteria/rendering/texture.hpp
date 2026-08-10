@@ -9,6 +9,8 @@
 
 namespace wisteria
 {
+class TextureGpuResource;
+
 enum class TextureColorSpace
 {
     Linear,
@@ -72,26 +74,14 @@ public:
         unsigned int unit = 0
     );
 
-    inline GLuint GetTexture() const noexcept { return this->texture; }
+    // R2.0 Phase 0C Step 3: the GL texture object now lives in the GPU
+    // realization; this accessor is retained for existing callers only.
+    GLuint GetTexture() const noexcept;
     bool IsAttached() const noexcept;
     TextureColorSpace ColorSpace() const noexcept;
 private:
-    void EnsureCreated();
-    static GLint MaxUnits();
-    static void ValidateUnit(unsigned int unit);
-    void ActiveTexture(unsigned int unit);
-    void Configure();
-    void UploadDecodedPixels(
-        const unsigned char* pixels,
-        int width,
-        int height,
-        unsigned int unit
-    );
-private:
     GraphicsDevice* device = nullptr;
     TextureData data;
-    GLuint texture = 0;
-    bool configured = false;
-    bool attached = false;
+    std::unique_ptr<TextureGpuResource> gpu;
 };
 }  // namespace wisteria

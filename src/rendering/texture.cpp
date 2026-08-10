@@ -1,11 +1,11 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/rendering/texture.hpp"
 #include <fstream>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 #include "wisteria/vendor/stb_image.h"
 #include <utility>
+#include "backend/opengl/texture_gpu_resource.hpp"
 
 namespace wisteria
 {
@@ -65,44 +65,21 @@ bool TextureData::IsRgba8() const noexcept
 
 Texture::Texture(TextureData data, GraphicsDevice* device)
     : device(device),
-      data(std::move(data))
+      data(std::move(data)),
+      gpu(std::make_unique<TextureGpuResource>(device))
 {
 }
 
-Texture::~Texture()
-{
-    if (this->texture != 0)
-    {
-        if (this->device != nullptr)
-        {
-            this->device->DeleteResource(
-                GraphicsDevice::ResourceKind::Texture,
-                this->texture
-            );
-        }
-        else
-        {
-            glDeleteTextures(1, &this->texture);
-        }
-        this->texture = 0;
-    }
-}
+Texture::~Texture() = default;
 
 void Texture::Bind(unsigned int unit)
 {
-    if (!this->attached)
-        throw std::logic_error("Texture must be attached before binding");
-
-    ValidateUnit(unit);
-    ActiveTexture(unit);
-    glBindTexture(GL_TEXTURE_2D, this->texture);
+    this->gpu->Bind(unit);
 }
 
 void Texture::Unbind(unsigned int unit)
 {
-    ValidateUnit(unit);
-    ActiveTexture(unit);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    this->gpu->Unbind(unit);
 }
 
 void Texture::Upload(
@@ -169,7 +146,13 @@ void Texture::UploadEncoded(
         );
     }
 
-    this->UploadDecodedPixels(pixels.get(), width, height, unit);
+    this->gpu->UploadDecodedPixels(
+        pixels.get(),
+        width,
+        height,
+        this->data.colorSpace,
+        unit
+    );
 }
 
 void Texture::UploadRgba8(
@@ -188,12 +171,18 @@ void Texture::UploadRgba8(
     if (pixels.size() != expectedSize)
         throw std::invalid_argument("RGBA texture byte count does not match its dimensions");
 
-    this->UploadDecodedPixels(pixels.data(), width, height, unit);
+    this->gpu->UploadDecodedPixels(
+        pixels.data(),
+        width,
+        height,
+        this->data.colorSpace,
+        unit
+    );
 }
 
 void Texture::Attach()
 {
-    if (this->attached)
+    if (this->gpu->IsAttached())
         return;
 
     if (this->data.IsFile())
@@ -208,7 +197,7 @@ void Texture::Attach()
 
 bool Texture::IsAttached() const noexcept
 {
-    return this->attached;
+    return this->gpu->IsAttached();
 }
 
 TextureColorSpace Texture::ColorSpace() const noexcept
@@ -216,90 +205,8 @@ TextureColorSpace Texture::ColorSpace() const noexcept
     return this->data.colorSpace;
 }
 
-void Texture::EnsureCreated()
+GLuint Texture::GetTexture() const noexcept
 {
-    if (this->texture == 0)
-        glGenTextures(1, &this->texture);
-    if (this->texture == 0)
-        throw std::runtime_error("Cannot create OpenGL texture");
-}
-
-void Texture::UploadDecodedPixels(
-    const unsigned char* pixels,
-    int width,
-    int height,
-    unsigned int unit
-)
-{
-    ValidateUnit(unit);
-    this->EnsureCreated();
-    this->ActiveTexture(unit);
-    glBindTexture(GL_TEXTURE_2D, this->texture);
-    this->Configure();
-
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        this->data.colorSpace == TextureColorSpace::Srgb
-            ? GL_SRGB8_ALPHA8
-            : GL_RGBA8,
-        width,
-        height,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        pixels
-    );
-    glGenerateMipmap(GL_TEXTURE_2D);
-    this->attached = true;
-}
-
-void Texture::ActiveTexture(unsigned int unit)
-{
-    glActiveTexture(GL_TEXTURE0 + unit);
-}
-
-GLint Texture::MaxUnits()
-{
-    // This application uses one OpenGL context, so the limit is stable.
-    static const GLint maxUnits = []
-    {
-        GLint value = 0;
-        glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &value);
-        return value;
-    }();
-    return maxUnits;
-}
-
-void Texture::ValidateUnit(unsigned int unit)
-{
-    const GLint maxUnits = MaxUnits();
-    if (maxUnits <= 0)
-        throw std::runtime_error("OpenGL reported no available texture units");
-
-    if (unit >= static_cast<unsigned int>(maxUnits))
-    {
-        throw std::out_of_range(
-            "Texture unit " + std::to_string(unit) +
-            " is out of range; maximum unit count is " +
-            std::to_string(maxUnits)
-        );
-    }
-}
-
-void Texture::Configure()
-{
-    if (this->configured)
-        return;
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(
-        GL_TEXTURE_2D,
-        GL_TEXTURE_MIN_FILTER,
-        GL_LINEAR_MIPMAP_LINEAR
-    );
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    this->configured = true;
+    return this->gpu->Id();
 }
 }  // namespace wisteria

@@ -13573,6 +13573,100 @@ void TestR2WindowedCapabilities()
     (void)capabilities;
 }
 
+void TestR2MeshGpuRealizationSplit()
+{
+    // R2.0 Phase 0C: Mesh CPU asset and GPU realization are physically
+    // separated (MeshGpuResource). Instance clones own their own
+    // realization, so runtime-deformed geometry can never be shared between
+    // ModelInstances referencing the same asset.
+    auto provider = wisteria::CreateHeadlessContext({});
+    Require(
+        provider != nullptr,
+        "r2-mesh provider unavailable"
+    );
+    wisteria::HeadlessRenderSession session(std::move(provider));
+    session.MakeCurrent();
+    wisteria::GraphicsDevice& device = session.GetGraphicsDevice();
+
+    // A tiny triangle asset: position(3) + normal(3) + texCoord(2).
+    wisteria::DefaultModelData assetData;
+    assetData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    const std::vector<float> staticVertices = {
+        // position            normal            texCoord
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    assetData.vertices = staticVertices;
+    assetData.indices = {0U, 1U, 2U};
+
+    wisteria::Mesh assetMesh(
+        assetData,
+        0U,
+        {},
+        {},
+        &device
+    );
+    Require(
+        assetMesh.Data().vertices == staticVertices,
+        "r2-mesh asset data changed after construction"
+    );
+
+    std::unique_ptr<wisteria::Mesh> instanceA =
+        assetMesh.CloneForInstance();
+    std::unique_ptr<wisteria::Mesh> instanceB =
+        assetMesh.CloneForInstance();
+    Require(
+        instanceA != nullptr && instanceB != nullptr &&
+            instanceA->LifetimeToken() != instanceB->LifetimeToken(),
+        "r2-mesh instance clones must have distinct lifetime identity"
+    );
+
+    instanceA->Attach();
+    instanceB->Attach();
+    Require(
+        instanceA->IsAttached() && instanceB->IsAttached(),
+        "r2-mesh instance attach failed"
+    );
+
+    // Runtime-deformed uploads are instance-local; the asset data never
+    // changes and the two instances never share dynamic state.
+    const std::vector<glm::vec3> positionsA = {
+        {-1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f},
+    };
+    const std::vector<glm::vec3> positionsB = {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, -1.0f, 0.0f},
+        {-1.0f, 0.0f, 0.0f},
+    };
+    const std::vector<glm::vec3> normals = {
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+    };
+    instanceA->UploadDynamicFrame(positionsA, normals);
+    instanceB->UploadDynamicFrame(positionsB, normals);
+    Require(
+        instanceA->HasDynamicVertexSource() &&
+            instanceB->HasDynamicVertexSource(),
+        "r2-mesh dynamic upload was not recorded"
+    );
+    Require(
+        assetMesh.Data().vertices == staticVertices,
+        "r2-mesh dynamic upload mutated the CPU asset"
+    );
+    Require(
+        instanceA->VertexCount() == 3U && instanceB->VertexCount() == 3U,
+        "r2-mesh instance vertex count mismatch"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -13706,6 +13800,10 @@ int main()
     failures += !RunTest(
         "R2.0 windowed capabilities transaction",
         TestR2WindowedCapabilities
+    );
+    failures += !RunTest(
+        "R2.0 mesh GPU realization split",
+        TestR2MeshGpuRealizationSplit
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

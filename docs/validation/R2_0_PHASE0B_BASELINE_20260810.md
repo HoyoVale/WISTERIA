@@ -1,6 +1,6 @@
 # R2.0 Phase 0B — RenderDevice Foundation 基线（2026-08-10）
 
-> 状态：**IMPLEMENTED / VALIDATED**；待 ChatGPT 复审后 CLOSED。
+> 状态：**CLOSED**（2026-08-10 ChatGPT 复审 `d05f2a6` 通过）。
 > 前置：R2.0 Phase 0A FROZEN（`R2_0_RENDER_ARCHITECTURE_CONTRACT.md`）。
 > 范围：只建立 backend-neutral RenderDevice 边界 + OpenGL backend
 > 吸收/包装现有 GraphicsDevice。**没有**提前做 0C（Mesh/Texture/
@@ -169,6 +169,6 @@ ABI safety matrix：94 legacy + 30 stable（导出面不变）
 ### 当前状态
 
 ```text
-R2.0 Phase 0B  FINAL FOUNDATION FIX APPLIED（待 ChatGPT 复审）
-R2.0 Phase 0C  HOLD
+R2.0 Phase 0B  CLOSED ✅
+R2.0 Phase 0C  AUTHORIZED ▶
 ```
