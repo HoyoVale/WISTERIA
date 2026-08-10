@@ -222,6 +222,21 @@ void EnvironmentMapGpuResource::Attach()
 {
     if (this->attached)
         return;
+    // P0-2 Closure: creation provenance must match deletion provenance.
+    // Reject before any GL work when the current share group is not the
+    // owning device's share group, or when no context is current at all.
+    if (this->device != nullptr)
+    {
+        this->device->RequireShareGroupToken(
+            GraphicsDevice::CurrentShareGroup()
+        );
+        if (GraphicsDevice::CurrentContext() == nullptr)
+        {
+            throw std::logic_error(
+                "Environment GPU realization requires a current owning context"
+            );
+        }
+    }
     // Context-local objects (VAO/FBO) belong to the exact context that is
     // current during attach.
     this->owningContext = GraphicsDevice::CurrentContext();

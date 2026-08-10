@@ -236,6 +236,9 @@ P0-2.1 shared resource ownership → R1.7：
   GraphicsDevice::DeleteResource：
     owning share-group current → immediate
     not current → pending delete（复用 R1.7 队列，不重造）
+  注：managed RenderResourceCache path 一律走 GraphicsDevice；
+  legacy/unmanaged null-cache compatibility path 暂保留 raw GL lifetime
+  （0C Final Review 再决定去留）
   Program::TakeProgram()：Environment 把 program 所有权交给
   DeleteResource（避免 Program 析构 raw glDelete 双重删除）
   skybox shader 在 link 后立即释放（Attach 时 owning context current）
@@ -253,10 +256,15 @@ P0-2.3 Attach rollback transaction：
 
 P0-2.4 adversarial tests（TestR2EnvironmentGpuLifetime）：
   1. owning context current 销毁 → immediate，PendingDeleteCount == 0
-  2. sibling context 销毁 → shared + context-local 全部入 pending
-  3. sibling flush A 队列 → context-local 不释放（owner=A）
+  2. 另一独立 session context 销毁 → owning device 队列（shared +
+     context-local 均入 pending）
+  3. 另一 session flush A 队列 → 不释放（非 A share group / 非 A exact
+     context）
   4. owning flush → 全部清空
-  5. corrupted HDR attach 失败 → 原子回滚，无 pending 残留
+  5. corrupted HDR attach 失败 → 临时 GPU allocation（geometry/FBO/RBO/
+     cubemap）之后 decode 抛错 → 原子回滚，无 pending 残留
+  6. wrong-share-group attach（cache A + session B current）→ logic_error
+     → 无 partial realization → A current 后 attach 成功
 
 P0-2.5 四矩阵 + ABI + IBL 回归：
   Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
@@ -265,6 +273,21 @@ P0-2.5 四矩阵 + ABI + IBL 回归：
 
 明确不做（P0-2 边界）：HDR decode 拆分（下阶段）、Environment
 RenderResourceCache dedup（6B）、PipelineVariant（Step 7）。
+
+### P0-2 Closure Micro Fix（2026-08-10 ChatGPT 复审 `b99573d` 后）
+
+```text
+1. EnvironmentMapGpuResource::Attach() 在任何 GL work 前验证：
+   device->RequireShareGroupToken(GraphicsDevice::CurrentShareGroup()) +
+   current context 非 null（creation provenance == deletion provenance）
+2. 新增 adversarial：cache A + session B current → Attach 拒绝
+   （logic_error）→ 无 partial / pending → A current 后 Attach 成功
+3. 文档口径：
+   - 两个独立 headless sessions（不同 share group），不称 sibling
+   - corrupted HDR = partial GPU allocation 后 rollback
+   - DeleteResource 统一限定 managed cache path；
+     null-cache raw GL fallback 保留至 0C Final Review
+```
 
 ## 3. 复审注意事项
 

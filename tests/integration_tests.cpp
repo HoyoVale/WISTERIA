@@ -13853,6 +13853,8 @@ void TestR2EnvironmentGpuLifetime()
     // lifetime authority. Shared objects (textures/buffers/program/RBO) go
     // through the share-group pending queue; context-local objects
     // (VAO/FBO) are bound to their exact creating context.
+    // NOTE: sessionA and sessionB are two INDEPENDENT headless sessions
+    // (separate share groups), not sibling contexts of one share group.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
     Require(
@@ -13891,8 +13893,9 @@ void TestR2EnvironmentGpuLifetime()
         "r2-env normal teardown left pending deletes"
     );
 
-    // P0-2.1 + P0-2.2: destroyed under a sibling context, shared objects
-    // queue and context-local objects must NOT be deleted from the sibling.
+    // P0-2.1: destroyed while another session's context is current, the
+    // owning device queues its shared objects; context-local objects are
+    // bound to the exact context captured at attach (R1.7 contract).
     {
         sessionA.MakeCurrent();
         auto environment = std::make_unique<wisteria::EnvironmentMap>(
@@ -13911,8 +13914,9 @@ void TestR2EnvironmentGpuLifetime()
         "r2-env non-owning destroy must queue deletions"
     );
 
-    // Flushing A's queue from B's context must not release A's
-    // context-local objects (their owner is A's exact context).
+    // Flushing A's queue while B is current cannot release anything:
+    // B is not A's share group (shared stay queued) and not A's exact
+    // context (context-local stay queued).
     sessionB.MakeCurrent();
     sessionA.GetGraphicsDevice().FlushPendingDeletes();
     Require(
@@ -13928,7 +13932,10 @@ void TestR2EnvironmentGpuLifetime()
     );
 
     // P0-2.4: attach failure must roll back atomically and leave no pending
-    // leftovers (corrupted HDR input fails during decode, before GPU work).
+    // leftovers. Corrupted HDR input fails during source preparation AFTER
+    // temporary GPU allocation (geometry/FBO/RBO/cubemap already created),
+    // so this verifies partial-construction rollback under the new
+    // shared/context-local ownership split.
     const std::filesystem::path badFile =
         std::filesystem::temp_directory_path() / "wisteria_r2_bad_env.hdr";
     {
@@ -13967,6 +13974,40 @@ void TestR2EnvironmentGpuLifetime()
         "r2-env attach failure left pending deletes"
     );
     std::filesystem::remove(badFile);
+
+    // P0-2 closure: creation provenance. An Environment realized through
+    // cache/device A must reject Attach while session B is current, before
+    // any GPU work, then succeed once A is current again.
+    sessionB.MakeCurrent();
+    auto wrongShareGroupEnvironment =
+        std::make_unique<wisteria::EnvironmentMap>(
+            smallData,
+            &cacheA
+        );
+    bool wrongShareGroupRejected = false;
+    try
+    {
+        wrongShareGroupEnvironment->Attach();
+    }
+    catch (const std::logic_error&)
+    {
+        wrongShareGroupRejected = true;
+    }
+    Require(
+        wrongShareGroupRejected,
+        "r2-env attach under wrong share group was not rejected"
+    );
+    Require(
+        !wrongShareGroupEnvironment->IsAttached() &&
+            sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-env wrong-share-group attach left partial state"
+    );
+    sessionA.MakeCurrent();
+    wrongShareGroupEnvironment->Attach();
+    Require(
+        wrongShareGroupEnvironment->IsAttached(),
+        "r2-env attach failed after switching to owning share group"
+    );
 }
 
 int main()
