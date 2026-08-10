@@ -81,12 +81,11 @@ Texture::~Texture() = default;
 
 void Texture::SetRenderCache(RenderResourceCache* nextCache)
 {
-    if (this->gpu != nullptr && this->gpu->IsAttached())
-        return;
+    // Textures are assets: allow re-resolving for another device even after
+    // attach. The previous device's cache keeps its realization alive.
     this->cache = nextCache;
-    if (this->cache == nullptr)
-        return;
-    this->gpu = this->cache->AcquireTexture(this->data);
+    if (this->cache != nullptr)
+        this->gpu = this->cache->AcquireTexture(this->data);
 }
 
 void Texture::Bind(unsigned int unit)

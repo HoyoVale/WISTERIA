@@ -13688,9 +13688,19 @@ void TestR2RenderResourceCache()
     std::vector<std::uint8_t> pixelsA(4U * 4U * 4U, 7U);
     std::vector<std::uint8_t> pixelsB(4U * 4U * 4U, 9U);
     wisteria::TextureData textureDataA =
-        wisteria::TextureData::FromRgba8(4, 4, std::move(pixelsA));
+        wisteria::TextureData::FromRgba8(
+            4,
+            4,
+            std::move(pixelsA),
+            wisteria::TextureColorSpace::Linear
+        );
     wisteria::TextureData textureDataB =
-        wisteria::TextureData::FromRgba8(4, 4, std::move(pixelsB));
+        wisteria::TextureData::FromRgba8(
+            4,
+            4,
+            std::move(pixelsB),
+            wisteria::TextureColorSpace::Linear
+        );
     auto textureA = std::make_shared<wisteria::Texture>(
         textureDataA,
         &cache
@@ -13706,6 +13716,24 @@ void TestR2RenderResourceCache()
     Require(
         cache.TextureCount() == 2U,
         "r2-cache texture sharing count mismatch"
+    );
+    // Color space must be part of the realization identity: identical RGBA
+    // bytes with Linear vs sRGB produce distinct realizations (Blocker B).
+    std::vector<std::uint8_t> srgbPixels(4U * 4U * 4U, 7U);
+    wisteria::TextureData srgbData =
+        wisteria::TextureData::FromRgba8(
+            4,
+            4,
+            std::move(srgbPixels),
+            wisteria::TextureColorSpace::Srgb
+        );
+    auto textureSrgb = std::make_shared<wisteria::Texture>(
+        srgbData,
+        &cache
+    );
+    Require(
+        cache.TextureCount() == 3U,
+        "r2-cache color space must differentiate realizations"
     );
     textureA->Attach();
     Require(
@@ -13761,6 +13789,45 @@ void TestR2RenderResourceCache()
     Require(
         instance->IsAttached(),
         "r2-cache instance clone attach failed"
+    );
+
+    // Cross-device asset realization (Blocker A): the same CPU Mesh resolved
+    // through a second RenderDevice gets a distinct realization, even after
+    // device A already attached its own.
+    auto secondProvider = wisteria::CreateHeadlessContext({});
+    Require(
+        secondProvider != nullptr,
+        "r2-cache second provider unavailable"
+    );
+    wisteria::HeadlessRenderSession secondSession(std::move(secondProvider));
+    secondSession.MakeCurrent();
+    wisteria::RenderResourceCache& secondCache =
+        secondSession.GetRenderCache();
+    auto crossDeviceMesh = std::make_shared<wisteria::Mesh>(
+        meshData,
+        0U,
+        std::vector<wisteria::MeshMorphTarget>{},
+        std::vector<std::uint32_t>{}
+    );
+    // Device A attaches first.
+    crossDeviceMesh->SetRenderCache(&cache);
+    crossDeviceMesh->Attach();
+    Require(
+        crossDeviceMesh->IsAttached(),
+        "r2-cache device A attach failed"
+    );
+    // Device B re-resolves; both caches hold distinct realizations.
+    crossDeviceMesh->SetRenderCache(&secondCache);
+    crossDeviceMesh->Attach();
+    Require(
+        crossDeviceMesh->IsAttached() &&
+            secondCache.StaticMeshCount() == 1U,
+        "r2-cache cross-device realization was not re-resolved"
+    );
+    Require(
+        cache.StaticMeshCount() == 1U &&
+            secondCache.StaticMeshCount() == 1U,
+        "r2-cache cross-device realizations must be per-device"
     );
 }
 

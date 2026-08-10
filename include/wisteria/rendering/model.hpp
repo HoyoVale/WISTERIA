@@ -1,6 +1,5 @@
 #pragma once
 
-#include "wisteria/rendering/render_device.hpp"
 #include "wisteria/rendering/vertex_layout.hpp"
 
 #include <glm/glm.hpp>

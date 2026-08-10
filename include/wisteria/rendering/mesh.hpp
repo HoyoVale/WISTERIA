@@ -17,7 +17,6 @@ class Pose;
 class Mesh;
 class MeshGpuResource;
 class RenderResourceCache;
-class GraphicsDevice;
 
 // Called by the Renderer with the owning window's GL context current. Used by
 // CPU-skinned models (Saba) to upload vertices at the correct time/context.

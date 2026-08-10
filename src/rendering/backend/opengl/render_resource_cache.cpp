@@ -92,15 +92,17 @@ std::size_t RenderResourceCache::StaticMeshCount() const noexcept
 
 std::string RenderResourceCache::TextureKey(const TextureData& data)
 {
+    const char* colorSpace =
+        data.colorSpace == TextureColorSpace::Srgb ? ":srgb" : ":linear";
     if (data.IsFile())
-        return "file:" + data.filePath.string();
+        return "file:" + data.filePath.string() + colorSpace;
 
     const std::uint64_t hash = Fnv1a64Bytes(
         data.data.data(),
         data.data.size()
     );
     std::ostringstream stream;
-    stream << "payload:" << std::hex << hash;
+    stream << "payload:" << std::hex << hash << colorSpace;
     if (data.IsRgba8())
         stream << ":rgba8:" << data.width << "x" << data.height;
     return stream.str();

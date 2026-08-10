@@ -340,15 +340,27 @@ std::unique_ptr<Mesh> Mesh::CloneForInstance() const
 
 void Mesh::SetRenderCache(RenderResourceCache* nextCache)
 {
-    if (this->gpu != nullptr && this->gpu->IsAttached())
-        return;
-    this->cache = nextCache;
-    if (this->cache == nullptr)
-        return;
     if (this->instanceLocal)
-        this->gpu = this->cache->CreateInstanceMesh(this->data);
-    else
+    {
+        // Instance realizations are fixed once attached: an instance is
+        // bound to one render session/device for its lifetime.
+        if (this->gpu == nullptr || !this->gpu->IsAttached())
+        {
+            this->cache = nextCache;
+            if (this->cache != nullptr)
+                this->gpu = this->cache->CreateInstanceMesh(this->data);
+        }
+        return;
+    }
+    // Asset meshes may render through multiple devices: re-resolve the
+    // shared realization for the current cache even if another device's
+    // realization is already attached. Each device's cache keeps its own
+    // realization alive, so A/B GPU state never shares.
+    this->cache = nextCache;
+    if (this->cache != nullptr)
         this->gpu = this->cache->AcquireStaticMesh(this->data);
+    else
+        this->gpu = nullptr;
 }
 
 std::vector<float> Mesh::RebuildInterleavedVertices(

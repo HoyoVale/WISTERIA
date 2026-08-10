@@ -167,6 +167,38 @@ Step 7 pipeline semantic cleanup：
   Environment shared/context-local ownership 分别验证
 ```
 
+## 10. 6A Final Boundary Fix（2026-08-10 ChatGPT 复审 `eda930e` 后）
+
+```text
+Blocker A（per-device realization ownership）：
+  Mesh/Texture/Material 的 SetRenderCache 允许跨 device 切换：
+  - asset（static）：重新解析当前 cache 的共享 realization，
+    即使另一 device 的 realization 已 attach（旧 cache 持有旧
+    realization，A/B GPU state 不共享）
+  - instance（runtime-deformed）：realization 固定独立
+    （instance 生命周期绑定一个 render session/device）
+  新增 cross-device Mesh 测试：Device A attach 后 Device B 重新解析，
+  两个 cache 各 1 个 realization
+
+Blocker B（Texture cache identity）：
+  TextureKey 加入 TextureColorSpace（file: path+cs /
+  payload: hash+cs / RGBA: hash+cs+WxH）
+  新增 adversarial：same pixels + Linear / sRGB → 2 realizations
+
+Micro 1：IndexFormat 从 render_device.hpp 下沉到 vertex_layout.hpp；
+        model.hpp 不再 include render_device.hpp
+Micro 2：mesh.hpp 残留 GraphicsDevice 前向声明删除
+```
+
+### 6A Final Fix 验证
+
+```text
+Windows CORE 12/12、Windows FULL 13/13
+WSL CORE 14/14、WSL FULL 15/15
+ABI 94 legacy + 30 stable
+render-assets-neutral-compile PASS（model 不再依赖 RenderDevice）
+```
+
 ## 3. 复审注意事项
 
 1. Mesh 公共头不再持有 VBO/EBO（GPU 细节移出 CPU asset）；

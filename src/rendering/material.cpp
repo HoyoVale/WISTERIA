@@ -150,8 +150,9 @@ Material::~Material() = default;
 
 void Material::SetRenderCache(RenderResourceCache* nextCache)
 {
-    if (this->gpu != nullptr && this->gpu->IsAttached())
-        return;
+    // Materials are assets: allow re-resolving for another device even
+    // after attach (programs and texture realizations stay alive through
+    // their own caches/shared ownership).
     this->cache = nextCache;
     if (this->cache == nullptr)
         return;

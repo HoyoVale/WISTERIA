@@ -15,6 +15,16 @@ namespace wisteria
 inline constexpr std::uint32_t AutomaticAttributeLocation =
     std::numeric_limits<std::uint32_t>::max();
 
+// Engine-semantic index format (moved here from the RenderDevice contract so
+// CPU ModelData never depends on RenderDevice; the OpenGL backend maps
+// Uint16 -> GL_UNSIGNED_SHORT, Uint32 -> GL_UNSIGNED_INT, etc.).
+enum class IndexFormat : std::uint8_t
+{
+    Uint8,
+    Uint16,
+    Uint32
+};
+
 // Engine-semantic vertex component format.
 enum class VertexFormat : std::uint8_t
 {
