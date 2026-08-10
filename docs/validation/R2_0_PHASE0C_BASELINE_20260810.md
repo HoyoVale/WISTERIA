@@ -422,6 +422,74 @@ P1-2 cache lifetime 测试语义修正：
 文档：A->B->A 描述修正为 same semantic data 的 cache resolution
 ```
 
+### 6B Closure Micro Fix（2026-08-11 ChatGPT 复审 `1df24ce` 后）
+
+```text
+1. Texture file identity 恢复 raw/unresolved asset path：
+   key = "file:" + filePath.string() + colorSpace；
+   exact equality = 原始路径 ==（不再 lexically_normal）
+   理由：lexical equivalence != filesystem equivalence
+   （missing/../assets 与 assets 可能不同；上传打开原始 path，
+   词法合并会让无效路径错误复用已 attached realization）
+   alias dedup 留给高层 asset resolver，GPU cache 不猜测
+2. normalized-equivalent path 共享测试删除/反转：
+   不同原始路径 → 各自 realization（count 5，保守不合并）
+3. EnvironmentGpuDataEqual procedural 分支完整比较 generation
+   parameters（sameSource + env/irr/pref/mip/brdf），
+   exact equality 自包含、不依赖 accelerator key 内容
+```
+
+## 15. Step 7 — Material / Pipeline Semantic Cleanup（2026-08-11）
+
+```text
+include/wisteria/rendering/pipeline_variant.hpp（新增，neutral）
+  PipelineVariant（Custom/PbrMetallicRoughness/MmdToon/ShadowDepth/
+  GroundShadow/Skybox/OitComposite/Present）
+  PipelineVariantKey
+  （从 render_device.hpp 移出：CPU MaterialData 依赖 pipeline variant
+   contract，不依赖 RenderDevice）
+
+include/wisteria/rendering/material.hpp
+  MaterialData.pipelineVariant（默认 PbrMetallicRoughness）
+  shaderFilePath / ShaderInterface 标记为 OpenGL legacy compatibility
+  （仅 PipelineVariant::Custom 使用 shaderFilePath）
+
+src/rendering/backend/opengl/material_gpu_resource.cpp
+  ResolveShaderPaths()：
+  - Custom → shaderFilePath（legacy custom GLSL）
+  - MmdToon → assets::Shader("mmd.vert"/"mmd.frag")
+  - PbrMetallicRoughness → assets::Shader("basicTex.vert"/"basicTex.frag")
+  - 内置变体经 asset system 解析（不再 cwd 相对路径）
+
+src/assets/model_asset_bundle.cpp + manager.cpp
+  MMD Toon 材料：设置 pipelineVariant=MmdToon（删除手动 shaderFilePath
+  设置）——semantic variant 是 shader 选择权威
+
+tests：TestR2MaterialPipelineVariant
+  - PBR 默认变体 Attach + GetProgram 成功（内置 basicTex）
+  - MMD 变体 Attach + GetProgram 成功（内置 mmd，无 cwd 路径）
+  - Custom + basicColor GLSL → Attach 成功（legacy 路径真正使用）
+  - Custom + 缺失 shader → Attach 拒绝（不会被内置静默替换）
+```
+
+边界（Step 7 第一阶段）：
+
+```text
+已完成：semantic pipeline variant 驱动 built-in shader 选择；
+        legacy custom GLSL 关进 PipelineVariant::Custom
+保留：ShaderInterface uniform-name contract 与 Renderer 的
+      GetProgram()/Uniform* 调用 —— OpenGL legacy compatibility，
+      0D（RenderFramePacket/RenderGraph）迁移到 backend pipeline
+      realization
+```
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+```
+
 ## 3. 复审注意事项
 
 1. Mesh 公共头不再持有 VBO/EBO（GPU 细节移出 CPU asset）；

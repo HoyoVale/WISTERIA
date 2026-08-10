@@ -97,12 +97,10 @@ ModelAssetBundle BuildModelAssetBundle(
         data.receiveSelfShadow = source.receiveSelfShadow;
         if (source.shadingModel == MaterialShadingModel::MmdToon)
         {
-            const std::filesystem::path shaderDirectory =
-                std::filesystem::current_path() / "assets" / "shaders";
-            data.shaderFilePath.VertexPath =
-                (shaderDirectory / "mmd.vert").string();
-            data.shaderFilePath.FragmentPath =
-                (shaderDirectory / "mmd.frag").string();
+            // R2.0 Phase 0C Step 7: semantic pipeline variant drives the
+            // backend shader selection; no cwd-relative shader path.
+            data.pipelineVariant.variant =
+                wisteria::PipelineVariant::MmdToon;
             data.shaderInterface.imageBasedLightingEnabled = false;
             data.shaderInterface.shadowingSupported = true;
         }

@@ -19,6 +19,8 @@
 #include <string_view>
 #include <vector>
 
+#include "wisteria/rendering/pipeline_variant.hpp"
+
 namespace wisteria
 {
 // Engine-semantic backend identity. OpenGL is the only R2.0 backend;
@@ -207,28 +209,6 @@ struct ShaderStageDesc
     std::string_view source;
     // Informational only in 0B/0C; OpenGL backend compiles the fixed main.
     std::string_view entryPoint;
-};
-
-// R2.0 Phase 0C Step 7: engine-semantic built-in pipeline variant key.
-// 0D RenderGraph/pipeline realization will select backend pipelines from
-// this key instead of shipping GLSL through the neutral layer. 0B/0C keep
-// GraphicsPipelineDesc.stages as the working surface.
-enum class PipelineVariant : std::uint8_t
-{
-    PbrMetallicRoughness,
-    MmdToon,
-    ShadowDepth,
-    GroundShadow,
-    Skybox,
-    OitComposite,
-    Present
-};
-
-struct PipelineVariantKey
-{
-    PipelineVariant variant = PipelineVariant::PbrMetallicRoughness;
-    // 0C: reserved for future semantic flags (alpha mode, skinning, morph).
-    std::uint32_t flags = 0U;
 };
 
 struct GraphicsPipelineDesc

@@ -137,7 +137,13 @@ std::string RenderResourceCache::TextureKey(const TextureData& data)
     const char* colorSpace =
         data.colorSpace == TextureColorSpace::Srgb ? ":srgb" : ":linear";
     if (data.IsFile())
-        return "file:" + data.filePath.lexically_normal().string() + colorSpace;
+    {
+        // 6B closure: raw/unresolved asset path identity. Lexical
+        // normalization must NOT merge two paths that may differ on the
+        // real filesystem (missing parent dirs, symlinks). Alias dedup
+        // belongs to a higher-level asset resolver, never the GPU cache.
+        return "file:" + data.filePath.string() + colorSpace;
+    }
 
     const std::uint64_t hash = Fnv1a64Bytes(
         data.data.data(),
@@ -211,8 +217,7 @@ bool RenderResourceCache::TextureDataEqual(
     const TextureData& right
 )
 {
-    return left.filePath.lexically_normal() ==
-            right.filePath.lexically_normal() &&
+    return left.filePath == right.filePath &&
         left.data == right.data &&
         left.width == right.width &&
         left.height == right.height &&
@@ -224,21 +229,27 @@ bool RenderResourceCache::EnvironmentGpuDataEqual(
     const EnvironmentMapData& right
 )
 {
-    if (left.equirectangularImage == nullptr ||
+    bool sameSource = false;
+    if (left.equirectangularImage == nullptr &&
         right.equirectangularImage == nullptr)
     {
-        // Procedural source: both must be procedural.
-        return left.equirectangularImage == nullptr &&
-            right.equirectangularImage == nullptr;
+        sameSource = true;
     }
-    const EnvironmentHdrImage& a = *left.equirectangularImage;
-    const EnvironmentHdrImage& b = *right.equirectangularImage;
-    if (a.width != b.width || a.height != b.height ||
-        a.rgb != b.rgb)
+    else if (left.equirectangularImage != nullptr &&
+             right.equirectangularImage != nullptr)
     {
-        return false;
+        const EnvironmentHdrImage& a = *left.equirectangularImage;
+        const EnvironmentHdrImage& b = *right.equirectangularImage;
+        sameSource =
+            a.width == b.width &&
+            a.height == b.height &&
+            a.rgb == b.rgb;
     }
-    return left.environmentResolution == right.environmentResolution &&
+    // Exact equality is self-contained: generation parameters are compared
+    // for both procedural and decoded sources, independent of the
+    // accelerator key contents.
+    return sameSource &&
+        left.environmentResolution == right.environmentResolution &&
         left.irradianceResolution == right.irradianceResolution &&
         left.prefilterResolution == right.prefilterResolution &&
         left.prefilterMipLevels == right.prefilterMipLevels &&

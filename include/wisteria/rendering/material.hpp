@@ -1,5 +1,6 @@
 #pragma once
 #include "wisteria/core/asset_paths.hpp"
+#include "wisteria/rendering/pipeline_variant.hpp"
 #include "wisteria/rendering/shader_path.hpp"
 #include "wisteria/rendering/texture.hpp"
 #include <string>
@@ -144,6 +145,12 @@ struct ShaderInterface
 };
 
 struct MaterialData{
+    // R2.0 Phase 0C Step 7: semantic pipeline variant drives built-in
+    // pipeline selection in the backend. Custom selects the legacy GLSL
+    // path below (OpenGL legacy compatibility).
+    PipelineVariantKey pipelineVariant;
+    // OpenGL legacy compatibility: only used when pipelineVariant.variant
+    // is Custom. New code must select built-in variants instead.
     Path shaderFilePath;
     MaterialShadingModel shadingModel =
         MaterialShadingModel::PbrMetallicRoughness;
@@ -187,6 +194,9 @@ struct MaterialData{
     // part afterwards so characters correctly occlude the shadow instead of
     // being overpainted by its coplanar depth bias.
     bool groundPlane = false;
+    // OpenGL legacy compatibility: GLSL uniform-name contract used by the
+    // current Renderer. 0D migrates uniform handling into backend pipeline
+    // realization; until then this stays as the working contract.
     ShaderInterface shaderInterface;
 };
 

@@ -2,6 +2,7 @@
 
 #include "material_gpu_resource.hpp"
 
+#include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/program_cache.hpp"
 #include "render_resource_cache.hpp"
 #include "wisteria/rendering/shader.hpp"
@@ -10,6 +11,32 @@
 
 namespace wisteria
 {
+namespace
+{
+// R2.0 Phase 0C Step 7: built-in semantic pipeline selection. Custom routes
+// to the legacy GLSL path; built-in variants resolve to engine shaders
+// through the asset system (not cwd-relative paths).
+Path ResolveShaderPaths(const MaterialData& data)
+{
+    if (data.pipelineVariant.variant == PipelineVariant::Custom)
+        return data.shaderFilePath;
+    switch (data.pipelineVariant.variant)
+    {
+    case PipelineVariant::MmdToon:
+        return Path{
+            wisteria::assets::Shader("mmd.vert"),
+            wisteria::assets::Shader("mmd.frag")
+        };
+    case PipelineVariant::PbrMetallicRoughness:
+    default:
+        return Path{
+            wisteria::assets::Shader("basicTex.vert"),
+            wisteria::assets::Shader("basicTex.frag")
+        };
+    }
+}
+}  // namespace
+
 MaterialGpuResource::MaterialGpuResource(
     const MaterialData&,
     MaterialTextureBindings nextTextures,
@@ -36,9 +63,10 @@ void MaterialGpuResource::Attach(const MaterialData& data)
     if (this->program != nullptr)
         return;
 
+    const Path shaderPaths = ResolveShaderPaths(data);
     this->program = this->programCache->Acquire(
-        data.shaderFilePath.VertexPath,
-        data.shaderFilePath.FragmentPath
+        shaderPaths.VertexPath,
+        shaderPaths.FragmentPath
     );
     for (const auto& [uniformName, texture] : this->textures)
         texture->Attach();

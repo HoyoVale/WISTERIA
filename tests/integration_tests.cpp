@@ -13735,8 +13735,11 @@ void TestR2RenderResourceCache()
         cache.TextureCount() == 3U,
         "r2-cache color space must differentiate realizations"
     );
-    // Normalized-equivalent file paths must share one realization: the
-    // accelerator key AND the exact-equality comparison both normalize.
+    // Raw file paths are conservative asset identity: lexically-normal
+    // equivalents (missing/../assets vs assets) are NOT merged, because
+    // lexical equivalence is not filesystem equivalence and the upload
+    // opens the original path. Alias dedup belongs to a higher-level asset
+    // resolver, never the GPU cache.
     wisteria::TextureData pathTextureA =
         wisteria::TextureData::FromFile(
             "textures/../assets/shared.png",
@@ -13756,8 +13759,8 @@ void TestR2RenderResourceCache()
         &cache
     );
     Require(
-        cache.TextureCount() == 4U,
-        "r2-cache normalized-equivalent paths must share a realization"
+        cache.TextureCount() == 5U,
+        "r2-cache raw file paths must not be merged by lexical normalization"
     );
     textureA->Attach();
     Require(
@@ -14314,6 +14317,90 @@ void TestR2EnvironmentCacheIdentity()
     );
 }
 
+void TestR2MaterialPipelineVariant()
+{
+    // R2.0 Phase 0C Step 7: MaterialData drives built-in pipeline selection
+    // through PipelineVariantKey; shaderFilePath is a legacy override only
+    // for PipelineVariant::Custom.
+    auto provider = wisteria::CreateHeadlessContext({});
+    Require(
+        provider != nullptr,
+        "r2-material provider unavailable"
+    );
+    wisteria::HeadlessRenderSession session(std::move(provider));
+    session.MakeCurrent();
+    wisteria::RenderResourceCache& cache = session.GetRenderCache();
+
+    // Built-in PBR (default variant): resolves to engine basicTex shaders.
+    wisteria::MaterialData pbrData;
+    pbrData.textureSources.clear();
+    wisteria::Material pbrMaterial(
+        pbrData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cache
+    );
+    pbrMaterial.Attach();
+    (void)pbrMaterial.GetProgram();  // must not throw
+
+    // Built-in MMD Toon: resolves to engine mmd shaders without any
+    // cwd-relative shaderFilePath (Step 7 semantic variant).
+    wisteria::MaterialData mmdData;
+    mmdData.textureSources.clear();
+    mmdData.pipelineVariant.variant =
+        wisteria::PipelineVariant::MmdToon;
+    wisteria::Material mmdMaterial(
+        mmdData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cache
+    );
+    mmdMaterial.Attach();
+    (void)mmdMaterial.GetProgram();
+
+    // Legacy custom GLSL: PipelineVariant::Custom routes to shaderFilePath.
+    wisteria::MaterialData customData;
+    customData.textureSources.clear();
+    customData.pipelineVariant.variant =
+        wisteria::PipelineVariant::Custom;
+    customData.shaderFilePath.VertexPath =
+        wisteria::assets::Shader("basicColor.vert");
+    customData.shaderFilePath.FragmentPath =
+        wisteria::assets::Shader("basicColor.frag");
+    wisteria::Material customMaterial(
+        customData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cache
+    );
+    customMaterial.Attach();
+    (void)customMaterial.GetProgram();
+
+    // Legacy custom GLSL with a missing shader must reject attach (the
+    // custom path is really used, not silently replaced by a built-in).
+    wisteria::MaterialData missingData;
+    missingData.textureSources.clear();
+    missingData.pipelineVariant.variant =
+        wisteria::PipelineVariant::Custom;
+    missingData.shaderFilePath.VertexPath = "no-such-shader.vert";
+    missingData.shaderFilePath.FragmentPath = "no-such-shader.frag";
+    wisteria::Material missingMaterial(
+        missingData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cache
+    );
+    bool customRejected = false;
+    try
+    {
+        missingMaterial.Attach();
+    }
+    catch (const std::runtime_error&)
+    {
+        customRejected = true;
+    }
+    Require(
+        customRejected,
+        "r2-material custom GLSL path must be authoritative"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -14463,6 +14550,10 @@ int main()
     failures += !RunTest(
         "R2.0 environment cache identity",
         TestR2EnvironmentCacheIdentity
+    );
+    failures += !RunTest(
+        "R2.0 material pipeline variant",
+        TestR2MaterialPipelineVariant
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
