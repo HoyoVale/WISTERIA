@@ -655,7 +655,10 @@ EnvironmentMap& ResourceManager::CreateEnvironment(
         );
     }
 
-    auto environment = std::make_unique<EnvironmentMap>(data);
+    auto environment = std::make_unique<EnvironmentMap>(
+        data,
+        this->renderCache
+    );
     EnvironmentMap& result = *environment;
     this->environments.emplace(name, std::move(environment));
     return result;

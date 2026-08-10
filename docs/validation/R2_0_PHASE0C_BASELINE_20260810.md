@@ -226,6 +226,46 @@ Step 7（Material/Pipeline semantic cleanup）范围，不计入 6A。
    SetRenderCache(nullptr) 语义（detach resolver / 保留 realization）
 ```
 
+## 12. P0-2 — Environment GPU Lifetime（2026-08-10，6A CLOSED 后）
+
+```text
+P0-2.1 shared resource ownership → R1.7：
+  EnvironmentMapGpuResource 增加 GraphicsDevice*（来自 RenderResourceCache）
+  shared 资源（environment/irradiance/prefilter cubemap、brdfLut、
+  cubeVbo/quadVbo、captureRenderbuffer、skyboxProgram）全部经
+  GraphicsDevice::DeleteResource：
+    owning share-group current → immediate
+    not current → pending delete（复用 R1.7 队列，不重造）
+  Program::TakeProgram()：Environment 把 program 所有权交给
+  DeleteResource（避免 Program 析构 raw glDelete 双重删除）
+  skybox shader 在 link 后立即释放（Attach 时 owning context current）
+
+P0-2.2 context-local ownership：
+  cubeVao/quadVao/captureFramebuffer 记录创建时 exact context
+  （GraphicsDevice::CurrentContext()），销毁经
+  DeleteResource(kind, name, owningContext)；
+  sibling context 永不删除（R1.7 ContextLocalIsCurrent 判定）
+  注：captureRenderbuffer 按 GL 规范属于 share-group shared
+  （GraphicsDevice::IsSharedResource 已含 Renderbuffer），走 shared 队列
+
+P0-2.3 Attach rollback transaction：
+  现有 try/catch Release() 保留；Release 按新 ownership 分轨清理
+
+P0-2.4 adversarial tests（TestR2EnvironmentGpuLifetime）：
+  1. owning context current 销毁 → immediate，PendingDeleteCount == 0
+  2. sibling context 销毁 → shared + context-local 全部入 pending
+  3. sibling flush A 队列 → context-local 不释放（owner=A）
+  4. owning flush → 全部清空
+  5. corrupted HDR attach 失败 → 原子回滚，无 pending 残留
+
+P0-2.5 四矩阵 + ABI + IBL 回归：
+  Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+  ABI 94 legacy + 30 stable
+```
+
+明确不做（P0-2 边界）：HDR decode 拆分（下阶段）、Environment
+RenderResourceCache dedup（6B）、PipelineVariant（Step 7）。
+
 ## 3. 复审注意事项
 
 1. Mesh 公共头不再持有 VBO/EBO（GPU 细节移出 CPU asset）；

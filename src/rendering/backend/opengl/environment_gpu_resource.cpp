@@ -3,6 +3,7 @@
 #include "environment_gpu_resource.hpp"
 
 #include "wisteria/core/asset_paths.hpp"
+#include "render_resource_cache.hpp"
 #include "wisteria/rendering/shader.hpp"
 #include <algorithm>
 #include <array>
@@ -203,8 +204,12 @@ std::vector<std::uint8_t> ReadBinaryFile(
 }
 }  // namespace
 
-EnvironmentMapGpuResource::EnvironmentMapGpuResource(EnvironmentMapData nextData)
-    : data(std::move(nextData))
+EnvironmentMapGpuResource::EnvironmentMapGpuResource(
+    EnvironmentMapData nextData,
+    RenderResourceCache* cache
+)
+    : data(std::move(nextData)),
+      device(cache != nullptr ? cache->Device() : nullptr)
 {
 }
 
@@ -217,6 +222,9 @@ void EnvironmentMapGpuResource::Attach()
 {
     if (this->attached)
         return;
+    // Context-local objects (VAO/FBO) belong to the exact context that is
+    // current during attach.
+    this->owningContext = GraphicsDevice::CurrentContext();
 
     GLint maximumCubemapSize = 0;
     GLint maximumTextureSize = 0;
@@ -795,7 +803,9 @@ void EnvironmentMapGpuResource::CreateSkyboxProgram()
         ShaderPath("skybox.frag").string()
     );
     auto program = std::make_unique<Program>(shader->GetShaderList());
-    this->skyboxShader = std::move(shader);
+    // Shader objects are no longer needed after linking; release them while
+    // the owning context is current (their destructor calls glDeleteShader).
+    shader.reset();
     this->skyboxProgram = std::move(program);
 }
 
@@ -813,16 +823,52 @@ void EnvironmentMapGpuResource::RenderQuad() const
 
 void EnvironmentMapGpuResource::ReleaseCaptureResources() noexcept
 {
-    if (this->captureRenderbuffer != 0)
-        glDeleteRenderbuffers(1, &this->captureRenderbuffer);
-    if (this->captureFramebuffer != 0)
-        glDeleteFramebuffers(1, &this->captureFramebuffer);
-    if (this->quadVbo != 0)
-        glDeleteBuffers(1, &this->quadVbo);
-    if (this->quadVao != 0)
-        glDeleteVertexArrays(1, &this->quadVao);
-    if (this->cubeVao != 0)
-        glDeleteVertexArrays(1, &this->cubeVao);
+    // Context-local: VAO/FBO must be deleted from their exact owning
+    // context. Shared: renderbuffer/buffer follow the share-group queue.
+    if (this->device != nullptr)
+    {
+        if (this->captureFramebuffer != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Framebuffer,
+                this->captureFramebuffer,
+                this->owningContext
+            );
+        if (this->quadVao != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::VertexArray,
+                this->quadVao,
+                this->owningContext
+            );
+        if (this->cubeVao != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::VertexArray,
+                this->cubeVao,
+                this->owningContext
+            );
+        if (this->captureRenderbuffer != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Renderbuffer,
+                this->captureRenderbuffer
+            );
+        if (this->quadVbo != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Buffer,
+                this->quadVbo
+            );
+    }
+    else
+    {
+        if (this->captureRenderbuffer != 0)
+            glDeleteRenderbuffers(1, &this->captureRenderbuffer);
+        if (this->captureFramebuffer != 0)
+            glDeleteFramebuffers(1, &this->captureFramebuffer);
+        if (this->quadVbo != 0)
+            glDeleteBuffers(1, &this->quadVbo);
+        if (this->quadVao != 0)
+            glDeleteVertexArrays(1, &this->quadVao);
+        if (this->cubeVao != 0)
+            glDeleteVertexArrays(1, &this->cubeVao);
+    }
 
     this->captureRenderbuffer = 0;
     this->captureFramebuffer = 0;
@@ -834,18 +880,63 @@ void EnvironmentMapGpuResource::ReleaseCaptureResources() noexcept
 void EnvironmentMapGpuResource::Release() noexcept
 {
     this->ReleaseCaptureResources();
-    this->skyboxProgram.reset();
-    this->skyboxShader.reset();
-    if (this->brdfLut != 0)
-        glDeleteTextures(1, &this->brdfLut);
-    if (this->prefilterCubemap != 0)
-        glDeleteTextures(1, &this->prefilterCubemap);
-    if (this->irradianceCubemap != 0)
-        glDeleteTextures(1, &this->irradianceCubemap);
-    if (this->environmentCubemap != 0)
-        glDeleteTextures(1, &this->environmentCubemap);
-    if (this->cubeVbo != 0)
-        glDeleteBuffers(1, &this->cubeVbo);
+    if (this->skyboxProgram != nullptr)
+    {
+        if (this->device != nullptr)
+        {
+            const GLuint program = this->skyboxProgram->TakeProgram();
+            if (program != 0U)
+            {
+                this->device->DeleteResource(
+                    GraphicsDevice::ResourceKind::Program,
+                    program
+                );
+            }
+        }
+        this->skyboxProgram.reset();
+    }
+    if (this->device != nullptr)
+    {
+        if (this->brdfLut != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                this->brdfLut
+            );
+        if (this->prefilterCubemap != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                this->prefilterCubemap
+            );
+        if (this->irradianceCubemap != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                this->irradianceCubemap
+            );
+        if (this->environmentCubemap != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Texture,
+                this->environmentCubemap
+            );
+        if (this->cubeVbo != 0)
+            this->device->DeleteResource(
+                GraphicsDevice::ResourceKind::Buffer,
+                this->cubeVbo
+            );
+    }
+    else
+    {
+        this->skyboxProgram.reset();
+        if (this->brdfLut != 0)
+            glDeleteTextures(1, &this->brdfLut);
+        if (this->prefilterCubemap != 0)
+            glDeleteTextures(1, &this->prefilterCubemap);
+        if (this->irradianceCubemap != 0)
+            glDeleteTextures(1, &this->irradianceCubemap);
+        if (this->environmentCubemap != 0)
+            glDeleteTextures(1, &this->environmentCubemap);
+        if (this->cubeVbo != 0)
+            glDeleteBuffers(1, &this->cubeVbo);
+    }
 
     this->brdfLut = 0;
     this->prefilterCubemap = 0;

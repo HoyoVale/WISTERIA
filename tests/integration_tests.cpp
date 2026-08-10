@@ -13847,6 +13847,128 @@ void TestR2RenderResourceCache()
     );
 }
 
+void TestR2EnvironmentGpuLifetime()
+{
+    // R2.0 Phase 0C P0-2: Environment GPU resources must follow R1.7
+    // lifetime authority. Shared objects (textures/buffers/program/RBO) go
+    // through the share-group pending queue; context-local objects
+    // (VAO/FBO) are bound to their exact creating context.
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-env providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+    wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
+    (void)cacheB;
+
+    wisteria::EnvironmentMapData smallData;
+    smallData.environmentResolution = 32U;
+    smallData.irradianceResolution = 16U;
+    smallData.prefilterResolution = 16U;
+    smallData.prefilterMipLevels = 5U;
+    smallData.brdfResolution = 64U;
+
+    // P0-2.3: normal teardown with the owning context current deletes
+    // immediately (no pending leftovers).
+    {
+        sessionA.MakeCurrent();
+        auto environment = std::make_unique<wisteria::EnvironmentMap>(
+            smallData,
+            &cacheA
+        );
+        environment->Attach();
+        Require(
+            environment->IsAttached(),
+            "r2-env normal attach failed"
+        );
+    }
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-env normal teardown left pending deletes"
+    );
+
+    // P0-2.1 + P0-2.2: destroyed under a sibling context, shared objects
+    // queue and context-local objects must NOT be deleted from the sibling.
+    {
+        sessionA.MakeCurrent();
+        auto environment = std::make_unique<wisteria::EnvironmentMap>(
+            smallData,
+            &cacheA
+        );
+        environment->Attach();
+        Require(
+            environment->IsAttached(),
+            "r2-env sibling attach failed"
+        );
+        sessionB.MakeCurrent();
+    }  // environment destroyed while B is current
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() > 0U,
+        "r2-env non-owning destroy must queue deletions"
+    );
+
+    // Flushing A's queue from B's context must not release A's
+    // context-local objects (their owner is A's exact context).
+    sessionB.MakeCurrent();
+    sessionA.GetGraphicsDevice().FlushPendingDeletes();
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() > 0U,
+        "r2-env sibling context must not delete A's context-local objects"
+    );
+    // Owning context flush releases everything.
+    sessionA.MakeCurrent();
+    sessionA.GetGraphicsDevice().FlushPendingDeletes();
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-env owning context flush did not clear"
+    );
+
+    // P0-2.4: attach failure must roll back atomically and leave no pending
+    // leftovers (corrupted HDR input fails during decode, before GPU work).
+    const std::filesystem::path badFile =
+        std::filesystem::temp_directory_path() / "wisteria_r2_bad_env.hdr";
+    {
+        std::ofstream stream(badFile, std::ios::binary);
+        stream << "not a valid HDR image";
+    }
+    {
+        sessionA.MakeCurrent();
+        wisteria::EnvironmentMapData badData =
+            wisteria::EnvironmentMapData::FromEquirectangular(badFile);
+        badData.environmentResolution = 32U;
+        badData.irradianceResolution = 16U;
+        badData.prefilterResolution = 16U;
+        badData.prefilterMipLevels = 5U;
+        badData.brdfResolution = 64U;
+        auto environment = std::make_unique<wisteria::EnvironmentMap>(
+            badData,
+            &cacheA
+        );
+        bool rejected = false;
+        try
+        {
+            environment->Attach();
+        }
+        catch (const std::runtime_error&)
+        {
+            rejected = true;
+        }
+        Require(
+            rejected && !environment->IsAttached(),
+            "r2-env corrupt input must reject attach"
+        );
+    }
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-env attach failure left pending deletes"
+    );
+    std::filesystem::remove(badFile);
+}
+
 int main()
 {
     int failures = 0;
@@ -13988,6 +14110,10 @@ int main()
     failures += !RunTest(
         "R2.0 render resource cache",
         TestR2RenderResourceCache
+    );
+    failures += !RunTest(
+        "R2.0 environment GPU lifetime",
+        TestR2EnvironmentGpuLifetime
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

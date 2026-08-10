@@ -9,7 +9,7 @@
 namespace wisteria
 {
 class Program;
-class Shader;
+class RenderResourceCache;
 
 // R2.0 Phase 0C Step 5: per-device GPU realization of an EnvironmentMap CPU
 // definition. Owns the IBL cubemaps, BRDF LUT, capture resources, skybox
@@ -17,7 +17,10 @@ class Shader;
 class EnvironmentMapGpuResource
 {
 public:
-    explicit EnvironmentMapGpuResource(EnvironmentMapData data);
+    explicit EnvironmentMapGpuResource(
+        EnvironmentMapData data,
+        RenderResourceCache* cache
+    );
     ~EnvironmentMapGpuResource();
 
     void Attach();
@@ -49,6 +52,11 @@ private:
     void Release() noexcept;
 
     EnvironmentMapData data;
+    GraphicsDevice* device = nullptr;
+    // R2.0 Phase 0C P0-2: the exact GL context that created the
+    // context-local objects (VAO/FBO). They must never be deleted from a
+    // sibling context, even within the same share group.
+    GraphicsContextToken owningContext = nullptr;
     GLuint environmentCubemap = 0;
     GLuint irradianceCubemap = 0;
     GLuint prefilterCubemap = 0;
@@ -59,7 +67,6 @@ private:
     GLuint cubeVbo = 0;
     GLuint quadVao = 0;
     GLuint quadVbo = 0;
-    std::unique_ptr<Shader> skyboxShader;
     std::unique_ptr<Program> skyboxProgram;
     bool attached = false;
 };

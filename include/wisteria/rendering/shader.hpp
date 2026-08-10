@@ -54,6 +54,15 @@ public:
     void UniformTex(const std::string& uniformName, unsigned int textureUnit);
 
     inline GLuint GetProgram() const { return program; };
+    // R2.0 Phase 0C P0-2: transfers program ownership to the caller (the
+    // destructor will not delete it). Used when deletion must go through
+    // GraphicsDevice::DeleteResource (R1.7 share-group lifetime).
+    GLuint TakeProgram() noexcept
+    {
+        const GLuint result = this->program;
+        this->program = 0U;
+        return result;
+    }
 
 private:
     GLuint CreateProgram(const std::vector<GLuint>& shaderList);

@@ -10,6 +10,7 @@ class Program;
 class Shader;
 class VAO;
 class EnvironmentMapGpuResource;
+class RenderResourceCache;
 
 struct EnvironmentMapData
 {
@@ -35,7 +36,10 @@ struct EnvironmentMapData
 class EnvironmentMap
 {
 public:
-    explicit EnvironmentMap(EnvironmentMapData data = {});
+    explicit EnvironmentMap(
+        EnvironmentMapData data = {},
+        RenderResourceCache* cache = nullptr
+    );
     ~EnvironmentMap();
 
     EnvironmentMap(const EnvironmentMap&) = delete;

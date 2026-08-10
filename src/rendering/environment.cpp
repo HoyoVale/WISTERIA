@@ -41,9 +41,15 @@ EnvironmentMapData EnvironmentMapData::FromEquirectangular(
     return result;
 }
 
-EnvironmentMap::EnvironmentMap(EnvironmentMapData data)
+EnvironmentMap::EnvironmentMap(
+    EnvironmentMapData data,
+    RenderResourceCache* cache
+)
     : data(std::move(data)),
-      gpu(std::make_unique<EnvironmentMapGpuResource>(this->data))
+      gpu(std::make_unique<EnvironmentMapGpuResource>(
+          this->data,
+          cache
+      ))
 {
     if (!IsPowerOfTwo(this->data.environmentResolution) ||
         !IsPowerOfTwo(this->data.irradianceResolution) ||
