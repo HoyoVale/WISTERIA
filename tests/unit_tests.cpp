@@ -2199,6 +2199,7 @@ void TestMaterialShadowFlags()
 {
     MaterialData data;
     data.shadingModel = MaterialShadingModel::MmdToon;
+    data.pipelineVariant.variant = PipelineVariant::MmdToon;
     data.groundShadow = true;
     data.castSelfShadow = false;
     data.receiveSelfShadow = true;

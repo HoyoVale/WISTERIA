@@ -63,13 +63,32 @@ void MaterialGpuResource::Attach(const MaterialData& data)
     if (this->program != nullptr)
         return;
 
+    // Creation provenance: programs and textures must be created under the
+    // owning device's share group, before any GL work.
+    if (this->device != nullptr)
+    {
+        this->device->RequireShareGroupToken(
+            GraphicsDevice::CurrentShareGroup()
+        );
+        if (GraphicsDevice::CurrentContext() == nullptr)
+        {
+            throw std::logic_error(
+                "Material GPU realization requires a current owning context"
+            );
+        }
+    }
+
+    // Transactional attach: the program is committed only after every
+    // texture also attached. A failure leaves the realization retryable
+    // (program == nullptr), never pseudo-attached.
     const Path shaderPaths = ResolveShaderPaths(data);
-    this->program = this->programCache->Acquire(
+    auto nextProgram = this->programCache->Acquire(
         shaderPaths.VertexPath,
         shaderPaths.FragmentPath
     );
     for (const auto& [uniformName, texture] : this->textures)
         texture->Attach();
+    this->program = std::move(nextProgram);
 }
 
 void MaterialGpuResource::Bind()

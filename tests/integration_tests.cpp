@@ -14346,6 +14346,7 @@ void TestR2MaterialPipelineVariant()
     // cwd-relative shaderFilePath (Step 7 semantic variant).
     wisteria::MaterialData mmdData;
     mmdData.textureSources.clear();
+    mmdData.shadingModel = wisteria::MaterialShadingModel::MmdToon;
     mmdData.pipelineVariant.variant =
         wisteria::PipelineVariant::MmdToon;
     wisteria::Material mmdMaterial(
@@ -14398,6 +14399,198 @@ void TestR2MaterialPipelineVariant()
     Require(
         customRejected,
         "r2-material custom GLSL path must be authoritative"
+    );
+
+    // Semantic consistency: pipeline variant and shading model must agree.
+    wisteria::MaterialData mismatchData;
+    mismatchData.textureSources.clear();
+    mismatchData.shadingModel =
+        wisteria::MaterialShadingModel::PbrMetallicRoughness;
+    mismatchData.pipelineVariant.variant =
+        wisteria::PipelineVariant::MmdToon;
+    bool mismatchRejected = false;
+    try
+    {
+        wisteria::Material mismatch(
+            mismatchData,
+            std::make_shared<wisteria::ProgramCache>(),
+            &cache
+        );
+        (void)mismatch;
+    }
+    catch (const std::invalid_argument&)
+    {
+        mismatchRejected = true;
+    }
+    Require(
+        mismatchRejected,
+        "r2-material pipeline/shading mismatch must be rejected"
+    );
+
+    // Pass-level variants are not Material realizations; non-zero reserved
+    // flags are rejected too.
+    wisteria::MaterialData passVariantData;
+    passVariantData.textureSources.clear();
+    passVariantData.pipelineVariant.variant =
+        wisteria::PipelineVariant::ShadowDepth;
+    bool passVariantRejected = false;
+    try
+    {
+        wisteria::Material passVariant(
+            passVariantData,
+            std::make_shared<wisteria::ProgramCache>(),
+            &cache
+        );
+        (void)passVariant;
+    }
+    catch (const std::invalid_argument&)
+    {
+        passVariantRejected = true;
+    }
+    Require(
+        passVariantRejected,
+        "r2-material pass-level variant must not fall back to PBR"
+    );
+
+    wisteria::MaterialData flagsData;
+    flagsData.textureSources.clear();
+    flagsData.pipelineVariant.flags = 1U;
+    bool flagsRejected = false;
+    try
+    {
+        wisteria::Material flagsMaterial(
+            flagsData,
+            std::make_shared<wisteria::ProgramCache>(),
+            &cache
+        );
+        (void)flagsMaterial;
+    }
+    catch (const std::invalid_argument&)
+    {
+        flagsRejected = true;
+    }
+    Require(
+        flagsRejected,
+        "r2-material reserved variant flags must be rejected"
+    );
+}
+
+void TestR2MaterialProgramRealization()
+{
+    // R2.0 Phase 0C Step 7 Stage 2: per-device ProgramCache resolution,
+    // wrong-share-group creation rejection, and transactional attach.
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-material-program providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+    wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
+    wisteria::GraphicsDevice& deviceA = sessionA.GetGraphicsDevice();
+    wisteria::GraphicsDevice& deviceB = sessionB.GetGraphicsDevice();
+
+    wisteria::MaterialData materialData;
+    materialData.textureSources.clear();
+
+    // A current: program compiles into device A's ProgramCache.
+    sessionA.MakeCurrent();
+    wisteria::Material material(
+        materialData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+    material.Attach();
+    (void)material.GetProgram();
+    Require(
+        deviceA.ProgramCount() >= 1U,
+        "r2-material-program device A must own its program"
+    );
+
+    // B current: SetRenderCache(B) must re-resolve a device-local
+    // ProgramCache; the program compiles into B's cache, not A's.
+    sessionB.MakeCurrent();
+    material.SetRenderCache(&cacheB);
+    material.Attach();
+    (void)material.GetProgram();
+    Require(
+        deviceB.ProgramCount() >= 1U,
+        "r2-material-program device B must compile its own program"
+    );
+    const std::size_t programsOnA = deviceA.ProgramCount();
+
+    // A current: re-resolving on A reuses A's program (no new compile).
+    sessionA.MakeCurrent();
+    material.SetRenderCache(&cacheA);
+    material.Attach();
+    (void)material.GetProgram();
+    Require(
+        deviceA.ProgramCount() == programsOnA,
+        "r2-material-program A->B->A must reacquire A's program"
+    );
+
+    // Wrong-share-group creation: cache/device A + context B current ->
+    // Attach rejected before any program GL work.
+    wisteria::Material wrongShareGroupMaterial(
+        materialData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+    sessionB.MakeCurrent();
+    bool wrongShareGroupRejected = false;
+    try
+    {
+        wrongShareGroupMaterial.Attach();
+    }
+    catch (const std::logic_error&)
+    {
+        wrongShareGroupRejected = true;
+    }
+    Require(
+        wrongShareGroupRejected,
+        "r2-material-program wrong-share-group attach must be rejected"
+    );
+
+    // Transactional attach: a texture that fails to attach must leave the
+    // realization unattached (program not committed), so the next attempt
+    // still runs the full attach transaction.
+    wisteria::MaterialData textureFailureData;
+    textureFailureData.textureSources = {
+        {"baseColorTexture", wisteria::TextureData{}},
+    };
+    wisteria::Material textureFailureMaterial(
+        textureFailureData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+    sessionA.MakeCurrent();
+    bool textureFailureRejected = false;
+    try
+    {
+        textureFailureMaterial.Attach();
+    }
+    catch (const std::logic_error&)
+    {
+        textureFailureRejected = true;
+    }
+    Require(
+        textureFailureRejected,
+        "r2-material-program texture attach failure must propagate"
+    );
+    bool programUncommitted = false;
+    try
+    {
+        (void)textureFailureMaterial.GetProgram();
+    }
+    catch (const std::logic_error&)
+    {
+        programUncommitted = true;
+    }
+    Require(
+        programUncommitted,
+        "r2-material-program failed attach must not commit the program"
     );
 }
 
@@ -14554,6 +14747,10 @@ int main()
     failures += !RunTest(
         "R2.0 material pipeline variant",
         TestR2MaterialPipelineVariant
+    );
+    failures += !RunTest(
+        "R2.0 material program realization",
+        TestR2MaterialProgramRealization
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

@@ -679,6 +679,10 @@ int main()
         // dangle; a later mesh at the same address rebuilds the VAO.
         {
             GraphicsDevice cacheDevice;
+            // The cache owns a share-group identity for this test context;
+            // Material realization requires the owning share group current.
+            cacheDevice.SetShareGroupToken(window);
+            GraphicsDevice::SetCurrentShareGroup(window);
             RenderResourceCache cache(&cacheDevice);
             ResourceManager cacheResources;
             cacheResources.BindGraphicsDevice(cacheDevice);

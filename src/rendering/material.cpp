@@ -7,6 +7,44 @@ namespace wisteria
 {
 namespace
 {
+// R2.0 Phase 0C Step 7 Stage 2: semantic consistency + realization scope.
+// Pass-level variants belong to 0D RenderGraph, never to Material.
+void ValidateMaterialVariant(const MaterialData& data)
+{
+    if (data.pipelineVariant.flags != 0U)
+    {
+        throw std::invalid_argument(
+            "Material pipeline variant flags are reserved and must be zero"
+        );
+    }
+    switch (data.pipelineVariant.variant)
+    {
+    case PipelineVariant::PbrMetallicRoughness:
+        if (data.shadingModel != MaterialShadingModel::PbrMetallicRoughness)
+        {
+            throw std::invalid_argument(
+                "PBR pipeline variant requires the PBR shading model"
+            );
+        }
+        break;
+    case PipelineVariant::MmdToon:
+        if (data.shadingModel != MaterialShadingModel::MmdToon)
+        {
+            throw std::invalid_argument(
+                "MMD pipeline variant requires the MMD shading model"
+            );
+        }
+        break;
+    case PipelineVariant::Custom:
+        // Legacy interface: explicit ShaderInterface/shadingModel allowed.
+        break;
+    default:
+        throw std::invalid_argument(
+            "pass-level pipeline variants are not valid Material realizations"
+        );
+    }
+}
+
 MaterialTextureBindings BuildTextureBindings(
     const MaterialData& data,
     RenderResourceCache* cache
@@ -138,6 +176,16 @@ Material::Material(
     );
     this->data.edgeSize = glm::max(this->data.edgeSize, 0.0f);
 
+    // Validate BEFORE creating the realization/cache entry: a rejected
+    // material must never leave a half-constructed gpu behind.
+    ValidateMaterialVariant(this->data);
+
+    // Managed materials resolve their ProgramCache from the cache's owning
+    // GraphicsDevice; an explicitly passed cache is never carried across
+    // devices (Step 7 Stage 2: per-device program realization).
+    if (this->cache != nullptr)
+        this->programCache = this->cache->Device()->Programs();
+
     this->gpu = std::make_unique<MaterialGpuResource>(
         this->data,
         this->textures,
@@ -156,6 +204,7 @@ void Material::SetRenderCache(RenderResourceCache* nextCache)
     this->cache = nextCache;
     if (this->cache == nullptr)
         return;
+    this->programCache = this->cache->Device()->Programs();
     for (const auto& [uniformName, texture] : this->textures)
         texture->SetRenderCache(this->cache);
     this->gpu = std::make_unique<MaterialGpuResource>(

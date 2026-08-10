@@ -395,6 +395,46 @@ Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
 ABI 94 legacy + 30 stable
 ```
 
+### Step 7 Stage 2 — Program / Pipeline Realization Closure（2026-08-11）
+
+```text
+P0-1 ProgramCache per-device realization：
+  Material 构造/SetRenderCache 从 cache->Device()->Programs() 重新解析
+  device-local ProgramCache（A 的 cache 不随 Material 到 B）；
+  A->B->A 回环验证：A/B ProgramCount 各 >=1，回 A 后 A 不再新增编译
+P0-2 MaterialGpuResource::Attach creation provenance gate：
+  RequireShareGroupToken(CurrentShareGroup()) + current context 非 null
+  （任何 shader compile/link 前拒绝 wrong-device creation）
+P0-3 semantic consistency validation（Material 构造）：
+  PBR variant ↔ PBR shadingModel；MmdToon ↔ MMD；
+  Custom 允许 legacy interface；不匹配 → invalid_argument
+P1-1 pass-level variant / flags fail-fast：
+  ShadowDepth/GroundShadow/Skybox/OitComposite/Present 在 Material
+  realization 拒绝（不静默降级 PBR）；reserved flags != 0 拒绝
+P1-2 Attach 事务提交：
+  program 先局部变量，所有 texture attach 成功后 commit；
+  失败后 GetProgram() 抛（program 未提交），realization 可重试
+
+测试：
+  TestR2MaterialProgramRealization（A->B->A ProgramCache、
+  wrong-share-group 拒绝、texture failure 不 commit program）
+  TestR2MaterialPipelineVariant 扩展（MMD 测试补 shadingModel、
+  mismatch/pass-variant/flags 拒绝）
+  unit TestMaterialShadowFlags 补 pipelineVariant（回归修复）
+  render_fbo cacheDevice 注册 share-group token（回归修复）
+```
+
+文档修正：built-in shader 路径准确说法为“统一交给 asset resolver，
+支持 WISTERIA_ASSET_ROOT，不再由各 Material/importer 自行拼接 cwd path”
+（assets::Root() 无 env 时仍 fallback cwd/assets）。
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+```
+
 6B 不做：Material ProgramCache per-device cleanup、PipelineVariant、
 shader semantic abstraction、RenderFramePacket、RenderGraph、Vulkan、
 stable ABI 修改（分别属 Step 7 / 0D / R2.1）。
