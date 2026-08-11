@@ -1,7 +1,7 @@
 # R2.0 — Final Architecture Closure（2026-08-12，ChatGPT 5-blocker 修复）
 
-> 状态：**IMPLEMENTED / VALIDATED — 四矩阵 + ABI 全绿；待 ChatGPT
-> 定点复查**
+> 状态：**IMPLEMENTED / VALIDATED（两轮）— 四矩阵 + ABI 全绿；待
+> ChatGPT 最终定点复查**
 > 依据：ChatGPT 对 `360453b` 的横向审查（P0-1..P0-5），R2.0 不能
 > CLOSED、R2.1 保持 HOLD，直到 frozen 0A contract 的架构边界真正闭合。
 
@@ -159,4 +159,98 @@ R2.0 0D Final Architecture Review   CLOSED（待 ChatGPT 定点复查）
 R2.0 0E backend-neutral boundary    CLOSED（待 ChatGPT 定点复查）
 R2.0 FINAL                          待 ChatGPT 最终复审
 R2.1 Vulkan                         HOLD（复审通过后授权）
+```
+
+## 10. Second-round residual gates（ChatGPT 复查 `ec8933be` 后）
+
+### 10.1 P0-1 residual — backend 真正拥有 executor
+
+```text
+新 RenderGraphExecutionContext { packet, target } 进入
+  RenderDevice::ExecuteGraph(graph, context)
+
+RenderGraph 增加 backend 可读 view API：
+  PassName / PassDependencies / AccessesForPass / ResourceDescriptor /
+  TransientLifetime / OrderedPasses
+
+新 OpenGlGraphExecutor（backend/opengl）：
+  - 由 OpenGlRenderDevice 按 GL context 拥有（VAO/FBO context-local，
+    因此 per-context executor registry）
+  - 承载原 Renderer 的全部 GL 执行状态与方法（8 个 pass executor、
+    DrawPart、skinning/morphing/uniforms、OIT/shadow/present 资源）
+  - Execute() 以 graph.OrderedPasses() 驱动 dispatch，
+    不再有任何 callback wiring / 第二套调度器
+
+Renderer 瘦身为 facade：
+  - 只做 frame extraction + BuildCurrentRenderGraph +
+    device->ExecuteGraph（legacy 路径直接执行 facade 拥有的 executor）
+  - 不再拥有任何 GL 执行资源
+
+RenderDevice::ExecuteGraph 现在是真正 execution authority：
+  OpenGL 路径 → device-owned executor；
+  未来 Vulkan → 解释同一 graph data + context
+```
+
+### 10.2 P0-2 residual — presentation seam + provenance
+
+```text
+neutral RenderDevice::CreatePresentationTarget(PresentSurface&) 不再携带
+OpenGL blit/swap callback。
+
+RenderTarget 增加 BackendId() provenance：
+  OpenGL PresentationTarget + 非 OpenGL RenderTarget → clean
+  invalid_argument（不再 unchecked static_cast）。
+  SceneFramebuffer::BackendId() == OpenGL。
+
+OpenGlPresentationTarget（backend 内部）：
+  Present() → device-owned executor::Present（provenance 校验后）
+  Swap()   → platform bridge 通过 backend-internal
+             WirePresentationSwap(target, callback) 注入 window swap
+
+GlfwPresentSurface 保持纯 platform endpoint（Width/Height）。
+```
+
+### 10.3 P0-3 residual — 确定性语义漏洞
+
+```text
+Transient 初始化 gate 改为 per (resource, aspect)：
+  Depth Write 不再错误初始化 Stencil aspect（DepthStencil adversarial）
+
+访问 op 合法性（AddAccess 注册期拒绝）：
+  Read + Clear ❌ / Read + Store ❌ / Clear 无 Store ❌
+  Transient 首访问 Read 或 Write+Load ❌（transient 无可 Load 内容）
+
+External SceneColor/DepthStencil 部分写入声明 Load + Store：
+  builder 所有 sceneColor / sceneDepth / stencil Write
+  → loadOp Load + storeOp Store（保留 pre-clear 行为，Vulkan 可解释）
+
+新增 adversarial：
+  A. transient DepthStencil Depth Write → Stencil Read REJECT
+  B. transient 首访问 Read+Load REJECT
+  C. Read+Clear / Read+Store / Clear-no-Store REJECT
+  D. builder 结构断言：external writes 全部 Load+Store；
+     shadowDepth/oitAccum/oitReveal 全部 Clear+Store
+```
+
+### 10.4 第二轮验证结果
+
+```text
+Windows CORE   12/12 PASS
+Windows FULL   13/13 PASS（native ABI window → PresentationTarget +
+                  device-owned executor Present + swap hook）
+WSL CORE       14/14 PASS
+WSL FULL       15/15 PASS
+ABI            94 legacy + 30 stable
+Gates A–E 全部 PASS
+```
+
+### 10.5 第二轮裁决
+
+```text
+P0-1 RenderDevice execution authority    CLOSED（executor 所有权转移）
+P0-2 Presentation boundary               CLOSED（provenance + neutral seam）
+P0-3 RenderGraph frozen semantics        CLOSED（per-aspect + op 合法性）
+P0-4 / P0-5                              CLOSED（首轮已接受）
+R2.0 FINAL                               待 ChatGPT 最终定点复查
+R2.1 Vulkan                              HOLD
 ```

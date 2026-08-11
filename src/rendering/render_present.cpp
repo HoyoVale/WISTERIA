@@ -1,10 +1,10 @@
 #include "wisteria/common/pch.hpp"
 
-#include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_graph_executor.hpp"
 
 namespace wisteria
 {
-void Renderer::Present(
+void OpenGlGraphExecutor::Present(
     const SceneFramebuffer& source,
     int destinationWidth,
     int destinationHeight
@@ -73,7 +73,7 @@ void Renderer::Present(
     glDepthMask(GL_TRUE);
 }
 
-void Renderer::EnsurePresentResources()
+void OpenGlGraphExecutor::EnsurePresentResources()
 {
     if (this->presentProgram == nullptr)
     {

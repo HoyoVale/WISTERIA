@@ -8,11 +8,15 @@
 #include "render_resource_cache.hpp"
 
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 
 namespace wisteria
 {
+class OpenGlGraphExecutor;
+
 // R2.0 Phase 0B: the OpenGL realization of RenderDevice.
 //
 // Absorbs the existing GraphicsDevice (which is classified as OpenGL backend
@@ -57,11 +61,12 @@ public:
     void DestroySampler(SamplerHandle handle) override;
     void DestroyGraphicsPipeline(PipelineHandle handle) override;
 
-    void ExecuteGraph(RenderGraph& graph) override;
+    void ExecuteGraph(
+        RenderGraph& graph,
+        const RenderGraphExecutionContext& context
+    ) override;
     std::unique_ptr<PresentationTarget> CreatePresentationTarget(
-        const PresentSurface& surface,
-        PresentBlitFunction blit,
-        PresentSwapFunction swap
+        PresentSurface& surface
     ) override;
 
     // OpenGL-backend-internal access to the absorbed R1.7 machinery. Must
@@ -84,6 +89,18 @@ public:
     // R2.0 Phase 0C Step 6: per-device shared realization cache (static
     // assets only; runtime-deformed instances never consult it).
     RenderResourceCache& RenderCache() noexcept;
+
+    // R2.0 Final Architecture Closure (P0-1): the device owns the OpenGL
+    // graph executor for the current GL context (one executor per context,
+    // because VAO/FBO state is context-local).
+    OpenGlGraphExecutor& GraphExecutorForCurrentContext();
+    void ReleaseGraphExecutorForCurrentContext() noexcept;
+    // Approved platform bridge: wires a window swap onto a presentation
+    // target created by this device (backend-internal, never neutral).
+    void WirePresentationSwap(
+        PresentationTarget& target,
+        std::function<void()> swap
+    );
 
 private:
     enum class ResourceKind
@@ -113,5 +130,9 @@ private:
     bool capabilitiesValid = false;
     std::uint64_t nextHandle = 1U;
     std::unordered_map<std::uint64_t, ResourceEntry> resources;
+    std::unordered_map<
+        GraphicsContextToken,
+        std::unique_ptr<OpenGlGraphExecutor>
+    > graphExecutors;
 };
 }  // namespace wisteria

@@ -112,12 +112,15 @@ public:
     void DestroyTexture(wisteria::TextureHandle) override {}
     void DestroySampler(wisteria::SamplerHandle) override {}
     void DestroyGraphicsPipeline(wisteria::PipelineHandle) override {}
-    void ExecuteGraph(wisteria::RenderGraph&) override {}
+    void ExecuteGraph(
+        wisteria::RenderGraph&,
+        const wisteria::RenderGraphExecutionContext&
+    ) override
+    {
+    }
 
     std::unique_ptr<wisteria::PresentationTarget> CreatePresentationTarget(
-        const wisteria::PresentSurface&,
-        wisteria::PresentBlitFunction,
-        wisteria::PresentSwapFunction
+        wisteria::PresentSurface&
     ) override
     {
         return nullptr;
@@ -16212,6 +16215,295 @@ void TestR2RenderGraphFrozenSemantics()
         Require(
             mismatchRejected,
             "r2-graph aspect/kind mismatch must be rejected"
+        );
+    }
+
+    // Transient DepthStencil: Depth Write alone must not initialize the
+    // Stencil aspect (per-aspect initialization gate).
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "tmp",
+            wisteria::RenderResourceKind::DepthStencil,
+            wisteria::RenderResourceLifetime::Transient
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::ShadowDepth, "shadow-depth", {},
+        });
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque,
+            "opaque",
+            {wisteria::RenderPassId::ShadowDepth},
+        });
+        wisteria::RenderAccessDesc depthWrite;
+        depthWrite.resource = "tmp";
+        depthWrite.access = wisteria::RenderResourceAccess::Write;
+        depthWrite.aspect = wisteria::RenderResourceAspect::Depth;
+        graph.AddAccess(wisteria::RenderPassId::ShadowDepth, depthWrite);
+        wisteria::RenderAccessDesc stencilRead;
+        stencilRead.resource = "tmp";
+        stencilRead.access = wisteria::RenderResourceAccess::Read;
+        stencilRead.aspect = wisteria::RenderResourceAspect::Stencil;
+        graph.AddAccess(wisteria::RenderPassId::Opaque, stencilRead);
+        bool perAspectInitRejected = false;
+        try
+        {
+            graph.Validate();
+        }
+        catch (const std::invalid_argument&)
+        {
+            perAspectInitRejected = true;
+        }
+        Require(
+            perAspectInitRejected,
+            "r2-graph transient per-aspect init must be enforced"
+        );
+    }
+
+    // Transient first access Read+Load must be rejected (a transient has
+    // no previous content to load).
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "tmp",
+            wisteria::RenderResourceKind::Color,
+            wisteria::RenderResourceLifetime::Transient
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::ShadowDepth, "shadow-depth", {},
+        });
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque,
+            "opaque",
+            {wisteria::RenderPassId::ShadowDepth},
+        });
+        wisteria::RenderAccessDesc readLoad;
+        readLoad.resource = "tmp";
+        readLoad.access = wisteria::RenderResourceAccess::Read;
+        readLoad.aspect = wisteria::RenderResourceAspect::Color;
+        readLoad.loadOp = wisteria::RenderLoadOp::Load;
+        graph.AddAccess(wisteria::RenderPassId::ShadowDepth, readLoad);
+        wisteria::RenderAccessDesc write;
+        write.resource = "tmp";
+        write.access = wisteria::RenderResourceAccess::Write;
+        write.aspect = wisteria::RenderResourceAspect::Color;
+        graph.AddAccess(wisteria::RenderPassId::Opaque, write);
+        bool transientReadLoadRejected = false;
+        try
+        {
+            graph.Validate();
+        }
+        catch (const std::invalid_argument&)
+        {
+            transientReadLoadRejected = true;
+        }
+        Require(
+            transientReadLoadRejected,
+            "r2-graph transient Read+Load must be rejected"
+        );
+    }
+
+    // Contradictory access ops are rejected at registration:
+    // Read+Clear, Read+Store, Clear without Store.
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "color",
+            wisteria::RenderResourceKind::Color,
+            wisteria::RenderResourceLifetime::External
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque, "opaque", {},
+        });
+
+        wisteria::RenderAccessDesc readClear;
+        readClear.resource = "color";
+        readClear.access = wisteria::RenderResourceAccess::Read;
+        readClear.aspect = wisteria::RenderResourceAspect::Color;
+        readClear.loadOp = wisteria::RenderLoadOp::Clear;
+        readClear.storeOp = wisteria::RenderStoreOp::Store;
+        bool readClearRejected = false;
+        try
+        {
+            graph.AddAccess(wisteria::RenderPassId::Opaque, readClear);
+        }
+        catch (const std::invalid_argument&)
+        {
+            readClearRejected = true;
+        }
+        Require(
+            readClearRejected,
+            "r2-graph Read+Clear must be rejected"
+        );
+
+        wisteria::RenderAccessDesc readStore;
+        readStore.resource = "color";
+        readStore.access = wisteria::RenderResourceAccess::Read;
+        readStore.aspect = wisteria::RenderResourceAspect::Color;
+        readStore.storeOp = wisteria::RenderStoreOp::Store;
+        bool readStoreRejected = false;
+        try
+        {
+            graph.AddAccess(wisteria::RenderPassId::Opaque, readStore);
+        }
+        catch (const std::invalid_argument&)
+        {
+            readStoreRejected = true;
+        }
+        Require(
+            readStoreRejected,
+            "r2-graph Read+Store must be rejected"
+        );
+
+        wisteria::RenderAccessDesc clearNoStore;
+        clearNoStore.resource = "color";
+        clearNoStore.access = wisteria::RenderResourceAccess::Write;
+        clearNoStore.aspect = wisteria::RenderResourceAspect::Color;
+        clearNoStore.loadOp = wisteria::RenderLoadOp::Clear;
+        bool clearNoStoreRejected = false;
+        try
+        {
+            graph.AddAccess(wisteria::RenderPassId::Opaque, clearNoStore);
+        }
+        catch (const std::invalid_argument&)
+        {
+            clearNoStoreRejected = true;
+        }
+        Require(
+            clearNoStoreRejected,
+            "r2-graph Clear without Store must be rejected"
+        );
+    }
+
+    // Structural assertion: BuildCurrentRenderGraph declares real
+    // Load/Store semantics for external attachments and Clear+Store for
+    // transient shadow/OIT attachments.
+    {
+        wisteria::Scene scene;
+        scene.CreateDirectionalLight(wisteria::DirectionalLightData{});
+        wisteria::EnvironmentMap environment(
+            wisteria::EnvironmentMapData::ProceduralSky(),
+            nullptr
+        );
+        scene.SetEnvironment(&environment);
+        wisteria::DefaultModelData triangleData;
+        triangleData.layout = {
+            wisteria::Layout{"position", 3U, wisteria::FLOAT},
+            wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+            wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+        };
+        triangleData.vertices = {
+            -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+             0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+        };
+        triangleData.indices = {0U, 1U, 2U};
+        wisteria::Mesh mesh(triangleData);
+        wisteria::MaterialData opaqueData;
+        opaqueData.textureSources.clear();
+        wisteria::Material opaqueMaterial(opaqueData);
+        wisteria::Entity& opaqueEntity = scene.CreateEntity();
+        opaqueEntity.AddRenderPart(mesh, opaqueMaterial);
+        wisteria::MaterialData blendData;
+        blendData.textureSources.clear();
+        blendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+        wisteria::Material blendMaterial(blendData);
+        wisteria::Entity& transparentEntity = scene.CreateEntity(
+            wisteria::Transform{glm::vec3(1.0f, 0.0f, 0.0f)}
+        );
+        transparentEntity.AddRenderPart(mesh, blendMaterial);
+        wisteria::Camera camera(wisteria::CameraParam{
+            .Position = glm::vec3(0.0f, 2.0f, 5.0f),
+            .Target = glm::vec3(0.0f, 0.0f, 0.0f),
+            .Up = glm::vec3(0.0f, 1.0f, 0.0f),
+            .VerticalFovDegrees = 45.0f,
+            .NearClip = 0.1f,
+            .FarClip = 100.0f
+        });
+        const glm::mat4 projection = glm::perspective(
+            glm::radians(45.0f),
+            1.0f,
+            0.1f,
+            100.0f
+        );
+        const wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, {});
+        graph.Validate();
+
+        const auto writesHaveLoadStore =
+            [](const wisteria::RenderGraph& built,
+               wisteria::RenderPassId pass,
+               const std::string& resource,
+               wisteria::RenderResourceAspect aspect)
+        {
+            for (const wisteria::RenderAccessDesc& access :
+                 built.AccessesForPass(pass))
+            {
+                if (access.resource == resource &&
+                    access.aspect == aspect &&
+                    access.access == wisteria::RenderResourceAccess::Write)
+                {
+                    return access.loadOp == wisteria::RenderLoadOp::Load &&
+                        access.storeOp == wisteria::RenderStoreOp::Store;
+                }
+            }
+            return false;
+        };
+        const auto writesHaveClearStore =
+            [](const wisteria::RenderGraph& built,
+               wisteria::RenderPassId pass,
+               const std::string& resource)
+        {
+            for (const wisteria::RenderAccessDesc& access :
+                 built.AccessesForPass(pass))
+            {
+                if (access.resource == resource &&
+                    access.access == wisteria::RenderResourceAccess::Write)
+                {
+                    return access.loadOp == wisteria::RenderLoadOp::Clear &&
+                        access.storeOp == wisteria::RenderStoreOp::Store;
+                }
+            }
+            return false;
+        };
+
+        Require(
+            writesHaveLoadStore(
+                graph,
+                wisteria::RenderPassId::GroundReceivers,
+                "sceneColor",
+                wisteria::RenderResourceAspect::Color
+            ) &&
+                writesHaveLoadStore(
+                    graph,
+                    wisteria::RenderPassId::Opaque,
+                    "sceneDepth",
+                    wisteria::RenderResourceAspect::Depth
+                ) &&
+                writesHaveLoadStore(
+                    graph,
+                    wisteria::RenderPassId::MmdGroundShadow,
+                    "sceneDepth",
+                    wisteria::RenderResourceAspect::Stencil
+                ) &&
+                writesHaveClearStore(
+                    graph,
+                    wisteria::RenderPassId::ShadowDepth,
+                    "shadowDepth"
+                ) &&
+                writesHaveClearStore(
+                    graph,
+                    wisteria::RenderPassId::Transparent,
+                    "oitAccum"
+                ) &&
+                writesHaveClearStore(
+                    graph,
+                    wisteria::RenderPassId::Transparent,
+                    "oitReveal"
+                ),
+            "r2-graph builder external/transient load-store semantics"
         );
     }
 }

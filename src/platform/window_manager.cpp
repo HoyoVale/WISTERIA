@@ -2,6 +2,7 @@
 #include "wisteria/platform/window_manager.hpp"
 #include "wisteria/platform/glfw_present_surface.hpp"
 #include "wisteria/rendering/bmp_writer.hpp"
+#include "rendering/backend/opengl/open_gl_render_device.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <chrono>
@@ -266,20 +267,17 @@ WindowManager::ManagedWindow::ManagedWindow(
     this->presentSurface = std::make_unique<GlfwPresentSurface>(
         *this->window
     );
-    this->presentationTarget = renderDevice->CreatePresentationTarget(
-        *this->presentSurface,
-        [renderer = &this->renderer](
-            const RenderTarget& source,
-            int width,
-            int height
-        )
-        {
-            renderer->Present(
-                static_cast<const SceneFramebuffer&>(source),
-                width,
-                height
-            );
-        },
+    this->presentationTarget =
+        renderDevice->CreatePresentationTarget(*this->presentSurface);
+    auto* openGl = dynamic_cast<OpenGlRenderDevice*>(renderDevice);
+    if (openGl == nullptr)
+    {
+        throw std::invalid_argument(
+            "R2.0: only the OpenGL RenderDevice backend is available"
+        );
+    }
+    openGl->WirePresentationSwap(
+        *this->presentationTarget,
         [window = this->window.get()]()
         {
             window->SwapBuffers();

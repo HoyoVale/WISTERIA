@@ -121,6 +121,14 @@ struct RenderPassDescriptor
     std::vector<RenderPassId> dependencies;
 };
 
+// Read-only compiled/view descriptors a backend executor can consume
+// without touching graph internals.
+struct RenderResourceDescriptor
+{
+    RenderResourceKind kind = RenderResourceKind::Color;
+    RenderResourceLifetime lifetime = RenderResourceLifetime::External;
+};
+
 // Logical frame scheduler. Validation is explicit: an invalid DAG (cycle,
 // unknown dependency, duplicate pass/resource, unknown access) throws
 // std::invalid_argument instead of silently producing a wrong order.
@@ -164,6 +172,17 @@ public:
     bool HasPass(RenderPassId id) const;
     std::size_t PassCount() const noexcept;
     std::size_t ResourceCount() const noexcept;
+
+    // Backend-readable graph view (R2.0 Final Architecture Closure): lets a
+    // backend executor interpret the compiled frame without callbacks.
+    const std::string& PassName(RenderPassId id) const;
+    const std::vector<RenderPassId>& PassDependencies(RenderPassId id) const;
+    const std::vector<RenderAccessDesc>& AccessesForPass(
+        RenderPassId id
+    ) const;
+    std::optional<RenderResourceDescriptor> ResourceDescriptor(
+        std::string_view resource
+    ) const;
 
 private:
     struct PassNode

@@ -340,6 +340,11 @@ int SceneFramebuffer::Height() const noexcept
     return this->height;
 }
 
+RenderBackendId SceneFramebuffer::BackendId() const noexcept
+{
+    return RenderBackendId::OpenGL;
+}
+
 GLuint SceneFramebuffer::Id() const noexcept
 {
     return this->framebuffer.Id();

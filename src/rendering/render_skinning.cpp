@@ -1,10 +1,10 @@
 #include "wisteria/common/pch.hpp"
 
-#include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_graph_executor.hpp"
 
 namespace wisteria
 {
-void Renderer::EnsureSkinningResources()
+void OpenGlGraphExecutor::EnsureSkinningResources()
 {
     if (this->skinningBuffer != 0 && this->skinningTexture != 0)
         return;
@@ -14,10 +14,10 @@ void Renderer::EnsureSkinningResources()
     // The GL_MAX_* probes remain only for the legacy Renderer(nullptr)
     // OpenGL compatibility path.
     std::size_t maximumSkinningMatrices = 0U;
-    if (this->renderDevice != nullptr)
+    if (this->openGl != nullptr)
     {
         maximumSkinningMatrices =
-            this->renderDevice->Capabilities().maxSkinningMatrices;
+            this->openGl->Capabilities().maxSkinningMatrices;
         if (maximumSkinningMatrices == 0U)
         {
             throw std::runtime_error(
@@ -72,7 +72,7 @@ void Renderer::EnsureSkinningResources()
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, nextBuffer);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_BUFFER, 0);
-    if (this->renderDevice == nullptr)
+    if (this->openGl == nullptr)
     {
         GLint maximumTexels = 0;
         glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maximumTexels);
@@ -92,7 +92,7 @@ void Renderer::EnsureSkinningResources()
     this->maximumSkinningMatrices = maximumSkinningMatrices;
 }
 
-void Renderer::UploadSkinning(
+void OpenGlGraphExecutor::UploadSkinning(
     Program& program,
     const ShaderInterface& shaderInterface,
     const Mesh& mesh,
@@ -181,7 +181,7 @@ void Renderer::UploadSkinning(
     );
 }
 
-void Renderer::UploadTransforms(
+void OpenGlGraphExecutor::UploadTransforms(
     Program& program,
     const ShaderInterface& shaderInterface,
     const glm::mat4& model,

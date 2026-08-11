@@ -1,10 +1,10 @@
 #include "wisteria/common/pch.hpp"
 
-#include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_graph_executor.hpp"
 
 namespace wisteria
 {
-void Renderer::BeginMorphingFrame()
+void OpenGlGraphExecutor::BeginMorphingFrame()
 {
     if (this->morphingFrame == std::numeric_limits<std::uint64_t>::max())
     {
@@ -40,7 +40,7 @@ void Renderer::BeginMorphingFrame()
     }
 }
 
-void Renderer::ReleaseMorphingCache() noexcept
+void OpenGlGraphExecutor::ReleaseMorphingCache() noexcept
 {
     for (auto& [morphState, meshes] : this->morphingCache)
     {
@@ -55,7 +55,7 @@ void Renderer::ReleaseMorphingCache() noexcept
     this->morphingCache.clear();
 }
 
-void Renderer::UploadMorphing(
+void OpenGlGraphExecutor::UploadMorphing(
     VAO& vertexArray,
     const ShaderInterface& shaderInterface,
     const Mesh& mesh,

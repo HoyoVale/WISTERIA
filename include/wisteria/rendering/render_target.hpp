@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wisteria/rendering/render_backend.hpp"
+
 // R2.0 Phase 0E (Final Architecture Closure): backend-neutral render target
 // contract.
 //
@@ -24,6 +26,10 @@ public:
 
     virtual int Width() const noexcept = 0;
     virtual int Height() const noexcept = 0;
+    // Backend provenance: lets a PresentationTarget/executor cleanly reject
+    // a target that belongs to a different backend instead of an unchecked
+    // downcast.
+    virtual RenderBackendId BackendId() const noexcept = 0;
 
 protected:
     RenderTarget() = default;

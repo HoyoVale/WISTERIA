@@ -1,6 +1,6 @@
 #include "wisteria/common/pch.hpp"
 
-#include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_graph_executor.hpp"
 
 namespace wisteria
 {
@@ -13,7 +13,7 @@ struct PhysicsDebugVertex
 };
 }
 
-void Renderer::EnsurePhysicsDebugResources()
+void OpenGlGraphExecutor::EnsurePhysicsDebugResources()
 {
     if (this->physicsDebugProgram == nullptr)
     {
@@ -58,7 +58,7 @@ void Renderer::EnsurePhysicsDebugResources()
     glBindVertexArray(0);
 }
 
-void Renderer::DrawPhysicsDebug(
+void OpenGlGraphExecutor::DrawPhysicsDebug(
     const std::vector<PhysicsDebugLine>& lines,
     const glm::mat4& view,
     const glm::mat4& projection

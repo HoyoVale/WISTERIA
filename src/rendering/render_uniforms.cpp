@@ -1,6 +1,6 @@
 #include "wisteria/common/pch.hpp"
 
-#include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_graph_executor.hpp"
 
 namespace wisteria
 {
@@ -17,7 +17,7 @@ int LightCount(std::size_t available, std::size_t capacity)
 }
 }
 
-void Renderer::UploadSceneUniforms(
+void OpenGlGraphExecutor::UploadSceneUniforms(
     Program& program,
     const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
@@ -30,7 +30,7 @@ void Renderer::UploadSceneUniforms(
     this->UploadSpotLights(program, packet, shaderInterface);
 }
 
-void Renderer::UploadEnvironment(
+void OpenGlGraphExecutor::UploadEnvironment(
     Program& program,
     const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
@@ -77,7 +77,7 @@ void Renderer::UploadEnvironment(
     );
 }
 
-void Renderer::UploadPointLights(
+void OpenGlGraphExecutor::UploadPointLights(
     Program& program,
     const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
@@ -128,7 +128,7 @@ void Renderer::UploadPointLights(
     }
 }
 
-void Renderer::UploadDirectionalLights(
+void OpenGlGraphExecutor::UploadDirectionalLights(
     Program& program,
     const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
@@ -164,7 +164,7 @@ void Renderer::UploadDirectionalLights(
     }
 }
 
-void Renderer::UploadSpotLights(
+void OpenGlGraphExecutor::UploadSpotLights(
     Program& program,
     const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface

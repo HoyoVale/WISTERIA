@@ -1,10 +1,10 @@
 #include "wisteria/common/pch.hpp"
 
-#include "renderer_internal.hpp"
+#include "backend/opengl/open_gl_graph_executor.hpp"
 
 namespace wisteria
 {
-void Renderer::DrawPart(
+void OpenGlGraphExecutor::DrawPart(
     RenderPart& part,
     const glm::mat4& model,
     const glm::mat4& view,
@@ -303,7 +303,7 @@ void Renderer::DrawPart(
     material.Unbind();
 }
 
-void Renderer::EnsureShadowResources()
+void OpenGlGraphExecutor::EnsureShadowResources()
 {
     if (this->shadowProgram == nullptr)
     {
@@ -391,7 +391,7 @@ void Renderer::EnsureShadowResources()
     }
 }
 
-void Renderer::RenderShadowPass(
+void OpenGlGraphExecutor::RenderShadowPass(
     const std::vector<RenderCommand>& commands,
     const std::array<glm::mat4, 4>& lightViews,
     const std::array<glm::mat4, 4>& lightProjections
@@ -482,7 +482,7 @@ void Renderer::RenderShadowPass(
     this->shadowProgram->unUse();
 }
 
-void Renderer::EnsureGroundShadowResources()
+void OpenGlGraphExecutor::EnsureGroundShadowResources()
 {
     if (this->groundShadowProgram != nullptr)
         return;
@@ -498,7 +498,7 @@ void Renderer::EnsureGroundShadowResources()
     this->groundShadowProgram = std::move(nextProgram);
 }
 
-void Renderer::RenderGroundShadowPass(
+void OpenGlGraphExecutor::RenderGroundShadowPass(
     const std::vector<RenderCommand>& commands,
     const glm::mat4& view,
     const glm::mat4& projection,
@@ -687,7 +687,7 @@ void Renderer::RenderGroundShadowPass(
     glStencilMask(0xFF);
 }
 
-VAO& Renderer::VertexArrayFor(Mesh& mesh)
+VAO& OpenGlGraphExecutor::VertexArrayFor(Mesh& mesh)
 {
     const auto cached = this->meshVertexArrays.find(&mesh);
     if (cached != this->meshVertexArrays.end())
@@ -710,7 +710,7 @@ VAO& Renderer::VertexArrayFor(Mesh& mesh)
     return result;
 }
 
-VAO& Renderer::SkyboxVertexArrayFor(EnvironmentMap& environment)
+VAO& OpenGlGraphExecutor::SkyboxVertexArrayFor(EnvironmentMap& environment)
 {
     const auto cached = this->skyboxVertexArrays.find(&environment);
     if (cached != this->skyboxVertexArrays.end())
@@ -723,7 +723,7 @@ VAO& Renderer::SkyboxVertexArrayFor(EnvironmentMap& environment)
     return result;
 }
 
-void Renderer::EnsureOitResources(const SceneFramebuffer& target)
+void OpenGlGraphExecutor::EnsureOitResources(const SceneFramebuffer& target)
 {
     const int width = target.Width();
     const int height = target.Height();
@@ -768,8 +768,8 @@ void Renderer::EnsureOitResources(const SceneFramebuffer& target)
             // The direct GL probe remains only for the legacy
             // Renderer(nullptr) OpenGL compatibility path.
             this->independentBlendSupported =
-                this->renderDevice != nullptr
-                    ? this->renderDevice->Capabilities().independentBlend
+                this->openGl != nullptr
+                    ? this->openGl->Capabilities().independentBlend
                     : (GLAD_GL_ARB_draw_buffers_blend != 0 &&
                        glad_glBlendFunciARB != nullptr);
             this->oitCompositeShader = std::move(nextShader);
@@ -859,7 +859,7 @@ void Renderer::EnsureOitResources(const SceneFramebuffer& target)
     this->oitDepthAttachment = target.DepthRenderbuffer();
 }
 
-void Renderer::BeginOitPass(const SceneFramebuffer& target)
+void OpenGlGraphExecutor::BeginOitPass(const SceneFramebuffer& target)
 {
     // The OIT textures were sampled by the previous composite pass. Unbind
     // them before attaching the same objects for drawing again.
@@ -885,7 +885,7 @@ void Renderer::BeginOitPass(const SceneFramebuffer& target)
     glClearBufferfv(GL_COLOR, 1, clearRevealage);
 }
 
-void Renderer::CompositeOit(const SceneFramebuffer& target)
+void OpenGlGraphExecutor::CompositeOit(const SceneFramebuffer& target)
 {
     // Composite is the last step of the transparent pass; restore the GL
     // state it changes so the following physics-debug draw starts clean.
@@ -929,7 +929,7 @@ void Renderer::CompositeOit(const SceneFramebuffer& target)
 // existing GL pass implementation extracted verbatim from the Stage 2B
 // RenderPacket callbacks; RenderPacket only wires them to the graph.
 
-void Renderer::ExecuteShadowDepth(
+void OpenGlGraphExecutor::ExecuteShadowDepth(
     const RenderFramePacket& packet,
     const SceneFramebuffer& target,
     const Camera& camera,
@@ -1056,7 +1056,7 @@ void Renderer::ExecuteShadowDepth(
     glViewport(0, 0, target.Width(), target.Height());
 }
 
-void Renderer::ExecuteGroundReceivers(
+void OpenGlGraphExecutor::ExecuteGroundReceivers(
     const RenderFramePacket& packet,
     const std::vector<RenderCommand>& commands,
     const Camera& camera,
@@ -1104,7 +1104,7 @@ void Renderer::ExecuteGroundReceivers(
     glDisable(GL_POLYGON_OFFSET_FILL);
 }
 
-void Renderer::ExecuteMmdGroundShadow(
+void OpenGlGraphExecutor::ExecuteMmdGroundShadow(
     const RenderFramePacket& packet,
     const std::vector<RenderCommand>& commands,
     const glm::mat4& view,
@@ -1127,7 +1127,7 @@ void Renderer::ExecuteMmdGroundShadow(
     );
 }
 
-void Renderer::ExecuteOpaque(
+void OpenGlGraphExecutor::ExecuteOpaque(
     const RenderFramePacket& packet,
     const std::vector<RenderCommand>& commands,
     const Camera& camera,
@@ -1154,7 +1154,7 @@ void Renderer::ExecuteOpaque(
     }
 }
 
-void Renderer::ExecuteSkybox(
+void OpenGlGraphExecutor::ExecuteSkybox(
     EnvironmentMap& environment,
     const glm::mat4& view,
     const glm::mat4& projection
@@ -1167,7 +1167,7 @@ void Renderer::ExecuteSkybox(
     );
 }
 
-void Renderer::ExecuteTransparent(
+void OpenGlGraphExecutor::ExecuteTransparent(
     const RenderFramePacket& packet,
     const SceneFramebuffer& target,
     const std::vector<RenderCommand>& commands,
@@ -1288,12 +1288,12 @@ void Renderer::ExecuteTransparent(
     }
 }
 
-void Renderer::ExecuteOitComposite(const SceneFramebuffer& target)
+void OpenGlGraphExecutor::ExecuteOitComposite(const SceneFramebuffer& target)
 {
     this->CompositeOit(target);
 }
 
-void Renderer::ExecutePhysicsDebug(
+void OpenGlGraphExecutor::ExecutePhysicsDebug(
     const std::vector<PhysicsDebugLine>& lines,
     const SceneFramebuffer& target,
     const glm::mat4& view,

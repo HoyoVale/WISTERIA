@@ -77,6 +77,33 @@ void RenderGraph::AddAccess(
         );
     }
 
+    // Load/Store semantics validity:
+    // - Clear is an attachment write/init behavior, never a pure Read;
+    // - Store only makes sense on writes;
+    // - a Clear must say what happens to the written attachment.
+    if (desc.access == RenderResourceAccess::Read)
+    {
+        if (desc.loadOp == RenderLoadOp::Clear)
+        {
+            throw std::invalid_argument(
+                "RenderGraph Read access cannot declare Clear"
+            );
+        }
+        if (desc.storeOp != RenderStoreOp::NotApplicable)
+        {
+            throw std::invalid_argument(
+                "RenderGraph Read access cannot declare a StoreOp"
+            );
+        }
+    }
+    if (desc.loadOp == RenderLoadOp::Clear &&
+        desc.storeOp == RenderStoreOp::NotApplicable)
+    {
+        throw std::invalid_argument(
+            "RenderGraph Clear requires a StoreOp"
+        );
+    }
+
     this->accesses[pass].push_back(desc);
     this->validated = false;
 }
@@ -272,10 +299,12 @@ void RenderGraph::Validate() const
         }
     }
 
-    // Read-before-initialization gate for Transient resources: the first
-    // execution-order access must initialize the resource (Write, or a
-    // Read that explicitly Loads/Clears). External resources are assumed
-    // initialized by the caller.
+    // Read-before-initialization gate for Transient resources, tracked per
+    // (resource, aspect): a DepthStencil whose Depth aspect is written but
+    // whose Stencil aspect is never initialized must be rejected. For each
+    // transient aspect the first execution-order access must be a Write
+    // that does not Load (a transient has no previous content to load).
+    // External resources are assumed initialized by the caller.
     std::unordered_map<RenderPassId, std::size_t> passOrderIndex;
     for (std::size_t index = 0U; index < order.size(); ++index)
         passOrderIndex[order[index]] = index;
@@ -284,9 +313,10 @@ void RenderGraph::Validate() const
         if (entry.second != RenderResourceLifetime::Transient)
             continue;
 
-        std::size_t firstIndex = order.size();
-        RenderResourceAccess firstAccess = RenderResourceAccess::Write;
-        RenderLoadOp firstLoadOp = RenderLoadOp::NotApplicable;
+        std::unordered_map<
+            std::string,
+            std::vector<std::pair<std::size_t, const RenderAccessDesc*>>
+        > accessesByAspect;
         for (const auto& [pass, list] : this->accesses)
         {
             const auto passIndex = passOrderIndex.find(pass);
@@ -296,23 +326,40 @@ void RenderGraph::Validate() const
             {
                 if (access.resource != name)
                     continue;
-                if (passIndex->second < firstIndex)
-                {
-                    firstIndex = passIndex->second;
-                    firstAccess = access.access;
-                    firstLoadOp = access.loadOp;
-                }
+                const std::string key =
+                    access.resource + ":" +
+                    std::to_string(
+                        static_cast<unsigned int>(access.aspect)
+                    );
+                accessesByAspect[key].push_back(
+                    {passIndex->second, &access}
+                );
             }
         }
-        if (firstIndex == order.size())
-            continue;  // declared but never accessed
-        if (firstAccess == RenderResourceAccess::Read &&
-            firstLoadOp != RenderLoadOp::Load &&
-            firstLoadOp != RenderLoadOp::Clear)
+
+        for (const auto& [key, accesses] : accessesByAspect)
         {
-            throw std::invalid_argument(
-                "RenderGraph transient resource is read before initialization"
-            );
+            (void)key;
+            const RenderAccessDesc* first = nullptr;
+            std::size_t firstIndex = order.size();
+            for (const auto& [index, access] : accesses)
+            {
+                if (index < firstIndex)
+                {
+                    firstIndex = index;
+                    first = access;
+                }
+            }
+            if (first == nullptr)
+                continue;  // declared but never accessed
+            if (first->access == RenderResourceAccess::Read ||
+                first->loadOp == RenderLoadOp::Load)
+            {
+                throw std::invalid_argument(
+                    "RenderGraph transient resource aspect is read/loaded "
+                    "before initialization"
+                );
+            }
         }
     }
 
@@ -405,5 +452,53 @@ std::size_t RenderGraph::PassCount() const noexcept
 std::size_t RenderGraph::ResourceCount() const noexcept
 {
     return this->resources.size();
+}
+
+const std::string& RenderGraph::PassName(RenderPassId id) const
+{
+    const auto iterator = this->passes.find(id);
+    if (iterator == this->passes.end())
+    {
+        throw std::invalid_argument(
+            "RenderGraph pass is not registered"
+        );
+    }
+    return iterator->second.name;
+}
+
+const std::vector<RenderPassId>& RenderGraph::PassDependencies(
+    RenderPassId id
+) const
+{
+    const auto iterator = this->passes.find(id);
+    if (iterator == this->passes.end())
+    {
+        throw std::invalid_argument(
+            "RenderGraph pass is not registered"
+        );
+    }
+    return iterator->second.dependencies;
+}
+
+const std::vector<RenderAccessDesc>& RenderGraph::AccessesForPass(
+    RenderPassId id
+) const
+{
+    static const std::vector<RenderAccessDesc> empty;
+    const auto iterator = this->accesses.find(id);
+    return iterator == this->accesses.end() ? empty : iterator->second;
+}
+
+std::optional<RenderResourceDescriptor> RenderGraph::ResourceDescriptor(
+    std::string_view resource
+) const
+{
+    const auto iterator = this->resources.find(std::string(resource));
+    if (iterator == this->resources.end())
+        return std::nullopt;
+    RenderResourceDescriptor descriptor;
+    descriptor.kind = iterator->second.first;
+    descriptor.lifetime = iterator->second.second;
+    return descriptor;
 }
 }  // namespace wisteria

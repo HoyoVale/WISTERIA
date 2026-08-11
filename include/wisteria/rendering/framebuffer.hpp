@@ -66,6 +66,7 @@ public:
     bool IsValid() const noexcept;
     int Width() const noexcept override;
     int Height() const noexcept override;
+    RenderBackendId BackendId() const noexcept override;
     GLuint Id() const noexcept;
     GLuint ColorTexture() const noexcept;
     GLuint DepthRenderbuffer() const noexcept;

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "wisteria/rendering/pipeline_variant.hpp"
+#include "wisteria/rendering/render_backend.hpp"
 #include "wisteria/rendering/presentation_target.hpp"
 #include "wisteria/rendering/present_surface.hpp"
 #include "wisteria/rendering/render_target.hpp"
@@ -30,22 +31,14 @@
 namespace wisteria
 {
 class RenderGraph;
+struct RenderFramePacket;
 
-// Backend-neutral present operations supplied by the composition root.
-// The backend owns WHEN to call them; the OpenGL render layer owns WHAT they
-// do (Renderer::Present blit / Window::SwapBuffers).
-using PresentBlitFunction = std::function<void(
-    const RenderTarget& source,
-    int width,
-    int height
-)>;
-using PresentSwapFunction = std::function<void()>;
-
-// Engine-semantic backend identity. OpenGL is the only R2.0 backend;
-// Vulkan enters in R2.1 as an additive id.
-enum class RenderBackendId : std::uint32_t
+// Frame execution inputs handed to a backend executor: the frame data
+// authority and the output target (SceneColor boundary).
+struct RenderGraphExecutionContext
 {
-    OpenGL = 1U
+    const RenderFramePacket& packet;
+    RenderTarget& target;
 };
 
 // Engine semantic capabilities. These describe what WISTERIA needs, not a
@@ -280,16 +273,17 @@ public:
     // execution authority. The OpenGL backend executes the wired pass
     // callbacks (the OpenGL pass executor layer); a future Vulkan backend
     // interprets the same backend-neutral graph data without callbacks.
-    virtual void ExecuteGraph(RenderGraph& graph) = 0;
+    virtual void ExecuteGraph(
+        RenderGraph& graph,
+        const RenderGraphExecutionContext& context
+    ) = 0;
 
     // Creates the backend presentation endpoint for a platform
     // PresentSurface. blit/swap are supplied by the composition root and
     // describe how SceneColor reaches the display and how the frame is
     // presented; the backend decides when to invoke them.
     virtual std::unique_ptr<PresentationTarget> CreatePresentationTarget(
-        const PresentSurface& surface,
-        PresentBlitFunction blit,
-        PresentSwapFunction swap
+        PresentSurface& surface
     ) = 0;
 
 protected:

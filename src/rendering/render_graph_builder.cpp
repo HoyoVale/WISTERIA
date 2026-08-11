@@ -74,6 +74,23 @@ RenderGraph BuildCurrentRenderGraph(
         if (enabled)
             deps.push_back(id);
     };
+    // External SceneColor/DepthStencil attachments are pre-cleared by the
+    // caller and partially rewritten by passes; every partial write must
+    // declare Load + Store so a future backend does not discard existing
+    // attachment content.
+    const auto addExternalWrite = [&graph](
+        RenderPassId pass,
+        std::string resource,
+        RenderResourceAspect aspect)
+    {
+        RenderAccessDesc desc;
+        desc.resource = std::move(resource);
+        desc.access = RenderResourceAccess::Write;
+        desc.aspect = aspect;
+        desc.loadOp = RenderLoadOp::Load;
+        desc.storeOp = RenderStoreOp::Store;
+        graph.AddAccess(pass, desc);
+    };
     // Main scene chain: each pass depends on the previous pass that
     // actually exists this frame (sparse frames never dangle).
     std::optional<RenderPassId> lastScenePass;
@@ -110,15 +127,15 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneDepth",
             RenderResourceAccess::Read
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::GroundReceivers,
             "sceneDepth",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Depth
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::GroundReceivers,
             "sceneColor",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Color
         );
         if (hasShadow)
         {
@@ -155,6 +172,8 @@ RenderGraph BuildCurrentRenderGraph(
         stencilWrite.resource = "sceneDepth";
         stencilWrite.access = RenderResourceAccess::Write;
         stencilWrite.aspect = RenderResourceAspect::Stencil;
+        stencilWrite.loadOp = RenderLoadOp::Load;
+        stencilWrite.storeOp = RenderStoreOp::Store;
         graph.AddAccess(RenderPassId::MmdGroundShadow, stencilWrite);
         RenderAccessDesc stencilRead;
         stencilRead.resource = "sceneDepth";
@@ -166,10 +185,10 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneColor",
             RenderResourceAccess::Read
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::MmdGroundShadow,
             "sceneColor",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Color
         );
         lastScenePass = RenderPassId::MmdGroundShadow;
     }
@@ -195,15 +214,15 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneDepth",
             RenderResourceAccess::Read
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::Opaque,
             "sceneDepth",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Depth
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::Opaque,
             "sceneColor",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Color
         );
         lastScenePass = RenderPassId::Opaque;
     }
@@ -223,10 +242,10 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneDepth",
             RenderResourceAccess::Read
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::Skybox,
             "sceneColor",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Color
         );
         lastScenePass = RenderPassId::Skybox;
     }
@@ -279,10 +298,10 @@ RenderGraph BuildCurrentRenderGraph(
                 "sceneColor",
                 RenderResourceAccess::Read
             );
-            graph.AddAccess(
+            addExternalWrite(
                 RenderPassId::Transparent,
                 "sceneColor",
-                RenderResourceAccess::Write
+                RenderResourceAspect::Color
             );
         }
         lastScenePass = RenderPassId::Transparent;
@@ -313,10 +332,10 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneColor",
             RenderResourceAccess::Read
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::OitComposite,
             "sceneColor",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Color
         );
         lastScenePass = RenderPassId::OitComposite;
     }
@@ -334,10 +353,10 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneDepth",
             RenderResourceAccess::Read
         );
-        graph.AddAccess(
+        addExternalWrite(
             RenderPassId::PhysicsDebug,
             "sceneColor",
-            RenderResourceAccess::Write
+            RenderResourceAspect::Color
         );
     }
 

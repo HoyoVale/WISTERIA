@@ -2,9 +2,11 @@
 
 #include "open_gl_render_device.hpp"
 
+#include "open_gl_graph_executor.hpp"
 #include "rendering/renderer_internal.hpp"
 #include "wisteria/rendering/render_graph.hpp"
 
+#include <functional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -13,33 +15,40 @@ namespace wisteria
 {
 namespace
 {
-// OpenGL realization of the backend-created presentation endpoint. It owns
-// the present->swap sequence; the actual blit and swap operations are the
-// composition root's OpenGL present implementation (Renderer::Present and
-// Window::SwapBuffers), supplied as neutral callbacks.
+// OpenGL realization of the backend-created presentation endpoint. Present
+// is executed by the device-owned graph executor (the OpenGL present
+// implementation); Swap is wired by the approved platform bridge
+// (composition root) through a backend-internal callback, so the neutral
+// RenderDevice API carries no OpenGL blit/swap callbacks.
 class OpenGlPresentationTarget final : public PresentationTarget
 {
 public:
     OpenGlPresentationTarget(
-        const PresentSurface& surface,
-        PresentBlitFunction blit,
-        PresentSwapFunction swap
+        OpenGlRenderDevice& device,
+        PresentSurface& surface
     )
-        : surface(surface),
-          blit(std::move(blit)),
-          swap(std::move(swap))
+        : device(device),
+          surface(surface)
     {
     }
 
     void Present(const RenderTarget& source) override
     {
-        if (!this->blit)
+        // Backend provenance: a non-OpenGL RenderTarget is cleanly rejected
+        // instead of an unchecked downcast.
+        if (source.BackendId() != RenderBackendId::OpenGL)
         {
-            throw std::logic_error(
-                "OpenGL presentation target has no blit wired"
+            throw std::invalid_argument(
+                "OpenGL presentation target requires an OpenGL render target"
             );
         }
-        this->blit(source, this->surface.Width(), this->surface.Height());
+        const SceneFramebuffer& framebuffer =
+            static_cast<const SceneFramebuffer&>(source);
+        this->device.GraphExecutorForCurrentContext().Present(
+            framebuffer,
+            this->surface.Width(),
+            this->surface.Height()
+        );
     }
 
     void Swap() override
@@ -53,10 +62,17 @@ public:
         this->swap();
     }
 
+    // Approved platform bridge hook (backend-internal, never in the neutral
+    // contract): the composition root wires the window swap here.
+    void SetSwapCallback(std::function<void()> nextSwap)
+    {
+        this->swap = std::move(nextSwap);
+    }
+
 private:
-    const PresentSurface& surface;
-    PresentBlitFunction blit;
-    PresentSwapFunction swap;
+    OpenGlRenderDevice& device;
+    PresentSurface& surface;
+    std::function<void()> swap;
 };
 
 GLenum MapBufferTarget(BufferUsage usage) noexcept
@@ -537,26 +553,80 @@ void OpenGlRenderDevice::DestroyGraphicsPipeline(
     this->Erase(RenderDevice::HandleId(handle));
 }
 
-void OpenGlRenderDevice::ExecuteGraph(RenderGraph& graph)
+void OpenGlRenderDevice::ExecuteGraph(
+    RenderGraph& graph,
+    const RenderGraphExecutionContext& context
+)
 {
-    // The OpenGL backend owns graph execution: pass callbacks are wired by
-    // the OpenGL pass executor layer (Renderer::Execute*). A future Vulkan
-    // backend interprets the graph data instead of callbacks.
-    graph.Execute();
+    // The OpenGL backend owns graph execution through its per-context
+    // executor. A future Vulkan backend interprets the same graph data.
+    this->GraphExecutorForCurrentContext().Execute(graph, context);
 }
 
 std::unique_ptr<PresentationTarget>
 OpenGlRenderDevice::CreatePresentationTarget(
-    const PresentSurface& surface,
-    PresentBlitFunction blit,
-    PresentSwapFunction swap
+    PresentSurface& surface
 )
 {
     return std::make_unique<OpenGlPresentationTarget>(
-        surface,
-        std::move(blit),
-        std::move(swap)
+        *this,
+        surface
     );
+}
+
+OpenGlGraphExecutor& OpenGlRenderDevice::GraphExecutorForCurrentContext()
+{
+    const GraphicsContextToken token = this->graphicsDevice.CurrentContext();
+    if (token == nullptr)
+    {
+        throw std::logic_error(
+            "OpenGL graph execution requires a current context"
+        );
+    }
+    auto iterator = this->graphExecutors.find(token);
+    if (iterator == this->graphExecutors.end())
+    {
+        iterator = this->graphExecutors.emplace(
+            token,
+            std::make_unique<OpenGlGraphExecutor>(this)
+        ).first;
+    }
+    return *iterator->second;
+}
+
+void OpenGlRenderDevice::ReleaseGraphExecutorForCurrentContext() noexcept
+{
+    try
+    {
+        const GraphicsContextToken token =
+            this->graphicsDevice.CurrentContext();
+        if (token == nullptr)
+            return;
+        const auto iterator = this->graphExecutors.find(token);
+        if (iterator == this->graphExecutors.end())
+            return;
+        iterator->second->Release();
+        this->graphExecutors.erase(iterator);
+    }
+    catch (...)
+    {
+        // Best effort; device teardown releases any remaining executor.
+    }
+}
+
+void OpenGlRenderDevice::WirePresentationSwap(
+    PresentationTarget& target,
+    std::function<void()> swap
+)
+{
+    auto* openGlTarget = dynamic_cast<OpenGlPresentationTarget*>(&target);
+    if (openGlTarget == nullptr)
+    {
+        throw std::invalid_argument(
+            "Presentation target does not belong to the OpenGL backend"
+        );
+    }
+    openGlTarget->SetSwapCallback(std::move(swap));
 }
 
 GraphicsDevice& OpenGlRenderDevice::LegacyGraphicsDevice() noexcept
