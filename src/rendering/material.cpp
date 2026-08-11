@@ -183,6 +183,15 @@ Material::Material(
     // leave subordinate texture/realization cache entries behind.
     ValidateMaterialVariant(this->data);
 
+    // Per-consumer resolver facades: several Materials may share one
+    // canonical Texture (same CPU data), but each Material must hold its
+    // own resolver facade so rebind/detach never aliases siblings.
+    for (auto& [uniformName, texture] : this->textures)
+    {
+        if (texture != nullptr)
+            texture = texture->CloneAsBinding();
+    }
+
     // After validation, resolve the device-local ProgramCache and bind
     // textures to the per-device cache (Step 7 Stage 2 + closure micro-fix).
     if (this->cache != nullptr)

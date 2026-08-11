@@ -189,3 +189,32 @@ ABI 94 legacy + 30 stable
   TestR2MaterialSubordinateTextureDetach（非空 textureSources：detach 后
     cacheA.Clear() → pending 增加——texture facade 不再持有 A realization）
 ```
+
+### 12. Shared Texture Facade Isolation（2026-08-11 ChatGPT 复审 `33927ac` 后）
+
+```text
+Blocker：Material 共享 canonical Texture facade 的 aliasing
+  - BuildModelAssetBundle 中多个 Material 引用同一 texture index →
+    同一 shared_ptr<Texture>
+  - Material rebind/detach 调用 texture->SetRenderCache → 修改共享对象
+  - 一个 Material 的 detach 会让 sibling Material 的 Bind 抛异常；
+    A→B rebind 会让 sibling 在 A context 下绑定 B realization
+    （cross-share-group GPU object use）
+  - 现有测试 textureSources.clear() 或 Material 自有 texture 均未覆盖
+
+修复：per-consumer resolver facade
+  - Texture::CloneAsBinding()：共享不可变 TextureData、独立 cache/gpu
+    状态的 facade
+  - Material 最终构造（validation 后）把 bindings 全部克隆为独立
+    facade——同 device GPU 仍由 cache 按数据 dedup
+  - 结构：CPU Texture semantic → Material A/B 各自 resolver facade
+    → RenderResourceCache → 共享 GPU realization
+
+测试：TestR2MaterialSharedTextureIsolation
+  - 同一 canonical Texture + Material A/B
+  - Device A：A/B Attach、B.Bind 成功
+  - A.SetRenderCache(nullptr) → B.Bind 仍成功
+  - A rebind Device B + Attach → A.Bind（B）成功
+  - 回 A：B.Bind（realization A）成功；到 B：A.Bind（realization B）成功
+  - cacheA/cacheB TextureCount 各 == 1（per-device GPU dedup）
+```

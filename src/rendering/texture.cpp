@@ -92,6 +92,11 @@ void Texture::SetRenderCache(RenderResourceCache* nextCache)
     this->gpu = this->cache->AcquireTexture(this->data);
 }
 
+std::shared_ptr<Texture> Texture::CloneAsBinding() const
+{
+    return std::make_shared<Texture>(this->data, nullptr);
+}
+
 void Texture::Bind(unsigned int unit)
 {
     if (this->gpu == nullptr)

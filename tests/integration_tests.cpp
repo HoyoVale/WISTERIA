@@ -14996,6 +14996,95 @@ void TestR2MaterialSubordinateTextureDetach()
     );
 }
 
+void TestR2MaterialSharedTextureIsolation()
+{
+    // R2.0 Phase 0C Final: multiple Materials may share one canonical
+    // Texture CPU asset, but each Material's resolver facade is isolated.
+    // One Material's rebind/detach must never affect siblings, while the
+    // GPU realization still dedups per device.
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-texture-alias providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+    wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
+
+    std::vector<std::uint8_t> pixels(4U * 4U * 4U, 7U);
+    wisteria::TextureData sharedData =
+        wisteria::TextureData::FromRgba8(
+            4,
+            4,
+            std::move(pixels),
+            wisteria::TextureColorSpace::Linear
+        );
+    // Canonical CPU texture asset shared by both Materials.
+    auto sharedTexture = std::make_shared<wisteria::Texture>(
+        sharedData,
+        nullptr
+    );
+
+    wisteria::MaterialData materialData;
+    materialData.textureSources.clear();
+    wisteria::MaterialTextureBindings bindingsA = {
+        {"baseColorTexture", sharedTexture},
+    };
+    wisteria::MaterialTextureBindings bindingsB = {
+        {"baseColorTexture", sharedTexture},
+    };
+    wisteria::Material materialA(
+        materialData,
+        std::move(bindingsA),
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+    wisteria::Material materialB(
+        materialData,
+        std::move(bindingsB),
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+
+    // Device A: both attach; B binds.
+    sessionA.MakeCurrent();
+    materialA.Attach();
+    materialB.Attach();
+    materialB.Bind();
+    materialB.Unbind();
+
+    // A detaches -> B's facade is untouched and still binds.
+    materialA.SetRenderCache(nullptr);
+    materialB.Bind();
+    materialB.Unbind();
+
+    // A rebinds Device B and attaches/binds there.
+    sessionB.MakeCurrent();
+    materialA.SetRenderCache(&cacheB);
+    materialA.Attach();
+    materialA.Bind();
+    materialA.Unbind();
+
+    // Back to Device A: B still uses realization A.
+    sessionA.MakeCurrent();
+    materialB.Bind();
+    materialB.Unbind();
+
+    // Device B: A uses realization B.
+    sessionB.MakeCurrent();
+    materialA.Bind();
+    materialA.Unbind();
+
+    // Per-device GPU dedup: each device has exactly one texture
+    // realization for the shared CPU asset.
+    Require(
+        cacheA.TextureCount() == 1U && cacheB.TextureCount() == 1U,
+        "r2-texture-alias per-device texture dedup failed"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -15165,6 +15254,10 @@ int main()
     failures += !RunTest(
         "R2.0 material subordinate texture detach",
         TestR2MaterialSubordinateTextureDetach
+    );
+    failures += !RunTest(
+        "R2.0 material shared texture isolation",
+        TestR2MaterialSharedTextureIsolation
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
