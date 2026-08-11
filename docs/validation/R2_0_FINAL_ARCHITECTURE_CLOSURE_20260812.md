@@ -1,7 +1,7 @@
 # R2.0 — Final Architecture Closure（2026-08-12，ChatGPT 5-blocker 修复）
 
-> 状态：**IMPLEMENTED / VALIDATED（两轮）— 四矩阵 + ABI 全绿；待
-> ChatGPT 最终定点复查**
+> 状态：**R2.0 FINAL APPROVED — CLOSED ✅（ChatGPT 对 `5ccf17e` 最终
+> 定点复查通过，无第三轮 micro-closure；R2.1 Vulkan AUTHORIZED）**
 > 依据：ChatGPT 对 `360453b` 的横向审查（P0-1..P0-5），R2.0 不能
 > CLOSED、R2.1 保持 HOLD，直到 frozen 0A contract 的架构边界真正闭合。
 
