@@ -56,6 +56,20 @@ void TextureGpuResource::UploadDecodedPixels(
     unsigned int unit
 )
 {
+    // Creation provenance: the GL texture must be created under the owning
+    // device's share group, before any GL query/glGenTextures.
+    if (this->device != nullptr)
+    {
+        this->device->RequireShareGroupToken(
+            GraphicsDevice::CurrentShareGroup()
+        );
+        if (GraphicsDevice::CurrentContext() == nullptr)
+        {
+            throw std::logic_error(
+                "Texture GPU realization requires a current owning context"
+            );
+        }
+    }
     if (pixels == nullptr || width <= 0 || height <= 0)
         throw std::invalid_argument("decoded texture pixels/dimensions invalid");
     ValidateUnit(unit);

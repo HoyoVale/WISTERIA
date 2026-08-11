@@ -114,3 +114,42 @@ ABI 94 legacy + 30 stable
 R2.0 Phase 0C   REVIEW COMPLETE（待 ChatGPT 盖章）
 R2.0 Phase 0D   HOLD
 ```
+
+## 10. Final Closure（2026-08-11 ChatGPT 复审 `5544d16` 后）
+
+```text
+P0-1 Mesh construction transaction：
+  全部 CPU validation（skinning/layout/bounds/bone/morph）移到
+  AcquireStaticMesh 之前；invalid skinning/morph → StaticMeshCount 不变
+P0-2 Mesh/Texture creation provenance：
+  MeshGpuResource::Attach / TextureGpuResource::UploadDecodedPixels 在
+  任何 GL work 前 RequireShareGroupToken + current context 检查；
+  wrong-share-group → logic_error（A/B pending 无副作用）
+P1-1 SetRenderCache(nullptr) 统一：
+  Mesh/Texture/Material 统一为“facade 不绑定任何 device realization”
+  （detach）；A->nullptr->A 重新绑定/重 attach gate
+P1-2 CloneForInstance 不再经过 static cache：
+  cache-free CPU clone → instanceLocal → CreateInstanceMesh
+P1-3 RenderResourceCache 禁 copy/move（one cache ↔ one device lifetime）
+P1-4 文档/头注释修正：
+  - SetRenderCache 头注释不再称 “No-op once attached”
+  - null-cache debt 扩展四类资源（Mesh/Texture/Material/Environment）
+  - Mesh::ConfigureVertexArray / EnvironmentMap VAO facade → 0D debt
+  - mutable HDR 风险表述（已存在 facade 的 CPU/GPU semantic divergence）
+  - Texture MaxUnits process-global static cache 登记（per-device 化
+    候选；R1.7 后多 context 假设不成立）
+
+测试：TestR2ConstructionAndProvenanceClosure
+  （invalid skinning/morph count unchanged、Mesh/Texture wrong-share-group、
+   A->nullptr->A rebind）
+render_fbo deferred-delete 测试语义修正：
+  owning share-group 创建 → non-owning 销毁 → pending
+  （原测试在 non-owning 状态下创建，正是 provenance gate 要禁止的）
+```
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+```

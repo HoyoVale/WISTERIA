@@ -526,6 +526,7 @@ int main()
         {
             GraphicsDevice deferredDevice;
             deferredDevice.SetShareGroupToken(window);
+            GraphicsDevice::SetCurrentContext(window);
             GraphicsDevice::SetCurrentShareGroup(window);
             {
                 const std::vector<std::uint8_t> pixels(16U, 255U);
@@ -542,16 +543,20 @@ int main()
                 "device must delete immediately with its context current"
             );
 
-            GraphicsDevice::SetCurrentShareGroup(nullptr);
             {
                 const std::vector<std::uint8_t> pixels(16U, 255U);
                 TextureGpuResource queued(&deferredDevice);
+                // Created under the owning share group (creation
+                // provenance), then destroyed while the tracker no longer
+                // matches -> deletion enters the pending queue.
+                GraphicsDevice::SetCurrentShareGroup(window);
                 queued.UploadDecodedPixels(
                     pixels.data(),
                     2,
                     2,
                     wisteria::TextureColorSpace::Srgb
                 );
+                GraphicsDevice::SetCurrentShareGroup(nullptr);
             }
             Require(
                 deferredDevice.PendingDeleteCount() == 1U,

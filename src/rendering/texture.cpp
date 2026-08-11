@@ -81,11 +81,15 @@ Texture::~Texture() = default;
 
 void Texture::SetRenderCache(RenderResourceCache* nextCache)
 {
-    // Textures are assets: allow re-resolving for another device even after
-    // attach. The previous device's cache keeps its realization alive.
+    // Unified semantics: nullptr = facade bound to no device realization.
+    // The old cache keeps its shared entry alive.
     this->cache = nextCache;
-    if (this->cache != nullptr)
-        this->gpu = this->cache->AcquireTexture(this->data);
+    if (this->cache == nullptr)
+    {
+        this->gpu.reset();
+        return;
+    }
+    this->gpu = this->cache->AcquireTexture(this->data);
 }
 
 void Texture::Bind(unsigned int unit)

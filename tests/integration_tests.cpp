@@ -14656,6 +14656,202 @@ void TestR2MaterialProgramRealization()
     );
 }
 
+void TestR2ConstructionAndProvenanceClosure()
+{
+    // R2.0 Phase 0C Final Closure:
+    //  1) rejected Mesh construction must not pollute the static cache
+    //  2) Mesh/Texture creation provenance (wrong share group rejected)
+    //  3) unified SetRenderCache(nullptr) detach + A->nullptr->A rebind
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-closure providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+    wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
+
+    wisteria::DefaultModelData triangleData;
+    triangleData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    triangleData.vertices = {
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    triangleData.indices = {0U, 1U, 2U};
+
+    // 1a. Invalid skinning metadata: requiredBoneCount > 0 without
+    // boneIndices/boneWeights -> rejected BEFORE AcquireStaticMesh.
+    const std::size_t meshCountBeforeSkinning = cacheA.StaticMeshCount();
+    bool skinningRejected = false;
+    try
+    {
+        wisteria::Mesh badSkinning(
+            triangleData,
+            4U,
+            std::vector<wisteria::MeshMorphTarget>{},
+            std::vector<std::uint32_t>{},
+            &cacheA
+        );
+        (void)badSkinning;
+    }
+    catch (const std::invalid_argument&)
+    {
+        skinningRejected = true;
+    }
+    Require(
+        skinningRejected &&
+            cacheA.StaticMeshCount() == meshCountBeforeSkinning,
+        "r2-closure rejected skinning must not pollute the static cache"
+    );
+
+    // 1b. Invalid morph metadata -> rejected BEFORE cache resolution.
+    std::vector<wisteria::MeshMorphTarget> badMorphs = {
+        wisteria::MeshMorphTarget{
+            wisteria::InvalidMorphIndex,
+            {},
+            {},
+        },
+    };
+    const std::size_t meshCountBeforeMorph = cacheA.StaticMeshCount();
+    bool morphRejected = false;
+    try
+    {
+        wisteria::Mesh badMorph(
+            triangleData,
+            0U,
+            std::move(badMorphs),
+            std::vector<std::uint32_t>{},
+            &cacheA
+        );
+        (void)badMorph;
+    }
+    catch (const std::invalid_argument&)
+    {
+        morphRejected = true;
+    }
+    Require(
+        morphRejected &&
+            cacheA.StaticMeshCount() == meshCountBeforeMorph,
+        "r2-closure rejected morph must not pollute the static cache"
+    );
+
+    // 2a. Mesh wrong-share-group creation: cache/device A + context B
+    // current -> Attach rejected before any GL work.
+    sessionA.MakeCurrent();
+    auto mesh = std::make_shared<wisteria::Mesh>(
+        triangleData,
+        0U,
+        std::vector<wisteria::MeshMorphTarget>{},
+        std::vector<std::uint32_t>{},
+        &cacheA
+    );
+    sessionB.MakeCurrent();
+    bool meshWrongShareGroupRejected = false;
+    try
+    {
+        mesh->Attach();
+    }
+    catch (const std::logic_error&)
+    {
+        meshWrongShareGroupRejected = true;
+    }
+    Require(
+        meshWrongShareGroupRejected && !mesh->IsAttached(),
+        "r2-closure mesh wrong-share-group attach must be rejected"
+    );
+    sessionA.MakeCurrent();
+    mesh->Attach();
+    Require(
+        mesh->IsAttached(),
+        "r2-closure mesh attach failed after switching to owning group"
+    );
+
+    // 2b. Texture wrong-share-group creation.
+    std::vector<std::uint8_t> pixels(4U * 4U * 4U, 7U);
+    wisteria::TextureData textureData =
+        wisteria::TextureData::FromRgba8(
+            4,
+            4,
+            std::move(pixels),
+            wisteria::TextureColorSpace::Linear
+        );
+    auto texture = std::make_shared<wisteria::Texture>(
+        textureData,
+        &cacheA
+    );
+    sessionB.MakeCurrent();
+    bool textureWrongShareGroupRejected = false;
+    try
+    {
+        texture->Attach();
+    }
+    catch (const std::logic_error&)
+    {
+        textureWrongShareGroupRejected = true;
+    }
+    Require(
+        textureWrongShareGroupRejected && !texture->IsAttached(),
+        "r2-closure texture wrong-share-group attach must be rejected"
+    );
+    sessionA.MakeCurrent();
+    texture->Attach();
+    Require(
+        texture->IsAttached(),
+        "r2-closure texture attach failed after switching to owning group"
+    );
+
+    // 3. Unified SetRenderCache(nullptr): facade bound to no device
+    // realization; A -> nullptr -> A rebinds and reattaches.
+    mesh->SetRenderCache(nullptr);
+    texture->SetRenderCache(nullptr);
+    Require(
+        !mesh->IsAttached() && !texture->IsAttached(),
+        "r2-closure nullptr cache must detach mesh/texture facades"
+    );
+    mesh->SetRenderCache(&cacheA);
+    texture->SetRenderCache(&cacheA);
+    mesh->Attach();
+    texture->Attach();
+    Require(
+        mesh->IsAttached() && texture->IsAttached(),
+        "r2-closure A->nullptr->A rebind must reattach"
+    );
+
+    wisteria::MaterialData materialData;
+    materialData.textureSources.clear();
+    wisteria::Material material(
+        materialData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+    material.Attach();
+    material.SetRenderCache(nullptr);
+    bool detachedProgramRejected = false;
+    try
+    {
+        (void)material.GetProgram();
+    }
+    catch (const std::logic_error&)
+    {
+        detachedProgramRejected = true;
+    }
+    Require(
+        detachedProgramRejected,
+        "r2-closure nullptr cache must detach the material realization"
+    );
+    material.SetRenderCache(&cacheA);
+    material.Attach();
+    (void)material.GetProgram();
+    (void)cacheB;
+}
+
 int main()
 {
     int failures = 0;
@@ -14813,6 +15009,10 @@ int main()
     failures += !RunTest(
         "R2.0 material program realization",
         TestR2MaterialProgramRealization
+    );
+    failures += !RunTest(
+        "R2.0 construction and provenance closure",
+        TestR2ConstructionAndProvenanceClosure
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

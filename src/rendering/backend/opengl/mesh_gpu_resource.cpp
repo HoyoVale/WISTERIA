@@ -33,6 +33,21 @@ void MeshGpuResource::Attach(const DefaultModelData& data)
     if (this->attached)
         return;
 
+    // Creation provenance: VBO/EBO must be created under the owning
+    // device's share group, before any GL work (0C Final Closure).
+    if (this->device != nullptr)
+    {
+        this->device->RequireShareGroupToken(
+            GraphicsDevice::CurrentShareGroup()
+        );
+        if (GraphicsDevice::CurrentContext() == nullptr)
+        {
+            throw std::logic_error(
+                "Mesh GPU realization requires a current owning context"
+            );
+        }
+    }
+
     auto nextVbo = std::make_unique<VBO>(this->device);
     auto nextEbo = std::make_unique<EBO>(this->device);
 

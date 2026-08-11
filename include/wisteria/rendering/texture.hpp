@@ -74,8 +74,9 @@ public:
         unsigned int unit = 0
     );
 
-    // R2.0 Phase 0C 6A: attach a per-device cache after CPU-only creation.
-    // No-op once a realization is attached.
+    // R2.0 Phase 0C 6A: bind a per-device cache after CPU-only creation.
+    // nullptr detaches the facade from any device realization (the old
+    // cache keeps its shared entry alive).
     void SetRenderCache(RenderResourceCache* cache);
 
     bool IsAttached() const noexcept;

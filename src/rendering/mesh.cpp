@@ -108,13 +108,6 @@ Mesh::Mesh(
       sourceVertexIndices(std::move(sourceVertexIndices)),
       cache(cache)
 {
-    // Static assets may share one per-device realization; instance clones
-    // never do (CloneForInstance passes no cache), so runtime-deformed
-    // geometry stays instance-local.
-    if (this->cache != nullptr)
-        this->gpu = this->cache->AcquireStaticMesh(this->data);
-    else
-        this->gpu = std::make_shared<MeshGpuResource>(nullptr);
     const auto hasAttribute = [this](const char* name)
     {
         return std::any_of(
@@ -264,6 +257,13 @@ Mesh::Mesh(
             }
         }
     }
+
+    // 0C Final Closure: cache resolution happens ONLY after every CPU
+    // validation above; a rejected Mesh never pollutes the static cache.
+    if (this->cache != nullptr)
+        this->gpu = this->cache->AcquireStaticMesh(this->data);
+    else
+        this->gpu = std::make_shared<MeshGpuResource>(nullptr);
 }
 
 Mesh::~Mesh() = default;
@@ -321,12 +321,16 @@ std::size_t Mesh::VertexCount() const noexcept
 
 std::unique_ptr<Mesh> Mesh::CloneForInstance() const
 {
+    // 0C Final Closure: the clone is constructed cache-free (never touching
+    // AcquireStaticMesh), marked instance-local, then given a distinct
+    // instance realization. Runtime-deformed geometry never consults the
+    // static cache.
     auto clone = std::make_unique<Mesh>(
         this->data,
         this->requiredBoneCount,
         this->morphTargets,
         this->sourceVertexIndices,
-        this->cache
+        nullptr
     );
     clone->instanceLocal = true;
     // Instance clones must own a distinct realization: runtime-deformed
@@ -340,15 +344,21 @@ std::unique_ptr<Mesh> Mesh::CloneForInstance() const
 
 void Mesh::SetRenderCache(RenderResourceCache* nextCache)
 {
+    this->cache = nextCache;
+    if (this->cache == nullptr)
+    {
+        // Unified semantics: nullptr = facade bound to no device
+        // realization. The old cache keeps its shared entry alive.
+        this->gpu.reset();
+        return;
+    }
     if (this->instanceLocal)
     {
         // Instance realizations are fixed once attached: an instance is
         // bound to one render session/device for its lifetime.
         if (this->gpu == nullptr || !this->gpu->IsAttached())
         {
-            this->cache = nextCache;
-            if (this->cache != nullptr)
-                this->gpu = this->cache->CreateInstanceMesh(this->data);
+            this->gpu = this->cache->CreateInstanceMesh(this->data);
         }
         return;
     }
@@ -356,11 +366,7 @@ void Mesh::SetRenderCache(RenderResourceCache* nextCache)
     // shared realization for the current cache even if another device's
     // realization is already attached. Each device's cache keeps its own
     // realization alive, so A/B GPU state never shares.
-    this->cache = nextCache;
-    if (this->cache != nullptr)
-        this->gpu = this->cache->AcquireStaticMesh(this->data);
-    else
-        this->gpu = nullptr;
+    this->gpu = this->cache->AcquireStaticMesh(this->data);
 }
 
 std::vector<float> Mesh::RebuildInterleavedVertices(

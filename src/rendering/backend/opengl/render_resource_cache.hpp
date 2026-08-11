@@ -27,6 +27,12 @@ public:
     // 0C Final Review: the cache is ALWAYS device-backed. A reference (not
     // a nullable pointer) makes this a type-level invariant.
     explicit RenderResourceCache(GraphicsDevice& device);
+    // One cache <-> one device lifetime: resource facades hold addresses
+    // into this object, so it must never move or be copied.
+    RenderResourceCache(const RenderResourceCache&) = delete;
+    RenderResourceCache& operator=(const RenderResourceCache&) = delete;
+    RenderResourceCache(RenderResourceCache&&) = delete;
+    RenderResourceCache& operator=(RenderResourceCache&&) = delete;
 
     // Shared realization for a texture asset (identity = file path or
     // encoded/RGBA8 payload hash). Callers keep the shared_ptr for as long

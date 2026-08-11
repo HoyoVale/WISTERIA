@@ -209,7 +209,12 @@ void Material::SetRenderCache(RenderResourceCache* nextCache)
     // their own caches/shared ownership).
     this->cache = nextCache;
     if (this->cache == nullptr)
+    {
+        // Unified semantics: nullptr = facade bound to no device
+        // realization; the old caches keep their entries alive.
+        this->gpu.reset();
         return;
+    }
     this->programCache = this->cache->Device().Programs();
     for (const auto& [uniformName, texture] : this->textures)
         texture->SetRenderCache(this->cache);

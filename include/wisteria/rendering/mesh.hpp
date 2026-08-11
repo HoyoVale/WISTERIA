@@ -51,9 +51,11 @@ public:
 
     std::unique_ptr<Mesh> CloneForInstance() const;
 
-    // R2.0 Phase 0C 6A: attach a per-device cache after CPU-only creation
+    // R2.0 Phase 0C 6A: bind a per-device cache after CPU-only creation
     // (stable entity assets are created before any render session exists).
-    // No-op once a realization is attached.
+    // nullptr detaches the facade from any device realization (the old
+    // cache keeps its shared entry alive). Instance clones keep their
+    // realization once attached.
     void SetRenderCache(RenderResourceCache* cache);
 
     // R2.0 Phase 0C (P0-4): explicit realization class. Static assets may
