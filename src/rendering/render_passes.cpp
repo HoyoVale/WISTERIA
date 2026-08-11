@@ -918,4 +918,390 @@ void Renderer::CompositeOit(const SceneFramebuffer& target)
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
 }
+
+// R2.0 Phase 0D Stage 2C: explicit OpenGL pass executors. Each body is the
+// existing GL pass implementation extracted verbatim from the Stage 2B
+// RenderPacket callbacks; RenderPacket only wires them to the graph.
+
+void Renderer::ExecuteShadowDepth(
+    const RenderFramePacket& packet,
+    const SceneFramebuffer& target,
+    const Camera& camera,
+    const glm::mat4& view,
+    const glm::mat4& projection,
+    const std::vector<RenderCommand>& commands
+)
+{
+    // Cascaded shadow mapping: four light-space depth slices fitted to the
+    // camera frustum, rendered into a depth texture array. MMD toon
+    // materials select the cascade by camera-space depth in the main pass.
+    const DirectionalLight& mainLight = *packet.directionalLights.front();
+    const glm::vec3 lightDirection = glm::normalize(
+        mainLight.Direction()
+    );
+    const glm::vec3 lightPosition = -lightDirection * 60.0f;
+    const glm::mat4 lightView = glm::lookAt(
+        lightPosition,
+        glm::vec3(0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+
+    // Practical split scheme: blend logarithmic and linear cascade
+    // boundaries so near cascades get more resolution.
+    const float nearClip = camera.NearClip();
+    const float farClip = camera.FarClip();
+    for (std::size_t index = 0U;
+         index <= ShadowCascadeCount;
+         ++index)
+    {
+        const float t = static_cast<float>(index) /
+            static_cast<float>(ShadowCascadeCount);
+        const float logarithmic =
+            nearClip * std::pow(farClip / nearClip, t);
+        const float linear =
+            nearClip + (farClip - nearClip) * t;
+        this->shadowSplitPositions[index] =
+            glm::mix(logarithmic, linear, 0.5f);
+    }
+
+    const glm::mat4 inverseViewProjection =
+        glm::inverse(projection * view);
+    std::array<glm::mat4, 4> lightViews;
+    std::array<glm::mat4, 4> lightProjections;
+    for (std::size_t cascade = 0U;
+         cascade < ShadowCascadeCount;
+         ++cascade)
+    {
+        // Frustum slice corners: transform NDC corners at the split depths
+        // back to world space through the inverse view-projection.
+        glm::vec3 minimumLight(
+            std::numeric_limits<float>::max()
+        );
+        glm::vec3 maximumLight(
+            -std::numeric_limits<float>::max()
+        );
+        for (int cornerX : {-1, 1})
+        {
+            for (int cornerY : {-1, 1})
+            {
+                for (const float splitDepth :
+                     {this->shadowSplitPositions[cascade],
+                      this->shadowSplitPositions[cascade + 1]})
+                {
+                    const float ndcZ =
+                        (projection[2][2] * -splitDepth +
+                         projection[3][2]) /
+                        splitDepth;
+                    glm::vec4 world = inverseViewProjection *
+                        glm::vec4(
+                            static_cast<float>(cornerX),
+                            static_cast<float>(cornerY),
+                            ndcZ,
+                            1.0f
+                        );
+                    world /= world.w;
+                    const glm::vec3 lightSpace = glm::vec3(
+                        lightView * world
+                    );
+                    minimumLight = glm::min(
+                        minimumLight,
+                        lightSpace
+                    );
+                    maximumLight = glm::max(
+                        maximumLight,
+                        lightSpace
+                    );
+                }
+            }
+        }
+
+        // Pad the light-space box so near-plane clamping cannot clip
+        // geometry that should cast into the cascade.
+        const float padding = 1.0f;
+        minimumLight -= glm::vec3(padding);
+        maximumLight += glm::vec3(padding);
+        const glm::mat4 lightProjection = glm::ortho(
+            minimumLight.x,
+            maximumLight.x,
+            minimumLight.y,
+            maximumLight.y,
+            -maximumLight.z,
+            -minimumLight.z
+        );
+        lightViews[cascade] = lightView;
+        lightProjections[cascade] = lightProjection;
+        this->shadowLightViewProjections[cascade] =
+            lightProjection * lightView;
+    }
+    this->RenderShadowPass(
+        commands,
+        lightViews,
+        lightProjections
+    );
+    this->shadowStateEnabled = true;
+
+    // Keep the shadow texture bound on its dedicated unit for the main
+    // pass, then restore the scene target the shadow pass replaced.
+    glActiveTexture(GL_TEXTURE0 + ShadowMapTextureUnit);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, this->shadowDepthTexture);
+    glActiveTexture(GL_TEXTURE0);
+    target.Bind();
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glViewport(0, 0, target.Width(), target.Height());
+}
+
+void Renderer::ExecuteGroundReceivers(
+    const RenderFramePacket& packet,
+    const std::vector<RenderCommand>& commands,
+    const Camera& camera,
+    const glm::mat4& view,
+    const glm::mat4& projection
+)
+{
+    // Ground planes first: the MMD ground shadow pass depth-tests against
+    // the floor, and every remaining opaque part is drawn afterwards so the
+    // character correctly occludes the flattened shadow instead of being
+    // overpainted by a coplanar depth bias. Push the ground's depth a few
+    // depth-buffer steps away from the camera so the exact-depth shadow
+    // overlay wins the LEQUAL test deterministically and the character
+    // (drawn afterwards) still passes at its y=0 feet. Without this margin,
+    // moving geometry toggles the shadow/feet boundary every frame, which
+    // reads as flicker and a clipped shadow.
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    for (const RenderCommand& command : commands)
+    {
+        const Material& material = command.part->GetMaterial();
+        if (!material.IsGroundPlane() && !material.ReceivesGroundShadow())
+            continue;
+        // Only true ground planes get the depth margin; shadow receivers
+        // such as an imported stage floor keep their exact depth.
+        if (material.IsGroundPlane())
+        {
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 2.0f);
+        }
+        else
+            glDisable(GL_POLYGON_OFFSET_FILL);
+        this->DrawPart(
+            *command.part,
+            command.model,
+            view,
+            projection,
+            camera,
+            packet,
+            command.pose,
+            command.morphState,
+            command.material,
+            0
+        );
+    }
+    glDisable(GL_POLYGON_OFFSET_FILL);
+}
+
+void Renderer::ExecuteMmdGroundShadow(
+    const RenderFramePacket& packet,
+    const std::vector<RenderCommand>& commands,
+    const glm::mat4& view,
+    const glm::mat4& projection
+)
+{
+    // MMD ground shadow: flatten ground-shadow materials onto the y=0
+    // plane along the main light direction. The shadow uses LEQUAL against
+    // the ground's depth, so the coplanar overlay lands exactly on the
+    // floor; characters drawn afterwards win the depth test and hide the
+    // shadow where they occlude it.
+    this->RenderGroundShadowPass(
+        commands,
+        view,
+        projection,
+        glm::normalize(
+            packet.directionalLights.front()->Direction()
+        ),
+        0.0f
+    );
+}
+
+void Renderer::ExecuteOpaque(
+    const RenderFramePacket& packet,
+    const std::vector<RenderCommand>& commands,
+    const Camera& camera,
+    const glm::mat4& view,
+    const glm::mat4& projection
+)
+{
+    for (const RenderCommand& command : commands)
+    {
+        if (command.part->GetMaterial().IsGroundPlane())
+            continue;
+        this->DrawPart(
+            *command.part,
+            command.model,
+            view,
+            projection,
+            camera,
+            packet,
+            command.pose,
+            command.morphState,
+            command.material,
+            0
+        );
+    }
+}
+
+void Renderer::ExecuteSkybox(
+    EnvironmentMap& environment,
+    const glm::mat4& view,
+    const glm::mat4& projection
+)
+{
+    environment.DrawSkybox(
+        view,
+        projection,
+        this->SkyboxVertexArrayFor(environment)
+    );
+}
+
+void Renderer::ExecuteTransparent(
+    const RenderFramePacket& packet,
+    const SceneFramebuffer& target,
+    const std::vector<RenderCommand>& commands,
+    const Camera& camera,
+    const glm::mat4& view,
+    const glm::mat4& projection,
+    bool oitEnabled
+)
+{
+    glDepthMask(GL_FALSE);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+
+    if (!oitEnabled)
+    {
+        // Diagnostic and compatibility fallback: render transparent parts
+        // directly into the scene target using conventional alpha blend.
+        // This intentionally bypasses both OIT attachments and composite.
+        target.Bind();
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glBlendFunc(
+            GL_SRC_ALPHA,
+            GL_ONE_MINUS_SRC_ALPHA
+        );
+        for (const RenderCommand& command : commands)
+        {
+            this->DrawPart(
+                *command.part,
+                command.model,
+                view,
+                projection,
+                camera,
+                packet,
+                command.pose,
+                command.morphState,
+                command.material,
+                0
+            );
+        }
+    }
+    else
+    {
+        this->EnsureOitResources(target);
+        this->BeginOitPass(target);
+
+        if (this->independentBlendSupported)
+        {
+            const GLenum attachments[] = {
+                GL_COLOR_ATTACHMENT0,
+                GL_COLOR_ATTACHMENT1
+            };
+            glDrawBuffers(2, attachments);
+            glBlendFunciARB(0, GL_ONE, GL_ONE);
+            glBlendFunciARB(
+                1,
+                GL_ZERO,
+                GL_ONE_MINUS_SRC_COLOR
+            );
+            for (const RenderCommand& command : commands)
+            {
+                this->DrawPart(
+                    *command.part,
+                    command.model,
+                    view,
+                    projection,
+                    camera,
+                    packet,
+                    command.pose,
+                    command.morphState,
+                    command.material,
+                    1
+                );
+            }
+        }
+        else
+        {
+            // OpenGL 3.3 fallback without ARB_draw_buffers_blend.
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            glBlendFunc(GL_ONE, GL_ONE);
+            for (const RenderCommand& command : commands)
+            {
+                this->DrawPart(
+                    *command.part,
+                    command.model,
+                    view,
+                    projection,
+                    camera,
+                    packet,
+                    command.pose,
+                    command.morphState,
+                    command.material,
+                    1
+                );
+            }
+
+            glDrawBuffer(GL_COLOR_ATTACHMENT1);
+            glBlendFunc(
+                GL_ZERO,
+                GL_ONE_MINUS_SRC_COLOR
+            );
+            for (const RenderCommand& command : commands)
+            {
+                this->DrawPart(
+                    *command.part,
+                    command.model,
+                    view,
+                    projection,
+                    camera,
+                    packet,
+                    command.pose,
+                    command.morphState,
+                    command.material,
+                    2
+                );
+            }
+        }
+    }
+}
+
+void Renderer::ExecuteOitComposite(const SceneFramebuffer& target)
+{
+    this->CompositeOit(target);
+}
+
+void Renderer::ExecutePhysicsDebug(
+    const std::vector<PhysicsDebugLine>& lines,
+    const SceneFramebuffer& target,
+    const glm::mat4& view,
+    const glm::mat4& projection
+)
+{
+    // CompositeOit's internal RenderStateScope restores the framebuffer
+    // that was current when it started, which on the OIT path is the OIT
+    // framebuffer. PhysicsDebug must explicitly restore the logical
+    // SceneColor target so the graph's declared SceneColor Write access is
+    // real.
+    target.Bind();
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glViewport(0, 0, target.Width(), target.Height());
+    this->DrawPhysicsDebug(lines, view, projection);
+}
 }  // namespace wisteria

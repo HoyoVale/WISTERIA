@@ -179,122 +179,14 @@ void Renderer::RenderPacket(
             [this, &packet, &target, &camera, &view, &projection,
              &opaqueCommands]()
             {
-                const DirectionalLight& mainLight =
-                    *packet.directionalLights.front();
-                const glm::vec3 lightDirection = glm::normalize(
-                    mainLight.Direction()
+                this->ExecuteShadowDepth(
+                    packet,
+                    target,
+                    camera,
+                    view,
+                    projection,
+                    opaqueCommands
                 );
-                const glm::vec3 lightPosition = -lightDirection * 60.0f;
-                const glm::mat4 lightView = glm::lookAt(
-                    lightPosition,
-                    glm::vec3(0.0f),
-                    glm::vec3(0.0f, 1.0f, 0.0f)
-                );
-
-                // Practical split scheme: blend logarithmic and linear
-                // cascade boundaries so near cascades get more resolution.
-                const float nearClip = camera.NearClip();
-                const float farClip = camera.FarClip();
-                for (std::size_t index = 0U;
-                     index <= ShadowCascadeCount;
-                     ++index)
-                {
-                    const float t = static_cast<float>(index) /
-                        static_cast<float>(ShadowCascadeCount);
-                    const float logarithmic =
-                        nearClip * std::pow(farClip / nearClip, t);
-                    const float linear =
-                        nearClip + (farClip - nearClip) * t;
-                    this->shadowSplitPositions[index] =
-                        glm::mix(logarithmic, linear, 0.5f);
-                }
-
-                const glm::mat4 inverseViewProjection =
-                    glm::inverse(projection * view);
-                std::array<glm::mat4, 4> lightViews;
-                std::array<glm::mat4, 4> lightProjections;
-                for (std::size_t cascade = 0U;
-                     cascade < ShadowCascadeCount;
-                     ++cascade)
-                {
-                    // Frustum slice corners: transform NDC corners at the
-                    // split depths back to world space through the inverse
-                    // view-projection.
-                    glm::vec3 minimumLight(
-                        std::numeric_limits<float>::max()
-                    );
-                    glm::vec3 maximumLight(
-                        -std::numeric_limits<float>::max()
-                    );
-                    for (int cornerX : {-1, 1})
-                    {
-                        for (int cornerY : {-1, 1})
-                        {
-                            for (const float splitDepth :
-                                 {this->shadowSplitPositions[cascade],
-                                  this->shadowSplitPositions[cascade + 1]})
-                            {
-                                const float ndcZ =
-                                    (projection[2][2] * -splitDepth +
-                                     projection[3][2]) /
-                                    splitDepth;
-                                glm::vec4 world = inverseViewProjection *
-                                    glm::vec4(
-                                        static_cast<float>(cornerX),
-                                        static_cast<float>(cornerY),
-                                        ndcZ,
-                                        1.0f
-                                    );
-                                world /= world.w;
-                                const glm::vec3 lightSpace = glm::vec3(
-                                    lightView * world
-                                );
-                                minimumLight = glm::min(
-                                    minimumLight,
-                                    lightSpace
-                                );
-                                maximumLight = glm::max(
-                                    maximumLight,
-                                    lightSpace
-                                );
-                            }
-                        }
-                    }
-
-                    // Pad the light-space box so near-plane clamping cannot
-                    // clip geometry that should cast into the cascade.
-                    const float padding = 1.0f;
-                    minimumLight -= glm::vec3(padding);
-                    maximumLight += glm::vec3(padding);
-                    const glm::mat4 lightProjection = glm::ortho(
-                        minimumLight.x,
-                        maximumLight.x,
-                        minimumLight.y,
-                        maximumLight.y,
-                        -maximumLight.z,
-                        -minimumLight.z
-                    );
-                    lightViews[cascade] = lightView;
-                    lightProjections[cascade] = lightProjection;
-                    this->shadowLightViewProjections[cascade] =
-                        lightProjection * lightView;
-                }
-                this->RenderShadowPass(
-                    opaqueCommands,
-                    lightViews,
-                    lightProjections
-                );
-                this->shadowStateEnabled = true;
-
-                // Keep the shadow texture bound on its dedicated unit for
-                // the main pass, then restore the scene target the shadow
-                // pass replaced.
-                glActiveTexture(GL_TEXTURE0 + ShadowMapTextureUnit);
-                glBindTexture(GL_TEXTURE_2D_ARRAY, this->shadowDepthTexture);
-                glActiveTexture(GL_TEXTURE0);
-                target.Bind();
-                glDrawBuffer(GL_COLOR_ATTACHMENT0);
-                glViewport(0, 0, target.Width(), target.Height());
             }
         );
     }
@@ -315,40 +207,13 @@ void Renderer::RenderPacket(
             RenderPassId::GroundReceivers,
             [this, &packet, &opaqueCommands, &view, &projection, &camera]()
             {
-                glDisable(GL_POLYGON_OFFSET_FILL);
-                for (const RenderCommand& command : opaqueCommands)
-                {
-                    const Material& material =
-                        command.part->GetMaterial();
-                    if (!material.IsGroundPlane() &&
-                        !material.ReceivesGroundShadow())
-                    {
-                        continue;
-                    }
-                    // Only true ground planes get the depth margin; shadow
-                    // receivers such as an imported stage floor keep their
-                    // exact depth.
-                    if (material.IsGroundPlane())
-                    {
-                        glEnable(GL_POLYGON_OFFSET_FILL);
-                        glPolygonOffset(1.0f, 2.0f);
-                    }
-                    else
-                        glDisable(GL_POLYGON_OFFSET_FILL);
-                    this->DrawPart(
-                        *command.part,
-                        command.model,
-                        view,
-                        projection,
-                        camera,
-                        packet,
-                        command.pose,
-                        command.morphState,
-                        command.material,
-                        0
-                    );
-                }
-                glDisable(GL_POLYGON_OFFSET_FILL);
+                this->ExecuteGroundReceivers(
+                    packet,
+                    opaqueCommands,
+                    camera,
+                    view,
+                    projection
+                );
             }
         );
     }
@@ -364,14 +229,11 @@ void Renderer::RenderPacket(
             RenderPassId::MmdGroundShadow,
             [this, &packet, &opaqueCommands, &view, &projection]()
             {
-                this->RenderGroundShadowPass(
+                this->ExecuteMmdGroundShadow(
+                    packet,
                     opaqueCommands,
                     view,
-                    projection,
-                    glm::normalize(
-                        packet.directionalLights.front()->Direction()
-                    ),
-                    0.0f
+                    projection
                 );
             }
         );
@@ -383,23 +245,13 @@ void Renderer::RenderPacket(
             RenderPassId::Opaque,
             [this, &packet, &opaqueCommands, &view, &projection, &camera]()
             {
-                for (const RenderCommand& command : opaqueCommands)
-                {
-                    if (command.part->GetMaterial().IsGroundPlane())
-                        continue;
-                    this->DrawPart(
-                        *command.part,
-                        command.model,
-                        view,
-                        projection,
-                        camera,
-                        packet,
-                        command.pose,
-                        command.morphState,
-                        command.material,
-                        0
-                    );
-                }
+                this->ExecuteOpaque(
+                    packet,
+                    opaqueCommands,
+                    camera,
+                    view,
+                    projection
+                );
             }
         );
     }
@@ -410,11 +262,7 @@ void Renderer::RenderPacket(
             RenderPassId::Skybox,
             [this, environment, &view, &projection]()
             {
-                environment->DrawSkybox(
-                    view,
-                    projection,
-                    this->SkyboxVertexArrayFor(*environment)
-                );
+                this->ExecuteSkybox(*environment, view, projection);
             }
         );
     }
@@ -426,121 +274,15 @@ void Renderer::RenderPacket(
             [this, &packet, &target, &transparentCommands, &view,
              &projection, &camera, oitEnabled = graphOptions.oitEnabled]()
             {
-                glDepthMask(GL_FALSE);
-                glEnable(GL_DEPTH_TEST);
-                glEnable(GL_BLEND);
-                glBlendEquation(GL_FUNC_ADD);
-
-                if (!oitEnabled)
-                {
-                    // Diagnostic and compatibility fallback: render
-                    // transparent parts directly into the scene target
-                    // using conventional alpha blend. This intentionally
-                    // bypasses both OIT attachments and composite.
-                    target.Bind();
-                    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-                    glBlendFunc(
-                        GL_SRC_ALPHA,
-                        GL_ONE_MINUS_SRC_ALPHA
-                    );
-                    for (const RenderCommand& command :
-                         transparentCommands)
-                    {
-                        this->DrawPart(
-                            *command.part,
-                            command.model,
-                            view,
-                            projection,
-                            camera,
-                            packet,
-                            command.pose,
-                            command.morphState,
-                            command.material,
-                            0
-                        );
-                    }
-                }
-                else
-                {
-                    this->EnsureOitResources(target);
-                    this->BeginOitPass(target);
-
-                    if (this->independentBlendSupported)
-                    {
-                        const GLenum attachments[] = {
-                            GL_COLOR_ATTACHMENT0,
-                            GL_COLOR_ATTACHMENT1
-                        };
-                        glDrawBuffers(2, attachments);
-                        glBlendFunciARB(0, GL_ONE, GL_ONE);
-                        glBlendFunciARB(
-                            1,
-                            GL_ZERO,
-                            GL_ONE_MINUS_SRC_COLOR
-                        );
-                        for (const RenderCommand& command :
-                             transparentCommands)
-                        {
-                            this->DrawPart(
-                                *command.part,
-                                command.model,
-                                view,
-                                projection,
-                                camera,
-                                packet,
-                                command.pose,
-                                command.morphState,
-                                command.material,
-                                1
-                            );
-                        }
-                    }
-                    else
-                    {
-                        // OpenGL 3.3 fallback without
-                        // ARB_draw_buffers_blend.
-                        glDrawBuffer(GL_COLOR_ATTACHMENT0);
-                        glBlendFunc(GL_ONE, GL_ONE);
-                        for (const RenderCommand& command :
-                             transparentCommands)
-                        {
-                            this->DrawPart(
-                                *command.part,
-                                command.model,
-                                view,
-                                projection,
-                                camera,
-                                packet,
-                                command.pose,
-                                command.morphState,
-                                command.material,
-                                1
-                            );
-                        }
-
-                        glDrawBuffer(GL_COLOR_ATTACHMENT1);
-                        glBlendFunc(
-                            GL_ZERO,
-                            GL_ONE_MINUS_SRC_COLOR
-                        );
-                        for (const RenderCommand& command :
-                             transparentCommands)
-                        {
-                            this->DrawPart(
-                                *command.part,
-                                command.model,
-                                view,
-                                projection,
-                                camera,
-                                packet,
-                                command.pose,
-                                command.morphState,
-                                command.material,
-                                2
-                            );
-                        }
-                    }
-                }
+                this->ExecuteTransparent(
+                    packet,
+                    target,
+                    transparentCommands,
+                    camera,
+                    view,
+                    projection,
+                    oitEnabled
+                );
             }
         );
     }
@@ -551,7 +293,7 @@ void Renderer::RenderPacket(
             RenderPassId::OitComposite,
             [this, &target]()
             {
-                this->CompositeOit(target);
+                this->ExecuteOitComposite(target);
             }
         );
     }
@@ -562,15 +304,12 @@ void Renderer::RenderPacket(
             RenderPassId::PhysicsDebug,
             [this, &packet, &target, &view, &projection]()
             {
-                // CompositeOit's internal RenderStateScope restores the
-                // framebuffer that was current when it started, which on
-                // the OIT path is the OIT framebuffer. PhysicsDebug must
-                // explicitly restore the logical SceneColor target so the
-                // graph's declared SceneColor Write access is real.
-                target.Bind();
-                glDrawBuffer(GL_COLOR_ATTACHMENT0);
-                glViewport(0, 0, target.Width(), target.Height());
-                this->DrawPhysicsDebug(packet.debugLines, view, projection);
+                this->ExecutePhysicsDebug(
+                    packet.debugLines,
+                    target,
+                    view,
+                    projection
+                );
             }
         );
     }

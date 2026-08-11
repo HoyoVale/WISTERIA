@@ -129,6 +129,58 @@ private:
         const glm::vec3& lightDirection,
         float groundY
     );
+    // R2.0 Phase 0D Stage 2C: explicit OpenGL pass executors. Each function
+    // is the existing GL pass body extracted from the Stage 2B callbacks;
+    // RenderPacket only wires them to the graph (no separate scheduler).
+    void ExecuteShadowDepth(
+        const RenderFramePacket& packet,
+        const SceneFramebuffer& target,
+        const Camera& camera,
+        const glm::mat4& view,
+        const glm::mat4& projection,
+        const std::vector<RenderCommand>& commands
+    );
+    void ExecuteGroundReceivers(
+        const RenderFramePacket& packet,
+        const std::vector<RenderCommand>& commands,
+        const Camera& camera,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
+    void ExecuteMmdGroundShadow(
+        const RenderFramePacket& packet,
+        const std::vector<RenderCommand>& commands,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
+    void ExecuteOpaque(
+        const RenderFramePacket& packet,
+        const std::vector<RenderCommand>& commands,
+        const Camera& camera,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
+    void ExecuteSkybox(
+        EnvironmentMap& environment,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
+    void ExecuteTransparent(
+        const RenderFramePacket& packet,
+        const SceneFramebuffer& target,
+        const std::vector<RenderCommand>& commands,
+        const Camera& camera,
+        const glm::mat4& view,
+        const glm::mat4& projection,
+        bool oitEnabled
+    );
+    void ExecuteOitComposite(const SceneFramebuffer& target);
+    void ExecutePhysicsDebug(
+        const std::vector<PhysicsDebugLine>& lines,
+        const SceneFramebuffer& target,
+        const glm::mat4& view,
+        const glm::mat4& projection
+    );
     void DrawPhysicsDebug(
         const std::vector<PhysicsDebugLine>& lines,
         const glm::mat4& view,
