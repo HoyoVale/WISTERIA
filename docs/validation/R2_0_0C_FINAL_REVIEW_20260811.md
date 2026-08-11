@@ -1,6 +1,8 @@
 # R2.0 Phase 0C — Final Review（2026-08-11）
 
 > 状态：**REVIEW COMPLETE（待 ChatGPT 盖章）**
+> 更新（2026-08-11 ChatGPT 复审 `db86e30`）：**R2.0 Phase 0C
+> APPROVED — CLOSED ✅；0D AUTHORIZED ▶**
 > 前置：6A CLOSED ✅ / P0-2 CLOSED ✅ / Decode Split CLOSED ✅ /
 > 6B CLOSED ✅ / Step 7 CLOSED ✅
 
@@ -217,4 +219,31 @@ Blocker：Material 共享 canonical Texture facade 的 aliasing
   - A rebind Device B + Attach → A.Bind（B）成功
   - 回 A：B.Bind（realization A）成功；到 B：A.Bind（realization B）成功
   - cacheA/cacheB TextureCount 各 == 1（per-device GPU dedup）
+```
+
+### 13. 0C 收尾（2026-08-11 ChatGPT 最终盖章 `db86e30`）
+
+```text
+R2.0 Phase 0C  APPROVED — CLOSED ✅
+R2.0 Phase 0D  RenderFramePacket + RenderGraph AUTHORIZED ▶
+
+非阻塞 watchpoint（登记 0D/asset ownership optimization）：
+  Texture resolver facade 当前复制 immutable-equivalent TextureData
+  （encoded/RGBA8 的 vector 会复制）；0D asset/packet 边界稳定后改为
+  共享 immutable CPU semantic payload
+  文档表述：现阶段为“复制相同的 immutable-equivalent TextureData，
+  独立 resolver state”
+```
+
+## 14. 0D Stage 1 — RenderFramePacket Extraction（开始）
+
+```text
+目标：Scene / ModelInstance → RenderFramePacket → 现有 Renderer
+  RenderFramePacket 只描述“这一帧要渲染什么”：
+    Scene traversal / Entity visibility / world transform /
+    ModelRenderFrameView / pose / morph state / runtime material override /
+    opaque-transparent classification inputs / Camera / Lights / Environment
+  不执行 GL、不 Update Runtime、不创建 RenderGraph、
+  不改变 pass 顺序、不改变像素结果
+验证：Packet + 旧 Renderer 像素回归完全一致后，再进 Stage 2（RenderGraph）
 ```

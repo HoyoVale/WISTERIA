@@ -9,6 +9,7 @@
 
 #include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/renderer.hpp"
+#include "wisteria/rendering/render_frame_packet.hpp"
 #include "wisteria/rendering/shader.hpp"
 #include "wisteria/rendering/environment.hpp"
 #include "wisteria/rendering/vao.hpp"
@@ -61,102 +62,22 @@ void UnbindTexture2DFromUnit(unsigned int unit, GLuint texture)
     glActiveTexture(static_cast<GLenum>(previousActiveTexture));
 }
 
+}
+
+// 0D Stage 1: material-state resolution moved to render_frame_packet.cpp;
+// declarations remain here for the legacy renderer translation units.
 MaterialMorphValues EvaluateMaterialMorphs(
     const RenderPart& part,
     const MorphState* morphState
-)
-{
-    const Material& material = part.GetMaterial();
-    MaterialMorphValues values;
-    values.diffuse = material.BaseColorFactor();
-    values.specular = material.SpecularColor();
-    values.shininess = material.Shininess();
-    values.ambient = material.AmbientColor();
-    values.edgeColor = material.EdgeColor();
-    values.edgeSize = material.EdgeSize();
-
-    if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
-        morphState != nullptr &&
-        morphState->GetMorphSet().HasKind(MorphKind::Material))
-    {
-        morphState->GetMorphSet().ApplyMaterialMorphs(
-            part.MorphMaterialIndex().value_or(AllMaterialMorphTargets),
-            morphState->EffectiveWeights(),
-            values
-        );
-    }
-    return values;
-}
-
-// R1.6 Phase 0C: single resolved material state per part per frame.
-// Priority: runtime material override (Saba, keyed by
-// MorphMaterialIndex -> runtime slot) -> Generic MorphState -> base.
+);
 MaterialMorphValues ResolveMaterialState(
     const RenderPart& part,
     const ModelRenderFrameView& frame
-)
-{
-    if (!frame.materials.empty())
-    {
-        const std::optional<std::uint32_t> slot =
-            part.MorphMaterialIndex();
-        if (slot.has_value())
-        {
-            if (*slot >= frame.materials.size())
-            {
-                throw std::logic_error(
-                    "RenderPart runtime material slot is out of range"
-                );
-            }
-            const MaterialRuntimeOverride& override =
-                frame.materials[*slot];
-            MaterialMorphValues values;
-            values.diffuse = override.diffuse;
-            values.specular = override.specular;
-            values.shininess = override.shininess;
-            values.ambient = override.ambient;
-            values.edgeColor = override.edgeColor;
-            values.edgeSize = override.edgeSize;
-            values.textureFactor = override.textureMultiply;
-            values.textureAdd = override.textureAdd;
-            values.sphereTextureFactor = override.sphereTextureMultiply;
-            values.sphereTextureAdd = override.sphereTextureAdd;
-            values.toonTextureFactor = override.toonTextureMultiply;
-            values.toonTextureAdd = override.toonTextureAdd;
-            return values;
-        }
-        // MorphMaterialIndex == nullopt means this part is not connected to
-        // a runtime material slot (e.g. a user-added RenderPart); fall back
-        // to the MorphState / base material path.
-    }
-    return EvaluateMaterialMorphs(part, frame.morphState);
-}
-
+);
 MaterialAlphaMode EffectiveAlphaMode(
     const Material& material,
     const MaterialMorphValues& values
-)
-{
-    if (material.ShadingModel() == MaterialShadingModel::MmdToon &&
-        values.diffuse.a < 0.999f)
-    {
-        return MaterialAlphaMode::Blend;
-    }
-    return material.AlphaMode();
-}
-
-}
-
-// Referenced by Renderer's private pass declarations, so it must be visible
-// at wisteria scope (matching the renderer.hpp forward declaration).
-struct RenderCommand
-{
-    RenderPart* part = nullptr;
-    glm::mat4 model{1.0f};
-    const Pose* pose = nullptr;
-    const MorphState* morphState = nullptr;
-    MaterialMorphValues material;
-};
+);
 
 constexpr unsigned int RendererBoundTextureUnits[] = {
     IrradianceTextureUnit,

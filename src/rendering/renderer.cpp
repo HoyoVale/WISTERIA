@@ -102,53 +102,18 @@ void Renderer::Render(
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
     const glm::mat4 view = camera.GetView();
-    EnvironmentMap* environment = scene.Environment();
+    // 0D Stage 1: frame data extraction is now explicit and CPU-only.
+    RenderFramePacket packet = BuildRenderFramePacket(
+        scene,
+        camera,
+        projection
+    );
+    EnvironmentMap* environment = packet.environment;
     if (environment != nullptr)
         environment->Attach();
-
-    std::vector<RenderCommand> opaqueCommands;
-    std::vector<RenderCommand> transparentCommands;
-    for (const std::unique_ptr<Entity>& entityPointer : scene.Entities())
-    {
-        Entity& entity = *entityPointer;
-        if (!entity.IsVisible())
-            continue;
-
-        const glm::mat4 entityTransform = entity.GetTransform().Matrix();
-        for (RenderPart& part : entity.RenderParts())
-        {
-            const glm::mat4 model =
-                entityTransform * part.LocalTransform();
-            ModelRenderFrameView frame;
-            if (entity.TryGetModelInstance() != nullptr &&
-                entity.TryGetModelInstance()->HasRuntime())
-            {
-                frame = entity.TryGetModelInstance()->LastRenderFrameView();
-            }
-            else
-            {
-                frame.pose = entity.TryGetPose();
-                frame.morphState = entity.TryGetMorphState();
-            }
-            RenderCommand command{
-                &part,
-                model,
-                frame.pose,
-                frame.morphState
-            };
-            command.material = ResolveMaterialState(part, frame);
-            if (EffectiveAlphaMode(
-                    part.GetMaterial(),
-                    command.material
-                ) ==
-                MaterialAlphaMode::Blend)
-            {
-                transparentCommands.push_back(command);
-            }
-            else
-                opaqueCommands.push_back(command);
-        }
-    }
+    std::vector<RenderCommand>& opaqueCommands = packet.opaqueDraws;
+    std::vector<RenderCommand>& transparentCommands =
+        packet.transparentDraws;
 
     // Cascaded shadow mapping: four light-space depth slices fitted to the
     // camera frustum, rendered into a depth texture array. MMD toon
@@ -172,11 +137,11 @@ void Renderer::Render(
     const bool shadowsEnabled = this->config.shadowsEnabled &&
         !EnvironmentFlagEnabled("WISTERIA_DISABLE_SHADOWS");
     if (shadowsEnabled &&
-        !scene.DirectionalLights().empty() &&
+        !packet.directionalLights.empty() &&
         !opaqueCommands.empty())
     {
         const DirectionalLight& mainLight =
-            *scene.DirectionalLights().front();
+            *packet.directionalLights.front();
         const glm::vec3 lightDirection = glm::normalize(
             mainLight.Direction()
         );
@@ -335,7 +300,7 @@ void Renderer::Render(
     // ground's depth, so the coplanar overlay lands exactly on the floor;
     // characters drawn afterwards win the depth test and hide the shadow
     // where they occlude it.
-    if (shadowsEnabled && !scene.DirectionalLights().empty() &&
+    if (shadowsEnabled && !packet.directionalLights.empty() &&
         this->config.groundShadowEnabled &&
         !EnvironmentFlagEnabled("WISTERIA_DISABLE_GROUND_SHADOW"))
     {
@@ -343,7 +308,7 @@ void Renderer::Render(
             opaqueCommands,
             view,
             projection,
-            glm::normalize(scene.DirectionalLights().front()->Direction()),
+            glm::normalize(packet.directionalLights.front()->Direction()),
             0.0f
         );
     }

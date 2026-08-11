@@ -79,10 +79,12 @@ public:
     // cache keeps its shared entry alive).
     void SetRenderCache(RenderResourceCache* cache);
 
-    // R2.0 Phase 0C Final: clones a per-consumer resolver facade sharing
-    // the immutable CPU TextureData, with its own cache/gpu state. Multiple
-    // Materials referencing the same canonical Texture must each hold a
-    // clone so one Material's rebind/detach never affects siblings.
+    // R2.0 Phase 0C Final: clones a per-consumer resolver facade with its
+    // own cache/gpu state. The clone copies the same immutable-equivalent
+    // TextureData (0D watchpoint: future asset ownership may share one
+    // immutable CPU payload instead of copying). Multiple Materials
+    // referencing the same canonical Texture must each hold a clone so one
+    // Material's rebind/detach never affects siblings.
     std::shared_ptr<Texture> CloneAsBinding() const;
 
     bool IsAttached() const noexcept;
