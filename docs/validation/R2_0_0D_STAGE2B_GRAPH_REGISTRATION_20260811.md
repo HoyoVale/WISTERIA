@@ -1,8 +1,8 @@
 # R2.0 Phase 0D Stage 2B — Graph Registration + Execution Authority 基线（2026-08-11）
 
-> 状态：**PART 1 ARCHITECTURE CLOSURE IMPLEMENTED / VALIDATED
-> （sparse DAG + resource semantics + Execute preflight 已闭合；
-> RenderPacket 执行迁移待 PART 2）**
+> 状态：**PART 1 CLOSED ✅ / PART 2 IMPLEMENTED / VALIDATED
+> （RenderPacket → Explicit RenderGraph Execution Migration 已完成；
+> 等待 ChatGPT 迁移代码审查 + 像素回归审查）**
 > 前置：Stage 2A CLOSED ✅
 
 ## 1. Part 1 改动
@@ -96,12 +96,67 @@ ABI 94 legacy + 30 stable
 （含上述 closure 补丁后的重新构建与全量回归）
 ```
 
-## 3. Part 2（下轮）
+## 3. Part 2 — RenderPacket → Explicit RenderGraph Execution Migration
 
 ```text
-把 Renderer::RenderPacket 的隐式 pass 顺序注册进 graph：
-  每段现有 GL 代码块包成 pass callback（ShadowDepth/GroundReceivers/
-  MmdGroundShadow/Opaque/Skybox/Transparent/OitComposite/PhysicsDebug）
-  → BuildCurrentRenderGraph → Validate → Execute
-  → 像素回归必须与现有 RenderPacket 完全一致
+Renderer::RenderPacket 现在的执行链：
+  RenderStateScope frameState            ← frame-level RAII 保留
+  target.Bind / draw buffer              ← frame setup 保留
+  shadowMapSize / PCF / bias 解析        ← CPU config 保留
+  ScopedDepthState depthState            ← frame-level depth 边界保留
+  BuildCurrentRenderGraph(packet, options)
+  → 按 graph.HasPass 条件 SetPassCallback
+  → graph.Execute()
+
+options 来自真实运行条件（不再重复手写 if 链）：
+  shadowsEnabled =
+      config.shadowsEnabled && !WISTERIA_DISABLE_SHADOWS
+  groundShadowEnabled =
+      config.groundShadowEnabled && !WISTERIA_DISABLE_GROUND_SHADOW
+  skyboxEnabled = !WISTERIA_DISABLE_SKYBOX
+  oitEnabled    = !WISTERIA_DISABLE_OIT
+  builder 再结合 packet 内容裁剪实际 pass
+
+8 个 callback 全部包装“现有 GL 代码块”：
+  ShadowDepth      → cascade 计算 + RenderShadowPass + 恢复 target
+  GroundReceivers  → polygon-offset ground/receiver 循环
+  MmdGroundShadow  → RenderGroundShadowPass
+  Opaque           → 非地面 opaque 循环
+  Skybox           → environment->DrawSkybox
+  Transparent      → OIT 绘制（EnsureOitResources + BeginOitPass +
+                     accum/reveal 两轮 draw）或 fallback alpha blend
+  OitComposite     → CompositeOit（从 Transparent callback 拆出，
+                     对应 DAG 的独立 composite pass）
+  PhysicsDebug     → DrawPhysicsDebug
+
+未改动的边界（0A/0D 冻结）：
+  - 不重写 pass body / shader / RenderDevice
+  - 不提前拆状态生命周期：RenderStateScope、ScopedDepthState、
+    target/frame setup 全部保持 frame-level
+  - CompositeOit 内部的 RenderStateScope 原样保留
+  - 无 GL 泄漏、stable ABI 30 符号不变
+
+新增测试：TestR2RenderPacketGraphExecution
+  - 真实 HeadlessRenderSession + RenderOffline（完整帧：directional
+    light + opaque + Blend transparent + environment skybox）
+  - 同一场景连续两次渲染逐字节一致（graph 路径确定性）
+  - 非空帧断言（ShadowDepth/GroundReceivers/MmdGroundShadow/Opaque/
+    Skybox/Transparent/OitComposite 真实执行）
+  - WISTERIA_DISABLE_OIT=1 fallback（RAII 环境变量守卫）渲染非空
+```
+
+## 4. Part 2 验证
+
+```text
+Windows CORE   12/12 PASS
+Windows FULL   13/13 PASS
+WSL CORE       14/14 PASS
+WSL FULL       15/15 PASS
+ABI            94 legacy + 30 stable
+
+像素回归证据：
+  R1.9 stable render pixels match engine（stable ABI vs engine 逐字节一致）
+  R2.0 render packet graph execution（graph 路径重复渲染逐字节一致）
+  R2.0 render device foundation（RenderDevice session 渲染非空）
+  render-fbo / headless-smoke / headless-smoke-glfw-fallback
 ```

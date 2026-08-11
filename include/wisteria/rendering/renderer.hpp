@@ -70,9 +70,11 @@ public:
         const glm::mat4& projection,
         SceneFramebuffer& target
     );
-    // R2.0 Phase 0D Stage 1: packet-only rendering path. All GL work
+    // R2.0 Phase 0D Stage 1+2B: packet-only rendering path. All GL work
     // happens here; the packet is the sole frame-data authority (no Scene
-    // access below this point).
+    // access below this point). Stage 2B Part 2 executes the frame through
+    // the explicit RenderGraph DAG (BuildCurrentRenderGraph +
+    // SetPassCallback + Execute) with the existing OpenGL pass bodies.
     void RenderPacket(
         const RenderFramePacket& packet,
         SceneFramebuffer& target

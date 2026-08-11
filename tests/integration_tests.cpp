@@ -15926,6 +15926,162 @@ void TestR2RenderGraphSparseAndExecution()
     }
 }
 
+void TestR2RenderPacketGraphExecution()
+{
+    // R2.0 Phase 0D Stage 2B Part 2: the real Renderer now executes the
+    // frame through the explicit RenderGraph DAG (BuildCurrentRenderGraph +
+    // SetPassCallback + Execute). A full frame -- directional light, opaque
+    // part, transparent Blend part and environment skybox -- must render
+    // through the graph path, be deterministic across executions, and keep
+    // the OIT fallback path working.
+    struct ScopedEnvVar
+    {
+        std::string name;
+        std::string saved;
+        bool hadValue = false;
+
+        ScopedEnvVar(const char* variable, const char* value)
+            : name(variable)
+        {
+            const char* previous = std::getenv(name.c_str());
+            this->hadValue = previous != nullptr;
+            if (this->hadValue)
+                this->saved = previous;
+            Set(this->name, value);
+        }
+
+        ~ScopedEnvVar()
+        {
+            Set(
+                this->name,
+                this->hadValue ? this->saved.c_str() : nullptr
+            );
+        }
+
+        static void Set(const std::string& variable, const char* value)
+        {
+#ifdef _WIN32
+            _putenv_s(variable.c_str(), value != nullptr ? value : "");
+#else
+            if (value != nullptr)
+                setenv(variable.c_str(), value, 1);
+            else
+                unsetenv(variable.c_str());
+#endif
+        }
+    };
+
+    auto provider = wisteria::CreateHeadlessContext({});
+    Require(
+        provider != nullptr,
+        "r2-graph-execution provider unavailable"
+    );
+    wisteria::HeadlessRenderSession session(std::move(provider));
+
+    wisteria::Scene scene;
+    scene.CreateDirectionalLight(wisteria::DirectionalLightData{
+        .Direction = {-0.35f, -0.75f, -0.45f},
+        .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+        .Intensity = 1.0f
+    });
+    wisteria::EnvironmentMap environment(
+        wisteria::EnvironmentMapData::ProceduralSky(),
+        nullptr
+    );
+    scene.SetEnvironment(&environment);
+    scene.Physics().SetDebugDrawEnabled(true);
+
+    wisteria::DefaultModelData triangleData;
+    triangleData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    triangleData.vertices = {
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    triangleData.indices = {0U, 1U, 2U};
+    wisteria::Mesh mesh(triangleData);
+
+    wisteria::MaterialData opaqueData;
+    opaqueData.textureSources.clear();
+    wisteria::Material opaqueMaterial(opaqueData);
+    wisteria::Entity& opaqueEntity = scene.CreateEntity();
+    opaqueEntity.AddRenderPart(mesh, opaqueMaterial);
+
+    wisteria::MaterialData blendData;
+    blendData.textureSources.clear();
+    blendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+    wisteria::Material blendMaterial(blendData);
+    wisteria::Entity& transparentEntity = scene.CreateEntity(
+        wisteria::Transform{glm::vec3(1.0f, 0.0f, 0.0f)}
+    );
+    transparentEntity.AddRenderPart(mesh, blendMaterial);
+
+    wisteria::OfflineRenderRequest request;
+    request.width = 64U;
+    request.height = 64U;
+    request.camera = wisteria::Camera(wisteria::CameraParam{
+        .Position = glm::vec3(0.0f, 2.0f, 5.0f),
+        .Target = glm::vec3(0.0f, 0.0f, 0.0f),
+        .Up = glm::vec3(0.0f, 1.0f, 0.0f),
+        .VerticalFovDegrees = 45.0f,
+        .NearClip = 0.1f,
+        .FarClip = 100.0f
+    });
+    request.projection = glm::perspective(
+        glm::radians(45.0f),
+        1.0f,
+        0.1f,
+        100.0f
+    );
+
+    const wisteria::Rgba8Frame firstFrame =
+        session.RenderOffline(scene, request);
+    const wisteria::Rgba8Frame secondFrame =
+        session.RenderOffline(scene, request);
+    Require(
+        firstFrame.pixels == secondFrame.pixels,
+        "r2-graph-execution repeated frame must be byte-identical"
+    );
+    bool hasContent = false;
+    for (const std::uint8_t value : firstFrame.pixels)
+    {
+        if (value != 0U)
+        {
+            hasContent = true;
+            break;
+        }
+    }
+    Require(
+        hasContent,
+        "r2-graph-execution full frame must not be empty"
+    );
+
+    // OIT fallback (WISTERIA_DISABLE_OIT=1) still runs through the graph
+    // without OitComposite and must render a non-empty frame.
+    {
+        ScopedEnvVar disableOit("WISTERIA_DISABLE_OIT", "1");
+        const wisteria::Rgba8Frame fallbackFrame =
+            session.RenderOffline(scene, request);
+        bool fallbackHasContent = false;
+        for (const std::uint8_t value : fallbackFrame.pixels)
+        {
+            if (value != 0U)
+            {
+                fallbackHasContent = true;
+                break;
+            }
+        }
+        Require(
+            fallbackHasContent,
+            "r2-graph-execution OIT fallback frame must not be empty"
+        );
+    }
+}
+
 int main()
 {
     int failures = 0;
@@ -16115,6 +16271,10 @@ int main()
     failures += !RunTest(
         "R2.0 render graph sparse and execution",
         TestR2RenderGraphSparseAndExecution
+    );
+    failures += !RunTest(
+        "R2.0 render packet graph execution",
+        TestR2RenderPacketGraphExecution
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
