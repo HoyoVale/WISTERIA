@@ -77,6 +77,12 @@ void RenderGraph::SetPassCallback(
             "RenderGraph callback references an unknown pass"
         );
     }
+    if (!callback)
+    {
+        throw std::invalid_argument(
+            "RenderGraph callback must not be empty"
+        );
+    }
     this->callbacks[pass] = std::move(callback);
 }
 
@@ -220,15 +226,21 @@ const std::vector<RenderPassId>& RenderGraph::OrderedPasses() const
 void RenderGraph::Execute()
 {
     const std::vector<RenderPassId>& order = this->OrderedPasses();
+    // Preflight: every pass must be wired before ANY pass executes, so a
+    // wiring error can never leave a half-executed frame.
     for (const RenderPassId id : order)
     {
         const auto iterator = this->callbacks.find(id);
-        if (iterator == this->callbacks.end())
+        if (iterator == this->callbacks.end() || !iterator->second)
         {
             throw std::logic_error(
                 "RenderGraph pass has no execution callback"
             );
         }
+    }
+    for (const RenderPassId id : order)
+    {
+        const auto iterator = this->callbacks.find(id);
         iterator->second();
     }
 }

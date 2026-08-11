@@ -15623,6 +15623,298 @@ void TestR2CurrentRenderGraphVariants()
     );
 }
 
+void TestR2RenderGraphSparseAndExecution()
+{
+    // R2.0 Phase 0D Stage 2B closure: sparse frames never dangle, and
+    // Execute() preflights all callbacks before running any pass.
+    wisteria::Camera camera(wisteria::CameraParam{
+        .Position = glm::vec3(0.0f, 2.0f, 5.0f),
+        .Target = glm::vec3(0.0f, 0.0f, 0.0f),
+        .Up = glm::vec3(0.0f, 1.0f, 0.0f),
+        .VerticalFovDegrees = 45.0f,
+        .NearClip = 0.1f,
+        .FarClip = 100.0f
+    });
+    const glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        16.0f / 9.0f,
+        0.1f,
+        100.0f
+    );
+    wisteria::RenderGraphBuildOptions options;
+    options.shadowsEnabled = true;
+    options.groundShadowEnabled = true;
+    options.skyboxEnabled = true;
+    options.oitEnabled = true;
+
+    // Skybox-only frame: no geometry, no lights -> only Skybox.
+    {
+        wisteria::Scene scene;
+        wisteria::EnvironmentMap environment(
+            wisteria::EnvironmentMapData::ProceduralSky(),
+            nullptr
+        );
+        scene.SetEnvironment(&environment);
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        graph.Validate();
+        Require(
+            graph.PassCount() == 1U &&
+                graph.HasPass(wisteria::RenderPassId::Skybox),
+            "r2-graph-sparse skybox-only frame must contain only Skybox"
+        );
+    }
+
+    // Transparent-only fallback -> Transparent (no Opaque dependency).
+    {
+        wisteria::Scene scene;
+        wisteria::DefaultModelData triangleData;
+        triangleData.layout = {
+            wisteria::Layout{"position", 3U, wisteria::FLOAT},
+            wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+            wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+        };
+        triangleData.vertices = {
+            -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+             0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+        };
+        triangleData.indices = {0U, 1U, 2U};
+        wisteria::Mesh mesh(triangleData);
+        wisteria::MaterialData blendData;
+        blendData.textureSources.clear();
+        blendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+        wisteria::Material blendMaterial(blendData);
+        wisteria::Entity& entity = scene.CreateEntity();
+        entity.AddRenderPart(mesh, blendMaterial);
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        graph.Validate();
+        Require(
+            graph.PassCount() == 1U &&
+                graph.HasPass(wisteria::RenderPassId::Transparent),
+            "r2-graph-sparse transparent-only fallback frame"
+        );
+
+        // Transparent-only OIT -> Transparent -> OitComposite.
+        wisteria::RenderGraph oitGraph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        oitGraph.Validate();
+        const std::vector<wisteria::RenderPassId> expected = {
+            wisteria::RenderPassId::Transparent,
+            wisteria::RenderPassId::OitComposite,
+        };
+        Require(
+            oitGraph.PassCount() == 2U &&
+                oitGraph.OrderedPasses() == expected,
+            "r2-graph-sparse transparent-only OIT frame"
+        );
+    }
+
+    // Debug-only frame -> PhysicsDebug only.
+    {
+        wisteria::Scene scene;
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        packet.debugLines.push_back(wisteria::PhysicsDebugLine{});
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        graph.Validate();
+        Require(
+            graph.PassCount() == 1U &&
+                graph.HasPass(wisteria::RenderPassId::PhysicsDebug),
+            "r2-graph-sparse debug-only frame"
+        );
+    }
+
+    // Opaque-only frame with shadows disabled: no shadowDepth resource is
+    // registered, so Opaque must not reference it (no unknown-resource
+    // failure, no dangling dependency).
+    {
+        wisteria::Scene scene;
+        wisteria::DefaultModelData triangleData;
+        triangleData.layout = {
+            wisteria::Layout{"position", 3U, wisteria::FLOAT},
+            wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+            wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+        };
+        triangleData.vertices = {
+            -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+             0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+        };
+        triangleData.indices = {0U, 1U, 2U};
+        wisteria::Mesh mesh(triangleData);
+        wisteria::MaterialData materialData;
+        materialData.textureSources.clear();
+        wisteria::Material material(materialData);
+        wisteria::Entity& entity = scene.CreateEntity();
+        entity.AddRenderPart(mesh, material);
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        wisteria::RenderGraphBuildOptions noShadowOptions = options;
+        noShadowOptions.shadowsEnabled = false;
+        noShadowOptions.groundShadowEnabled = false;
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, noShadowOptions);
+        graph.Validate();
+        Require(
+            graph.PassCount() == 1U &&
+                graph.HasPass(wisteria::RenderPassId::Opaque) &&
+                !graph.HasPass(wisteria::RenderPassId::ShadowDepth) &&
+                !graph.HasPass(wisteria::RenderPassId::GroundReceivers),
+            "r2-graph-sparse opaque-only frame without shadows"
+        );
+    }
+
+    // Empty frame -> zero execution passes.
+    {
+        wisteria::Scene scene;
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        graph.Validate();
+        Require(
+            graph.PassCount() == 0U,
+            "r2-graph-sparse empty frame must have zero passes"
+        );
+    }
+
+    // Execute success path: every callback runs exactly once in
+    // topological order.
+    {
+        wisteria::Scene scene;
+        scene.CreateDirectionalLight(wisteria::DirectionalLightData{});
+        wisteria::EnvironmentMap environment(
+            wisteria::EnvironmentMapData::ProceduralSky(),
+            nullptr
+        );
+        scene.SetEnvironment(&environment);
+        wisteria::DefaultModelData triangleData;
+        triangleData.layout = {
+            wisteria::Layout{"position", 3U, wisteria::FLOAT},
+            wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+            wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+        };
+        triangleData.vertices = {
+            -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+             0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+        };
+        triangleData.indices = {0U, 1U, 2U};
+        wisteria::Mesh mesh(triangleData);
+        wisteria::MaterialData materialData;
+        materialData.textureSources.clear();
+        wisteria::Material material(materialData);
+        wisteria::Entity& entity = scene.CreateEntity();
+        entity.AddRenderPart(mesh, material);
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        packet.debugLines.push_back(wisteria::PhysicsDebugLine{});
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        const std::vector<wisteria::RenderPassId> expected = {
+            wisteria::RenderPassId::ShadowDepth,
+            wisteria::RenderPassId::GroundReceivers,
+            wisteria::RenderPassId::MmdGroundShadow,
+            wisteria::RenderPassId::Opaque,
+            wisteria::RenderPassId::Skybox,
+            wisteria::RenderPassId::Transparent,
+            wisteria::RenderPassId::OitComposite,
+            wisteria::RenderPassId::PhysicsDebug,
+        };
+        std::vector<wisteria::RenderPassId> executed;
+        for (const wisteria::RenderPassId id : expected)
+        {
+            graph.SetPassCallback(
+                id,
+                [id, &executed]() { executed.push_back(id); }
+            );
+        }
+        graph.Execute();
+        Require(
+            executed == expected,
+            "r2-graph-execute callbacks must run once in topological order"
+        );
+    }
+
+    // Execute preflight: a missing callback must fail BEFORE any pass runs.
+    {
+        wisteria::Scene scene;
+        scene.CreateDirectionalLight(wisteria::DirectionalLightData{});
+        wisteria::EnvironmentMap environment(
+            wisteria::EnvironmentMapData::ProceduralSky(),
+            nullptr
+        );
+        scene.SetEnvironment(&environment);
+        wisteria::DefaultModelData triangleData;
+        triangleData.layout = {
+            wisteria::Layout{"position", 3U, wisteria::FLOAT},
+            wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+            wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+        };
+        triangleData.vertices = {
+            -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+             0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+        };
+        triangleData.indices = {0U, 1U, 2U};
+        wisteria::Mesh mesh(triangleData);
+        wisteria::MaterialData materialData;
+        materialData.textureSources.clear();
+        wisteria::Material material(materialData);
+        wisteria::Entity& entity = scene.CreateEntity();
+        entity.AddRenderPart(mesh, material);
+        wisteria::RenderFramePacket packet =
+            wisteria::BuildRenderFramePacket(scene, camera, projection);
+        packet.debugLines.push_back(wisteria::PhysicsDebugLine{});
+        wisteria::RenderGraph graph =
+            wisteria::BuildCurrentRenderGraph(packet, options);
+        // Wire only the first pass; the rest missing.
+        int executed = 0;
+        graph.SetPassCallback(
+            wisteria::RenderPassId::ShadowDepth,
+            [&executed]() { ++executed; }
+        );
+        bool preflightRejected = false;
+        try
+        {
+            graph.Execute();
+        }
+        catch (const std::logic_error&)
+        {
+            preflightRejected = true;
+        }
+        Require(
+            preflightRejected && executed == 0,
+            "r2-graph-execute missing callback must fail before any pass"
+        );
+
+        // Empty callback is rejected at registration.
+        bool emptyCallbackRejected = false;
+        try
+        {
+            graph.SetPassCallback(
+                wisteria::RenderPassId::ShadowDepth,
+                std::function<void()>{}
+            );
+        }
+        catch (const std::invalid_argument&)
+        {
+            emptyCallbackRejected = true;
+        }
+        Require(
+            emptyCallbackRejected,
+            "r2-graph-execute empty callback must be rejected"
+        );
+    }
+}
+
 int main()
 {
     int failures = 0;

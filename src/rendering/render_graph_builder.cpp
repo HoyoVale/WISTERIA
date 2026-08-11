@@ -5,6 +5,7 @@
 #include "wisteria/rendering/render_frame_packet.hpp"
 #include "wisteria/rendering/environment.hpp"
 
+#include <optional>
 #include <vector>
 
 namespace wisteria
@@ -15,11 +16,6 @@ RenderGraph BuildCurrentRenderGraph(
 )
 {
     RenderGraph graph;
-    graph.AddResource(
-        "shadowDepth",
-        RenderResourceKind::Depth,
-        RenderResourceLifetime::Transient
-    );
     graph.AddResource(
         "sceneDepth",
         RenderResourceKind::Depth,
@@ -47,6 +43,14 @@ RenderGraph BuildCurrentRenderGraph(
     const bool hasOitComposite = hasTransparent && options.oitEnabled;
     const bool hasPhysicsDebug = !packet.debugLines.empty();
 
+    if (hasShadow)
+    {
+        graph.AddResource(
+            "shadowDepth",
+            RenderResourceKind::Depth,
+            RenderResourceLifetime::Transient
+        );
+    }
     if (hasOitComposite)
     {
         graph.AddResource(
@@ -68,6 +72,9 @@ RenderGraph BuildCurrentRenderGraph(
         if (enabled)
             deps.push_back(id);
     };
+    // Main scene chain: each pass depends on the previous pass that
+    // actually exists this frame (sparse frames never dangle).
+    std::optional<RenderPassId> lastScenePass;
 
     if (hasShadow)
     {
@@ -79,12 +86,14 @@ RenderGraph BuildCurrentRenderGraph(
             "shadowDepth",
             RenderResourceAccess::Write
         );
+        lastScenePass = RenderPassId::ShadowDepth;
     }
 
     if (hasGroundReceivers)
     {
         std::vector<RenderPassId> deps;
-        addDependency(deps, hasShadow, RenderPassId::ShadowDepth);
+        if (lastScenePass.has_value())
+            deps.push_back(*lastScenePass);
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::GroundReceivers,
             "ground-receivers",
@@ -92,61 +101,124 @@ RenderGraph BuildCurrentRenderGraph(
         });
         graph.AddAccess(
             RenderPassId::GroundReceivers,
+            "sceneDepth",
+            RenderResourceAccess::Read
+        );
+        graph.AddAccess(
+            RenderPassId::GroundReceivers,
+            "sceneDepth",
+            RenderResourceAccess::Write
+        );
+        graph.AddAccess(
+            RenderPassId::GroundReceivers,
             "sceneColor",
             RenderResourceAccess::Write
         );
+        lastScenePass = RenderPassId::GroundReceivers;
     }
 
     if (hasMmdGroundShadow)
     {
+        std::vector<RenderPassId> deps;
+        addDependency(deps, hasShadow, RenderPassId::ShadowDepth);
+        addDependency(
+            deps,
+            hasGroundReceivers,
+            RenderPassId::GroundReceivers
+        );
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::MmdGroundShadow,
             "mmd-ground-shadow",
-            {RenderPassId::ShadowDepth, RenderPassId::GroundReceivers},
+            deps,
         });
+        graph.AddAccess(
+            RenderPassId::MmdGroundShadow,
+            "shadowDepth",
+            RenderResourceAccess::Read
+        );
+        graph.AddAccess(
+            RenderPassId::MmdGroundShadow,
+            "sceneDepth",
+            RenderResourceAccess::Read
+        );
         graph.AddAccess(
             RenderPassId::MmdGroundShadow,
             "sceneColor",
             RenderResourceAccess::Write
         );
+        lastScenePass = RenderPassId::MmdGroundShadow;
     }
 
     if (hasOpaque)
     {
         std::vector<RenderPassId> deps;
-        addDependency(deps, hasShadow, RenderPassId::ShadowDepth);
-        addDependency(deps, hasMmdGroundShadow, RenderPassId::MmdGroundShadow);
+        if (lastScenePass.has_value())
+            deps.push_back(*lastScenePass);
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::Opaque, "opaque", deps,
         });
+        if (hasShadow)
+        {
+            graph.AddAccess(
+                RenderPassId::Opaque,
+                "shadowDepth",
+                RenderResourceAccess::Read
+            );
+        }
+        graph.AddAccess(
+            RenderPassId::Opaque,
+            "sceneDepth",
+            RenderResourceAccess::Read
+        );
+        graph.AddAccess(
+            RenderPassId::Opaque,
+            "sceneDepth",
+            RenderResourceAccess::Write
+        );
         graph.AddAccess(
             RenderPassId::Opaque,
             "sceneColor",
             RenderResourceAccess::Write
         );
+        lastScenePass = RenderPassId::Opaque;
     }
 
     if (hasSkybox)
     {
+        std::vector<RenderPassId> deps;
+        if (lastScenePass.has_value())
+            deps.push_back(*lastScenePass);
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::Skybox,
             "skybox",
-            {RenderPassId::Opaque},
+            deps,
         });
+        graph.AddAccess(
+            RenderPassId::Skybox,
+            "sceneDepth",
+            RenderResourceAccess::Read
+        );
         graph.AddAccess(
             RenderPassId::Skybox,
             "sceneColor",
             RenderResourceAccess::Write
         );
+        lastScenePass = RenderPassId::Skybox;
     }
 
     if (hasTransparent)
     {
-        std::vector<RenderPassId> deps = {RenderPassId::Opaque};
-        addDependency(deps, hasSkybox, RenderPassId::Skybox);
+        std::vector<RenderPassId> deps;
+        if (lastScenePass.has_value())
+            deps.push_back(*lastScenePass);
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::Transparent, "transparent", deps,
         });
+        graph.AddAccess(
+            RenderPassId::Transparent,
+            "sceneDepth",
+            RenderResourceAccess::Read
+        );
         if (hasOitComposite)
         {
             graph.AddAccess(
@@ -168,14 +240,18 @@ RenderGraph BuildCurrentRenderGraph(
                 RenderResourceAccess::Write
             );
         }
+        lastScenePass = RenderPassId::Transparent;
     }
 
     if (hasOitComposite)
     {
+        std::vector<RenderPassId> deps;
+        if (lastScenePass.has_value())
+            deps.push_back(*lastScenePass);
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::OitComposite,
             "oit-composite",
-            {RenderPassId::Transparent},
+            deps,
         });
         graph.AddAccess(
             RenderPassId::OitComposite,
@@ -192,20 +268,22 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneColor",
             RenderResourceAccess::Write
         );
+        lastScenePass = RenderPassId::OitComposite;
     }
 
     if (hasPhysicsDebug)
     {
-        std::vector<RenderPassId> deps = {RenderPassId::Opaque};
-        addDependency(
-            deps,
-            hasOitComposite,
-            RenderPassId::OitComposite
-        );
-        addDependency(deps, hasTransparent, RenderPassId::Transparent);
+        std::vector<RenderPassId> deps;
+        if (lastScenePass.has_value())
+            deps.push_back(*lastScenePass);
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::PhysicsDebug, "physics-debug", deps,
         });
+        graph.AddAccess(
+            RenderPassId::PhysicsDebug,
+            "sceneDepth",
+            RenderResourceAccess::Read
+        );
         graph.AddAccess(
             RenderPassId::PhysicsDebug,
             "sceneColor",
