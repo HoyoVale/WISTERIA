@@ -257,8 +257,33 @@ WindowManager::ManagedWindow::ManagedWindow(
 {
     if (this->window == nullptr)
         throw std::invalid_argument("Managed window cannot be null");
+    if (renderDevice == nullptr)
+    {
+        throw std::logic_error(
+            "Managed window requires a RenderDevice"
+        );
+    }
     this->presentSurface = std::make_unique<GlfwPresentSurface>(
         *this->window
+    );
+    this->presentationTarget = renderDevice->CreatePresentationTarget(
+        *this->presentSurface,
+        [renderer = &this->renderer](
+            const RenderTarget& source,
+            int width,
+            int height
+        )
+        {
+            renderer->Present(
+                static_cast<const SceneFramebuffer&>(source),
+                width,
+                height
+            );
+        },
+        [window = this->window.get()]()
+        {
+            window->SwapBuffers();
+        }
     );
 }
 
@@ -767,8 +792,7 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         ReportGlErrors("capture-scene", frameIndex, window.Title());
     }
 
-    managedWindow.presentSurface->Present(
-        managedWindow.renderer,
+    managedWindow.presentationTarget->Present(
         managedWindow.framebuffer
     );
     ReportGlErrors("present", frameIndex, window.Title());
@@ -793,7 +817,7 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         );
         ReportGlErrors("capture-default", frameIndex, window.Title());
     }
-    managedWindow.presentSurface->Swap();
+    managedWindow.presentationTarget->Swap();
     ReportGlErrors("swap", frameIndex, window.Title());
     const auto afterSwap = std::chrono::steady_clock::now();
 

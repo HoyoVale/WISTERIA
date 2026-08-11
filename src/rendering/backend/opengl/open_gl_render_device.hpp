@@ -3,6 +3,7 @@
 #include "wisteria/rendering/render_device.hpp"
 
 #include "wisteria/rendering/graphics_device.hpp"
+#include "wisteria/rendering/presentation_target.hpp"
 
 #include "render_resource_cache.hpp"
 
@@ -55,6 +56,13 @@ public:
     void DestroyTexture(TextureHandle handle) override;
     void DestroySampler(SamplerHandle handle) override;
     void DestroyGraphicsPipeline(PipelineHandle handle) override;
+
+    void ExecuteGraph(RenderGraph& graph) override;
+    std::unique_ptr<PresentationTarget> CreatePresentationTarget(
+        const PresentSurface& surface,
+        PresentBlitFunction blit,
+        PresentSwapFunction swap
+    ) override;
 
     // OpenGL-backend-internal access to the absorbed R1.7 machinery. Must
     // never be promoted into the neutral RenderDevice contract (Gate B).

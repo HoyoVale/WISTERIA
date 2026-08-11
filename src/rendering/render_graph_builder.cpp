@@ -18,7 +18,9 @@ RenderGraph BuildCurrentRenderGraph(
     RenderGraph graph;
     graph.AddResource(
         "sceneDepth",
-        RenderResourceKind::Depth,
+        // SceneFramebuffer uses a combined GL_DEPTH24_STENCIL8 attachment;
+        // MMD ground shadow writes the stencil aspect.
+        RenderResourceKind::DepthStencil,
         RenderResourceLifetime::External
     );
     graph.AddResource(
@@ -81,11 +83,15 @@ RenderGraph BuildCurrentRenderGraph(
         graph.AddPass(RenderPassDescriptor{
             RenderPassId::ShadowDepth, "shadow-depth", {},
         });
-        graph.AddAccess(
-            RenderPassId::ShadowDepth,
-            "shadowDepth",
-            RenderResourceAccess::Write
-        );
+        RenderAccessDesc shadowWrite;
+        shadowWrite.resource = "shadowDepth";
+        shadowWrite.access = RenderResourceAccess::Write;
+        shadowWrite.aspect = RenderResourceAspect::Depth;
+        // The shadow pass clears each cascade layer before rendering.
+        shadowWrite.loadOp = RenderLoadOp::Clear;
+        shadowWrite.storeOp = RenderStoreOp::Store;
+        shadowWrite.clearValue = {1.0f, 0.0f, 0.0f, 0.0f};
+        graph.AddAccess(RenderPassId::ShadowDepth, shadowWrite);
         lastScenePass = RenderPassId::ShadowDepth;
     }
 
@@ -144,6 +150,17 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneDepth",
             RenderResourceAccess::Read
         );
+        // Mask pass writes the stencil silhouette; fill pass reads it.
+        RenderAccessDesc stencilWrite;
+        stencilWrite.resource = "sceneDepth";
+        stencilWrite.access = RenderResourceAccess::Write;
+        stencilWrite.aspect = RenderResourceAspect::Stencil;
+        graph.AddAccess(RenderPassId::MmdGroundShadow, stencilWrite);
+        RenderAccessDesc stencilRead;
+        stencilRead.resource = "sceneDepth";
+        stencilRead.access = RenderResourceAccess::Read;
+        stencilRead.aspect = RenderResourceAspect::Stencil;
+        graph.AddAccess(RenderPassId::MmdGroundShadow, stencilRead);
         graph.AddAccess(
             RenderPassId::MmdGroundShadow,
             "sceneColor",
@@ -237,16 +254,23 @@ RenderGraph BuildCurrentRenderGraph(
         }
         if (hasOitComposite)
         {
-            graph.AddAccess(
-                RenderPassId::Transparent,
-                "oitAccum",
-                RenderResourceAccess::Write
-            );
-            graph.AddAccess(
-                RenderPassId::Transparent,
-                "oitReveal",
-                RenderResourceAccess::Write
-            );
+            RenderAccessDesc accumWrite;
+            accumWrite.resource = "oitAccum";
+            accumWrite.access = RenderResourceAccess::Write;
+            accumWrite.aspect = RenderResourceAspect::Color;
+            accumWrite.loadOp = RenderLoadOp::Clear;
+            accumWrite.storeOp = RenderStoreOp::Store;
+            accumWrite.clearValue = {0.0f, 0.0f, 0.0f, 0.0f};
+            graph.AddAccess(RenderPassId::Transparent, accumWrite);
+
+            RenderAccessDesc revealWrite;
+            revealWrite.resource = "oitReveal";
+            revealWrite.access = RenderResourceAccess::Write;
+            revealWrite.aspect = RenderResourceAspect::Color;
+            revealWrite.loadOp = RenderLoadOp::Clear;
+            revealWrite.storeOp = RenderStoreOp::Store;
+            revealWrite.clearValue = {1.0f, 1.0f, 1.0f, 1.0f};
+            graph.AddAccess(RenderPassId::Transparent, revealWrite);
         }
         else
         {

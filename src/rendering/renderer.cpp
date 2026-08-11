@@ -40,19 +40,21 @@ private:
 
 Renderer::Renderer(RenderDevice* renderDevice)
     : device(OpenGlRenderDevice::GraphicsDeviceFrom(renderDevice)),
-      renderCache(
-          renderDevice != nullptr
-              ? &dynamic_cast<OpenGlRenderDevice*>(renderDevice)->RenderCache()
-              : nullptr
-      ),
+      renderDevice(renderDevice),
+      renderCache(nullptr),
       oitFramebuffer(this->device),
       shadowFramebuffer(this->device)
 {
-    if (renderDevice != nullptr && this->device == nullptr)
+    if (renderDevice != nullptr)
     {
-        throw std::invalid_argument(
-            "R2.0: only the OpenGL RenderDevice backend is available"
-        );
+        auto* openGl = dynamic_cast<OpenGlRenderDevice*>(renderDevice);
+        if (openGl == nullptr)
+        {
+            throw std::invalid_argument(
+                "R2.0: only the OpenGL RenderDevice backend is available"
+            );
+        }
+        this->renderCache = &openGl->RenderCache();
     }
 }
 
@@ -314,9 +316,14 @@ void Renderer::RenderPacket(
         );
     }
 
-    // Explicit DAG execution: preflight requires every registered pass to
-    // have a callback, so a wiring error fails before any GL pass runs.
-    graph.Execute();
+    // Explicit DAG execution through the backend execution authority:
+    // preflight requires every registered pass to have a callback, so a
+    // wiring error fails before any GL pass runs. The legacy
+    // Renderer(nullptr) OpenGL compatibility path executes directly.
+    if (this->renderDevice != nullptr)
+        this->renderDevice->ExecuteGraph(graph);
+    else
+        graph.Execute();
 }
 
 void Renderer::SetFxaaSettings(const FxaaSettings& settings)

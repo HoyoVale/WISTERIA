@@ -13,6 +13,7 @@
 #include "wisteria/rendering/offline_render.hpp"
 #include "wisteria/rendering/render_frame_packet.hpp"
 #include "wisteria/rendering/render_graph.hpp"
+#include "wisteria/rendering/renderer.hpp"
 #include "wisteria/platform/application.hpp"
 #include "rendering/backend/opengl/render_resource_cache.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
@@ -51,6 +52,80 @@ bool HasRenderedRgb(const wisteria::Rgba8Frame& frame)
     }
     return false;
 }
+
+class FakeNonOpenGlRenderDevice final : public wisteria::RenderDevice
+{
+public:
+    wisteria::RenderBackendId BackendId() const noexcept override
+    {
+        return static_cast<wisteria::RenderBackendId>(0xFFFFU);
+    }
+
+    std::string_view BackendName() const noexcept override
+    {
+        return "FakeNonOpenGl";
+    }
+
+    const wisteria::RenderDeviceCapabilities& Capabilities() const override
+    {
+        return this->caps;
+    }
+
+    wisteria::BufferHandle CreateBuffer(
+        const wisteria::BufferDesc&
+    ) override
+    {
+        return {};
+    }
+
+    wisteria::TextureHandle CreateTexture(
+        const wisteria::TextureDesc&
+    ) override
+    {
+        return {};
+    }
+
+    wisteria::SamplerHandle CreateSampler(
+        const wisteria::SamplerDesc&
+    ) override
+    {
+        return {};
+    }
+
+    wisteria::PipelineHandle CreateGraphicsPipeline(
+        const wisteria::GraphicsPipelineDesc&
+    ) override
+    {
+        return {};
+    }
+
+    void UpdateBuffer(
+        wisteria::BufferHandle,
+        const void*,
+        std::size_t,
+        std::size_t
+    ) override
+    {
+    }
+
+    void DestroyBuffer(wisteria::BufferHandle) override {}
+    void DestroyTexture(wisteria::TextureHandle) override {}
+    void DestroySampler(wisteria::SamplerHandle) override {}
+    void DestroyGraphicsPipeline(wisteria::PipelineHandle) override {}
+    void ExecuteGraph(wisteria::RenderGraph&) override {}
+
+    std::unique_ptr<wisteria::PresentationTarget> CreatePresentationTarget(
+        const wisteria::PresentSurface&,
+        wisteria::PresentBlitFunction,
+        wisteria::PresentSwapFunction
+    ) override
+    {
+        return nullptr;
+    }
+
+private:
+    wisteria::RenderDeviceCapabilities caps;
+};
 
 void TestGlmMultiplySanity()
 {
@@ -13543,6 +13618,27 @@ void TestR2RenderDeviceFoundation()
     );
 }
 
+void TestR2NonOpenGlRendererRejection()
+{
+    // R2.0 Final Architecture Closure P0-4: a non-OpenGL RenderDevice must
+    // be rejected cleanly by the compatibility Renderer (invalid_argument),
+    // never reach a dynamic_cast-null dereference.
+    FakeNonOpenGlRenderDevice fake;
+    bool rejected = false;
+    try
+    {
+        wisteria::Renderer renderer(&fake);
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejected = true;
+    }
+    Require(
+        rejected,
+        "non-OpenGL RenderDevice must be rejected cleanly"
+    );
+}
+
 void TestR2WindowedCapabilities()
 {
     // R2.0 0B Final Fix: capabilities must only become authoritative after a
@@ -15937,6 +16033,189 @@ void TestR2RenderGraphSparseAndExecution()
     }
 }
 
+void TestR2RenderGraphFrozenSemantics()
+{
+    // R2.0 Final Architecture Closure P0-3: RenderGraph must express the
+    // frozen resource semantics -- DepthStencil kind, per-aspect accesses,
+    // Load/Clear/Store, transient lifetime analysis and read-before-init
+    // rejection -- not just pass ordering.
+
+    // Transient read-before-initialization must be rejected.
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "tmp",
+            wisteria::RenderResourceKind::Color,
+            wisteria::RenderResourceLifetime::Transient
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::ShadowDepth, "shadow-depth", {},
+        });
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque,
+            "opaque",
+            {wisteria::RenderPassId::ShadowDepth},
+        });
+        graph.AddAccess(
+            wisteria::RenderPassId::ShadowDepth,
+            "tmp",
+            wisteria::RenderResourceAccess::Read
+        );
+        graph.AddAccess(
+            wisteria::RenderPassId::Opaque,
+            "tmp",
+            wisteria::RenderResourceAccess::Write
+        );
+        bool readBeforeInitRejected = false;
+        try
+        {
+            graph.Validate();
+        }
+        catch (const std::invalid_argument&)
+        {
+            readBeforeInitRejected = true;
+        }
+        Require(
+            readBeforeInitRejected,
+            "r2-graph transient read-before-init must be rejected"
+        );
+    }
+
+    // A write-then-read transient resource computes a valid lifetime span.
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "tmp",
+            wisteria::RenderResourceKind::Color,
+            wisteria::RenderResourceLifetime::Transient
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::ShadowDepth, "shadow-depth", {},
+        });
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque,
+            "opaque",
+            {wisteria::RenderPassId::ShadowDepth},
+        });
+        graph.AddAccess(
+            wisteria::RenderPassId::ShadowDepth,
+            "tmp",
+            wisteria::RenderResourceAccess::Write
+        );
+        graph.AddAccess(
+            wisteria::RenderPassId::Opaque,
+            "tmp",
+            wisteria::RenderResourceAccess::Read
+        );
+        graph.Validate();
+        const auto span = graph.TransientLifetime("tmp");
+        Require(
+            span.has_value() &&
+                span->firstUse == wisteria::RenderPassId::ShadowDepth &&
+                span->lastUse == wisteria::RenderPassId::Opaque,
+            "r2-graph transient lifetime span is wrong"
+        );
+        Require(
+            !graph.TransientLifetime("no-such-resource").has_value(),
+            "r2-graph unknown transient lifetime must be empty"
+        );
+    }
+
+    // Unordered stencil WAW hazard on a DepthStencil resource is rejected.
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "ds",
+            wisteria::RenderResourceKind::DepthStencil,
+            wisteria::RenderResourceLifetime::External
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque, "opaque", {},
+        });
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Skybox, "skybox", {},
+        });
+        wisteria::RenderAccessDesc firstStencilWrite;
+        firstStencilWrite.resource = "ds";
+        firstStencilWrite.access = wisteria::RenderResourceAccess::Write;
+        firstStencilWrite.aspect = wisteria::RenderResourceAspect::Stencil;
+        wisteria::RenderAccessDesc secondStencilWrite = firstStencilWrite;
+        graph.AddAccess(wisteria::RenderPassId::Opaque, firstStencilWrite);
+        graph.AddAccess(wisteria::RenderPassId::Skybox, secondStencilWrite);
+        bool stencilHazardRejected = false;
+        try
+        {
+            graph.Validate();
+        }
+        catch (const std::invalid_argument&)
+        {
+            stencilHazardRejected = true;
+        }
+        Require(
+            stencilHazardRejected,
+            "r2-graph unordered stencil WAW hazard must be rejected"
+        );
+    }
+
+    // Distinct aspects of the same attachment are independent (depth write
+    // vs stencil write without ordering is valid).
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "ds",
+            wisteria::RenderResourceKind::DepthStencil,
+            wisteria::RenderResourceLifetime::External
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque, "opaque", {},
+        });
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Skybox, "skybox", {},
+        });
+        wisteria::RenderAccessDesc depthWrite;
+        depthWrite.resource = "ds";
+        depthWrite.access = wisteria::RenderResourceAccess::Write;
+        depthWrite.aspect = wisteria::RenderResourceAspect::Depth;
+        wisteria::RenderAccessDesc stencilWrite;
+        stencilWrite.resource = "ds";
+        stencilWrite.access = wisteria::RenderResourceAccess::Write;
+        stencilWrite.aspect = wisteria::RenderResourceAspect::Stencil;
+        graph.AddAccess(wisteria::RenderPassId::Opaque, depthWrite);
+        graph.AddAccess(wisteria::RenderPassId::Skybox, stencilWrite);
+        graph.Validate();  // must not throw
+    }
+
+    // Aspect/kind mismatch is rejected at registration.
+    {
+        wisteria::RenderGraph graph;
+        graph.AddResource(
+            "colorOnly",
+            wisteria::RenderResourceKind::Color,
+            wisteria::RenderResourceLifetime::External
+        );
+        graph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque, "opaque", {},
+        });
+        wisteria::RenderAccessDesc badAspect;
+        badAspect.resource = "colorOnly";
+        badAspect.access = wisteria::RenderResourceAccess::Write;
+        badAspect.aspect = wisteria::RenderResourceAspect::Depth;
+        bool mismatchRejected = false;
+        try
+        {
+            graph.AddAccess(wisteria::RenderPassId::Opaque, badAspect);
+        }
+        catch (const std::invalid_argument&)
+        {
+            mismatchRejected = true;
+        }
+        Require(
+            mismatchRejected,
+            "r2-graph aspect/kind mismatch must be rejected"
+        );
+    }
+}
+
 void TestR2RenderPacketGraphExecution()
 {
     // R2.0 Phase 0D Stage 2B Part 2: the real Renderer now executes the
@@ -16283,6 +16562,10 @@ int main()
         TestR2RenderDeviceFoundation
     );
     failures += !RunTest(
+        "R2.0 non-OpenGL renderer rejection",
+        TestR2NonOpenGlRendererRejection
+    );
+    failures += !RunTest(
         "R2.0 windowed capabilities transaction",
         TestR2WindowedCapabilities
     );
@@ -16341,6 +16624,10 @@ int main()
     failures += !RunTest(
         "R2.0 render graph sparse and execution",
         TestR2RenderGraphSparseAndExecution
+    );
+    failures += !RunTest(
+        "R2.0 render graph frozen semantics",
+        TestR2RenderGraphFrozenSemantics
     );
     failures += !RunTest(
         "R2.0 render packet graph execution",

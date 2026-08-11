@@ -3,6 +3,7 @@
 #include "open_gl_render_device.hpp"
 
 #include "rendering/renderer_internal.hpp"
+#include "wisteria/rendering/render_graph.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -12,6 +13,52 @@ namespace wisteria
 {
 namespace
 {
+// OpenGL realization of the backend-created presentation endpoint. It owns
+// the present->swap sequence; the actual blit and swap operations are the
+// composition root's OpenGL present implementation (Renderer::Present and
+// Window::SwapBuffers), supplied as neutral callbacks.
+class OpenGlPresentationTarget final : public PresentationTarget
+{
+public:
+    OpenGlPresentationTarget(
+        const PresentSurface& surface,
+        PresentBlitFunction blit,
+        PresentSwapFunction swap
+    )
+        : surface(surface),
+          blit(std::move(blit)),
+          swap(std::move(swap))
+    {
+    }
+
+    void Present(const RenderTarget& source) override
+    {
+        if (!this->blit)
+        {
+            throw std::logic_error(
+                "OpenGL presentation target has no blit wired"
+            );
+        }
+        this->blit(source, this->surface.Width(), this->surface.Height());
+    }
+
+    void Swap() override
+    {
+        if (!this->swap)
+        {
+            throw std::logic_error(
+                "OpenGL presentation target has no swap wired"
+            );
+        }
+        this->swap();
+    }
+
+private:
+    const PresentSurface& surface;
+    PresentBlitFunction blit;
+    PresentSwapFunction swap;
+};
+
 GLenum MapBufferTarget(BufferUsage usage) noexcept
 {
     switch (usage)
@@ -488,6 +535,28 @@ void OpenGlRenderDevice::DestroyGraphicsPipeline(
         entry->object
     );
     this->Erase(RenderDevice::HandleId(handle));
+}
+
+void OpenGlRenderDevice::ExecuteGraph(RenderGraph& graph)
+{
+    // The OpenGL backend owns graph execution: pass callbacks are wired by
+    // the OpenGL pass executor layer (Renderer::Execute*). A future Vulkan
+    // backend interprets the graph data instead of callbacks.
+    graph.Execute();
+}
+
+std::unique_ptr<PresentationTarget>
+OpenGlRenderDevice::CreatePresentationTarget(
+    const PresentSurface& surface,
+    PresentBlitFunction blit,
+    PresentSwapFunction swap
+)
+{
+    return std::make_unique<OpenGlPresentationTarget>(
+        surface,
+        std::move(blit),
+        std::move(swap)
+    );
 }
 
 GraphicsDevice& OpenGlRenderDevice::LegacyGraphicsDevice() noexcept

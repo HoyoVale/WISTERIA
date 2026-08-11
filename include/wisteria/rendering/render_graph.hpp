@@ -14,9 +14,11 @@
 // - it is never exposed through the Stable C ABI;
 // - no aliasing / async / multi-queue / pass merging in this stage.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -45,7 +47,36 @@ enum class RenderPassId : std::uint8_t
 enum class RenderResourceKind : std::uint8_t
 {
     Color,
-    Depth
+    Depth,
+    // Combined depth+stencil attachment (SceneFramebuffer uses
+    // GL_DEPTH24_STENCIL8); accesses must declare Depth or Stencil aspect.
+    DepthStencil
+};
+
+// Which aspect of a resource one access targets. Distinct aspects of the
+// same attachment are independent for hazard purposes (Vulkan maps these
+// to separate aspect masks / barriers).
+enum class RenderResourceAspect : std::uint8_t
+{
+    Color,
+    Depth,
+    Stencil
+};
+
+enum class RenderLoadOp : std::uint8_t
+{
+    // No load semantics (Read access, or default for legacy AddAccess).
+    NotApplicable,
+    Load,
+    Clear
+};
+
+enum class RenderStoreOp : std::uint8_t
+{
+    // No store semantics (Read access, or default for legacy AddAccess).
+    NotApplicable,
+    Store,
+    DontCare
 };
 
 // Orthogonal to kind: how long the logical resource lives. Transient only
@@ -61,6 +92,25 @@ enum class RenderResourceAccess : std::uint8_t
 {
     Read,
     Write
+};
+
+// Full per-access semantics: target aspect, load/store behavior and the
+// clear value used when loadOp == Clear.
+struct RenderAccessDesc
+{
+    std::string resource;
+    RenderResourceAccess access = RenderResourceAccess::Read;
+    RenderResourceAspect aspect = RenderResourceAspect::Color;
+    RenderLoadOp loadOp = RenderLoadOp::NotApplicable;
+    RenderStoreOp storeOp = RenderStoreOp::NotApplicable;
+    std::array<float, 4> clearValue{0.0f, 0.0f, 0.0f, 1.0f};
+};
+
+// First/last pass that touches a Transient resource in execution order.
+struct RenderResourceLifetimeSpan
+{
+    RenderPassId firstUse = RenderPassId::ShadowDepth;
+    RenderPassId lastUse = RenderPassId::ShadowDepth;
 };
 
 struct RenderPassDescriptor
@@ -83,6 +133,9 @@ public:
         RenderResourceKind kind,
         RenderResourceLifetime lifetime
     );
+    void AddAccess(RenderPassId pass, const RenderAccessDesc& desc);
+    // Legacy convenience: aspect defaults to the resource kind's primary
+    // aspect (Color for Color, Depth for Depth/DepthStencil).
     void AddAccess(
         RenderPassId pass,
         std::string_view resource,
@@ -98,6 +151,11 @@ public:
     // Validates the DAG and computes the topological order. Idempotent;
     // throws std::invalid_argument on cycle/unknown/duplicate.
     void Validate() const;
+    // First/last execution-order use of a Transient resource. Requires
+    // validation; returns nullopt for unknown or non-transient resources.
+    std::optional<RenderResourceLifetimeSpan> TransientLifetime(
+        std::string_view resource
+    ) const;
     // Executes passes in topological order. Every registered pass must have
     // a callback; execution does not mutate the DAG.
     void Execute();
@@ -124,7 +182,7 @@ private:
     // pass -> set of resource accesses (resource name, access).
     std::unordered_map<
         RenderPassId,
-        std::vector<std::pair<std::string, RenderResourceAccess>>
+        std::vector<RenderAccessDesc>
     > accesses;
     std::unordered_map<RenderPassId, std::function<void()>> callbacks;
 };

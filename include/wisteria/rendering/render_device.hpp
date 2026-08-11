@@ -9,20 +9,38 @@
 //
 // 0B scope (foundation only): capabilities + resource handles/descriptors +
 // OpenGL backend implementation. Mesh/Texture/Material migration is 0C;
-// RenderFramePacket/RenderGraph is 0D; PresentSurface is 0E. SubmitFrameWork
-// is intentionally NOT part of the v1 interface yet (defined with RenderGraph
-// in 0D).
+// RenderFramePacket/RenderGraph is 0D; PresentSurface is 0E. R2.0 Final
+// Architecture Closure adds RenderDevice::ExecuteGraph (graph execution
+// authority) and RenderDevice::CreatePresentationTarget (backend-created
+// presentation endpoint).
 
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <string_view>
 #include <vector>
 
 #include "wisteria/rendering/pipeline_variant.hpp"
+#include "wisteria/rendering/presentation_target.hpp"
+#include "wisteria/rendering/present_surface.hpp"
+#include "wisteria/rendering/render_target.hpp"
 
 namespace wisteria
 {
+class RenderGraph;
+
+// Backend-neutral present operations supplied by the composition root.
+// The backend owns WHEN to call them; the OpenGL render layer owns WHAT they
+// do (Renderer::Present blit / Window::SwapBuffers).
+using PresentBlitFunction = std::function<void(
+    const RenderTarget& source,
+    int width,
+    int height
+)>;
+using PresentSwapFunction = std::function<void()>;
+
 // Engine-semantic backend identity. OpenGL is the only R2.0 backend;
 // Vulkan enters in R2.1 as an additive id.
 enum class RenderBackendId : std::uint32_t
@@ -257,6 +275,22 @@ public:
     virtual void DestroyTexture(TextureHandle handle) = 0;
     virtual void DestroySampler(SamplerHandle handle) = 0;
     virtual void DestroyGraphicsPipeline(PipelineHandle handle) = 0;
+
+    // R2.0 Final Architecture Closure: the RenderDevice is the graph
+    // execution authority. The OpenGL backend executes the wired pass
+    // callbacks (the OpenGL pass executor layer); a future Vulkan backend
+    // interprets the same backend-neutral graph data without callbacks.
+    virtual void ExecuteGraph(RenderGraph& graph) = 0;
+
+    // Creates the backend presentation endpoint for a platform
+    // PresentSurface. blit/swap are supplied by the composition root and
+    // describe how SceneColor reaches the display and how the frame is
+    // presented; the backend decides when to invoke them.
+    virtual std::unique_ptr<PresentationTarget> CreatePresentationTarget(
+        const PresentSurface& surface,
+        PresentBlitFunction blit,
+        PresentSwapFunction swap
+    ) = 0;
 
 protected:
     RenderDevice() : deviceUid_(NextDeviceUid()) {}

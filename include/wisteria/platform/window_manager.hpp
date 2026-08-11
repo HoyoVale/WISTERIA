@@ -2,6 +2,7 @@
 
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/rendering/framebuffer.hpp"
+#include "wisteria/rendering/presentation_target.hpp"
 #include "wisteria/rendering/present_surface.hpp"
 #include "wisteria/rendering/render_device.hpp"
 #include "wisteria/rendering/renderer.hpp"
@@ -106,6 +107,9 @@ private:
         // sequence; WindowManager no longer calls Renderer::Present or
         // Window::SwapBuffers directly.
         std::unique_ptr<PresentSurface> presentSurface;
+        // R2.0 Final Architecture Closure: backend-created presentation
+        // target (Present + Swap) bound to the platform surface above.
+        std::unique_ptr<PresentationTarget> presentationTarget;
         std::size_t renderedFrames = 0U;
         double profileUpdateMilliseconds = 0.0;
         double profileRenderMilliseconds = 0.0;

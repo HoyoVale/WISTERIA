@@ -7,7 +7,9 @@
 // contract has zero GL leakage by construction.
 
 #include "wisteria/rendering/render_device.hpp"
+#include "wisteria/rendering/presentation_target.hpp"
 #include "wisteria/rendering/present_surface.hpp"
+#include "wisteria/rendering/render_target.hpp"
 
 #include <cstddef>
 #include <string_view>
@@ -20,6 +22,8 @@ using wisteria::RenderDeviceCapabilities;
 
 static_assert(std::is_abstract_v<RenderDevice>);
 static_assert(std::is_abstract_v<wisteria::PresentSurface>);
+static_assert(std::is_abstract_v<wisteria::RenderTarget>);
+static_assert(std::is_abstract_v<wisteria::PresentationTarget>);
 static_assert(
     std::is_default_constructible_v<RenderDeviceCapabilities>
 );

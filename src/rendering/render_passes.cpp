@@ -763,9 +763,15 @@ void Renderer::EnsureOitResources(const SceneFramebuffer& target)
                 throw std::runtime_error("Cannot create Weighted OIT resources");
             }
 
+            // R2.0 Final Architecture Closure: RenderDeviceCapabilities is
+            // the single capability authority on the device-backed path.
+            // The direct GL probe remains only for the legacy
+            // Renderer(nullptr) OpenGL compatibility path.
             this->independentBlendSupported =
-                GLAD_GL_ARB_draw_buffers_blend != 0 &&
-                glad_glBlendFunciARB != nullptr;
+                this->renderDevice != nullptr
+                    ? this->renderDevice->Capabilities().independentBlend
+                    : (GLAD_GL_ARB_draw_buffers_blend != 0 &&
+                       glad_glBlendFunciARB != nullptr);
             this->oitCompositeShader = std::move(nextShader);
             this->oitCompositeProgram = std::move(nextProgram);
         }

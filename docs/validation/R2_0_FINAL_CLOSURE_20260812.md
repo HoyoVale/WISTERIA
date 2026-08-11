@@ -1,7 +1,8 @@
 # R2.0 — Backend-neutral Render Architecture Final Closure（2026-08-12）
 
-> 状态：**R2.0 CLOSED ✅（本地四矩阵验证；GitHub connector 无可见
-> CI status；待 ChatGPT 最终复审）**
+> 状态：**REVISED（2026-08-12 ChatGPT 横向审查拒绝首版 closure；
+> 5 个架构 blocker 已在 R2_0_FINAL_ARCHITECTURE_CLOSURE_20260812.md
+> 全部修复并重新验证；最终状态以该文档为准）**
 
 ## 阶段状态
 

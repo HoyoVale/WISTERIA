@@ -43,8 +43,7 @@ void RenderGraph::AddResource(
 
 void RenderGraph::AddAccess(
     RenderPassId pass,
-    std::string_view resource,
-    RenderResourceAccess access
+    const RenderAccessDesc& desc
 )
 {
     if (!this->passes.contains(pass))
@@ -53,17 +52,63 @@ void RenderGraph::AddAccess(
             "RenderGraph access references an unknown pass"
         );
     }
-    if (!this->resources.contains(std::string(resource)))
+    const auto resource = this->resources.find(desc.resource);
+    if (resource == this->resources.end())
     {
         throw std::invalid_argument(
             "RenderGraph access references an unknown resource"
         );
     }
-    this->accesses[pass].emplace_back(
-        std::string(resource),
-        access
-    );
+
+    // The declared aspect must be expressible by the resource kind.
+    const RenderResourceKind kind = resource->second.first;
+    const bool aspectMatches =
+        (kind == RenderResourceKind::Color &&
+         desc.aspect == RenderResourceAspect::Color) ||
+        (kind == RenderResourceKind::Depth &&
+         desc.aspect == RenderResourceAspect::Depth) ||
+        (kind == RenderResourceKind::DepthStencil &&
+         (desc.aspect == RenderResourceAspect::Depth ||
+          desc.aspect == RenderResourceAspect::Stencil));
+    if (!aspectMatches)
+    {
+        throw std::invalid_argument(
+            "RenderGraph access aspect does not match the resource kind"
+        );
+    }
+
+    this->accesses[pass].push_back(desc);
     this->validated = false;
+}
+
+void RenderGraph::AddAccess(
+    RenderPassId pass,
+    std::string_view resource,
+    RenderResourceAccess access
+)
+{
+    RenderAccessDesc desc;
+    desc.resource = std::string(resource);
+    desc.access = access;
+    const auto iterator = this->resources.find(desc.resource);
+    if (iterator == this->resources.end())
+    {
+        throw std::invalid_argument(
+            "RenderGraph access references an unknown resource"
+        );
+    }
+    // Legacy convenience: default to the resource kind's primary aspect.
+    switch (iterator->second.first)
+    {
+    case RenderResourceKind::Color:
+        desc.aspect = RenderResourceAspect::Color;
+        break;
+    case RenderResourceKind::Depth:
+    case RenderResourceKind::DepthStencil:
+        desc.aspect = RenderResourceAspect::Depth;
+        break;
+    }
+    this->AddAccess(pass, desc);
 }
 
 void RenderGraph::SetPassCallback(
@@ -175,17 +220,32 @@ void RenderGraph::Validate() const
         reaches[id] = std::move(visited);
     }
 
+    // Unordered resource hazard gate, keyed by (resource, aspect): distinct
+    // aspects of one attachment are independent (depth writes and stencil
+    // writes on a DepthStencil resource do not hazard each other). Any two
+    // distinct passes touching the same aspect with at least one write must
+    // be ordered by an explicit dependency path.
     std::unordered_map<
         std::string,
         std::vector<std::pair<RenderPassId, RenderResourceAccess>>
     > accessesByResource;
     for (const auto& [pass, list] : this->accesses)
     {
-        for (const auto& [resource, access] : list)
-            accessesByResource[resource].push_back({pass, access});
+        for (const RenderAccessDesc& access : list)
+        {
+            const std::string key =
+                access.resource + ":" +
+                std::to_string(
+                    static_cast<unsigned int>(access.aspect)
+                );
+            accessesByResource[key].push_back(
+                {pass, access.access}
+            );
+        }
     }
-    for (const auto& [resource, pairs] : accessesByResource)
+    for (const auto& [key, pairs] : accessesByResource)
     {
+        (void)key;
         for (std::size_t i = 0U; i < pairs.size(); ++i)
         {
             for (std::size_t j = i + 1U; j < pairs.size(); ++j)
@@ -212,8 +272,95 @@ void RenderGraph::Validate() const
         }
     }
 
+    // Read-before-initialization gate for Transient resources: the first
+    // execution-order access must initialize the resource (Write, or a
+    // Read that explicitly Loads/Clears). External resources are assumed
+    // initialized by the caller.
+    std::unordered_map<RenderPassId, std::size_t> passOrderIndex;
+    for (std::size_t index = 0U; index < order.size(); ++index)
+        passOrderIndex[order[index]] = index;
+    for (const auto& [name, entry] : this->resources)
+    {
+        if (entry.second != RenderResourceLifetime::Transient)
+            continue;
+
+        std::size_t firstIndex = order.size();
+        RenderResourceAccess firstAccess = RenderResourceAccess::Write;
+        RenderLoadOp firstLoadOp = RenderLoadOp::NotApplicable;
+        for (const auto& [pass, list] : this->accesses)
+        {
+            const auto passIndex = passOrderIndex.find(pass);
+            if (passIndex == passOrderIndex.end())
+                continue;
+            for (const RenderAccessDesc& access : list)
+            {
+                if (access.resource != name)
+                    continue;
+                if (passIndex->second < firstIndex)
+                {
+                    firstIndex = passIndex->second;
+                    firstAccess = access.access;
+                    firstLoadOp = access.loadOp;
+                }
+            }
+        }
+        if (firstIndex == order.size())
+            continue;  // declared but never accessed
+        if (firstAccess == RenderResourceAccess::Read &&
+            firstLoadOp != RenderLoadOp::Load &&
+            firstLoadOp != RenderLoadOp::Clear)
+        {
+            throw std::invalid_argument(
+                "RenderGraph transient resource is read before initialization"
+            );
+        }
+    }
+
     this->orderedPasses = std::move(order);
     this->validated = true;
+}
+
+std::optional<RenderResourceLifetimeSpan> RenderGraph::TransientLifetime(
+    std::string_view resource
+) const
+{
+    if (!this->validated)
+        this->Validate();
+
+    const std::string key(resource);
+    const auto entry = this->resources.find(key);
+    if (entry == this->resources.end() ||
+        entry->second.second != RenderResourceLifetime::Transient)
+    {
+        return std::nullopt;
+    }
+
+    std::unordered_map<RenderPassId, std::size_t> passOrderIndex;
+    for (std::size_t index = 0U; index < this->orderedPasses.size(); ++index)
+        passOrderIndex[this->orderedPasses[index]] = index;
+
+    std::size_t firstIndex = this->orderedPasses.size();
+    std::size_t lastIndex = 0U;
+    for (const auto& [pass, list] : this->accesses)
+    {
+        const auto passIndex = passOrderIndex.find(pass);
+        if (passIndex == passOrderIndex.end())
+            continue;
+        for (const RenderAccessDesc& access : list)
+        {
+            if (access.resource != key)
+                continue;
+            firstIndex = std::min(firstIndex, passIndex->second);
+            lastIndex = std::max(lastIndex, passIndex->second);
+        }
+    }
+    if (firstIndex == this->orderedPasses.size())
+        return std::nullopt;
+
+    RenderResourceLifetimeSpan span;
+    span.firstUse = this->orderedPasses[firstIndex];
+    span.lastUse = this->orderedPasses[lastIndex];
+    return span;
 }
 
 const std::vector<RenderPassId>& RenderGraph::OrderedPasses() const

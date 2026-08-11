@@ -240,6 +240,9 @@ private:
 
 private:
     GraphicsDevice* device = nullptr;
+    // R2.0 Final Architecture Closure: the backend-neutral execution
+    // authority. Null only on the legacy OpenGL-only compatibility path.
+    RenderDevice* renderDevice = nullptr;
     Config config;
     Framebuffer oitFramebuffer;
     GLuint oitAccumulationTexture = 0;

@@ -9,6 +9,7 @@
 
 #include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/renderer.hpp"
+#include "wisteria/rendering/render_device.hpp"
 #include "wisteria/rendering/render_frame_packet.hpp"
 #include "wisteria/rendering/shader.hpp"
 #include "wisteria/rendering/environment.hpp"

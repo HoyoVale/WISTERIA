@@ -1,23 +1,28 @@
 #pragma once
 
-// R2.0 Phase 0E: backend-neutral presentation endpoint contract.
+// R2.0 Phase 0E (Final Architecture Closure): backend-neutral PLATFORM
+// presentation endpoint contract.
 //
-// A PresentSurface separates the display path from:
-//   - Window: the platform native window / context,
-//   - Renderer: the SceneColor producer,
-//   - SceneFramebuffer: the offline scene target.
-// The Renderer still blits SceneColor to the presentation target; the
-// surface owns the present -> swap sequence. OffscreenRenderSession has no
-// PresentSurface requirement (contract §9).
+// A PresentSurface describes ONLY the native display endpoint (dimensions).
+// It carries no Renderer, no SceneFramebuffer and no Swap: those belong to
+// the backend-created PresentationTarget. This keeps the OpenGL mapping
+// (GLFW default framebuffer + glfwSwapBuffers) and the future Vulkan mapping
+// (VkSurfaceKHR + swapchain + vkQueuePresentKHR) on the same neutral seam
+// (contract §9):
+//
+//   Platform Window
+//        ↓
+//   PresentSurface
+//        ↓
+//   backend creates PresentationTarget using RenderDevice + PresentSurface
+//
+// OffscreenRenderSession has no PresentSurface requirement.
 //
 // Backend-neutral (Gate A0): this header must never include glad/gl.h,
 // GLFW, or any Vulkan header.
 
 namespace wisteria
 {
-class Renderer;
-class SceneFramebuffer;
-
 class PresentSurface
 {
 public:
@@ -29,13 +34,6 @@ public:
 
     virtual int Width() const noexcept = 0;
     virtual int Height() const noexcept = 0;
-    // Blit SceneColor to the presentation target (no swap yet).
-    virtual void Present(
-        Renderer& renderer,
-        const SceneFramebuffer& scene
-    ) = 0;
-    // Present the rendered target (GLFW swap / future queue present).
-    virtual void Swap() = 0;
 
 protected:
     PresentSurface() = default;

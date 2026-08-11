@@ -2,6 +2,7 @@
 
 #include <glad/gl.h>
 #include "wisteria/rendering/graphics_device.hpp"
+#include "wisteria/rendering/render_target.hpp"
 #include <glm/glm.hpp>
 
 // Owns only an OpenGL framebuffer object. Attachments are owned by the
@@ -45,7 +46,7 @@ private:
 // The off-screen render target used for a complete scene frame. Its color
 // texture can be sampled by post-processing shaders, while its depth buffer
 // can be shared with auxiliary passes such as Weighted Blended OIT.
-class SceneFramebuffer
+class SceneFramebuffer : public RenderTarget
 {
 public:
     explicit SceneFramebuffer(GraphicsDevice* device = nullptr);
@@ -63,8 +64,8 @@ public:
     void Release() noexcept;
 
     bool IsValid() const noexcept;
-    int Width() const noexcept;
-    int Height() const noexcept;
+    int Width() const noexcept override;
+    int Height() const noexcept override;
     GLuint Id() const noexcept;
     GLuint ColorTexture() const noexcept;
     GLuint DepthRenderbuffer() const noexcept;

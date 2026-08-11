@@ -9,6 +9,24 @@ void Renderer::EnsureSkinningResources()
     if (this->skinningBuffer != 0 && this->skinningTexture != 0)
         return;
 
+    // R2.0 Final Architecture Closure: RenderDeviceCapabilities is the
+    // single authority for skinning capacity on the device-backed path.
+    // The GL_MAX_* probes remain only for the legacy Renderer(nullptr)
+    // OpenGL compatibility path.
+    std::size_t maximumSkinningMatrices = 0U;
+    if (this->renderDevice != nullptr)
+    {
+        maximumSkinningMatrices =
+            this->renderDevice->Capabilities().maxSkinningMatrices;
+        if (maximumSkinningMatrices == 0U)
+        {
+            throw std::runtime_error(
+                "RenderDevice reports no GPU skinning capacity"
+            );
+        }
+    }
+    else
+    {
     GLint vertexTextureUnits = 0;
     GLint combinedTextureUnits = 0;
     glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &vertexTextureUnits);
@@ -22,6 +40,7 @@ void Renderer::EnsureSkinningResources()
         throw std::runtime_error(
             "OpenGL does not provide the texture unit required for GPU skinning"
         );
+    }
     }
 
     GLuint nextBuffer = 0;
@@ -53,18 +72,24 @@ void Renderer::EnsureSkinningResources()
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, nextBuffer);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_BUFFER, 0);
-    GLint maximumTexels = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maximumTexels);
-    if (maximumTexels < 4)
+    if (this->renderDevice == nullptr)
     {
-        glDeleteTextures(1, &nextTexture);
-        glDeleteBuffers(1, &nextBuffer);
-        throw std::runtime_error("OpenGL texture buffers cannot store one bone matrix");
+        GLint maximumTexels = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maximumTexels);
+        if (maximumTexels < 4)
+        {
+            glDeleteTextures(1, &nextTexture);
+            glDeleteBuffers(1, &nextBuffer);
+            throw std::runtime_error(
+                "OpenGL texture buffers cannot store one bone matrix"
+            );
+        }
+        maximumSkinningMatrices =
+            static_cast<std::size_t>(maximumTexels) / 4U;
     }
     this->skinningBuffer = nextBuffer;
     this->skinningTexture = nextTexture;
-    this->maximumSkinningMatrices =
-        static_cast<std::size_t>(maximumTexels) / 4U;
+    this->maximumSkinningMatrices = maximumSkinningMatrices;
 }
 
 void Renderer::UploadSkinning(
