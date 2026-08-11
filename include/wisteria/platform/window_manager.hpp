@@ -2,6 +2,7 @@
 
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/rendering/framebuffer.hpp"
+#include "wisteria/rendering/present_surface.hpp"
 #include "wisteria/rendering/render_device.hpp"
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/platform/window.hpp"
@@ -101,6 +102,10 @@ private:
         std::string captureStem;
         Renderer renderer;
         SceneFramebuffer framebuffer;
+        // R2.0 Phase 0E: presentation endpoint owning the present->swap
+        // sequence; WindowManager no longer calls Renderer::Present or
+        // Window::SwapBuffers directly.
+        std::unique_ptr<PresentSurface> presentSurface;
         std::size_t renderedFrames = 0U;
         double profileUpdateMilliseconds = 0.0;
         double profileRenderMilliseconds = 0.0;

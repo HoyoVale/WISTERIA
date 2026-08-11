@@ -1,5 +1,6 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/platform/window_manager.hpp"
+#include "wisteria/platform/glfw_present_surface.hpp"
 #include "wisteria/rendering/bmp_writer.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -256,6 +257,9 @@ WindowManager::ManagedWindow::ManagedWindow(
 {
     if (this->window == nullptr)
         throw std::invalid_argument("Managed window cannot be null");
+    this->presentSurface = std::make_unique<GlfwPresentSurface>(
+        *this->window
+    );
 }
 
 WindowManager::WindowManager()
@@ -763,10 +767,9 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         ReportGlErrors("capture-scene", frameIndex, window.Title());
     }
 
-    managedWindow.renderer.Present(
-        managedWindow.framebuffer,
-        framebufferSize.width,
-        framebufferSize.height
+    managedWindow.presentSurface->Present(
+        managedWindow.renderer,
+        managedWindow.framebuffer
     );
     ReportGlErrors("present", frameIndex, window.Title());
     const auto afterPresent = std::chrono::steady_clock::now();
@@ -790,7 +793,7 @@ void WindowManager::RenderWindow(ManagedWindow& managedWindow)
         );
         ReportGlErrors("capture-default", frameIndex, window.Title());
     }
-    window.SwapBuffers();
+    managedWindow.presentSurface->Swap();
     ReportGlErrors("swap", frameIndex, window.Title());
     const auto afterSwap = std::chrono::steady_clock::now();
 

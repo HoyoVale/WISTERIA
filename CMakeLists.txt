@@ -188,6 +188,7 @@ set(WISTERIA_PLATFORM_SOURCES
     src/platform/application.cpp
     src/platform/egl_headless_context.cpp
     src/platform/free_camera_controller.cpp
+    src/platform/glfw_present_surface.cpp
     src/platform/input.cpp
     src/platform/window.cpp
     src/platform/window_manager.cpp
