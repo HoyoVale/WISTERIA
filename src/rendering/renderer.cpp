@@ -87,7 +87,7 @@ void Renderer::Render(
 }
 
 void Renderer::RenderPacket(
-    RenderFramePacket& packet,
+    const RenderFramePacket& packet,
     SceneFramebuffer& target
 )
 {
@@ -122,8 +122,8 @@ void Renderer::RenderPacket(
     EnvironmentMap* environment = packet.environment;
     if (environment != nullptr)
         environment->Attach();
-    std::vector<RenderCommand>& opaqueCommands = packet.opaqueDraws;
-    std::vector<RenderCommand>& transparentCommands =
+    const std::vector<RenderCommand>& opaqueCommands = packet.opaqueDraws;
+    const std::vector<RenderCommand>& transparentCommands =
         packet.transparentDraws;
 
     // Cascaded shadow mapping: four light-space depth slices fitted to the

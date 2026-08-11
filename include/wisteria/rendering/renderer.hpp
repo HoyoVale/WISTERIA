@@ -74,7 +74,7 @@ public:
     // happens here; the packet is the sole frame-data authority (no Scene
     // access below this point).
     void RenderPacket(
-        RenderFramePacket& packet,
+        const RenderFramePacket& packet,
         SceneFramebuffer& target
     );
     void Present(

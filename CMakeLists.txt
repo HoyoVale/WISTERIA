@@ -219,6 +219,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/primitives/procedural.cpp
     src/rendering/render_part.cpp
     src/rendering/render_frame_packet.cpp
+    src/rendering/render_graph.cpp
     src/rendering/render_morphing.cpp
     src/rendering/render_passes.cpp
     src/rendering/render_physics_debug.cpp

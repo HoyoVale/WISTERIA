@@ -12,6 +12,7 @@
 #include "wisteria/rendering/headless_render_session.hpp"
 #include "wisteria/rendering/offline_render.hpp"
 #include "wisteria/rendering/render_frame_packet.hpp"
+#include "wisteria/rendering/render_graph.hpp"
 #include "wisteria/platform/application.hpp"
 #include "rendering/backend/opengl/render_resource_cache.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
@@ -15196,6 +15197,197 @@ void TestR2RenderFramePacketExtraction()
     );
 }
 
+void TestR2RenderGraphCore()
+{
+    // R2.0 Phase 0D Stage 2A: RenderGraph core types + explicit DAG
+    // foundation. Registers the current implicit RenderPacket pass order
+    // and validates ordering/dependency semantics without executing GL.
+    wisteria::RenderGraph graph;
+    graph.AddResource("shadowDepth", wisteria::RenderResourceKind::Depth);
+    graph.AddResource("sceneDepth", wisteria::RenderResourceKind::Depth);
+    graph.AddResource("sceneColor", wisteria::RenderResourceKind::Color);
+    graph.AddResource("oitAccum", wisteria::RenderResourceKind::Transient);
+    graph.AddResource("oitReveal", wisteria::RenderResourceKind::Transient);
+
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::ShadowDepth, "shadow-depth", {},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::GroundReceivers,
+        "ground-receivers",
+        {wisteria::RenderPassId::ShadowDepth},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::MmdGroundShadow,
+        "mmd-ground-shadow",
+        {wisteria::RenderPassId::ShadowDepth,
+         wisteria::RenderPassId::GroundReceivers},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::Opaque,
+        "opaque",
+        {wisteria::RenderPassId::ShadowDepth,
+         wisteria::RenderPassId::MmdGroundShadow},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::Skybox,
+        "skybox",
+        {wisteria::RenderPassId::Opaque},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::Transparent,
+        "transparent",
+        {wisteria::RenderPassId::Opaque,
+         wisteria::RenderPassId::Skybox},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::OitComposite,
+        "oit-composite",
+        {wisteria::RenderPassId::Transparent},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::PhysicsDebug,
+        "physics-debug",
+        {wisteria::RenderPassId::Opaque},
+    });
+    graph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::SceneColor,
+        "scene-color",
+        {wisteria::RenderPassId::OitComposite,
+         wisteria::RenderPassId::PhysicsDebug},
+    });
+
+    graph.AddAccess(
+        wisteria::RenderPassId::ShadowDepth,
+        "shadowDepth",
+        wisteria::RenderResourceAccess::Write
+    );
+    graph.AddAccess(
+        wisteria::RenderPassId::Opaque,
+        "sceneColor",
+        wisteria::RenderResourceAccess::Write
+    );
+    graph.AddAccess(
+        wisteria::RenderPassId::Transparent,
+        "oitAccum",
+        wisteria::RenderResourceAccess::Write
+    );
+    graph.AddAccess(
+        wisteria::RenderPassId::SceneColor,
+        "sceneColor",
+        wisteria::RenderResourceAccess::Read
+    );
+
+    graph.Validate();
+    Require(
+        graph.PassCount() == 9U && graph.ResourceCount() == 5U,
+        "r2-graph pass/resource counts"
+    );
+    const std::vector<wisteria::RenderPassId>& order =
+        graph.OrderedPasses();
+    const std::vector<wisteria::RenderPassId> expected = {
+        wisteria::RenderPassId::ShadowDepth,
+        wisteria::RenderPassId::GroundReceivers,
+        wisteria::RenderPassId::MmdGroundShadow,
+        wisteria::RenderPassId::Opaque,
+        wisteria::RenderPassId::Skybox,
+        wisteria::RenderPassId::Transparent,
+        wisteria::RenderPassId::OitComposite,
+        wisteria::RenderPassId::PhysicsDebug,
+        wisteria::RenderPassId::SceneColor,
+    };
+    Require(
+        order == expected,
+        "r2-graph topological order must match the current pass DAG"
+    );
+
+    // Cycle detection: ShadowDepth depending on SceneColor while
+    // SceneColor depends on ShadowDepth creates a cycle.
+    wisteria::RenderGraph cyclicGraph;
+    cyclicGraph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::ShadowDepth,
+        "shadow-depth",
+        {wisteria::RenderPassId::SceneColor},
+    });
+    cyclicGraph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::SceneColor,
+        "scene-color",
+        {wisteria::RenderPassId::ShadowDepth},
+    });
+    bool cycleRejected = false;
+    try
+    {
+        cyclicGraph.Validate();
+    }
+    catch (const std::invalid_argument&)
+    {
+        cycleRejected = true;
+    }
+    Require(cycleRejected, "r2-graph cycle must be rejected");
+
+    // Unknown dependency.
+    wisteria::RenderGraph unknownGraph;
+    unknownGraph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::Opaque,
+        "opaque",
+        {wisteria::RenderPassId::ShadowDepth},  // not registered
+    });
+    bool unknownDependencyRejected = false;
+    try
+    {
+        unknownGraph.Validate();
+    }
+    catch (const std::invalid_argument&)
+    {
+        unknownDependencyRejected = true;
+    }
+    Require(
+        unknownDependencyRejected,
+        "r2-graph unknown dependency must be rejected"
+    );
+
+    // Duplicate pass.
+    wisteria::RenderGraph duplicateGraph;
+    duplicateGraph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::Opaque, "opaque", {},
+    });
+    bool duplicateRejected = false;
+    try
+    {
+        duplicateGraph.AddPass(wisteria::RenderPassDescriptor{
+            wisteria::RenderPassId::Opaque, "opaque-again", {},
+        });
+    }
+    catch (const std::invalid_argument&)
+    {
+        duplicateRejected = true;
+    }
+    Require(duplicateRejected, "r2-graph duplicate pass must be rejected");
+
+    // Unknown resource in an access.
+    wisteria::RenderGraph unknownResourceGraph;
+    unknownResourceGraph.AddPass(wisteria::RenderPassDescriptor{
+        wisteria::RenderPassId::Opaque, "opaque", {},
+    });
+    bool unknownResourceRejected = false;
+    try
+    {
+        unknownResourceGraph.AddAccess(
+            wisteria::RenderPassId::Opaque,
+            "no-such-resource",
+            wisteria::RenderResourceAccess::Write
+        );
+    }
+    catch (const std::invalid_argument&)
+    {
+        unknownResourceRejected = true;
+    }
+    Require(
+        unknownResourceRejected,
+        "r2-graph unknown resource access must be rejected"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -15373,6 +15565,10 @@ int main()
     failures += !RunTest(
         "R2.0 render frame packet extraction",
         TestR2RenderFramePacketExtraction
+    );
+    failures += !RunTest(
+        "R2.0 render graph core",
+        TestR2RenderGraphCore
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
