@@ -7,7 +7,8 @@
 
 #include "wisteria/rendering/camera.hpp"
 #include "wisteria/rendering/material.hpp"
-#include "wisteria/scene/scene.hpp"
+#include "wisteria/animation/morph.hpp"
+#include "wisteria/physics/physics_types.hpp"
 
 #include <glm/glm.hpp>
 
@@ -21,6 +22,10 @@ class EnvironmentMap;
 class MorphState;
 class Pose;
 class RenderPart;
+class Scene;
+class DirectionalLight;
+class PointLight;
+class SpotLight;
 
 // One draw item: stable references into the scene/runtime state, resolved
 // material morph values, and the final world transform.
@@ -44,10 +49,16 @@ struct RenderFramePacket
     std::vector<RenderCommand> opaqueDraws;
     std::vector<RenderCommand> transparentDraws;
 
-    std::span<const std::unique_ptr<DirectionalLight>> directionalLights;
-    std::span<const std::unique_ptr<PointLight>> pointLights;
-    std::span<const std::unique_ptr<SpotLight>> spotLights;
+    // Frame semantic view: light pointers, not Scene container
+    // representation. No deep copies; valid for the packet lifetime.
+    std::vector<const DirectionalLight*> directionalLights;
+    std::vector<const PointLight*> pointLights;
+    std::vector<const SpotLight*> spotLights;
     EnvironmentMap* environment = nullptr;
+
+    // Physics debug lines collected at extraction time; the GPU pass never
+    // traverses Scene/Physics/Entity again.
+    std::vector<PhysicsDebugLine> debugLines;
 };
 
 // Builds the packet from scene/runtime state. No GL, no runtime mutation.

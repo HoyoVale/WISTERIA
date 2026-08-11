@@ -57,3 +57,31 @@ IBL/影子/OIT 像素路径——全部保持绿色
       RenderResourceCache 生产接入（消费 realization）
 下一步 Stage 2：把现有隐式 pass DAG 显式化为 RenderGraph
 ```
+
+## 4. Architecture Closure（2026-08-11 ChatGPT 复审 `77a4228` 后）
+
+```text
+Blocker 1/2：packet-only rendering path
+  Renderer::Render = BuildRenderFramePacket（纯 CPU）→
+  Renderer::RenderPacket（所有 GL work 从这里开始）
+  RenderPacket 内统一 packet.camera/projection/view；
+  DrawPart 不再接收 Scene（改 RenderFramePacket&）；
+  UploadSceneUniforms/UploadEnvironment/UploadPointLights/
+  UploadDirectionalLights/UploadSpotLights 全部改读 packet
+  （packet.environment / packet.*Lights 是唯一 lighting authority）
+Blocker 3：DebugDrawData 进入 packet
+  Build 阶段收集 world lines + entity AppendPhysicsDebugLines →
+  packet.debugLines；DrawPhysicsDebug(packet.debugLines, ...) 不再
+  遍历 Scene/Physics/Entity
+P1：lights 改 vector<const Light*>（不暴露 Scene container）；
+  render_frame_packet.hpp 去掉 scene.hpp include（前向声明）
+
+测试：TestR2RenderFramePacketExtraction
+  invisible 排除 / opaque-transparent 分类 / camera-projection 快照 /
+  lights 数量 / environment / physics debug lines 提取 /
+  extraction 不改变 scene（visibility/lights）
+
+验证：
+  Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+  ABI 94 legacy + 30 stable
+```

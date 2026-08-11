@@ -10,7 +10,7 @@ void Renderer::DrawPart(
     const glm::mat4& view,
     const glm::mat4& projection,
     const Camera& camera,
-    const Scene& scene,
+    const RenderFramePacket& packet,
     const Pose* pose,
     const MorphState* morphState,
     const MaterialMorphValues& materialValues,
@@ -228,7 +228,7 @@ void Renderer::DrawPart(
         );
         this->UploadSceneUniforms(
             program,
-            scene,
+            packet,
             shaderInterface
         );
     }

@@ -77,6 +77,20 @@ void Renderer::Render(
     SceneFramebuffer& target
 )
 {
+    // 0D Stage 1: CPU extraction first, then a packet-only GL path.
+    RenderFramePacket packet = BuildRenderFramePacket(
+        scene,
+        camera,
+        projection
+    );
+    this->RenderPacket(packet, target);
+}
+
+void Renderer::RenderPacket(
+    RenderFramePacket& packet,
+    SceneFramebuffer& target
+)
+{
     // Frame boundary: capture the OpenGL state the renderer touches and
     // restore it on exit. R0.2 showed that a texture left bound on a unit
     // that becomes a draw attachment in the next frame can black out
@@ -101,13 +115,10 @@ void Renderer::Render(
     target.Bind();
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
-    const glm::mat4 view = camera.GetView();
-    // 0D Stage 1: frame data extraction is now explicit and CPU-only.
-    RenderFramePacket packet = BuildRenderFramePacket(
-        scene,
-        camera,
-        projection
-    );
+    // The packet is the sole frame-data authority from here on.
+    const Camera& camera = packet.camera;
+    const glm::mat4& projection = packet.projection;
+    const glm::mat4 view = packet.camera.GetView();
     EnvironmentMap* environment = packet.environment;
     if (environment != nullptr)
         environment->Attach();
@@ -286,7 +297,7 @@ void Renderer::Render(
             view,
             projection,
             camera,
-            scene,
+            packet,
             command.pose,
             command.morphState,
             command.material,
@@ -323,7 +334,7 @@ void Renderer::Render(
             view,
             projection,
             camera,
-            scene,
+            packet,
             command.pose,
             command.morphState,
             command.material,
@@ -364,7 +375,7 @@ void Renderer::Render(
                     view,
                     projection,
                     camera,
-                    scene,
+                    packet,
                     command.pose,
                     command.morphState,
                     command.material,
@@ -394,7 +405,7 @@ void Renderer::Render(
                         view,
                         projection,
                         camera,
-                        scene,
+                        packet,
                         command.pose,
                         command.morphState,
                         command.material,
@@ -415,7 +426,7 @@ void Renderer::Render(
                         view,
                         projection,
                         camera,
-                        scene,
+                        packet,
                         command.pose,
                         command.morphState,
                         command.material,
@@ -433,7 +444,7 @@ void Renderer::Render(
                         view,
                         projection,
                         camera,
-                        scene,
+                        packet,
                         command.pose,
                         command.morphState,
                         command.material,
@@ -446,7 +457,7 @@ void Renderer::Render(
         }
     }
 
-    this->DrawPhysicsDebug(scene, view, projection);
+    this->DrawPhysicsDebug(packet.debugLines, view, projection);
 }
 
 void Renderer::SetFxaaSettings(const FxaaSettings& settings)

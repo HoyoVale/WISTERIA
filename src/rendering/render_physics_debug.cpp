@@ -59,20 +59,11 @@ void Renderer::EnsurePhysicsDebugResources()
 }
 
 void Renderer::DrawPhysicsDebug(
-    const Scene& scene,
+    const std::vector<PhysicsDebugLine>& lines,
     const glm::mat4& view,
     const glm::mat4& projection
 )
 {
-    std::vector<PhysicsDebugLine> lines;
-    if (scene.Physics().DebugDrawEnabled())
-    {
-        const std::span<const PhysicsDebugLine> worldLines =
-            scene.Physics().DebugLines();
-        lines.insert(lines.end(), worldLines.begin(), worldLines.end());
-    }
-    for (const std::unique_ptr<Entity>& entity : scene.Entities())
-        entity->AppendPhysicsDebugLines(lines);
     if (lines.empty())
         return;
 

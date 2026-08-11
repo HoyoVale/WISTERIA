@@ -11,6 +11,7 @@
 #include "wisteria/platform/headless_context.hpp"
 #include "wisteria/rendering/headless_render_session.hpp"
 #include "wisteria/rendering/offline_render.hpp"
+#include "wisteria/rendering/render_frame_packet.hpp"
 #include "wisteria/platform/application.hpp"
 #include "rendering/backend/opengl/render_resource_cache.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
@@ -15085,6 +15086,116 @@ void TestR2MaterialSharedTextureIsolation()
     );
 }
 
+void TestR2RenderFramePacketExtraction()
+{
+    // R2.0 Phase 0D Stage 1 closure: the packet is a pure CPU snapshot of
+    // the frame; the Renderer consumes it as the sole authority.
+    wisteria::Scene scene;
+
+    wisteria::Camera camera(wisteria::CameraParam{
+        .Position = glm::vec3(0.0f, 2.0f, 5.0f),
+        .Target = glm::vec3(0.0f, 0.0f, 0.0f),
+        .Up = glm::vec3(0.0f, 1.0f, 0.0f),
+        .VerticalFovDegrees = 45.0f,
+        .NearClip = 0.1f,
+        .FarClip = 100.0f
+    });
+    const glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        16.0f / 9.0f,
+        0.1f,
+        100.0f
+    );
+
+    scene.CreateDirectionalLight(wisteria::DirectionalLightData{});
+    scene.CreatePointLight(wisteria::PointLightData{});
+    scene.CreateSpotLight(wisteria::SpotLightData{});
+    wisteria::EnvironmentMap environment(
+        wisteria::EnvironmentMapData::ProceduralSky(),
+        nullptr
+    );
+    scene.SetEnvironment(&environment);
+    scene.Physics().SetDebugDrawEnabled(true);
+
+    wisteria::DefaultModelData triangleData;
+    triangleData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    triangleData.vertices = {
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    triangleData.indices = {0U, 1U, 2U};
+    wisteria::Mesh mesh(triangleData);
+
+    wisteria::MaterialData opaqueData;
+    opaqueData.textureSources.clear();
+    wisteria::Material opaqueMaterial(opaqueData);
+
+    wisteria::MaterialData blendData;
+    blendData.textureSources.clear();
+    blendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+    wisteria::Material blendMaterial(blendData);
+
+    wisteria::Entity& opaqueEntity = scene.CreateEntity();
+    opaqueEntity.AddRenderPart(mesh, opaqueMaterial);
+    wisteria::Entity& transparentEntity = scene.CreateEntity(
+        wisteria::Transform{glm::vec3(2.0f, 0.0f, 0.0f)}
+    );
+    transparentEntity.AddRenderPart(mesh, blendMaterial);
+    wisteria::Entity& hiddenEntity = scene.CreateEntity();
+    hiddenEntity.SetVisible(false);
+    hiddenEntity.AddRenderPart(mesh, opaqueMaterial);
+
+    wisteria::RenderFramePacket packet = wisteria::BuildRenderFramePacket(
+        scene,
+        camera,
+        projection
+    );
+
+    // Invisible entities never enter draws; classification is correct.
+    Require(
+        packet.opaqueDraws.size() == 1U &&
+            packet.transparentDraws.size() == 1U,
+        "r2-packet draw classification or visibility filter failed"
+    );
+    // Camera/projection snapshot.
+    Require(
+        packet.camera.GetParam().Position == camera.GetParam().Position &&
+            packet.projection == projection,
+        "r2-packet camera/projection snapshot failed"
+    );
+    // Lights and environment are packet authority.
+    Require(
+        packet.directionalLights.size() == 1U &&
+            packet.pointLights.size() == 1U &&
+            packet.spotLights.size() == 1U &&
+            packet.environment == &environment,
+        "r2-packet lights/environment snapshot failed"
+    );
+    // Physics debug lines are extracted at build time.
+    Require(
+        packet.debugLines.size() == scene.Physics().DebugLines().size(),
+        "r2-packet physics debug extraction failed"
+    );
+    // Extraction does not mutate the scene.
+    Require(
+        opaqueEntity.IsVisible() &&
+            transparentEntity.IsVisible() &&
+            !hiddenEntity.IsVisible(),
+        "r2-packet extraction mutated scene visibility"
+    );
+    Require(
+        scene.PointLights().size() == 1U &&
+            scene.DirectionalLights().size() == 1U &&
+            scene.SpotLights().size() == 1U,
+        "r2-packet extraction mutated scene lights"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -15258,6 +15369,10 @@ int main()
     failures += !RunTest(
         "R2.0 material shared texture isolation",
         TestR2MaterialSharedTextureIsolation
+    );
+    failures += !RunTest(
+        "R2.0 render frame packet extraction",
+        TestR2RenderFramePacketExtraction
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

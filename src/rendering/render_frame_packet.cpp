@@ -3,6 +3,7 @@
 #include "wisteria/rendering/render_frame_packet.hpp"
 
 #include "wisteria/rendering/material.hpp"
+#include "wisteria/scene/scene.hpp"
 
 #include <memory>
 #include <utility>
@@ -102,9 +103,12 @@ RenderFramePacket BuildRenderFramePacket(
     RenderFramePacket packet;
     packet.camera = camera;
     packet.projection = projection;
-    packet.directionalLights = scene.DirectionalLights();
-    packet.pointLights = scene.PointLights();
-    packet.spotLights = scene.SpotLights();
+    for (const auto& light : scene.DirectionalLights())
+        packet.directionalLights.push_back(light.get());
+    for (const auto& light : scene.PointLights())
+        packet.pointLights.push_back(light.get());
+    for (const auto& light : scene.SpotLights())
+        packet.spotLights.push_back(light.get());
     packet.environment = scene.Environment();
 
     // Scene traversal: visibility, world transform, ModelRenderFrameView,
@@ -153,6 +157,22 @@ RenderFramePacket BuildRenderFramePacket(
             }
         }
     }
+
+    // Physics debug lines: collected at extraction time so the GPU pass
+    // never traverses Scene/Physics/Entity again.
+    if (scene.Physics().DebugDrawEnabled())
+    {
+        const std::span<const PhysicsDebugLine> worldLines =
+            scene.Physics().DebugLines();
+        packet.debugLines.insert(
+            packet.debugLines.end(),
+            worldLines.begin(),
+            worldLines.end()
+        );
+    }
+    for (const std::unique_ptr<Entity>& entity : scene.Entities())
+        entity->AppendPhysicsDebugLines(packet.debugLines);
+
     return packet;
 }
 }  // namespace wisteria

@@ -3,6 +3,7 @@
 #include "wisteria/rendering/framebuffer.hpp"
 #include "wisteria/animation/morph.hpp"
 #include "wisteria/scene/scene.hpp"
+#include "wisteria/physics/physics_types.hpp"
 #include <glad/gl.h>
 #include <array>
 #include <cstdint>
@@ -23,6 +24,7 @@ class Pose;
 class VAO;
 class RenderDevice;
 class RenderResourceCache;
+class RenderFramePacket;
 
 // Defined in src/rendering/renderer_internal.hpp; forward-declared here so
 // private pass methods can reference command lists in the public header.
@@ -68,6 +70,13 @@ public:
         const glm::mat4& projection,
         SceneFramebuffer& target
     );
+    // R2.0 Phase 0D Stage 1: packet-only rendering path. All GL work
+    // happens here; the packet is the sole frame-data authority (no Scene
+    // access below this point).
+    void RenderPacket(
+        RenderFramePacket& packet,
+        SceneFramebuffer& target
+    );
     void Present(
         const SceneFramebuffer& source,
         int destinationWidth,
@@ -95,7 +104,7 @@ private:
         const glm::mat4& view,
         const glm::mat4& projection,
         const Camera& camera,
-        const Scene& scene,
+        const RenderFramePacket& packet,
         const Pose* pose,
         const MorphState* morphState,
         const MaterialMorphValues& materialValues,
@@ -119,7 +128,7 @@ private:
         float groundY
     );
     void DrawPhysicsDebug(
-        const Scene& scene,
+        const std::vector<PhysicsDebugLine>& lines,
         const glm::mat4& view,
         const glm::mat4& projection
     );
@@ -151,27 +160,27 @@ private:
     void ReleaseMorphingCache() noexcept;
     void UploadSceneUniforms(
         Program& program,
-        const Scene& scene,
+        const RenderFramePacket& packet,
         const ShaderInterface& shaderInterface
     );
     void UploadEnvironment(
         Program& program,
-        const Scene& scene,
+        const RenderFramePacket& packet,
         const ShaderInterface& shaderInterface
     );
     void UploadPointLights(
         Program& program,
-        const Scene& scene,
+        const RenderFramePacket& packet,
         const ShaderInterface& shaderInterface
     );
     void UploadDirectionalLights(
         Program& program,
-        const Scene& scene,
+        const RenderFramePacket& packet,
         const ShaderInterface& shaderInterface
     );
     void UploadSpotLights(
         Program& program,
-        const Scene& scene,
+        const RenderFramePacket& packet,
         const ShaderInterface& shaderInterface
     );
 

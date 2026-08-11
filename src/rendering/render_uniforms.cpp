@@ -19,27 +19,27 @@ int LightCount(std::size_t available, std::size_t capacity)
 
 void Renderer::UploadSceneUniforms(
     Program& program,
-    const Scene& scene,
+    const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
 )
 {
     program.Uniform1f(shaderInterface.ambientStrength, 0.15f);
-    this->UploadEnvironment(program, scene, shaderInterface);
-    this->UploadPointLights(program, scene, shaderInterface);
-    this->UploadDirectionalLights(program, scene, shaderInterface);
-    this->UploadSpotLights(program, scene, shaderInterface);
+    this->UploadEnvironment(program, packet, shaderInterface);
+    this->UploadPointLights(program, packet, shaderInterface);
+    this->UploadDirectionalLights(program, packet, shaderInterface);
+    this->UploadSpotLights(program, packet, shaderInterface);
 }
 
 void Renderer::UploadEnvironment(
     Program& program,
-    const Scene& scene,
+    const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
 )
 {
     if (!shaderInterface.imageBasedLightingEnabled)
         return;
 
-    const EnvironmentMap* environment = scene.Environment();
+    const EnvironmentMap* environment = packet.environment;
     program.Uniform1i(
         shaderInterface.hasEnvironment,
         environment != nullptr ? 1 : 0
@@ -79,19 +79,19 @@ void Renderer::UploadEnvironment(
 
 void Renderer::UploadPointLights(
     Program& program,
-    const Scene& scene,
+    const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
 )
 {
     const int count = LightCount(
-        scene.PointLights().size(),
+        packet.pointLights.size(),
         shaderInterface.maxPointLights
     );
     program.Uniform1i(shaderInterface.pointLightCount, count);
 
     for (int index = 0; index < count; ++index)
     {
-        const PointLight& light = *scene.PointLights()[index];
+        const PointLight& light = *packet.pointLights[index];
         const glm::vec3 radiance = light.Radiance();
         const std::string uniformPrefix =
             shaderInterface.pointLights +
@@ -130,19 +130,20 @@ void Renderer::UploadPointLights(
 
 void Renderer::UploadDirectionalLights(
     Program& program,
-    const Scene& scene,
+    const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
 )
 {
     const int count = LightCount(
-        scene.DirectionalLights().size(),
+        packet.directionalLights.size(),
         shaderInterface.maxDirectionalLights
     );
     program.Uniform1i(shaderInterface.directionalLightCount, count);
 
     for (int index = 0; index < count; ++index)
     {
-        const DirectionalLight& light = *scene.DirectionalLights()[index];
+        const DirectionalLight& light =
+            *packet.directionalLights[index];
         const glm::vec3 radiance = light.Radiance();
         const std::string uniformPrefix =
             shaderInterface.directionalLights +
@@ -165,19 +166,19 @@ void Renderer::UploadDirectionalLights(
 
 void Renderer::UploadSpotLights(
     Program& program,
-    const Scene& scene,
+    const RenderFramePacket& packet,
     const ShaderInterface& shaderInterface
 )
 {
     const int count = LightCount(
-        scene.SpotLights().size(),
+        packet.spotLights.size(),
         shaderInterface.maxSpotLights
     );
     program.Uniform1i(shaderInterface.spotLightCount, count);
 
     for (int index = 0; index < count; ++index)
     {
-        const SpotLight& light = *scene.SpotLights()[index];
+        const SpotLight& light = *packet.spotLights[index];
         const glm::vec3 radiance = light.Radiance();
         const std::string uniformPrefix =
             shaderInterface.spotLights +
