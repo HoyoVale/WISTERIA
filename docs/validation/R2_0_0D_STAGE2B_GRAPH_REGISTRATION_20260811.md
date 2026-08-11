@@ -62,17 +62,28 @@ render_graph_builder.cpp：
     Opaque Read+Write / Skybox Read / Transparent Read /
     PhysicsDebug Read
   shadowDepth 进入 DAG：
-    ShadowDepth Write / MmdGroundShadow Read / Opaque Read
+    ShadowDepth Write / GroundReceivers Read / Opaque Read /
+    Transparent Read（均仅 hasShadow 时注册）
+    MmdGroundShadow 不 Read shadowDepth（planar projection 不采样
+    CSM shadow map，仅保持 pass order 依赖）
+  alpha-blending 读目标色：
+    MmdGroundShadow / fallback Transparent / OitComposite 对
+    SceneColor 均为 Read + Write（blending 需要 destination color）
   真实资源语义覆盖（不再只是 pass 顺序，资源访问参与 hazard 校验）
 
 测试：TestR2RenderGraphSparseAndExecution
+  已注册进 main()（此前仅编译未执行，现已真正运行）
   skybox-only → 1 pass
   transparent-only fallback → 1 pass
   transparent-only OIT → Transparent → OitComposite（2 pass）
   debug-only → 1 pass
-  opaque-only + shadows disabled → 1 pass（无 shadowDepth 未知资源）
+  opaque-only + shadows disabled → GroundReceivers → Opaque
+    （2 pass；无 ShadowDepth / MmdGroundShadow；ground-receiver 循环
+    与 shadowsEnabled 无关，与 Renderer::RenderPacket 语义一致）
   empty frame → 0 pass
   Execute 成功路径：8 个 callback 各执行一次且严格按拓扑序
+    （场景含 opaque + transparent + debug line + skybox + directional
+    light，完整覆盖 8-pass DAG）
   Execute preflight：只接第一个 callback → logic_error，且 executed == 0
   empty callback 注册 → invalid_argument
 ```

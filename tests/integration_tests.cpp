@@ -15691,8 +15691,10 @@ void TestR2RenderGraphSparseAndExecution()
         entity.AddRenderPart(mesh, blendMaterial);
         wisteria::RenderFramePacket packet =
             wisteria::BuildRenderFramePacket(scene, camera, projection);
+        wisteria::RenderGraphBuildOptions fallbackOptions = options;
+        fallbackOptions.oitEnabled = false;
         wisteria::RenderGraph graph =
-            wisteria::BuildCurrentRenderGraph(packet, options);
+            wisteria::BuildCurrentRenderGraph(packet, fallbackOptions);
         graph.Validate();
         Require(
             graph.PassCount() == 1U &&
@@ -15763,10 +15765,11 @@ void TestR2RenderGraphSparseAndExecution()
             wisteria::BuildCurrentRenderGraph(packet, noShadowOptions);
         graph.Validate();
         Require(
-            graph.PassCount() == 1U &&
+            graph.PassCount() == 2U &&
+                graph.HasPass(wisteria::RenderPassId::GroundReceivers) &&
                 graph.HasPass(wisteria::RenderPassId::Opaque) &&
                 !graph.HasPass(wisteria::RenderPassId::ShadowDepth) &&
-                !graph.HasPass(wisteria::RenderPassId::GroundReceivers),
+                !graph.HasPass(wisteria::RenderPassId::MmdGroundShadow),
             "r2-graph-sparse opaque-only frame without shadows"
         );
     }
@@ -15813,6 +15816,14 @@ void TestR2RenderGraphSparseAndExecution()
         wisteria::Material material(materialData);
         wisteria::Entity& entity = scene.CreateEntity();
         entity.AddRenderPart(mesh, material);
+        wisteria::MaterialData blendData;
+        blendData.textureSources.clear();
+        blendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+        wisteria::Material blendMaterial(blendData);
+        wisteria::Entity& transparentEntity = scene.CreateEntity(
+            wisteria::Transform{glm::vec3(1.0f, 0.0f, 0.0f)}
+        );
+        transparentEntity.AddRenderPart(mesh, blendMaterial);
         wisteria::RenderFramePacket packet =
             wisteria::BuildRenderFramePacket(scene, camera, projection);
         packet.debugLines.push_back(wisteria::PhysicsDebugLine{});
@@ -16100,6 +16111,10 @@ int main()
     failures += !RunTest(
         "R2.0 current render graph variants",
         TestR2CurrentRenderGraphVariants
+    );
+    failures += !RunTest(
+        "R2.0 render graph sparse and execution",
+        TestR2RenderGraphSparseAndExecution
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",

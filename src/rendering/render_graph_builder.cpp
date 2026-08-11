@@ -114,6 +114,14 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneColor",
             RenderResourceAccess::Write
         );
+        if (hasShadow)
+        {
+            graph.AddAccess(
+                RenderPassId::GroundReceivers,
+                "shadowDepth",
+                RenderResourceAccess::Read
+            );
+        }
         lastScenePass = RenderPassId::GroundReceivers;
     }
 
@@ -133,12 +141,12 @@ RenderGraph BuildCurrentRenderGraph(
         });
         graph.AddAccess(
             RenderPassId::MmdGroundShadow,
-            "shadowDepth",
+            "sceneDepth",
             RenderResourceAccess::Read
         );
         graph.AddAccess(
             RenderPassId::MmdGroundShadow,
-            "sceneDepth",
+            "sceneColor",
             RenderResourceAccess::Read
         );
         graph.AddAccess(
@@ -219,6 +227,14 @@ RenderGraph BuildCurrentRenderGraph(
             "sceneDepth",
             RenderResourceAccess::Read
         );
+        if (hasShadow)
+        {
+            graph.AddAccess(
+                RenderPassId::Transparent,
+                "shadowDepth",
+                RenderResourceAccess::Read
+            );
+        }
         if (hasOitComposite)
         {
             graph.AddAccess(
@@ -234,6 +250,11 @@ RenderGraph BuildCurrentRenderGraph(
         }
         else
         {
+            graph.AddAccess(
+                RenderPassId::Transparent,
+                "sceneColor",
+                RenderResourceAccess::Read
+            );
             graph.AddAccess(
                 RenderPassId::Transparent,
                 "sceneColor",
@@ -261,6 +282,11 @@ RenderGraph BuildCurrentRenderGraph(
         graph.AddAccess(
             RenderPassId::OitComposite,
             "oitReveal",
+            RenderResourceAccess::Read
+        );
+        graph.AddAccess(
+            RenderPassId::OitComposite,
+            "sceneColor",
             RenderResourceAccess::Read
         );
         graph.AddAccess(
