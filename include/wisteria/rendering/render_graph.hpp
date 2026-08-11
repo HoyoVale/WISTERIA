@@ -24,7 +24,9 @@
 
 namespace wisteria
 {
-// The current implicit pass order of Renderer::RenderPacket, made explicit.
+// The current implicit execution passes of Renderer::RenderPacket, made
+// explicit. SceneColor is NOT a pass: it is the graph output logical
+// resource / offline capture boundary (before Present/FXAA).
 enum class RenderPassId : std::uint8_t
 {
     ShadowDepth,
@@ -34,14 +36,21 @@ enum class RenderPassId : std::uint8_t
     Skybox,
     Transparent,
     OitComposite,
-    PhysicsDebug,
-    SceneColor
+    PhysicsDebug
 };
 
 enum class RenderResourceKind : std::uint8_t
 {
     Color,
-    Depth,
+    Depth
+};
+
+// Orthogonal to kind: how long the logical resource lives. Transient only
+// means frame-local lifetime; it is NOT resource aliasing (R2.0 excludes
+// aliasing entirely).
+enum class RenderResourceLifetime : std::uint8_t
+{
+    External,
     Transient
 };
 
@@ -53,7 +62,7 @@ enum class RenderResourceAccess : std::uint8_t
 
 struct RenderPassDescriptor
 {
-    RenderPassId id = RenderPassId::SceneColor;
+    RenderPassId id = RenderPassId::PhysicsDebug;
     std::string_view name;
     // Passes that must execute before this one.
     std::vector<RenderPassId> dependencies;
@@ -68,7 +77,8 @@ public:
     void AddPass(const RenderPassDescriptor& descriptor);
     void AddResource(
         std::string_view name,
-        RenderResourceKind kind
+        RenderResourceKind kind,
+        RenderResourceLifetime lifetime
     );
     void AddAccess(
         RenderPassId pass,
@@ -95,7 +105,10 @@ private:
     mutable std::vector<RenderPassId> orderedPasses;
     mutable bool validated = false;
     std::unordered_map<RenderPassId, PassNode> passes;
-    std::unordered_map<std::string, RenderResourceKind> resources;
+    std::unordered_map<
+        std::string,
+        std::pair<RenderResourceKind, RenderResourceLifetime>
+    > resources;
     // pass -> set of resource accesses (resource name, access).
     std::unordered_map<
         RenderPassId,

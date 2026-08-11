@@ -3,6 +3,7 @@
 #include "wisteria/rendering/render_graph.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <queue>
 #include <stdexcept>
 
@@ -25,7 +26,8 @@ void RenderGraph::AddPass(const RenderPassDescriptor& descriptor)
 
 void RenderGraph::AddResource(
     std::string_view name,
-    RenderResourceKind kind
+    RenderResourceKind kind,
+    RenderResourceLifetime lifetime
 )
 {
     const std::string key(name);
@@ -35,7 +37,7 @@ void RenderGraph::AddResource(
             "RenderGraph resource is already registered"
         );
     }
-    this->resources.emplace(key, kind);
+    this->resources.emplace(key, std::make_pair(kind, lifetime));
     this->validated = false;
 }
 
@@ -127,6 +129,67 @@ void RenderGraph::Validate() const
         throw std::invalid_argument(
             "RenderGraph contains a dependency cycle"
         );
+    }
+
+    // Unordered resource hazard gate: for every logical resource, any two
+    // distinct passes with at least one write must be ordered by an
+    // explicit dependency path. The deterministic tie-break must never
+    // silently decide a hazard; the DAG must express it.
+    std::unordered_map<
+        RenderPassId,
+        std::unordered_set<RenderPassId>
+    > reaches;
+    for (const auto& [id, node] : this->passes)
+    {
+        std::unordered_set<RenderPassId> visited;
+        std::function<void(RenderPassId)> visit =
+            [&](RenderPassId current)
+        {
+            for (const RenderPassId successor : adjacency[current])
+            {
+                if (visited.insert(successor).second)
+                    visit(successor);
+            }
+        };
+        visit(id);
+        reaches[id] = std::move(visited);
+    }
+
+    std::unordered_map<
+        std::string,
+        std::vector<std::pair<RenderPassId, RenderResourceAccess>>
+    > accessesByResource;
+    for (const auto& [pass, list] : this->accesses)
+    {
+        for (const auto& [resource, access] : list)
+            accessesByResource[resource].push_back({pass, access});
+    }
+    for (const auto& [resource, pairs] : accessesByResource)
+    {
+        for (std::size_t i = 0U; i < pairs.size(); ++i)
+        {
+            for (std::size_t j = i + 1U; j < pairs.size(); ++j)
+            {
+                const auto& a = pairs[i];
+                const auto& b = pairs[j];
+                if (a.first == b.first)
+                    continue;
+                if (a.second == RenderResourceAccess::Read &&
+                    b.second == RenderResourceAccess::Read)
+                {
+                    continue;
+                }
+                const bool ordered =
+                    reaches[a.first].contains(b.first) ||
+                    reaches[b.first].contains(a.first);
+                if (!ordered)
+                {
+                    throw std::invalid_argument(
+                        "RenderGraph contains an unordered resource hazard"
+                    );
+                }
+            }
+        }
     }
 
     this->orderedPasses = std::move(order);

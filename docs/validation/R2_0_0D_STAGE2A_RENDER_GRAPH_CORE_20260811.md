@@ -59,3 +59,37 @@ TestR2RenderFramePacketExtraction 的 debug lines 断言可能是 0==0
 保证（Build 只调 const LastRenderFrameView）。Stage 2B 后补真实
 debug-geometry fixture 或显式 runtime revision 断言。
 ```
+
+## 5. Architecture Closure（2026-08-11 ChatGPT 复审 `98bf166` 后）
+
+```text
+Blocker 1：AddAccess 参与 validation
+  Validate() 增加 unordered resource hazard gate：
+    同一 logical resource 的两个不同 pass：
+      Read+Read → 可无依赖
+      Read/Write、Write/Read、Write/Write → 必须 A reaches B 或
+      B reaches A（显式依赖路径），否则 invalid_argument
+    （enum tie-break 绝不替 DAG 决定 hazard；不自动补 edge）
+  adversarial：Opaque Write + Skybox Write 无依赖 → REJECT；
+    加显式依赖 → PASS；Read+Read 无依赖 → PASS
+Blocker 2：SceneColor 从 pass 移除
+  RenderPassId 现在 8 个 execution pass（SceneColor 不再是 pass）；
+  sceneColor 只保留 logical resource（graph output / offline capture
+  boundary，Present/FXAA 在其后）
+Blocker 3：lifetime 与 kind 正交
+  RenderResourceKind = Color/Depth
+  RenderResourceLifetime = External/Transient
+  AddResource(name, kind, lifetime)
+  SceneColor = Color+External；SceneDepth = Depth+External；
+  ShadowDepth = Depth+Transient；OitAccum/Reveal = Color+Transient
+  Transient 仅 frame-local lifetime，≠ aliasing（R2.0 无 aliasing）
+主 graph 依赖更新：PhysicsDebug 依赖 Opaque + OitComposite
+  （两者写 sceneColor，hazard 需显式 edge）
+```
+
+验证：
+
+```text
+Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
+ABI 94 legacy + 30 stable
+```
