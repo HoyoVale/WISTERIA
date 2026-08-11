@@ -220,6 +220,7 @@ set(WISTERIA_RENDERING_SOURCES
     src/rendering/render_part.cpp
     src/rendering/render_frame_packet.cpp
     src/rendering/render_graph.cpp
+    src/rendering/render_graph_builder.cpp
     src/rendering/render_morphing.cpp
     src/rendering/render_passes.cpp
     src/rendering/render_physics_debug.cpp
@@ -486,7 +487,10 @@ if(BUILD_TESTING)
         ${WISTERIA_BULLET_ROOT}/src
     )
     if(WISTERIA_BUILD_NATIVE)
-        target_link_libraries(wisteria_integration_tests PRIVATE wisteria_native)
+        target_link_libraries(wisteria_integration_tests PRIVATE
+            wisteria_native
+            wisteria_core
+        )
         target_include_directories(wisteria_integration_tests PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src
         )

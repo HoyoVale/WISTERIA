@@ -66,6 +66,20 @@ void RenderGraph::AddAccess(
     this->validated = false;
 }
 
+void RenderGraph::SetPassCallback(
+    RenderPassId pass,
+    std::function<void()> callback
+)
+{
+    if (!this->passes.contains(pass))
+    {
+        throw std::invalid_argument(
+            "RenderGraph callback references an unknown pass"
+        );
+    }
+    this->callbacks[pass] = std::move(callback);
+}
+
 void RenderGraph::Validate() const
 {
     if (this->validated)
@@ -201,6 +215,22 @@ const std::vector<RenderPassId>& RenderGraph::OrderedPasses() const
     if (!this->validated)
         this->Validate();
     return this->orderedPasses;
+}
+
+void RenderGraph::Execute()
+{
+    const std::vector<RenderPassId>& order = this->OrderedPasses();
+    for (const RenderPassId id : order)
+    {
+        const auto iterator = this->callbacks.find(id);
+        if (iterator == this->callbacks.end())
+        {
+            throw std::logic_error(
+                "RenderGraph pass has no execution callback"
+            );
+        }
+        iterator->second();
+    }
 }
 
 bool RenderGraph::HasPass(RenderPassId id) const

@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -24,6 +25,8 @@
 
 namespace wisteria
 {
+struct RenderFramePacket;
+
 // The current implicit execution passes of Renderer::RenderPacket, made
 // explicit. SceneColor is NOT a pass: it is the graph output logical
 // resource / offline capture boundary (before Present/FXAA).
@@ -85,10 +88,19 @@ public:
         std::string_view resource,
         RenderResourceAccess access
     );
+    // Stage 2B: execution callback for a pass. The callback body may call
+    // existing engine/OpenGL renderer code; graph migration is incremental.
+    void SetPassCallback(
+        RenderPassId pass,
+        std::function<void()> callback
+    );
 
     // Validates the DAG and computes the topological order. Idempotent;
     // throws std::invalid_argument on cycle/unknown/duplicate.
     void Validate() const;
+    // Executes passes in topological order. Every registered pass must have
+    // a callback; execution does not mutate the DAG.
+    void Execute();
 
     const std::vector<RenderPassId>& OrderedPasses() const;
     bool HasPass(RenderPassId id) const;
@@ -114,5 +126,23 @@ private:
         RenderPassId,
         std::vector<std::pair<std::string, RenderResourceAccess>>
     > accesses;
+    std::unordered_map<RenderPassId, std::function<void()>> callbacks;
 };
+
+// Stage 2B: build the CURRENT frame's graph from the extracted packet and
+// runtime capability options. Passes that do not execute this frame are not
+// registered (the graph describes what actually runs, not a maximum
+// template). Callbacks are attached by the caller (existing Renderer code).
+struct RenderGraphBuildOptions
+{
+    bool shadowsEnabled = true;
+    bool groundShadowEnabled = true;
+    bool skyboxEnabled = true;
+    bool oitEnabled = true;
+};
+
+RenderGraph BuildCurrentRenderGraph(
+    const RenderFramePacket& packet,
+    const RenderGraphBuildOptions& options = {}
+);
 }  // namespace wisteria

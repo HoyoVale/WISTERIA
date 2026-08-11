@@ -15501,6 +15501,128 @@ void TestR2RenderGraphCore()
     readOnlyGraph.Validate();  // must not throw
 }
 
+void TestR2CurrentRenderGraphVariants()
+{
+    // R2.0 Phase 0D Stage 2B: BuildCurrentRenderGraph registers only the
+    // passes that actually execute this frame.
+    wisteria::Scene scene;
+    scene.CreateDirectionalLight(wisteria::DirectionalLightData{});
+    wisteria::EnvironmentMap environment(
+        wisteria::EnvironmentMapData::ProceduralSky(),
+        nullptr
+    );
+    scene.SetEnvironment(&environment);
+
+    wisteria::DefaultModelData triangleData;
+    triangleData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    triangleData.vertices = {
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    triangleData.indices = {0U, 1U, 2U};
+    wisteria::Mesh mesh(triangleData);
+    wisteria::MaterialData materialData;
+    materialData.textureSources.clear();
+    wisteria::Material material(materialData);
+    wisteria::Entity& entity = scene.CreateEntity();
+    entity.AddRenderPart(mesh, material);
+    wisteria::Entity& transparentEntity = scene.CreateEntity(
+        wisteria::Transform{glm::vec3(1.0f, 0.0f, 0.0f)}
+    );
+    wisteria::MaterialData blendData;
+    blendData.textureSources.clear();
+    blendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+    wisteria::Material blendMaterial(blendData);
+    transparentEntity.AddRenderPart(mesh, blendMaterial);
+
+    wisteria::Camera camera(wisteria::CameraParam{
+        .Position = glm::vec3(0.0f, 2.0f, 5.0f),
+        .Target = glm::vec3(0.0f, 0.0f, 0.0f),
+        .Up = glm::vec3(0.0f, 1.0f, 0.0f),
+        .VerticalFovDegrees = 45.0f,
+        .NearClip = 0.1f,
+        .FarClip = 100.0f
+    });
+    const glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        16.0f / 9.0f,
+        0.1f,
+        100.0f
+    );
+    wisteria::RenderFramePacket packet = wisteria::BuildRenderFramePacket(
+        scene,
+        camera,
+        projection
+    );
+    // Inject one physics debug line so the PhysicsDebug pass is registered
+    // (world debug lines require physics bodies; this directly exercises
+    // the graph builder condition instead).
+    packet.debugLines.push_back(wisteria::PhysicsDebugLine{});
+
+    // Variant A — OIT path: full 8-pass graph with oit resources.
+    wisteria::RenderGraphBuildOptions oitOptions;
+    oitOptions.shadowsEnabled = true;
+    oitOptions.groundShadowEnabled = true;
+    oitOptions.skyboxEnabled = true;
+    oitOptions.oitEnabled = true;
+    wisteria::RenderGraph oitGraph = wisteria::BuildCurrentRenderGraph(
+        packet,
+        oitOptions
+    );
+    oitGraph.Validate();
+    Require(
+        oitGraph.PassCount() == 8U &&
+            oitGraph.ResourceCount() == 5U,
+        "r2-graph-builder OIT variant pass/resource counts"
+    );
+    const std::vector<wisteria::RenderPassId> expectedOit = {
+        wisteria::RenderPassId::ShadowDepth,
+        wisteria::RenderPassId::GroundReceivers,
+        wisteria::RenderPassId::MmdGroundShadow,
+        wisteria::RenderPassId::Opaque,
+        wisteria::RenderPassId::Skybox,
+        wisteria::RenderPassId::Transparent,
+        wisteria::RenderPassId::OitComposite,
+        wisteria::RenderPassId::PhysicsDebug,
+    };
+    Require(
+        oitGraph.OrderedPasses() == expectedOit,
+        "r2-graph-builder OIT variant order mismatch"
+    );
+
+    // Variant B — alpha fallback: no OitComposite, Transparent writes
+    // SceneColor directly.
+    wisteria::RenderGraphBuildOptions fallbackOptions = oitOptions;
+    fallbackOptions.oitEnabled = false;
+    wisteria::RenderGraph fallbackGraph =
+        wisteria::BuildCurrentRenderGraph(packet, fallbackOptions);
+    fallbackGraph.Validate();
+    Require(
+        fallbackGraph.PassCount() == 7U &&
+            fallbackGraph.ResourceCount() == 3U &&
+            !fallbackGraph.HasPass(wisteria::RenderPassId::OitComposite),
+        "r2-graph-builder fallback variant must drop OitComposite"
+    );
+    const std::vector<wisteria::RenderPassId> expectedFallback = {
+        wisteria::RenderPassId::ShadowDepth,
+        wisteria::RenderPassId::GroundReceivers,
+        wisteria::RenderPassId::MmdGroundShadow,
+        wisteria::RenderPassId::Opaque,
+        wisteria::RenderPassId::Skybox,
+        wisteria::RenderPassId::Transparent,
+        wisteria::RenderPassId::PhysicsDebug,
+    };
+    Require(
+        fallbackGraph.OrderedPasses() == expectedFallback,
+        "r2-graph-builder fallback variant order mismatch"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -15682,6 +15804,10 @@ int main()
     failures += !RunTest(
         "R2.0 render graph core",
         TestR2RenderGraphCore
+    );
+    failures += !RunTest(
+        "R2.0 current render graph variants",
+        TestR2CurrentRenderGraphVariants
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
