@@ -560,8 +560,16 @@ void Renderer::RenderPacket(
     {
         graph.SetPassCallback(
             RenderPassId::PhysicsDebug,
-            [this, &packet, &view, &projection]()
+            [this, &packet, &target, &view, &projection]()
             {
+                // CompositeOit's internal RenderStateScope restores the
+                // framebuffer that was current when it started, which on
+                // the OIT path is the OIT framebuffer. PhysicsDebug must
+                // explicitly restore the logical SceneColor target so the
+                // graph's declared SceneColor Write access is real.
+                target.Bind();
+                glDrawBuffer(GL_COLOR_ATTACHMENT0);
+                glViewport(0, 0, target.Width(), target.Height());
                 this->DrawPhysicsDebug(packet.debugLines, view, projection);
             }
         );

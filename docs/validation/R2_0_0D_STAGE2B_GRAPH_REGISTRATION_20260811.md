@@ -140,9 +140,40 @@ options 来自真实运行条件（不再重复手写 if 链）：
   - 真实 HeadlessRenderSession + RenderOffline（完整帧：directional
     light + opaque + Blend transparent + environment skybox）
   - 同一场景连续两次渲染逐字节一致（graph 路径确定性）
-  - 非空帧断言（ShadowDepth/GroundReceivers/MmdGroundShadow/Opaque/
-    Skybox/Transparent/OitComposite 真实执行）
+  - 非空帧断言改为 RGB-vs-clear 检查（alpha=255 不再能造成 vacuous
+    pass；必须证明有 draw call 产生 RGB 内容）
   - WISTERIA_DISABLE_OIT=1 fallback（RAII 环境变量守卫）渲染非空
+```
+
+## 3.5 Final Micro-Closure（ChatGPT 复审 blocker 闭合）
+
+```text
+P0-1 vacuous 像素断言修复：
+  clearColor 是 {0,0,0,1}，任意 byte != 0 会因为 alpha=255 恒真。
+  新增 HasRenderedRgb()：只统计 RGB 偏离 clear RGB 的像素 > 0。
+  应用到 graph-execution full/OIT-fallback 断言，并顺带修复
+  TestR2RenderDeviceFoundation 的同类 vacuous 断言。
+
+P0-2 PhysicsDebug execution target closure：
+  CompositeOit 内部 RenderStateScope 会恢复进入前绑定的 OIT
+  framebuffer，导致 OIT 路径下 PhysicsDebug 实际画到 OIT FBO，
+  与 graph 声明的 SceneColor Write 不一致（迁移前就存在的旧 bug）。
+  PhysicsDebug callback 现在显式：
+    target.Bind()
+    glDrawBuffer(GL_COLOR_ATTACHMENT0)
+    glViewport(0, 0, target.Width(), target.Height())
+  之后才调用 DrawPhysicsDebug —— graph 声明变成真实执行目标。
+
+新增 OIT + debug adversarial（Renderer-level）：
+  构造 RenderFramePacket（opaque + Blend transparent），人工 push
+  一条醒目的 debug line，直接调用公开 Renderer::RenderPacket 渲染到
+  SceneFramebuffer：
+    frame A = 有 debug line
+    frame B = 同帧无 debug line
+  Require(A.pixels != B.pixels)
+  反证验证：临时移除 target.Bind 修复后，该测试立即失败于
+  "r2-graph-execution debug line must reach SceneColor"，
+  证明它真实捕获 OIT+debug framebuffer 目标错误，不是 vacuous。
 ```
 
 ## 4. Part 2 验证
@@ -158,5 +189,6 @@ ABI            94 legacy + 30 stable
   R1.9 stable render pixels match engine（stable ABI vs engine 逐字节一致）
   R2.0 render packet graph execution（graph 路径重复渲染逐字节一致）
   R2.0 render device foundation（RenderDevice session 渲染非空）
+  R2.0 OIT + debug adversarial（debug line 必须进入 SceneColor）
   render-fbo / headless-smoke / headless-smoke-glfw-fallback
 ```

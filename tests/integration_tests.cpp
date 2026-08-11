@@ -35,6 +35,23 @@
 namespace
 {
 
+bool HasRenderedRgb(const wisteria::Rgba8Frame& frame)
+{
+    // Offline clear color is {0, 0, 0, 1}, so the alpha byte alone can
+    // never prove a draw call happened; only RGB deviation from the clear
+    // color counts as rendered content.
+    for (std::size_t i = 0U; i + 3U < frame.pixels.size(); i += 4U)
+    {
+        if (frame.pixels[i + 0U] != 0U ||
+            frame.pixels[i + 1U] != 0U ||
+            frame.pixels[i + 2U] != 0U)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void TestGlmMultiplySanity()
 {
     const glm::mat4 identity(1.0f);
@@ -13520,16 +13537,10 @@ void TestR2RenderDeviceFoundation()
     );
     const wisteria::Rgba8Frame frame =
         session.RenderOffline(scene, request);
-    bool hasContent = false;
-    for (const std::uint8_t value : frame.pixels)
-    {
-        if (value != 0U)
-        {
-            hasContent = true;
-            break;
-        }
-    }
-    Require(hasContent, "r2 render through RenderDevice session is empty");
+    Require(
+        HasRenderedRgb(frame),
+        "r2 render through RenderDevice session is empty"
+    );
 }
 
 void TestR2WindowedCapabilities()
@@ -16046,17 +16057,8 @@ void TestR2RenderPacketGraphExecution()
         firstFrame.pixels == secondFrame.pixels,
         "r2-graph-execution repeated frame must be byte-identical"
     );
-    bool hasContent = false;
-    for (const std::uint8_t value : firstFrame.pixels)
-    {
-        if (value != 0U)
-        {
-            hasContent = true;
-            break;
-        }
-    }
     Require(
-        hasContent,
+        HasRenderedRgb(firstFrame),
         "r2-graph-execution full frame must not be empty"
     );
 
@@ -16066,18 +16068,86 @@ void TestR2RenderPacketGraphExecution()
         ScopedEnvVar disableOit("WISTERIA_DISABLE_OIT", "1");
         const wisteria::Rgba8Frame fallbackFrame =
             session.RenderOffline(scene, request);
-        bool fallbackHasContent = false;
-        for (const std::uint8_t value : fallbackFrame.pixels)
-        {
-            if (value != 0U)
-            {
-                fallbackHasContent = true;
-                break;
-            }
-        }
         Require(
-            fallbackHasContent,
+            HasRenderedRgb(fallbackFrame),
             "r2-graph-execution OIT fallback frame must not be empty"
+        );
+    }
+
+    // OIT + populated debug lines: PhysicsDebug must write SceneColor, not
+    // the OIT framebuffer left current after CompositeOit. A/B comparison:
+    // adding a debug line must change the SceneColor readback.
+    {
+        session.MakeCurrent();
+        wisteria::Scene debugScene;
+        debugScene.CreateDirectionalLight(wisteria::DirectionalLightData{
+            .Direction = {-0.35f, -0.75f, -0.45f},
+            .Color = glm::vec3(1.0f, 0.96f, 0.92f),
+            .Intensity = 1.0f
+        });
+        wisteria::DefaultModelData quadData;
+        quadData.layout = {
+            wisteria::Layout{"position", 3U, wisteria::FLOAT},
+            wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+            wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+        };
+        quadData.vertices = {
+            -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+             0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+        };
+        quadData.indices = {0U, 1U, 2U};
+        wisteria::Mesh quadMesh(quadData);
+        wisteria::MaterialData debugOpaqueData;
+        debugOpaqueData.textureSources.clear();
+        wisteria::Material debugOpaqueMaterial(debugOpaqueData);
+        wisteria::Entity& debugOpaqueEntity = debugScene.CreateEntity();
+        debugOpaqueEntity.AddRenderPart(quadMesh, debugOpaqueMaterial);
+
+        wisteria::MaterialData debugBlendData;
+        debugBlendData.textureSources.clear();
+        debugBlendData.alphaMode = wisteria::MaterialAlphaMode::Blend;
+        wisteria::Material debugBlendMaterial(debugBlendData);
+        wisteria::Entity& debugBlendEntity = debugScene.CreateEntity(
+            wisteria::Transform{glm::vec3(1.0f, 0.0f, 0.0f)}
+        );
+        debugBlendEntity.AddRenderPart(quadMesh, debugBlendMaterial);
+
+        wisteria::RenderFramePacket packet = wisteria::BuildRenderFramePacket(
+            debugScene,
+            request.camera,
+            request.projection
+        );
+        Require(
+            packet.transparentDraws.size() == 1U,
+            "r2-graph-execution debug adversarial needs a transparent draw"
+        );
+
+        const glm::vec4 clearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        wisteria::SceneFramebuffer target;
+        target.Resize(64, 64);
+
+        // Frame A: a bright magenta debug line crossing the view.
+        packet.debugLines.push_back(wisteria::PhysicsDebugLine{
+            glm::vec3(-2.0f, 3.0f, 0.0f),
+            glm::vec3(2.0f, 1.0f, 0.0f),
+            glm::vec3(1.0f, 0.0f, 1.0f)
+        });
+        target.Clear(clearColor);
+        session.GetRenderer().RenderPacket(packet, target);
+        const wisteria::Rgba8Frame withDebug =
+            wisteria::ReadbackRgba8(target);
+
+        // Frame B: identical frame without debug lines.
+        packet.debugLines.clear();
+        target.Clear(clearColor);
+        session.GetRenderer().RenderPacket(packet, target);
+        const wisteria::Rgba8Frame withoutDebug =
+            wisteria::ReadbackRgba8(target);
+
+        Require(
+            withDebug.pixels != withoutDebug.pixels,
+            "r2-graph-execution debug line must reach SceneColor"
         );
     }
 }
