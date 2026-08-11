@@ -211,8 +211,14 @@ void Material::SetRenderCache(RenderResourceCache* nextCache)
     if (this->cache == nullptr)
     {
         // Unified semantics: nullptr = facade bound to no device
-        // realization; the old caches keep their entries alive.
+        // realization. Subordinate texture facades must detach too, and
+        // the device-local ProgramCache resolver is cleared; otherwise a
+        // Material surviving its device would hold stale GraphicsDevice*
+        // through its textures.
         this->gpu.reset();
+        for (const auto& [uniformName, texture] : this->textures)
+            texture->SetRenderCache(nullptr);
+        this->programCache.reset();
         return;
     }
     this->programCache = this->cache->Device().Programs();

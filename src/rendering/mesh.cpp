@@ -333,6 +333,9 @@ std::unique_ptr<Mesh> Mesh::CloneForInstance() const
         nullptr
     );
     clone->instanceLocal = true;
+    // The clone records the same owning cache so its resolver authority
+    // matches the instance realization (never via AcquireStaticMesh).
+    clone->cache = this->cache;
     // Instance clones must own a distinct realization: runtime-deformed
     // geometry must never share the static cache entry.
     if (this->cache != nullptr)
@@ -344,28 +347,36 @@ std::unique_ptr<Mesh> Mesh::CloneForInstance() const
 
 void Mesh::SetRenderCache(RenderResourceCache* nextCache)
 {
-    this->cache = nextCache;
-    if (this->cache == nullptr)
-    {
-        // Unified semantics: nullptr = facade bound to no device
-        // realization. The old cache keeps its shared entry alive.
-        this->gpu.reset();
-        return;
-    }
     if (this->instanceLocal)
     {
         // Instance realizations are fixed once attached: an instance is
-        // bound to one render session/device for its lifetime.
-        if (this->gpu == nullptr || !this->gpu->IsAttached())
+        // bound to one render session/device for its lifetime (6A frozen).
+        if (this->gpu != nullptr && this->gpu->IsAttached())
         {
-            this->gpu = this->cache->CreateInstanceMesh(this->data);
+            if (nextCache != this->cache)
+            {
+                throw std::logic_error(
+                    "attached instance-local Mesh cannot change render device"
+                );
+            }
+            return;
         }
+        this->cache = nextCache;
+        if (this->cache != nullptr)
+            this->gpu = this->cache->CreateInstanceMesh(this->data);
+        else
+            this->gpu.reset();
         return;
     }
-    // Asset meshes may render through multiple devices: re-resolve the
-    // shared realization for the current cache even if another device's
-    // realization is already attached. Each device's cache keeps its own
-    // realization alive, so A/B GPU state never shares.
+    // Static asset: nullptr = facade bound to no device realization (the
+    // old cache keeps its shared entry alive); otherwise re-resolve the
+    // shared realization for the current cache.
+    this->cache = nextCache;
+    if (this->cache == nullptr)
+    {
+        this->gpu.reset();
+        return;
+    }
     this->gpu = this->cache->AcquireStaticMesh(this->data);
 }
 

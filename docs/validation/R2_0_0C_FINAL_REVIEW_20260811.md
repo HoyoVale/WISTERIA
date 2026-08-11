@@ -68,9 +68,16 @@ Gate E   wisteria_stable_runtime.h / render.h 零改动  PASS
 ```text
 0D（RenderFramePacket/RenderGraph）：
   - Renderer 隐式 pass DAG 数据化
-  - ShaderInterface / GetProgram / Uniform* 迁移到 backend pipeline
+  - ShaderInterface uniform contract / Material::GetProgram() /
+    Renderer Uniform* 调用迁移到 backend pipeline realization
   - RenderResourceCache 生产接入（Renderer 消费 realization）
-  - ProgramCount A->B->A 测试可再精确（非阻塞）
+  - Mesh::ConfigureVertexArray(VAO&) / EnvironmentMap::
+    ConfigureSkyboxVertexArray(VAO&) / DrawSkybox(..., VAO&)
+    VAO facade 迁移（public legacy facade → 0D）
+  - TextureGpuResource::MaxUnits process-global static cache
+    （R1.7 后多 context 假设不成立；改 per-device capability）
+  - legacy unmanaged/null-cache GPU path 收口
+    （Mesh / Texture / Material / Environment 四类 raw GL fallback）
 
 R2.1（Vulkan）：
   - Vulkan device/resource/pipeline backend
@@ -81,11 +88,11 @@ R2.2：
 
 独立债务（不阻塞）：
   - R1.7 native-Linux hardware EGL gate（真机验证）
-  - EnvironmentHdrImage mutable payload（0C Final Review watchpoint：
-    调用者保留 mutable shared_ptr 可改 rgb → 重复 realization/stale
-    identity；exact equality 已防错误共享，长期改为真正不可变）
-  - Environment null-cache raw GL fallback（0C Final Review 决定：
-    ResourceManager 正式路径已传 cache；fallback 保留待 0D 收口）
+  - EnvironmentHdrImage mutable payload：调用者保留 mutable shared_ptr
+    可在 GPU attach 后修改 rgb → 已存在 facade 的 CPU/GPU semantic
+    divergence（cache key 旧 hash、GPU 旧 payload）；exact equality
+    防住后续错误共享，但防不住已存在 facade 的分歧；
+    长期改为真正不可变 CPU asset
 ```
 
 ## 7. Final Review 改动（本阶段）
@@ -152,4 +159,33 @@ render_fbo deferred-delete 测试语义修正：
 ```text
 Windows CORE 12/12、FULL 13/13、WSL CORE 14/14、FULL 15/15
 ABI 94 legacy + 30 stable
+```
+
+## 11. Closure Micro-Fix（2026-08-11 ChatGPT 复审 `cb03921` 后）
+
+```text
+1. instance-local Mesh ownership 修复：
+   - CloneForInstance 记录 clone->cache（resolver authority 与 instance
+     realization 一致；不经过 AcquireStaticMesh）
+   - attached instance SetRenderCache：
+       同 cache → no-op
+       不同 cache / nullptr → fail-fast（logic_error）
+     realization 保持 A（6A 冻结：instance fixed to one session/device）
+   - 头注释同步
+2. Material::SetRenderCache(nullptr) 真正解除 subordinate Texture：
+   - gpu.reset() + 遍历 textures SetRenderCache(nullptr) +
+     programCache.reset()
+   - 防 Material 存活超过 device 时 TextureGpuResource 析构解引用
+     stale GraphicsDevice*
+3. Final Review §6 debt ledger 同步为最终版本：
+   - ProgramCount A->B->A 已精确（移除旧条目）
+   - null-cache raw GL fallback 扩展四类资源
+   - Mesh/Environment VAO facade、Texture MaxUnits 合并进 0D 条目
+   - mutable HDR 风险表述更新（已存在 facade 的 CPU/GPU divergence）
+
+测试：
+  TestR2InstanceLocalMeshOwnership（same-cache no-op / device migration
+    reject / detach reject）
+  TestR2MaterialSubordinateTextureDetach（非空 textureSources：detach 后
+    cacheA.Clear() → pending 增加——texture facade 不再持有 A realization）
 ```

@@ -14852,6 +14852,150 @@ void TestR2ConstructionAndProvenanceClosure()
     (void)cacheB;
 }
 
+void TestR2InstanceLocalMeshOwnership()
+{
+    // R2.0 Phase 0C Closure Micro-Fix: attached instance-local Mesh is
+    // fixed to one render session/device; cache change or detach fails fast
+    // and the realization remains intact.
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-instance providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+    wisteria::RenderResourceCache& cacheB = sessionB.GetRenderCache();
+
+    wisteria::DefaultModelData triangleData;
+    triangleData.layout = {
+        wisteria::Layout{"position", 3U, wisteria::FLOAT},
+        wisteria::Layout{"normal", 3U, wisteria::FLOAT},
+        wisteria::Layout{"texCoord", 2U, wisteria::FLOAT},
+    };
+    triangleData.vertices = {
+        -1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+         1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  0.5f, 1.0f,
+    };
+    triangleData.indices = {0U, 1U, 2U};
+
+    sessionA.MakeCurrent();
+    auto asset = std::make_shared<wisteria::Mesh>(
+        triangleData,
+        0U,
+        std::vector<wisteria::MeshMorphTarget>{},
+        std::vector<std::uint32_t>{},
+        &cacheA
+    );
+    auto instance = asset->CloneForInstance();
+    Require(
+        instance->IsInstanceLocal(),
+        "r2-instance clone must be marked instance-local"
+    );
+    instance->Attach();
+    Require(
+        instance->IsAttached(),
+        "r2-instance attach failed"
+    );
+
+    // Same cache is a no-op.
+    instance->SetRenderCache(&cacheA);
+    Require(
+        instance->IsAttached(),
+        "r2-instance same-cache rebind must keep the realization"
+    );
+
+    // Changing the device after attach fails fast.
+    bool migrateRejected = false;
+    try
+    {
+        instance->SetRenderCache(&cacheB);
+    }
+    catch (const std::logic_error&)
+    {
+        migrateRejected = true;
+    }
+    Require(
+        migrateRejected && instance->IsAttached(),
+        "r2-instance attached mesh must reject device migration"
+    );
+
+    // Detaching after attach also fails fast; realization remains.
+    bool detachRejected = false;
+    try
+    {
+        instance->SetRenderCache(nullptr);
+    }
+    catch (const std::logic_error&)
+    {
+        detachRejected = true;
+    }
+    Require(
+        detachRejected && instance->IsAttached(),
+        "r2-instance attached mesh must reject detach"
+    );
+}
+
+void TestR2MaterialSubordinateTextureDetach()
+{
+    // R2.0 Phase 0C Closure Micro-Fix: Material::SetRenderCache(nullptr)
+    // must detach subordinate Texture facades too. Otherwise a Material
+    // surviving its device holds stale GraphicsDevice* through its
+    // textures, and cache.Clear() is not the final owner.
+    auto providerA = wisteria::CreateHeadlessContext({});
+    auto providerB = wisteria::CreateHeadlessContext({});
+    Require(
+        providerA != nullptr && providerB != nullptr,
+        "r2-material-detach providers unavailable"
+    );
+    wisteria::HeadlessRenderSession sessionA(std::move(providerA));
+    wisteria::HeadlessRenderSession sessionB(std::move(providerB));
+    wisteria::RenderResourceCache& cacheA = sessionA.GetRenderCache();
+
+    // NON-empty default textureSources (chessboard) exercises the
+    // subordinate texture path.
+    wisteria::MaterialData materialData;
+    wisteria::Material material(
+        materialData,
+        std::make_shared<wisteria::ProgramCache>(),
+        &cacheA
+    );
+    sessionA.MakeCurrent();
+    material.Attach();
+
+    material.SetRenderCache(nullptr);
+    bool detachedProgramRejected = false;
+    try
+    {
+        (void)material.GetProgram();
+    }
+    catch (const std::logic_error&)
+    {
+        detachedProgramRejected = true;
+    }
+    Require(
+        detachedProgramRejected,
+        "r2-material-detach material realization must be detached"
+    );
+
+    // With subordinate textures detached, cacheA.Clear() is the final
+    // owner: releasing it while B is current pushes real deletions.
+    sessionB.MakeCurrent();
+    cacheA.Clear();
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() > 0U,
+        "r2-material-detach subordinate textures must not outlive detach"
+    );
+    sessionA.MakeCurrent();
+    sessionA.GetGraphicsDevice().FlushPendingDeletes();
+    Require(
+        sessionA.GetGraphicsDevice().PendingDeleteCount() == 0U,
+        "r2-material-detach pending flush failed"
+    );
+}
+
 int main()
 {
     int failures = 0;
@@ -15013,6 +15157,14 @@ int main()
     failures += !RunTest(
         "R2.0 construction and provenance closure",
         TestR2ConstructionAndProvenanceClosure
+    );
+    failures += !RunTest(
+        "R2.0 instance-local mesh ownership",
+        TestR2InstanceLocalMeshOwnership
+    );
+    failures += !RunTest(
+        "R2.0 material subordinate texture detach",
+        TestR2MaterialSubordinateTextureDetach
     );
     failures += !RunTest(
         "R1.4 stable ABI motion lifecycle",
