@@ -2,7 +2,6 @@
 
 最适合的下一步是：把 `Window + Shader + VAO + VBO` 组合成一个完整、稳定的“三角形渲染流程”，并让三角形带颜色。
 
-
 5. 纹理和材质
 
 加入：
@@ -59,7 +58,6 @@ Transform 动画：整体平移、旋转、缩放，例如当前旋转立方体�
 骨骼动画：模型内部骨骼、权重、关键帧和蒙皮计算。
 Transform 动画现在就能实现；但骨骼动画依赖外部模型中的节点、骨骼、权重和动画轨道，必须等模型导入结构稳定后再做。
 
-
 第一版的功能范围
 建议第一版只实现：
 OBJ 和外部纹理。
@@ -76,32 +74,29 @@ PBR 金属度、粗糙度。
 法线贴图和切线。
 异步加载。
 
-
 对，不过其中有一项已经完成了一半以上：GLB 内嵌纹理已经可以读取和渲染，目前缺的是支持更多纹理类型，而不是重新实现内嵌纹理解码。
 
 当前状态可以这样划分：
 
-| 功能 | 当前状态 |
-|---|---|
-| 静态 Mesh、多 Mesh、多 Material | 已完成 |
-| OBJ 外部纹理 | 已完成 |
-| GLB 内嵌基础颜色纹理 | 已完成 |
-| 节点局部变换 | 已完成 |
-| 骨骼蒙皮 | 未实现 |
-| 动画播放 | 未实现 |
-| PBR 金属度/粗糙度 | 未实现，目前是 Blinn-Phong |
-| 法线贴图/切线 | 未实现 |
-| 输入与事件交互 | 未实现 |
-| 异步加载 | 未实现 |
+| 功能                            | 当前状态                   |
+| ------------------------------- | -------------------------- |
+| 静态 Mesh、多 Mesh、多 Material | 已完成                     |
+| OBJ 外部纹理                    | 已完成                     |
+| GLB 内嵌基础颜色纹理            | 已完成                     |
+| 节点局部变换                    | 已完成                     |
+| 骨骼蒙皮                        | 未实现                     |
+| 动画播放                        | 未实现                     |
+| PBR 金属度/粗糙度               | 未实现，目前是 Blinn-Phong |
+| 法线贴图/切线                   | 未实现                     |
+| 输入与事件交互                  | 未实现                     |
+| 异步加载                        | 未实现                     |
 
 推荐接下来的顺序：
 
 1. 事件与输入系统
    封装 GLFW 键盘、鼠标、窗口事件，先实现可操作相机。
-
 2. 法线贴图与切线
    扩展顶点格式，导入 `tangent/bitangent`，建立 TBN 矩阵。这也是完善材质系统的重要基础。
-
 3. PBR 材质
    支持：
 
@@ -113,7 +108,6 @@ PBR 金属度、粗糙度。
    - Ambient Occlusion
 
    GLB 通常会把 metallic 和 roughness 打包在同一张纹理的不同通道中。
-
 4. 骨骼蒙皮
    顶点增加骨骼 ID 和权重，由顶点着色器执行：
 
@@ -123,7 +117,6 @@ PBR 金属度、粗糙度。
        boneMatrices[boneID1] * position * weight1 +
        ...;
    ```
-
 5. 动画系统
    导入动画片段和关键帧，插值位置、旋转、缩放，计算：
 
@@ -134,7 +127,6 @@ PBR 金属度、粗糙度。
        → 最终蒙皮矩阵
        → 上传 Shader
    ```
-
 6. 异步加载
    最后实现，因为它涉及线程边界：
 
@@ -145,20 +137,18 @@ PBR 金属度、粗糙度。
 
 如果目标是先让人物“动起来”，最合适的下一步是实现骨骼数据结构和蒙皮顶点格式；如果目标是先提升画面质量，则先实现切线、法线贴图和 PBR。事件系统相对独立，可以优先做，以便加入自由相机来观察后续效果。
 
-
-| 动作 | 默认输入 | 类型 |
-|---|---|---|
-| 向前/后移动 | `W / S` | 持续 |
-| 向左/右移动 | `A / D` | 持续 |
-| 向上/下移动 | `E / Q` | 持续 |
-| 加速移动 | `Left Shift` | 持续 |
-| 相机转向 | 鼠标移动 | 持续 |
-| 调整视野角 | 鼠标滚轮 | 事件 |
-| 捕获/释放鼠标 | 鼠标右键 | 状态切换 |
-| 释放鼠标 | `Esc` | 单次 |
-| 重置相机 | `R` | 单次 |
-| 关闭窗口 | 窗口关闭按钮 | 事件 |
-
+| 动作          | 默认输入       | 类型     |
+| ------------- | -------------- | -------- |
+| 向前/后移动   | `W / S`      | 持续     |
+| 向左/右移动   | `A / D`      | 持续     |
+| 向上/下移动   | `E / Q`      | 持续     |
+| 加速移动      | `Left Shift` | 持续     |
+| 相机转向      | 鼠标移动       | 持续     |
+| 调整视野角    | 鼠标滚轮       | 事件     |
+| 捕获/释放鼠标 | 鼠标右键       | 状态切换 |
+| 释放鼠标      | `Esc`        | 单次     |
+| 重置相机      | `R`          | 单次     |
+| 关闭窗口      | 窗口关闭按钮   | 事件     |
 
 基础的通用 PBR 材质系统已经足够完整，可以作为后续功能的基础；但它还不等于“完整支持 MMD 材质”。
 
@@ -247,7 +237,6 @@ Entity
 
 这样能先解决你当前看到的材质问题，同时避免误把材质差异归到骨骼系统中。
 
-
 Scene
   ↓
 SceneFramebuffer
@@ -266,7 +255,6 @@ PostProcess
   └─ 未来 Bloom
        ↓
 Window 默认 framebuffer
-
 
 多窗口则需要这层结构：
 Application / WindowManager
@@ -310,7 +298,7 @@ RenderTarget保存宽高、颜色附件和深度附件。
 增加 SceneFramebuffer。
 增加最终 Present/FXAA Pass。
 然后再实现 Application 与 WindowManager。
----
+-----------------------------------------
 
 # Physics 2A：Bullet Foundation
 
@@ -1275,7 +1263,6 @@ Bind 两套正确，当前 Bullet 红色运行体后来跑偏
 
 这就是“先定位，再修公式”的工程意义：每一种错误只修改拥有该语义的层，避免用全局补偿矩阵掩盖模型数据或求解器问题。
 
-
 # MMD Initialization Stability：先区分原始 Frame 差异与真实限制违规
 
 双重 Bind Overlay 解决了“数据在哪一层开始错位”的问题，但它还必须区分捕获时机。Bullet 刚体创建后如果立刻执行 `ResetToPose()`，再记录所谓 initial state，就会把 VMD 第 0 帧误标成 Bullet Bind。正确快照顺序是：
@@ -1359,6 +1346,7 @@ CCD 也不能再由尺寸一次性决定。尺寸只选候选，真正启用取�
 ```
 
 不能用更多 solver iteration 替代错误的碰撞关系。
+
 # P1.2 Gravity & Constraint Balance：重力是持续输入，碰撞冲量是放大器
 
 碰撞矩阵显示，大多数高冲量接触来自同一裙摆分组内部，而非跨链碰撞。只削弱蒙皮平移会再次隐藏问题，因此应先控制 Bullet 的持续下坠输入。WISTERIA 现在为 MMD Dynamic 刚体使用可选的每体重力覆盖，并将大型恢复连通分量拆成更细的 `SKIRT / HAIR / TAIL / ACCESSORY / GENERAL` 重力分组。
@@ -1371,3 +1359,60 @@ world gravity × global A/B scale × chain scale
 
 同时只提高到分组最低阻尼，不覆盖更高的 PMX 原值。`G` 用于 1g、0.75g、0.5g、0.25g、0g 对照；`H` 输出每个分组的向下位移、速度、接触冲量和 Mode 2 位移。若 0g 下仍有巨大冲量，问题就不再是重力，而是初始重叠、动画锚点推入或碰撞/约束拓扑。裙摆的三至四跳 Box 近邻会在 Bind Pose 仍重叠时被过滤，避免关节拉近与碰撞推开形成永久反馈。
 
+
+
+# 语义地图
+
+
+
+
+```mermaid
+flowchart TB
+    subgraph ENTRY["入口 / 平台层"]
+        MAIN["main.cpp<br/>参数解析 · 创建 Window · 绑定 Scene"]
+        APP["Application"]
+        WIN["Window / WindowManager<br/>GLFW + GL context · 输入 · PresentSurface"]
+        MAIN --> APP
+        APP --> WIN
+    end
+
+    subgraph STATE["状态世界（与 GPU 无关）"]
+        RES["ResourceManager<br/>ModelAsset（共享只读）"]
+        SCENE["Scene / Entity<br/>五段式 Update"]
+        MI["ModelInstance<br/>runtime · instanceMeshes · 视图/快照"]
+        REG["ModelBackendRegistry<br/>SabaMmdBackend · preset 配置"]
+        RT["SabaMmdRuntimeModel<br/>VMD → Morph → IK → 物理 → 蒙皮"]
+        RES --> SCENE
+        SCENE --> MI
+        REG -. 创建 .-> RT
+        MI --> RT
+    end
+
+    subgraph RENDER["渲染世界（R2.0 边界）"]
+        RENDERER["Renderer"]
+        PACKET["RenderFramePacket"]
+        GRAPH["RenderGraph"]
+        DEVICE["RenderDevice"]
+        EXEC["OpenGlGraphExecutor"]
+        PRESENT["PresentSurface / RenderTarget"]
+        RENDERER --> PACKET --> GRAPH --> DEVICE --> EXEC --> PRESENT
+    end
+
+    subgraph PORTAL["C 门户（wisteria_native）"]
+        H["wisteria_native.h v0.6<br/>94 legacy 函数"]
+        S["wisteria_stable_runtime.h / render.h<br/>30 stable 函数"]
+        ABI["ABI 安全矩阵 · 跨进程 checkpoint 测试"]
+        H --> S
+        S --> ABI
+    end
+
+    subgraph TOOLS["工具链"]
+        T["tools/trace<br/>JSONL 轨迹 / 差分"]
+        R["tools/reference_trace<br/>babylon-mmd 对照"]
+    end
+
+    MI -. "LastRenderFrameView 零拷贝" .-> RENDERER
+    WIN --> PRESENT
+    T -. 消费 .-> RT
+    PORTAL -. 桥接目标 .-> STATE
+```
