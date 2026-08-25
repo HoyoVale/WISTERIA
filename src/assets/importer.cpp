@@ -823,20 +823,204 @@ std::vector<QuaternionKeyframe> ImportQuaternionKeys(
     return unique;
 }
 
+struct GenericMorphTargetKey
+{
+    std::string meshName;
+    std::uint32_t targetOrdinal = 0U;
+
+    bool operator==(const GenericMorphTargetKey& other) const = default;
+};
+
+struct GenericMorphTargetKeyHash
+{
+    std::size_t operator()(const GenericMorphTargetKey& key) const noexcept
+    {
+        std::size_t seed = std::hash<std::string>{}(key.meshName);
+        seed ^= std::hash<std::uint32_t>{}(key.targetOrdinal) +
+            0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+        return seed;
+    }
+};
+
+using GenericMorphTargetMap = std::unordered_map<
+    GenericMorphTargetKey,
+    MorphIndex,
+    GenericMorphTargetKeyHash
+>;
+using NodeMeshNameMap = std::unordered_map<std::string, std::string>;
+
+void CollectNodeMeshNames(
+    const aiScene& scene,
+    const aiNode& node,
+    NodeMeshNameMap& names
+)
+{
+    for (unsigned int meshIndex = 0; meshIndex < node.mNumMeshes; ++meshIndex)
+    {
+        const unsigned int sourceMeshIndex = node.mMeshes[meshIndex];
+        if (sourceMeshIndex >= scene.mNumMeshes ||
+            scene.mMeshes[sourceMeshIndex] == nullptr)
+        {
+            continue;
+        }
+        names.emplace(
+            ToString(node.mName),
+            ToString(scene.mMeshes[sourceMeshIndex]->mName)
+        );
+    }
+    for (unsigned int childIndex = 0;
+         childIndex < node.mNumChildren;
+         ++childIndex)
+    {
+        if (node.mChildren[childIndex] != nullptr)
+        {
+            CollectNodeMeshNames(
+                scene,
+                *node.mChildren[childIndex],
+                names
+            );
+        }
+    }
+}
+
+NodeMeshNameMap BuildNodeMeshNameMap(const aiScene& scene)
+{
+    NodeMeshNameMap names;
+    if (scene.mRootNode != nullptr)
+        CollectNodeMeshNames(scene, *scene.mRootNode, names);
+    return names;
+}
+
+void ImportGenericMorphTargets(
+    const aiMesh& mesh,
+    ImportedMeshData& imported,
+    std::vector<MorphDefinition>& morphs,
+    GenericMorphTargetMap& morphTargets
+)
+{
+    if (mesh.mNumAnimMeshes == 0)
+        return;
+
+    const std::string meshName = ToString(mesh.mName);
+    for (unsigned int targetIndex = 0;
+         targetIndex < mesh.mNumAnimMeshes;
+         ++targetIndex)
+    {
+        const aiAnimMesh* target = mesh.mAnimMeshes[targetIndex];
+        if (target == nullptr)
+        {
+            throw std::runtime_error(
+                "Imported mesh contains a null morph target"
+            );
+        }
+        if (target->mNumVertices != mesh.mNumVertices)
+        {
+            throw std::runtime_error(
+                "Imported morph target vertex count does not match its mesh"
+            );
+        }
+
+        std::string morphName = ToString(target->mName);
+        if (morphName.empty())
+            morphName = meshName + "_morph_" + std::to_string(targetIndex);
+
+        MorphIndex morphIndex = InvalidMorphIndex;
+        for (std::size_t index = 0; index < morphs.size(); ++index)
+        {
+            if (morphs[index].name == morphName)
+            {
+                morphIndex = static_cast<MorphIndex>(index);
+                break;
+            }
+        }
+        if (morphIndex == InvalidMorphIndex)
+        {
+            MorphDefinition definition;
+            definition.name = morphName;
+            definition.category = MorphCategory::Other;
+            definition.kind = MorphKind::Vertex;
+            morphIndex = static_cast<MorphIndex>(morphs.size());
+            morphs.push_back(std::move(definition));
+        }
+
+        morphTargets[GenericMorphTargetKey{meshName, targetIndex}] =
+            morphIndex;
+
+        if (!target->HasPositions())
+            continue;
+
+        MeshMorphTarget meshTarget;
+        meshTarget.morphIndex = morphIndex;
+        for (unsigned int vertexIndex = 0;
+             vertexIndex < mesh.mNumVertices;
+             ++vertexIndex)
+        {
+            const glm::vec3 offset(
+                target->mVertices[vertexIndex].x -
+                    mesh.mVertices[vertexIndex].x,
+                target->mVertices[vertexIndex].y -
+                    mesh.mVertices[vertexIndex].y,
+                target->mVertices[vertexIndex].z -
+                    mesh.mVertices[vertexIndex].z
+            );
+            if (!IsFinite(offset))
+            {
+                throw std::runtime_error(
+                    "Imported morph target contains a non-finite offset"
+                );
+            }
+            if (glm::dot(offset, offset) > 0.0000000001f)
+            {
+                meshTarget.offsets.push_back(VertexMorphOffset{
+                    static_cast<std::uint32_t>(vertexIndex),
+                    offset
+                });
+            }
+        }
+        if (!meshTarget.offsets.empty())
+            imported.morphTargets.push_back(std::move(meshTarget));
+    }
+}
+
+std::vector<FloatKeyframe> DeduplicateFloatKeys(
+    std::vector<FloatKeyframe> keys
+)
+{
+    std::stable_sort(
+        keys.begin(),
+        keys.end(),
+        [](const FloatKeyframe& left, const FloatKeyframe& right)
+        {
+            return left.time < right.time;
+        }
+    );
+    std::vector<FloatKeyframe> unique;
+    unique.reserve(keys.size());
+    for (const FloatKeyframe& key : keys)
+    {
+        if (!unique.empty() &&
+            std::abs(unique.back().time - key.time) <= 0.000001f)
+        {
+            unique.back() = key;
+        }
+        else
+        {
+            unique.push_back(key);
+        }
+    }
+    return unique;
+}
+
 std::vector<AnimationClip> ImportAnimations(
     const aiScene& scene,
-    const std::optional<Skeleton>& skeleton
+    const std::optional<Skeleton>& skeleton,
+    const GenericMorphTargetMap& genericMorphTargets,
+    const NodeMeshNameMap& nodeMeshNames
 )
 {
     std::vector<AnimationClip> result;
     if (scene.mNumAnimations == 0)
         return result;
-    if (!skeleton.has_value())
-    {
-        // Node-only animation needs a scene-node hierarchy, which is outside
-        // this first skeletal animation implementation.
-        return result;
-    }
 
     result.reserve(scene.mNumAnimations);
     std::unordered_set<std::string> names;
@@ -872,7 +1056,9 @@ std::vector<AnimationClip> ImportAnimations(
                 throw std::runtime_error("Imported animation contains a null channel");
 
             const std::optional<BoneIndex> boneIndex =
-                skeleton->FindBone(ToString(channel->mNodeName));
+                skeleton.has_value()
+                    ? skeleton->FindBone(ToString(channel->mNodeName))
+                    : std::nullopt;
             if (!boneIndex.has_value())
                 continue;
             if (!animatedBones.emplace(*boneIndex).second)
@@ -914,8 +1100,82 @@ std::vector<AnimationClip> ImportAnimations(
             tracks.push_back(std::move(track));
         }
 
-        if (tracks.empty() || duration <= 0.0f)
+        std::unordered_map<MorphIndex, std::vector<FloatKeyframe>>
+            morphKeys;
+        for (unsigned int channelIndex = 0;
+             channelIndex < sourceAnimation->mNumMorphMeshChannels;
+             ++channelIndex)
+        {
+            const aiMeshMorphAnim* channel =
+                sourceAnimation->mMorphMeshChannels[channelIndex];
+            if (channel == nullptr)
+            {
+                throw std::runtime_error(
+                    "Imported animation contains a null morph channel"
+                );
+            }
+
+            const std::string nodeName = ToString(channel->mName);
+            const auto nodeMeshEntry = nodeMeshNames.find(nodeName);
+            const std::string& meshName =
+                nodeMeshEntry != nodeMeshNames.end()
+                    ? nodeMeshEntry->second
+                    : nodeName;
+
+            for (unsigned int keyIndex = 0;
+                 keyIndex < channel->mNumKeys;
+                 ++keyIndex)
+            {
+                const aiMeshMorphKey& key = channel->mKeys[keyIndex];
+                const float time = AnimationTimeSeconds(
+                    key.mTime,
+                    ticksPerSecond
+                );
+                for (unsigned int valueIndex = 0;
+                     valueIndex < key.mNumValuesAndWeights;
+                     ++valueIndex)
+                {
+                    const auto morphEntry = genericMorphTargets.find(
+                        GenericMorphTargetKey{
+                            meshName,
+                            key.mValues[valueIndex]
+                        }
+                    );
+                    if (morphEntry == genericMorphTargets.end())
+                        continue;
+                    if (!std::isfinite(key.mWeights[valueIndex]))
+                    {
+                        throw std::runtime_error(
+                            "Imported morph animation contains a non-finite weight"
+                        );
+                    }
+                    morphKeys[morphEntry->second].push_back(
+                        FloatKeyframe{
+                            time,
+                            static_cast<float>(key.mWeights[valueIndex])
+                        }
+                    );
+                }
+            }
+        }
+
+        std::vector<MorphWeightTrack> morphWeightTracks;
+        morphWeightTracks.reserve(morphKeys.size());
+        for (auto& [morphIndex, keys] : morphKeys)
+        {
+            keys = DeduplicateFloatKeys(std::move(keys));
+            duration = std::max(duration, keys.back().time);
+            morphWeightTracks.emplace_back(
+                morphIndex,
+                std::move(keys)
+            );
+        }
+
+        if ((tracks.empty() && morphWeightTracks.empty()) ||
+            duration <= 0.0f)
+        {
             continue;
+        }
 
         std::string name = ToString(sourceAnimation->mName);
         if (name.empty())
@@ -926,7 +1186,13 @@ std::vector<AnimationClip> ImportAnimations(
             while (!names.emplace(name).second)
                 name += "_";
         }
-        result.emplace_back(name, duration, std::move(tracks));
+        result.emplace_back(
+            name,
+            duration,
+            std::move(tracks),
+            std::vector<MmdIkStateTrack>{},
+            std::move(morphWeightTracks)
+        );
     }
     return result;
 }
@@ -1917,7 +2183,8 @@ ImportedModelData ModelImporter::Import(
             );
         }
     }
-    result.animations = ImportAnimations(*scene, result.skeleton);
+    const NodeMeshNameMap nodeMeshNames = BuildNodeMeshNameMap(*scene);
+    GenericMorphTargetMap genericMorphTargets;
     ImportedTextureIndexMap textureIndices;
     std::unordered_map<unsigned int, std::size_t> materialIndices;
     result.meshes.reserve(scene->mNumMeshes);
@@ -1984,9 +2251,24 @@ ImportedModelData ModelImporter::Import(
             ).first;
         }
         mesh.materialIndex = materialEntry->second;
+        if (!pmxMetadata.has_value())
+        {
+            ImportGenericMorphTargets(
+                *scene->mMeshes[index],
+                mesh,
+                result.morphs,
+                genericMorphTargets
+            );
+        }
         result.meshes.push_back(std::move(mesh));
     }
 
+    result.animations = ImportAnimations(
+        *scene,
+        result.skeleton,
+        genericMorphTargets,
+        nodeMeshNames
+    );
     ImportNodeParts(*scene, *scene->mRootNode, glm::mat4(1.0f), result);
     if (result.meshes.empty() || result.parts.empty())
         throw std::runtime_error("Imported model contains no drawable mesh parts");

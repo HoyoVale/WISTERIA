@@ -197,6 +197,70 @@ void TestAnimatedModelImporter()
     );
 }
 
+void TestGlbMorphTargetImporter()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("morph-triangle-gltf");
+    RequireCoreAsset("morph-triangle-gltf");
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value() &&
+        imported.skeleton->FindBone("rootBone").has_value(),
+        "Morph glTF fixture lost its imported Skeleton"
+    );
+    Require(
+        imported.meshes.size() == 1U &&
+        imported.meshes[0].morphTargets.size() == 1U &&
+        imported.morphs.size() == 1U,
+        "glTF morph target was not imported"
+    );
+    Require(
+        imported.morphs[0].name == "lift" &&
+        imported.morphs[0].kind == MorphKind::Vertex,
+        "glTF morph target name/kind mismatch"
+    );
+    Require(
+        imported.animations.size() == 1U,
+        "glTF morph animation was not imported"
+    );
+    const AnimationClip& clip = imported.animations[0];
+    Require(
+        clip.MorphWeightTrackCount() == 1U &&
+        clip.FindMorphWeightTrack(0U) != nullptr,
+        "glTF morph weight track was not imported"
+    );
+    const MorphWeightTrack* morphTrack = clip.FindMorphWeightTrack(0U);
+    Require(
+        NearlyEqual(morphTrack->Sample(0.5f), 0.5f),
+        "glTF morph weight track sampled incorrectly"
+    );
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "morphTriangle",
+        modelPath
+    );
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric &&
+        model.HasMorphs() &&
+        model.GetMorphSet().MorphCount() == 1U,
+        "Imported morph glTF was not routed to the Generic runtime"
+    );
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    Require(
+        entity.HasModelInstance() &&
+            entity.TryGetModelInstance()->HasRuntime(),
+        "Morph glTF entity has no Generic runtime"
+    );
+    scene.Update(0.25f);
+    const float weight = entity.TryGetMorphState()->Weight(0U);
+    Require(
+        NearlyEqual(weight, 0.25f),
+        "Imported glTF morph animation did not drive the MorphState"
+    );
+}
+
 void TestExtendedPmxMorphImporter()
 {
     const std::filesystem::path modelPath =
@@ -16728,6 +16792,7 @@ int main()
     int failures = 0;
     failures += !RunTest("GLM multiply sanity", TestGlmMultiplySanity);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
+    failures += !RunTest("glTF morph target importer", TestGlbMorphTargetImporter);
     failures += !RunTest(
         "Extended PMX morph importer",
         TestExtendedPmxMorphImporter

@@ -86,6 +86,11 @@
       "usedBy": ["TestAnimatedModelImporter"]
     },
     {
+      "id": "morph-triangle-gltf",
+      "path": "tests/data/morph_triangle.gltf",
+      "usedBy": ["TestGlbMorphTargetImporter"]
+    },
+    {
       "id": "pbr-quad-gltf",
       "path": "tests/data/pbr_quad.gltf",
       "usedBy": [],
