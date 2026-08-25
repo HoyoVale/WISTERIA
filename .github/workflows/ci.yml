@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+
+jobs:
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build `
+            --config RelWithDebInfo `
+            --parallel
+
+      - name: Test
+        shell: pwsh
+        run: |
+          ctest --test-dir build `
+            -C RelWithDebInfo `
+            --output-on-failure
+
+  linux:
+    name: Linux (X11 + xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            xvfb
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DWISTERIA_LINUX_WINDOW_BACKEND=X11
+
+      - name: Build
+        run: cmake --build build-linux --parallel
+
+      - name: Test
+        run: xvfb-run -a ctest --test-dir build-linux --output-on-failure

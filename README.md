@@ -1,5 +1,7 @@
 # WISTERIA
 
+[![CI](https://github.com/HoyoVale/WISTERIA/actions/workflows/ci.yml/badge.svg)](https://github.com/HoyoVale/WISTERIA/actions/workflows/ci.yml)
+
 WISTERIA 是一个以 OpenGL、Assimp、GLM 和 Bullet 构建的 C++20 实时渲染实验引擎。当前主线是一条完整的 MMD 纵向链路：
 
 ```text
@@ -48,6 +50,13 @@ Linux：
 ./build-linux/wisteria
 ```
 
+
+## CI 与 Release 自动化
+
+- 每次 push / PR：Windows MSVC 与 Linux X11 双矩阵构建，并运行全部 CTest。
+- 推送 `v*` 标签：自动构建 Windows zip 与 Linux tar.gz SDK 包，并发布到 GitHub Release。
+
+Workflow 定义：`.github/workflows/ci.yml`、`.github/workflows/release.yml`。
 ## 演示资产
 
 仓库不分发 `assets/models/` 与 `assets/motions/` 下的 PMX/VMD 文件（版权与体积原因）。默认角色模型、动作和场景模型需自行准备：
