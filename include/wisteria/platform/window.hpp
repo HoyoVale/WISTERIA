@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 #include "wisteria/scene/behaviour.hpp"
 #include "wisteria/platform/input.hpp"
 #include "wisteria/rendering/graphics_context.hpp"

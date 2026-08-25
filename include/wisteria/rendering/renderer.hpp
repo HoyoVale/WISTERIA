@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 
 #include "wisteria/rendering/framebuffer.hpp"
 #include "wisteria/animation/morph.hpp"

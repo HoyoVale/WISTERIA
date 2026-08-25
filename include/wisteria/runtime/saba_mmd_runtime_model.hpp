@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 
 #include "wisteria/runtime/mmd_runtime_model.hpp"
 #include "wisteria/runtime/determinism.hpp"

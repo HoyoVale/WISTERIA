@@ -1,4 +1,7 @@
 #pragma once
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 
 #include "wisteria/animation/pose_buffer.hpp"
 #include "wisteria/animation/morph.hpp"

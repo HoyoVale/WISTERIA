@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 #include "wisteria/core/asset_paths.hpp"
 #include "wisteria/rendering/pipeline_variant.hpp"
 #include "wisteria/rendering/shader_path.hpp"
