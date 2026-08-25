@@ -3,7 +3,10 @@ cmake_minimum_required(VERSION 3.20)
 set(CMAKE_MSVC_RUNTIME_LIBRARY
     "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-project(FLORA LANGUAGES C CXX)
+project(FLORA VERSION 1.1.0 LANGUAGES C CXX)
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # The native C ABI library is a shared object on Linux/macOS; every static
 # dependency it links must be compiled with position-independent code.
@@ -51,10 +54,12 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# 不编译 GLFW 自带的文档、测试和示例
+# 不编译 GLFW 自带的文档、测试、示例和安装规则。WISTERIA SDK 只导出
+# wisteria_native，不把 GLFW 作为外部 SDK 依赖暴露。
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(third-party/glfw)
 
@@ -403,22 +408,80 @@ if(WISTERIA_BUILD_NATIVE)
         src/native/native_window.cpp
         src/native/windows_path.cpp
     )
-    target_include_directories(wisteria_native PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    add_library(wisteria_sdk_headers INTERFACE)
+    target_include_directories(wisteria_sdk_headers INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     )
+
     target_compile_features(wisteria_native PRIVATE cxx_std_20)
+    target_link_libraries(wisteria_native PUBLIC wisteria_sdk_headers)
     target_link_libraries(wisteria_native PRIVATE
         wisteria_core
         wisteria_platform
     )
     target_compile_definitions(wisteria_native PRIVATE WISTERIA_NATIVE_BUILD)
     set_target_properties(wisteria_native PROPERTIES
+        EXPORT_NAME native
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN YES
+    )
+    set_target_properties(wisteria_sdk_headers PROPERTIES
+        EXPORT_NAME sdk_headers
     )
     if(MSVC)
         target_compile_options(wisteria_native PRIVATE /utf-8 /FS)
     endif()
+
+    # B1: installable stable C ABI SDK. wisteria_native links its engine
+    # dependencies privately, so the exported package only exposes the shared
+    # library and the public headers below.
+    install(TARGETS wisteria_native wisteria_sdk_headers
+        COMPONENT wisteria-sdk
+        EXPORT WisteriaTargets
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+
+    install(FILES
+        include/wisteria/native/wisteria_stable_runtime.h
+        include/wisteria/native/wisteria_stable_render.h
+        include/wisteria/native/wisteria_native.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wisteria/native
+        COMPONENT wisteria-sdk
+    )
+    install(FILES
+        include/wisteria/core/version.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wisteria/core
+        COMPONENT wisteria-sdk
+    )
+
+    install(EXPORT WisteriaTargets
+        FILE WisteriaTargets.cmake
+        NAMESPACE Wisteria::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Wisteria
+        COMPONENT wisteria-sdk
+    )
+
+    configure_package_config_file(
+        cmake/WisteriaConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/WisteriaConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Wisteria
+    )
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/WisteriaConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/WisteriaConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/WisteriaConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Wisteria
+        COMPONENT wisteria-sdk
+    )
+
 endif()
 
 # application
