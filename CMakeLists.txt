@@ -768,6 +768,23 @@ if(BUILD_TESTING)
     set_tests_properties(wisteria.stable-abi-ctypes PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+
+    # B1: installed SDK consumer smoke. Runs cmake --install into an
+    # isolated prefix, configures the pure-C consumer project with
+    # find_package(Wisteria), builds it and executes it.
+    add_test(
+        NAME wisteria.sdk-install-consumer
+        COMMAND ${CMAKE_COMMAND}
+            -DWISTERIA_BINARY_DIR=${CMAKE_BINARY_DIR}
+            -DWISTERIA_CONFIG=$<CONFIG>
+            -DWISTERIA_GENERATOR=${CMAKE_GENERATOR}
+            -DWISTERIA_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk_consumer/run_install_test.cmake
+    )
+    set_tests_properties(wisteria.sdk-install-consumer PROPERTIES
+        TIMEOUT 300
+    )
+
     if(WISTERIA_TEST_FULL_ASSETS)
         add_test(
             NAME wisteria.stable-checkpoint-cross-process-full
