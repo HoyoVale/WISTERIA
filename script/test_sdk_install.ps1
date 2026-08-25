@@ -17,12 +17,15 @@ if ([string]::IsNullOrWhiteSpace($BuildPath)) {
 $BuildPath = [System.IO.Path]::GetFullPath($BuildPath)
 
 if ([string]::IsNullOrWhiteSpace($CMakePath)) {
-    $CMakeCommand = Get-Command cmake.exe -ErrorAction SilentlyContinue
+    $CMakeCommand = Get-Command cmake -ErrorAction SilentlyContinue
+    if ($null -eq $CMakeCommand) {
+        $CMakeCommand = Get-Command cmake.exe -ErrorAction SilentlyContinue
+    }
     if ($null -ne $CMakeCommand) {
         $CMakePath = $CMakeCommand.Source
     }
     else {
-        $CMakePath = 'C:\Program Files\CMake\bin\cmake.exe'
+        throw '找不到 CMake，请通过 -CMakePath 指定路径。'
     }
 }
 
@@ -88,10 +91,18 @@ if ([string]::IsNullOrWhiteSpace($Consumer)) {
 }
 
 Write-Host "正在运行 SDK 消费测试..." -ForegroundColor Cyan
-# Windows 上共享库位于 <prefix>/bin，运行消费者前先加入 PATH。
-$InstallBin = Join-Path $InstallPrefix 'bin'
-if (Test-Path -LiteralPath $InstallBin -PathType Container) {
-    $env:PATH = "$InstallBin;$env:PATH"
+# 运行消费者前把共享库目录加入运行时搜索路径。
+if ($env:OS -eq 'Windows_NT') {
+    $InstallBin = Join-Path $InstallPrefix 'bin'
+    if (Test-Path -LiteralPath $InstallBin -PathType Container) {
+        $env:PATH = "$InstallBin;$env:PATH"
+    }
+}
+else {
+    $InstallLib = Join-Path $InstallPrefix 'lib'
+    if (Test-Path -LiteralPath $InstallLib -PathType Container) {
+        $env:LD_LIBRARY_PATH = "$InstallLib`:$env:LD_LIBRARY_PATH"
+    }
 }
 & $Consumer
 if ($LASTEXITCODE -ne 0) {
