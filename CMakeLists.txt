@@ -414,6 +414,15 @@ if(WISTERIA_BUILD_NATIVE)
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     )
 
+    # B3a: header-only C++ RAII wrappers over the stable C ABI. No separate
+    # compiled library and no third-party type leaks; consumers still link
+    # Wisteria::cpp -> Wisteria::native.
+    add_library(wisteria_sdk_cpp INTERFACE)
+    target_link_libraries(wisteria_sdk_cpp INTERFACE
+        wisteria_native
+        wisteria_sdk_headers
+    )
+
     target_compile_features(wisteria_native PRIVATE cxx_std_20)
     target_link_libraries(wisteria_native PUBLIC wisteria_sdk_headers)
     target_link_libraries(wisteria_native PRIVATE
@@ -429,6 +438,9 @@ if(WISTERIA_BUILD_NATIVE)
     set_target_properties(wisteria_sdk_headers PROPERTIES
         EXPORT_NAME sdk_headers
     )
+    set_target_properties(wisteria_sdk_cpp PROPERTIES
+        EXPORT_NAME cpp
+    )
     if(MSVC)
         target_compile_options(wisteria_native PRIVATE /utf-8 /FS)
     endif()
@@ -436,7 +448,7 @@ if(WISTERIA_BUILD_NATIVE)
     # B1: installable stable C ABI SDK. wisteria_native links its engine
     # dependencies privately, so the exported package only exposes the shared
     # library and the public headers below.
-    install(TARGETS wisteria_native wisteria_sdk_headers
+    install(TARGETS wisteria_native wisteria_sdk_headers wisteria_sdk_cpp
         COMPONENT wisteria-sdk
         EXPORT WisteriaTargets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -456,6 +468,11 @@ if(WISTERIA_BUILD_NATIVE)
         include/wisteria/core/version.hpp
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wisteria/core
         COMPONENT wisteria-sdk
+    )
+    install(DIRECTORY include/wisteria/sdk
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wisteria
+        COMPONENT wisteria-sdk
+        FILES_MATCHING PATTERN "*.hpp"
     )
 
     install(EXPORT WisteriaTargets
@@ -783,6 +800,7 @@ if(BUILD_TESTING)
     )
     set_tests_properties(wisteria.sdk-install-consumer PROPERTIES
         TIMEOUT 300
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
     if(WISTERIA_TEST_FULL_ASSETS)

@@ -5,10 +5,12 @@
 # Imported targets:
 #   Wisteria::native        shared library exporting the stable C ABI
 #   Wisteria::sdk_headers   install-tree include directories
+#   Wisteria::cpp           header-only C++ RAII wrappers over the C ABI
 #
 # The stable headers are:
 #   wisteria/native/wisteria_stable_runtime.h
 #   wisteria/native/wisteria_stable_render.h
+#   wisteria/sdk/wisteria_sdk.hpp
 #
 # wisteria/native/wisteria_native.h is the legacy v0.7 surface and remains
 # experimental; consumers should prefer the stable headers above.
