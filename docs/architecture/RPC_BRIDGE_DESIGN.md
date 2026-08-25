@@ -64,7 +64,7 @@ hello 是脆弱点——启动期日志最容易漏配 sink。
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"model.load","params":{"path":"C:/x.pmx"}}
-{"jsonrpc":"2.0","id":1,"result":{"modelHandle":42}}
+{"jsonrpc":"2.0","id":1,"result":{"modelHandle":"42"}}
 {"jsonrpc":"2.0","id":1,"error":{"code":-33001,"message":"model load failed","data":{"status":"INVALID_ARGUMENT","detail":"file not found"}}}
 {"jsonrpc":"2.0","method":"window.closed","params":{"window":"42"}}
 ```
@@ -105,10 +105,10 @@ R1.2 定义保证）。
 ### 1.7 传输层健壮性（新增）
 
 ```text
-Windows stdio 二进制模式：
-  MSVC CRT 默认文本模式会把 stdout 的 \n 转成 \r\n；桥接必须
-  _setmode(_fileno(stdout)/_fileno(stdin), _O_BINARY)，
-  或 SDK 行解析容忍 \r\n（契约里定死一种，二选一）
+Windows stdio 二进制模式（冻结，外部复审 2026-08-12）：
+  引擎 MUST _setmode(_fileno(stdin)/_fileno(stdout), _O_BINARY)；
+  wire 定界符只允许 LF(0x0A)；SDK parser MAY 防御性容忍 CRLF，
+  但引擎 MUST 只发 LF
 
 id 策略：
   客户端 id 单调递增；未知 id 的响应记录并忽略；
@@ -177,16 +177,18 @@ legacy（实验性）。两个选择：
 `timeline.prepareFrameZero`）；分组只是组织视图，不是命名层级。
 
 ```text
-system.*      hello / listMethods / describeMethod / shutdown
+system.*      listMethods / describeMethod / shutdown
               + system.ping（健康检查，AI 调试/保活用）
+              （启动通知是 engine.hello，不是 system.hello）
 context.*     create / destroy / lastError
 model.*       headless 模型面（可选/别名；v1 以 scene/entity 为主面）
 physics.*     setSettings / reset / capabilities
 scene.*       create / destroy / loadModel / instantiate / addLight / addPrimitive
 entity.*      transform / visible / morph / destroy
 camera.*      set / get
-window.*      create / createHidden / render / shouldClose /
-              captureFrame（readPixels 已有 C 函数，v1 可选）
+window.*      create / createHidden / render / shouldClose
+              （captureFrame 不在 v1：read_pixels 留 legacy，
+               像素走未来数据通道）
 timeline.*    prepareFrameZero / stepExact / replayExact / setPreviewFrame
               （映射 stable：wisteria_stable_entity_*，确定性回放核心）
 checkpoint.*  create / restore / replay（复用 R1.2C）
@@ -271,7 +273,8 @@ stderr 一律转发日志，绝不参与协议。
 多 Context（2026-08-12 用户拍板）：支持多个 context，语义镜像 C ABI。
 
 ```text
-hello 后桥接自动创建默认 context
+进程启动时先创建默认 context，成功后才发 engine.hello{defaultContext}；
+失败不发 hello、stderr 记录、exit non-zero
 方法参数里 context 可选：省略 → 默认 context；显式 → 指定 context
 context.create 返回新句柄；context.destroy 销毁指定 context
 默认 context 禁止销毁（INVALID_STATE），显式 context 可销毁
@@ -527,6 +530,8 @@ CI 归属：本地四矩阵 + npm test；.github 未配时文档注明手动门�
 12. 多窗口：v1 已支持（§2.4 / §5.2.20 已写，2026-08-12 拍板）
 13. 多 context：v1 已支持（§3.2 / §5.2.21 已写，2026-08-12 拍板）
 14. 客户端通知：v1 客户端不发通知（§1.1 已写）
+15. P0 Entity 双世界：stable/legacy 实体句柄不互用，
+    方案 A/B 待拍板（见 RPC_BRIDGE_CONTRACT.md §11.5）
 ```
 
 ## 7. 一轮审查记录（2026-08-12）
