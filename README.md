@@ -18,7 +18,6 @@ v1.0.0 的交付形态是可运行的技术演示 + 可复用运行时/渲染核
 - **实验 C ABI**：`wisteria_native` 提供 legacy v0.7 与 stable runtime/render 接口。
 - **测试**：12 个 CTest 目标覆盖单元、运行时、集成、渲染、C ABI 与跨进程检查点。
 
-
 ## 演示截图
 
 默认 MMD 演示：
@@ -28,6 +27,7 @@ v1.0.0 的交付形态是可运行的技术演示 + 可复用运行时/渲染核
 `--ground-lab` 地面阴影测试场景：
 
 ![ground-lab](docs/images/ground-lab.png)
+
 ## 构建与运行
 
 要求：CMake 3.20+、Visual Studio 2022（Windows），或支持 C++20 的 Linux 工具链。
