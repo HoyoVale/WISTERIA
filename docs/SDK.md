@@ -131,6 +131,14 @@ int main(void)
 .\run.ps1 sdk
 ```
 
+生成 SDK zip 包：
+
+```powershell
+.\run.ps1 package
+```
+
+产物位于 `artifacts/sdk/wisteria-sdk-<version>-<platform>.zip`。
+
 等价步骤：
 
 ```powershell

@@ -38,6 +38,7 @@ Windows PowerShell：
 .\run.ps1 test    # 配置、编译并运行全部测试
 .\run.ps1 run     # 配置、编译并启动默认 MMD 演示
 .\run.ps1 sdk     # 编译、安装 Stable C ABI SDK 并运行消费测试
+.\run.ps1 package # 编译并生成 Stable C ABI SDK zip 包
 ```
 
 Linux：
