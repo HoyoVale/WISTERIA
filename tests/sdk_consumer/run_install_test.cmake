@@ -168,6 +168,12 @@ if(NOT _cpp_consumer)
     message(FATAL_ERROR "SDK C++ consumer executable was not found")
 endif()
 
+if(WIN32)
+    # GitHub Windows runners have no OpenGL 3.3 headless provider. The C++
+    # consumer still verifies context/entity/checkpoint; only the optional
+    # render step is skipped there. Linux remains strict.
+    set(ENV{WISTERIA_SDK_ALLOW_RENDER_SKIP} "1")
+endif()
 execute_process(
     COMMAND "${_cpp_consumer}"
         "${WISTERIA_SOURCE_DIR}/tests/data/animated_triangle.gltf"

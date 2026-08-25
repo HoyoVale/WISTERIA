@@ -36,6 +36,37 @@
 namespace
 {
 
+#if defined(WISTERIA_TEST_NATIVE_ABI)
+bool RenderSessionUnavailable(
+    std::uint32_t status,
+    WisteriaStableContext context
+)
+{
+    if (std::getenv("WISTERIA_ALLOW_RENDER_SKIP") == nullptr)
+        return false;
+    if (status != WISTERIA_STATUS_INITIALIZATION)
+        return false;
+    const char* detail = wisteria_stable_last_error(context);
+    return detail != nullptr &&
+        std::strstr(detail, "no headless context provider") != nullptr;
+}
+
+void RequireStableRenderSession(
+    std::uint32_t status,
+    WisteriaStableContext context,
+    WisteriaRenderSession session,
+    const char* message
+)
+{
+    if (RenderSessionUnavailable(status, context))
+        SkipTest("headless render provider unavailable in this environment");
+    Require(
+        status == WISTERIA_STATUS_OK && session != 0U,
+        message
+    );
+}
+#endif
+
 bool HasRenderedRgb(const wisteria::Rgba8Frame& frame)
 {
     // Offline clear color is {0, 0, 0, 1}, so the alpha byte alone can
@@ -12282,12 +12313,16 @@ void TestStableRenderAbiGeneric()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK && renderSession != 0U,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "stable render session create failed"
     );
 
@@ -12546,12 +12581,16 @@ void TestR19StableRenderOwnershipLifecycle()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession firstSession = 0U;
-    Require(
+    const std::uint32_t firstSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &firstSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        firstSessionStatus,
+        context,
+        firstSession,
         "ownership first session create failed"
     );
 
@@ -12600,12 +12639,16 @@ void TestR19StableRenderOwnershipLifecycle()
         ) == WISTERIA_STATUS_OK,
         "ownership size-query session destroy failed"
     );
-    Require(
+    const std::uint32_t firstSessionRecreateStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &firstSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        firstSessionRecreateStatus,
+        context,
+        firstSession,
         "ownership session recreate failed"
     );
     const std::uint64_t fillBytes = 32U * 32U * 4U;
@@ -12776,12 +12819,16 @@ void TestR19StableStaticCapabilitiesAndUnicodePath()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "static render session create failed"
     );
     WisteriaRenderCameraV1 camera;
@@ -13011,12 +13058,16 @@ void TestR19StableStatusSemantics()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "status session create failed"
     );
     WisteriaRenderCameraV1 camera;
@@ -13117,12 +13168,16 @@ void TestR19StableRenderSequenceFailureState()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "failure session create failed"
     );
     WisteriaRenderCameraV1 camera;
@@ -13203,12 +13258,16 @@ void TestR19GlfwLifetimeSharedWithApplication()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "glfw-lifetime session create failed"
     );
 
@@ -13309,12 +13368,16 @@ void TestR19StableRenderPixelsMatchEngine()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "pixels stable session create failed"
     );
     std::vector<std::uint8_t> stableBytes(

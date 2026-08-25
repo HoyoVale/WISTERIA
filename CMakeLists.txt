@@ -565,6 +565,11 @@ if(BUILD_TESTING)
         set_tests_properties(wisteria.${TIER} PROPERTIES
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         )
+        if(WIN32 AND TIER STREQUAL "integration")
+            set_tests_properties(wisteria.integration PROPERTIES
+                ENVIRONMENT "WISTERIA_ALLOW_RENDER_SKIP=1"
+            )
+        endif()
     endforeach()
     # The linked-body A/B semantic test drives Bullet directly (the engine
     # wrappers intentionally hide bt* from public headers).
@@ -772,6 +777,11 @@ if(BUILD_TESTING)
     )
     # R1.9 Phase 0E: Python ctypes is the normative stable-ABI acceptance
     # (Decision 5). Pure standard-library ctypes; no pip dependencies.
+    if(WIN32)
+        set(_wisteria_stable_abi_ctypes_extra --allow-render-skip)
+    else()
+        set(_wisteria_stable_abi_ctypes_extra)
+    endif()
     add_test(
         NAME wisteria.stable-abi-ctypes
         COMMAND ${Python3_EXECUTABLE}
@@ -781,6 +791,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/animated_triangle.gltf
             --static-model
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/pbr_quad.gltf
+            ${_wisteria_stable_abi_ctypes_extra}
     )
     set_tests_properties(wisteria.stable-abi-ctypes PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

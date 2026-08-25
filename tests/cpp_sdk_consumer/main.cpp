@@ -10,6 +10,7 @@
 #include "wisteria/sdk/wisteria_sdk.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -50,16 +51,34 @@ int main(int argc, char* argv[])
 
             if (argc > 2 && std::string(argv[2]) == "render")
             {
-                wisteria::sdk::RenderSession session(context);
-                const std::vector<std::uint8_t> pixels =
-                    session.RenderOffline(
-                        entity,
-                        wisteria::sdk::RenderCamera{},
-                        64U,
-                        64U
-                    );
-                if (pixels.empty())
-                    throw std::runtime_error("offline render returned no pixels");
+                try
+                {
+                    wisteria::sdk::RenderSession session(context);
+                    const std::vector<std::uint8_t> pixels =
+                        session.RenderOffline(
+                            entity,
+                            wisteria::sdk::RenderCamera{},
+                            64U,
+                            64U
+                        );
+                    if (pixels.empty())
+                    {
+                        throw std::runtime_error(
+                            "offline render returned no pixels"
+                        );
+                    }
+                }
+                catch (const wisteria::sdk::StatusError& error)
+                {
+                    if (std::getenv("WISTERIA_SDK_ALLOW_RENDER_SKIP") ==
+                            nullptr ||
+                        error.Code() != WISTERIA_STATUS_INITIALIZATION)
+                    {
+                        throw;
+                    }
+                    std::cerr << "[SKIP] headless render provider "
+                                 "unavailable; render checks skipped\n";
+                }
             }
         }
 

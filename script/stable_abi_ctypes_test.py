@@ -25,6 +25,7 @@ import tempfile
 from pathlib import Path
 
 WISTERIA_STATUS_OK = 0
+WISTERIA_STATUS_INITIALIZATION = 5
 WISTERIA_STATUS_NOT_FOUND = 2
 WISTERIA_STATUS_UNSUPPORTED = 17
 
@@ -336,6 +337,11 @@ def main() -> int:
         default=Path("tests/data/pbr_quad.gltf"),
     )
     parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument(
+        "--allow-render-skip",
+        action="store_true",
+        help="skip render checks when no headless GL provider is available",
+    )
     args = parser.parse_args()
 
     check(
@@ -568,13 +574,26 @@ def main() -> int:
     session_options.struct_size = ctypes.sizeof(session_options)
     session_options.struct_version = 1
     render_session = U64(0)
-    check(
+    render_session_status = (
         abi.lib.wisteria_stable_render_session_create(
             context,
             ctypes.byref(session_options),
             ctypes.byref(render_session),
         )
-        == WISTERIA_STATUS_OK
+    )
+    if (
+        args.allow_render_skip
+        and render_session_status == WISTERIA_STATUS_INITIALIZATION
+    ):
+        print(
+            "[SKIP] headless render provider unavailable; "
+            "skipping render checks"
+        )
+        abi.lib.wisteria_stable_entity_destroy(context, generic_entity)
+        abi.lib.wisteria_stable_context_destroy(context)
+        return 0
+    check(
+        render_session_status == WISTERIA_STATUS_OK
         and render_session.value != 0,
         "render session create",
     )
