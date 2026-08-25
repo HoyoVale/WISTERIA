@@ -1,9 +1,6 @@
 # WISTERIA SDK
 
-v1.1.0 起，WISTERIA 提供可安装的 SDK，包含：
-
-- **Stable C ABI**：正式的跨语言二进制接口；
-- **C++ RAII 封装**：`wisteria/sdk/` 下 header-only 的类型安全包装，底层仍是 Stable C ABI。
+v1.1.0 起，WISTERIA 提供可安装的 SDK。v1.2.0 起额外提供 **C++ RAII 封装**：`wisteria/sdk/` 下 header-only 的类型安全包装，底层仍是 Stable C ABI。
 
 完整 C++ 引擎头文件（`Scene` / `Renderer` 等）仍作为源码级 API 供同源码树使用，不承诺二进制兼容。
 
@@ -108,7 +105,7 @@ int main(void)
 C++ 消费者链接 `Wisteria::cpp`：
 
 ```cmake
-find_package(Wisteria 1.1 CONFIG REQUIRED)
+find_package(Wisteria 1.2 CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE Wisteria::cpp)
 ```
 
@@ -146,7 +143,7 @@ int main()
 
 | 版本 | 含义 |
 | --- | --- |
-| 产品版本 `WISTERIA_VERSION_*` | 每次发布递增，当前 1.1.0 |
+| 产品版本 `WISTERIA_VERSION_*` | 每次发布递增，当前 1.2.0 |
 | Runtime C ABI `WISTERIA_STABLE_RUNTIME_ABI_VERSION` | 当前 1 |
 | Render C ABI `WISTERIA_STABLE_RENDER_ABI_VERSION` | 当前 1 |
 
