@@ -19,8 +19,10 @@ endforeach()
 
 set(_prefix "${WISTERIA_BINARY_DIR}/sdk-install-test")
 set(_consumer_build "${WISTERIA_BINARY_DIR}/sdk-consumer-test")
+set(_cpp_consumer_build "${WISTERIA_BINARY_DIR}/sdk-cpp-consumer-test")
 file(REMOVE_RECURSE "${_prefix}")
 file(REMOVE_RECURSE "${_consumer_build}")
+file(REMOVE_RECURSE "${_cpp_consumer_build}")
 
 set(_install_cmd
     "${CMAKE_COMMAND}"
@@ -112,4 +114,71 @@ if(NOT _consumer_result EQUAL 0)
     message(FATAL_ERROR "SDK consumer run failed (${_consumer_result})\n${_consumer_output}${_consumer_error}")
 endif()
 
+set(_cpp_configure_cmd
+    "${CMAKE_COMMAND}"
+    -S "${WISTERIA_SOURCE_DIR}/tests/cpp_sdk_consumer"
+    -B "${_cpp_consumer_build}"
+    "-DCMAKE_PREFIX_PATH=${_prefix}"
+)
+if(WISTERIA_GENERATOR)
+    list(APPEND _cpp_configure_cmd -G "${WISTERIA_GENERATOR}")
+endif()
+execute_process(
+    COMMAND ${_cpp_configure_cmd}
+    RESULT_VARIABLE _cpp_configure_result
+    OUTPUT_VARIABLE _cpp_configure_output
+    ERROR_VARIABLE _cpp_configure_error
+)
+if(NOT _cpp_configure_result EQUAL 0)
+    message(FATAL_ERROR "SDK C++ consumer configure failed (${_cpp_configure_result})\n${_cpp_configure_output}${_cpp_configure_error}")
+endif()
+
+set(_cpp_build_cmd
+    "${CMAKE_COMMAND}"
+    --build "${_cpp_consumer_build}"
+    --parallel
+)
+if(WISTERIA_CONFIG)
+    list(APPEND _cpp_build_cmd --config "${WISTERIA_CONFIG}")
+endif()
+execute_process(
+    COMMAND ${_cpp_build_cmd}
+    RESULT_VARIABLE _cpp_build_result
+    OUTPUT_VARIABLE _cpp_build_output
+    ERROR_VARIABLE _cpp_build_error
+)
+if(NOT _cpp_build_result EQUAL 0)
+    message(FATAL_ERROR "SDK C++ consumer build failed (${_cpp_build_result})\n${_cpp_build_output}${_cpp_build_error}")
+endif()
+
+set(_cpp_consumer_candidates
+    "${_cpp_consumer_build}/${WISTERIA_CONFIG}/wisteria_cpp_sdk_consumer.exe"
+    "${_cpp_consumer_build}/wisteria_cpp_sdk_consumer.exe"
+    "${_cpp_consumer_build}/${WISTERIA_CONFIG}/wisteria_cpp_sdk_consumer"
+    "${_cpp_consumer_build}/wisteria_cpp_sdk_consumer"
+)
+set(_cpp_consumer "")
+foreach(_candidate IN LISTS _cpp_consumer_candidates)
+    if(EXISTS "${_candidate}")
+        set(_cpp_consumer "${_candidate}")
+        break()
+    endif()
+endforeach()
+if(NOT _cpp_consumer)
+    message(FATAL_ERROR "SDK C++ consumer executable was not found")
+endif()
+
+execute_process(
+    COMMAND "${_cpp_consumer}"
+        "${WISTERIA_SOURCE_DIR}/tests/data/animated_triangle.gltf"
+        render
+    RESULT_VARIABLE _cpp_consumer_result
+    OUTPUT_VARIABLE _cpp_consumer_output
+    ERROR_VARIABLE _cpp_consumer_error
+)
+if(NOT _cpp_consumer_result EQUAL 0)
+    message(FATAL_ERROR "SDK C++ consumer run failed (${_cpp_consumer_result})\n${_cpp_consumer_output}${_cpp_consumer_error}")
+endif()
+
+message(STATUS "SDK install C++ consumer passed: ${_cpp_consumer_output}")
 message(STATUS "SDK install consumer passed: ${_consumer_output}")
