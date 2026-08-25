@@ -58,6 +58,7 @@ jobs:
             libxcursor-dev \
             libxi-dev \
             libgl1-mesa-dev \
+            libgl1-mesa-dri \
             libegl1-mesa-dev \
             xvfb
 
@@ -71,4 +72,7 @@ jobs:
         run: cmake --build build-linux --parallel
 
       - name: Test
-        run: xvfb-run -a ctest --test-dir build-linux --output-on-failure
+        run: |
+          LIBGL_ALWAYS_SOFTWARE=1 \
+          xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX +render" \
+            ctest --test-dir build-linux --output-on-failure
