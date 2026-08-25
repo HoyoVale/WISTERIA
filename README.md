@@ -37,6 +37,8 @@ Windows PowerShell：
 ```powershell
 .\run.ps1 test    # 配置、编译并运行全部测试
 .\run.ps1 run     # 配置、编译并启动默认 MMD 演示
+.\run.ps1 sdk     # 编译、安装 Stable C ABI SDK 并运行消费测试
+.\run.ps1 package # 编译并生成 Stable C ABI SDK zip 包
 ```
 
 Linux：
@@ -139,6 +141,7 @@ Esc         释放鼠标
 ```text
 docs/README.md                      文档总索引
 docs/ASSETS.md                      演示资产说明
+docs/SDK.md                         Stable C ABI SDK 使用文档
 docs/architecture/                  架构契约、设计、审计
 docs/validation/                    各阶段验证基线与收口报告
 RELEASE_NOTES.md                    v1.0.0 发布说明

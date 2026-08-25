@@ -1,0 +1,18 @@
+@PACKAGE_INIT@
+
+# WISTERIA stable C ABI SDK.
+#
+# Imported targets:
+#   Wisteria::native        shared library exporting the stable C ABI
+#   Wisteria::sdk_headers   install-tree include directories
+#
+# The stable headers are:
+#   wisteria/native/wisteria_stable_runtime.h
+#   wisteria/native/wisteria_stable_render.h
+#
+# wisteria/native/wisteria_native.h is the legacy v0.7 surface and remains
+# experimental; consumers should prefer the stable headers above.
+
+include("${CMAKE_CURRENT_LIST_DIR}/WisteriaTargets.cmake")
+
+check_required_components(Wisteria)

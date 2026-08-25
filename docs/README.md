@@ -19,6 +19,7 @@
 | --- | --- |
 | `FINAL_REPORT.md` | v1.0.0 最终收尾报告，项目全貌与后续路线 |
 | `ASSETS.md` | 演示资产准备、目录布局与授权提醒 |
+| `SDK.md` | Stable C ABI SDK 的安装、消费方式与版本规则 |
 | `architecture/PROJECT_LAYOUT.md` | 工程目录职责、模块依赖方向和 include 规范 |
 | `architecture/PHYSICS_LAYER_AUDIT.md` | 物理分层审计，Legacy path 与 Saba path 的边界 |
 | `architecture/R1_3_MMD_COMPAT_CONTRACT.md` | 当前 MMD 兼容策略的 Phase 0A 冻结契约 |

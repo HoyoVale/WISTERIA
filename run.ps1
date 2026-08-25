@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('run', 'build', 'compile', 'test', 'clean')]
+    [ValidateSet('run', 'build', 'compile', 'test', 'sdk', 'package', 'clean')]
     [string]$Action = 'run',
 
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
@@ -16,6 +16,8 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = $PSScriptRoot
 $BuildScript = Join-Path $ProjectRoot 'script/build.ps1'
 $ClearScript = Join-Path $ProjectRoot 'script/clear_build.ps1'
+$SdkTestScript = Join-Path $ProjectRoot 'script/test_sdk_install.ps1'
+$SdkPackageScript = Join-Path $ProjectRoot 'script/package_sdk.ps1'
 $BuildPath = Join-Path $ProjectRoot 'build'
 $ExecutableCandidates = @(
     (Join-Path $BuildPath "$Configuration/wisteria.exe"),
@@ -62,6 +64,18 @@ switch ($Action) {
 
     'test' {
         & $BuildScript -Action test -Configuration $Configuration
+    }
+
+    'sdk' {
+        & $ClearScript -BuildPath $BuildPath
+        & $BuildScript -Action compile -Configuration $Configuration
+        & $SdkTestScript -Configuration $Configuration -BuildPath $BuildPath
+    }
+
+    'package' {
+        & $ClearScript -BuildPath $BuildPath
+        & $BuildScript -Action compile -Configuration $Configuration
+        & $SdkPackageScript -Configuration $Configuration -BuildPath $BuildPath
     }
 
     'run' {
