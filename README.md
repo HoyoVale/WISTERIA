@@ -87,6 +87,7 @@ assets/motions/梦的翅膀/梦的翅膀camera.vmd  （可选）
 --model <pmx>       指定角色 PMX 路径
 --motion <vmd>      指定角色 VMD 路径
 --scene <pmx>       场景模式，加载舞台 PMX
+--gltf <glb>       通用 glTF/GLB 查看模式
 --ground-lab        固定相机地面 + 立方体阴影测试场景（无需外部资产）
 --alternate-model   使用备用内置模型 preset
 --frames <n>        精确运行 n 帧后退出（配合 --fixed-dt）
@@ -99,6 +100,7 @@ assets/motions/梦的翅膀/梦的翅膀camera.vmd  （可选）
 
 ```powershell
 .\run.ps1 run -ApplicationArguments '--scene'
+.\run.ps1 run -ApplicationArguments '--gltf tests/assets/models/Box.glb'
 .\run.ps1 run -ApplicationArguments '--alternate-model'
 .\run.ps1 run -ApplicationArguments '--ground-lab'
 .\run.ps1 run -ApplicationArguments '--frames 180 --fixed-dt 0.0166667'

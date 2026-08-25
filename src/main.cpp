@@ -121,6 +121,7 @@ void PrintHelp()
         << "  --model <pmx>       Override character PMX path\n"
         << "  --motion <vmd>      Override character VMD path\n"
         << "  --scene <pmx>       Enable scene mode and load a stage PMX\n"
+        << "  --gltf <glb>        Generic glTF/GLB viewer mode\n"
         << "  --ground-lab        Fixed-camera ground + cube render lab\n"
         << "  --alternate-model   Use the alternate built-in model preset\n"
         << "  --frames <n>        Run exactly n pull-model frames, then exit\n"
@@ -168,12 +169,27 @@ int main(int argumentCount, char* arguments[])
                 "--ground-lab cannot be combined with --scene"
             );
         }
+        const std::optional<std::filesystem::path> gltfPath =
+            PathArgument(argumentCount, arguments, "--gltf");
+        const bool gltfMode = gltfPath.has_value();
+        if (gltfMode && (groundLab || sceneMode))
+        {
+            throw std::invalid_argument(
+                "--gltf cannot be combined with --ground-lab or --scene"
+            );
+        }
         const std::optional<std::filesystem::path> modelPath =
             PathArgument(argumentCount, arguments, "--model");
         const std::optional<std::filesystem::path> motionPath =
             PathArgument(argumentCount, arguments, "--motion");
         const std::optional<std::filesystem::path> scenePath =
             PathArgument(argumentCount, arguments, "--scene");
+        if (gltfMode && (modelPath.has_value() || motionPath.has_value()))
+        {
+            throw std::invalid_argument(
+                "--gltf cannot be combined with --model or --motion"
+            );
+        }
 
         std::optional<std::size_t> frameLimit =
             PositiveSizeArgument(argumentCount, arguments, "--frames");
@@ -198,9 +214,11 @@ int main(int argumentCount, char* arguments[])
             .height = 720,
             .title = groundLab
                 ? "FLORAL WISTERIA - GROUND LAB"
-                : (sceneMode
-                    ? "FLORAL WISTERIA - MMD SCENE"
-                    : "FLORAL WISTERIA - MMD DREAM WINGS")
+                : (gltfMode
+                    ? "FLORAL WISTERIA - GLTF VIEWER"
+                    : (sceneMode
+                        ? "FLORAL WISTERIA - MMD SCENE"
+                        : "FLORAL WISTERIA - MMD DREAM WINGS"))
         });
         const std::shared_ptr<Scene> scene = application.CreateScene();
         if (groundLab)
@@ -208,6 +226,14 @@ int main(int argumentCount, char* arguments[])
             SetupGroundShadowLabScene(
                 *scene,
                 application.GetResources()
+            );
+        }
+        else if (gltfMode)
+        {
+            SetupGenericGltfDemoScene(
+                *scene,
+                application.GetResources(),
+                *gltfPath
             );
         }
         else
@@ -227,7 +253,7 @@ int main(int argumentCount, char* arguments[])
         FreeCameraControllerSettings cameraSettings;
         cameraSettings.moveSpeed = groundLab
             ? 6.0f
-            : (sceneMode ? 12.0f : 2.5f);
+            : (gltfMode ? 3.0f : (sceneMode ? 12.0f : 2.5f));
         windowManager.EnableFreeCameraController(
             primaryWindow,
             cameraSettings

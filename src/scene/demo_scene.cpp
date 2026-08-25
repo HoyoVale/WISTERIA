@@ -430,6 +430,67 @@ void SetupGroundShadowLabScene(Scene& scene, ResourceManager& resources)
               << std::endl;
 }
 
+void SetupGenericGltfDemoScene(
+    Scene& scene,
+    ResourceManager& resources,
+    std::filesystem::path modelPath
+)
+{
+    if (modelPath.empty() ||
+        !std::filesystem::is_regular_file(modelPath))
+    {
+        throw std::invalid_argument(
+            "glTF demo requires an existing model file"
+        );
+    }
+
+    EnvironmentMap* existingEnvironment =
+        resources.FindEnvironment("defaultSky");
+    EnvironmentMap& environment = existingEnvironment != nullptr
+        ? *existingEnvironment
+        : resources.CreateEnvironment(
+            "defaultSky",
+            EnvironmentMapData::ProceduralSky()
+        );
+    scene.SetEnvironment(&environment);
+
+    (void)ConfigureCharacterLighting(scene);
+    AddDemoGround(scene, resources);
+
+    const std::u8string fileName = modelPath.filename().u8string();
+    const std::string resourceName(
+        reinterpret_cast<const char*>(fileName.data()),
+        fileName.size()
+    );
+    ModelAsset& model = resources.LoadModel(
+        "gltf::" + resourceName,
+        modelPath
+    );
+    Entity& entity = scene.InstantiateModel(
+        model,
+        Transform(
+            glm::vec3(0.0f, 0.0f, 0.1f),
+            glm::vec3(0.0f),
+            glm::vec3(1.0f)
+        )
+    );
+    MarkModelAsGroundShadowReceiver(model);
+
+    scene.ActiveCamera().SetParam(CameraParam{
+        .Position = {3.0f, 2.0f, 5.0f},
+        .Target = {0.0f, 1.0f, 0.0f},
+        .Up = {0.0f, 1.0f, 0.0f}
+    });
+
+    const ModelInstance* instance = entity.TryGetModelInstance();
+    const IModelRuntimeDriver* runtime =
+        instance != nullptr ? instance->TryGetRuntime() : nullptr;
+    std::cout << "[INFO] GLTF demo: meshes=" << model.Parts().size()
+              << " backend="
+              << (runtime != nullptr ? runtime->BackendName() : "static")
+              << " model=" << ToNarrowUtf8(modelPath) << std::endl;
+}
+
 void SetupSabaMmdDemoScene(
     Scene& scene,
     ResourceManager& resources,
