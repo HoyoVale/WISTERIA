@@ -7,13 +7,16 @@
 ### SDK 内容
 
 - `Wisteria::native`：共享库，导出 stable runtime / render C ABI。
+- `Wisteria::cpp`：header-only C++ RAII 封装（Context / Entity / Checkpoint / RenderSession）。
 - 公共头文件：
   - `wisteria/native/wisteria_stable_runtime.h`（runtime ABI v1）
   - `wisteria/native/wisteria_stable_render.h`（render ABI v1）
   - `wisteria/native/wisteria_native.h`（legacy v0.7，experimental）
   - `wisteria/core/version.hpp`
+  - `wisteria/sdk/`：C++ RAII 封装头文件
 - CMake package：`find_package(Wisteria 1.1 CONFIG REQUIRED)`。
 - 纯 C 消费测试：`tests/sdk_consumer/`，并已接入 CTest。
+- C++ 消费测试：`tests/cpp_sdk_consumer/`，并已接入 CTest。
 
 ### 使用
 
@@ -26,7 +29,7 @@
 
 ### 已知边界
 
-- C++ 头文件仍为源码级 API，不承诺二进制兼容。
+- `wisteria/sdk/` 之外的 C++ 引擎头文件仍为源码级 API，不承诺二进制兼容。
 - `wisteria_core` / `wisteria_platform` 的 install/export 尚未提供。
 - legacy `wisteria_native.h` v0.7 不参与稳定承诺。
 

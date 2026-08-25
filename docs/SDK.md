@@ -1,6 +1,11 @@
 # WISTERIA SDK
 
-v1.1.0 起，WISTERIA 提供可安装的 SDK。当前阶段只正式发布 **Stable C ABI**；C++ 头文件作为源码级 API 供同源码树/后续版本使用，不承诺二进制兼容。
+v1.1.0 起，WISTERIA 提供可安装的 SDK，包含：
+
+- **Stable C ABI**：正式的跨语言二进制接口；
+- **C++ RAII 封装**：`wisteria/sdk/` 下 header-only 的类型安全包装，底层仍是 Stable C ABI。
+
+完整 C++ 引擎头文件（`Scene` / `Renderer` 等）仍作为源码级 API 供同源码树使用，不承诺二进制兼容。
 
 ## 1. SDK 组成
 
@@ -18,10 +23,17 @@ v1.1.0 起，WISTERIA 提供可安装的 SDK。当前阶段只正式发布 **Sta
 │       └── WisteriaTargets.cmake
 └── include/wisteria/
     ├── core/version.hpp
-    └── native/
-        ├── wisteria_stable_runtime.h   正式 ABI：runtime v1
-        ├── wisteria_stable_render.h    正式 ABI：render v1
-        └── wisteria_native.h           legacy v0.7（experimental）
+    ├── native/
+    │   ├── wisteria_stable_runtime.h   正式 ABI：runtime v1
+    │   ├── wisteria_stable_render.h    正式 ABI：render v1
+    │   └── wisteria_native.h           legacy v0.7（experimental）
+    └── sdk/
+        ├── wisteria_sdk.hpp            C++ RAII 封装总入口
+        ├── context.hpp
+        ├── entity.hpp
+        ├── checkpoint.hpp
+        ├── render_session.hpp
+        └── status.hpp
 ```
 
 CMake imported targets：
@@ -29,6 +41,7 @@ CMake imported targets：
 ```cmake
 Wisteria::native        共享库
 Wisteria::sdk_headers   公共 include 目录
+Wisteria::cpp           header-only C++ RAII 封装
 ```
 
 ## 2. 消费方式
@@ -90,13 +103,46 @@ int main(void)
 
 完整可编译版本：`tests/sdk_consumer/main.c`。
 
-## 4. 线程与生命周期
+## 4. 使用 C++ RAII 封装
+
+C++ 消费者链接 `Wisteria::cpp`：
+
+```cmake
+find_package(Wisteria 1.1 CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE Wisteria::cpp)
+```
+
+最小示例：
+
+```cpp
+#include "wisteria/sdk/wisteria_sdk.hpp"
+
+int main()
+{
+    wisteria::sdk::Context context;
+    const auto abi = context.RuntimeAbiVersion();
+    return abi == WISTERIA_STABLE_RUNTIME_ABI_VERSION ? 0 : 1;
+}
+```
+
+提供的封装：
+
+| 类 | 说明 |
+| --- | --- |
+| `Context` | Context RAII、ABI 查询、last_error |
+| `Entity` | 模型实体、morph override、motion、精确步进 |
+| `Checkpoint` | 快照创建/恢复/二进制序列化 |
+| `RenderSession` | 单帧离线渲染与帧序列 |
+| `StatusError` | 携带 stable status code 的异常 |
+
+封装层是 header-only 的，不新增二进制 ABI；兼容性仍由 Stable C ABI 契约管理。
+## 5. 线程与生命周期
 
 - `WisteriaStableContext` 是 creator-thread-affine：同一 Context 的所有调用必须发生在创建它的线程上。这是调用方前置条件，v1 不做运行时线程校验。
 - 状态码是权威结果；`wisteria_stable_last_error` 是 best-effort 的 sticky 诊断文本，成功的调用不会清空它。
 - 可扩展结构体都带 `struct_size` / `struct_version`。调用方必须显式填充，库只识别已知版本。
 
-## 5. 版本规则
+## 6. 版本规则
 
 | 版本 | 含义 |
 | --- | --- |
@@ -110,7 +156,7 @@ int main(void)
 - 产品版本可以上升，而 C ABI 版本保持不变。
 - legacy `wisteria_native.h` v0.7 不参与稳定承诺。
 
-## 6. 平台
+## 7. 平台
 
 | 平台 | 状态 |
 | --- | --- |
@@ -118,12 +164,13 @@ int main(void)
 | Linux / GCC / Clang | Supported（使用 `build_linux.sh` 构建） |
 | WSLg / llvmpipe | Supported fallback |
 
-## 7. 与 C++ 头文件的关系
+## 8. 与 C++ 头文件的关系
 
+- `include/wisteria/sdk/` 是正式发布的 header-only C++ RAII 封装，ABI 兼容性由 Stable C ABI 保证。
 - `include/wisteria/` 下的 C++ 头文件是源码级 API，随版本可能发生源码不兼容调整；不保证跨版本二进制兼容。
-- C++ SDK 的正式打包（`wisteria_core` / `wisteria_platform` 的 install/export）计划在后续版本发布。
+- `wisteria_core` / `wisteria_platform` 的完整 C++ 引擎库 install/export 计划在后续版本发布。
 
-## 8. 验证
+## 9. 验证
 
 一键构建、安装并运行消费测试：
 
