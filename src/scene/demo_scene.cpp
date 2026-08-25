@@ -67,6 +67,32 @@ std::string ToNarrowUtf8(const std::filesystem::path& path)
     );
 }
 
+void ValidateDemoModelFile(
+    const std::filesystem::path& path,
+    bool usedDefaultPath
+)
+{
+    if (std::filesystem::is_regular_file(path))
+        return;
+
+    std::string message =
+        "Demo model file not found: " + ToNarrowUtf8(path) + "\n";
+    if (usedDefaultPath)
+    {
+        message +=
+            "The repository does not ship demo models or motions.\n"
+            "Prepare them first (see docs/ASSETS.md):\n"
+            "  .\\script\\setup_demo_assets.ps1 -SourceRoot <assets-source>\n"
+            "or start a dependency-free scene instead:\n"
+            "  .\\run.ps1 run -ApplicationArguments '--ground-lab'";
+    }
+    else
+    {
+        message += "Check the --model / --scene path and try again.";
+    }
+    throw std::runtime_error(message);
+}
+
 DirectionalLight& ConfigureCharacterLighting(Scene& scene)
 {
     // Main directional light also drives the CSM shadow map and the MMD
@@ -427,15 +453,20 @@ void SetupSabaMmdDemoScene(
         );
     scene.SetEnvironment(&environment);
 
+    const bool usedDefaultModelPath = modelPath.empty();
     if (modelPath.empty())
         modelPath = DemoModelPath(alternateModel);
+    ValidateDemoModelFile(modelPath, usedDefaultModelPath);
     const std::u8string modelFileName = modelPath.filename().u8string();
     const std::string modelResourceName(
         reinterpret_cast<const char*>(modelFileName.data()),
         modelFileName.size()
     );
+    const bool usedDefaultScenePath = scenePath.empty();
     if (scenePath.empty())
         scenePath = DemoScenePath(alternateModel);
+    if (sceneMode)
+        ValidateDemoModelFile(scenePath, usedDefaultScenePath);
     const std::u8string sceneFileName = scenePath.filename().u8string();
     const std::string sceneResourceName(
         reinterpret_cast<const char*>(sceneFileName.data()),
@@ -478,8 +509,27 @@ void SetupSabaMmdDemoScene(
         // the composition is character + chessboard ground only.
         AddDemoGround(scene, resources);
     }
+    const bool usedDefaultMotionPath = motionPath.empty();
     if (motionPath.empty() && !sceneMode)
         motionPath = DemoDreamWingMotionPath();
+    if (!motionPath.empty() && !std::filesystem::is_regular_file(motionPath))
+    {
+        if (usedDefaultMotionPath)
+        {
+            std::cerr << "[WARN] Demo VMD not found, continuing without "
+                         "motion: "
+                      << ToNarrowUtf8(motionPath) << "\n"
+                      << "       Prepare assets with "
+                         "script\\setup_demo_assets.ps1 (docs/ASSETS.md).\n";
+            motionPath.clear();
+        }
+        else
+        {
+            throw std::runtime_error(
+                "Motion file not found: " + ToNarrowUtf8(motionPath)
+            );
+        }
+    }
     const std::filesystem::path cameraPath = DemoDreamWingCameraPath();
     SabaPhysicsSettings physicsSettings;
     if (physicsFps > 0.0f)
