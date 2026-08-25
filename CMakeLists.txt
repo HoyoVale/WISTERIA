@@ -424,6 +424,9 @@ endif()
 # application
 add_executable(wisteria src/main.cpp)
 target_link_libraries(wisteria PRIVATE wisteria_platform)
+if(MSVC)
+    target_compile_options(wisteria PRIVATE /utf-8 /FS)
+endif()
 
 # R1.3 trace tooling: JSONL writer/parser and the minimal diff CLI. The
 # runtime never performs trace I/O (contract §6.4); tooling lives here.
