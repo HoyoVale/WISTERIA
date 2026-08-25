@@ -1138,12 +1138,15 @@ enum WisteriaStatus wisteria_point_light_get(
     });
 }
 
+extern "C++"
+{
 namespace
 {
 bool ValidSpotCutoff(float inner, float outer)
 {
     return std::isfinite(inner) && std::isfinite(outer) &&
         inner >= 0.0f && outer > inner && outer <= 90.0f;
+}
 }
 }
 
@@ -1438,6 +1441,8 @@ enum WisteriaStatus wisteria_scene_set_environment(
     });
 }
 
+extern "C++"
+{
 namespace
 {
 DefaultModelData BuildGroundPlaneData(float size)
@@ -1479,6 +1484,7 @@ DefaultModelData BuildGroundPlaneData(float size)
     // Front face points +Y (see the ground winding regression).
     data.indices = {0U, 2U, 1U, 0U, 3U, 2U};
     return data;
+}
 }
 }
 
@@ -1606,6 +1612,8 @@ enum WisteriaStatus wisteria_scene_add_ground_plane(
     });
 }
 
+extern "C++"
+{
 namespace
 {
 enum WisteriaStatus AddPrimitiveEntity(
@@ -1664,6 +1672,8 @@ enum WisteriaStatus AddPrimitiveEntity(
         TrySetError(handle.get(), error.what());
         return WISTERIA_ERROR_INTERNAL;
     }
+
+}
 }
 }
 
