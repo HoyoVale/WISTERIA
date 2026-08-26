@@ -260,6 +260,7 @@ set(WISTERIA_ASSET_SOURCES
     src/assets/model_asset_bundle.cpp
     src/assets/pmx_parser.cpp
     src/assets/saba_mmd_importer.cpp
+    src/assets/vrm_parser.cpp
 )
 
 set(WISTERIA_PHYSICS_SOURCES
@@ -309,6 +310,7 @@ target_include_directories(wisteria_core
     PRIVATE
         ${WISTERIA_BULLET_ROOT}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/VRM.h
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -587,6 +589,28 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME wisteria.vrm-header-compile
         COMMAND wisteria_vrm_header_compile
+    )
+
+    # C5C: minimal VRM 1.0 fixture must parse through VRM.h.
+    add_executable(wisteria_vrm_parse_smoke
+        tests/vrm_parse_smoke.cpp
+    )
+    target_include_directories(wisteria_vrm_parse_smoke PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/VRM.h
+    )
+    target_link_libraries(wisteria_vrm_parse_smoke PRIVATE
+        wisteria_core
+    )
+    target_compile_features(wisteria_vrm_parse_smoke PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(wisteria_vrm_parse_smoke PRIVATE /utf-8)
+    endif()
+    add_test(NAME wisteria.vrm-parse-smoke
+        COMMAND wisteria_vrm_parse_smoke
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/minimal_vrm_1_0.glb
     )
 
     # The linked-body A/B semantic test drives Bullet directly (the engine
