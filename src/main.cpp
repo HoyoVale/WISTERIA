@@ -121,7 +121,7 @@ void PrintHelp()
         << "  --model <pmx>       Override character PMX path\n"
         << "  --motion <vmd>      Override character VMD path\n"
         << "  --scene <pmx>       Enable scene mode and load a stage PMX\n"
-        << "  --gltf <glb>        Generic glTF/GLB viewer mode\n"
+        << "  --gltf <glb|vrm>    Generic glTF/GLB/VRM viewer mode\n"
         << "  --ground-lab        Fixed-camera ground + cube render lab\n"
         << "  --alternate-model   Use the alternate built-in model preset\n"
         << "  --frames <n>        Run exactly n pull-model frames, then exit\n"
