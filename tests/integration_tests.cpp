@@ -67,6 +67,16 @@ void RequireStableRenderSession(
 }
 #endif
 
+void RequireHeadlessProvider(bool available, const char* message)
+{
+    if (!available &&
+        std::getenv("WISTERIA_ALLOW_RENDER_SKIP") != nullptr)
+    {
+        SkipTest("headless render provider unavailable in this environment");
+    }
+    Require(available, message);
+}
+
 bool HasRenderedRgb(const wisteria::Rgba8Frame& frame)
 {
     // Offline clear color is {0, 0, 0, 1}, so the alpha byte alone can
@@ -13401,7 +13411,7 @@ void TestR19StableRenderPixelsMatchEngine()
 
     // Engine path: ResourceManager + Scene::InstantiateModel + exact replay.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "pixels engine provider unavailable"
     );
@@ -13481,7 +13491,7 @@ void TestR2RenderDeviceFoundation()
     // wrong-device detection, invalid-shader rejection, and that the R1
     // engine path still renders through the new composition root.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2 provider unavailable"
     );
@@ -13597,7 +13607,7 @@ void TestR2RenderDeviceFoundation()
 
     // Wrong-device handle use is an engine contract violation (detected).
     auto secondProvider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         secondProvider != nullptr,
         "r2 second provider unavailable"
     );
@@ -13800,7 +13810,16 @@ void TestR2WindowedCapabilities()
     config.width = 64;
     config.height = 64;
     config.visible = false;
-    application.CreateWindow(config);
+    try
+    {
+        application.CreateWindow(config);
+    }
+    catch (const std::exception&)
+    {
+        if (std::getenv("WISTERIA_ALLOW_RENDER_SKIP") != nullptr)
+            SkipTest("headless render provider unavailable in this environment");
+        throw;
+    }
     const wisteria::RenderDeviceCapabilities& capabilities =
         application.GetRenderDevice().Capabilities();
     Require(
@@ -13820,7 +13839,7 @@ void TestR2MeshGpuRealizationSplit()
     // realization, so runtime-deformed geometry can never be shared between
     // ModelInstances referencing the same asset.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-mesh provider unavailable"
     );
@@ -13913,7 +13932,7 @@ void TestR2RenderResourceCache()
     // assets share one realization per device; instance clones never enter
     // the cache (runtime-deformed geometry stays instance-local).
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-cache provider unavailable"
     );
@@ -14061,7 +14080,7 @@ void TestR2RenderResourceCache()
     // through a second RenderDevice gets a distinct realization, even after
     // device A already attached its own.
     auto secondProvider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         secondProvider != nullptr,
         "r2-cache second provider unavailable"
     );
@@ -14123,7 +14142,7 @@ void TestR2EnvironmentGpuLifetime()
     // (separate share groups), not sibling contexts of one share group.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-env providers unavailable"
     );
@@ -14412,7 +14431,7 @@ void TestR2EnvironmentCacheIdentity()
     // drawSkybox must NOT affect identity; different devices never share.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-env-id providers unavailable"
     );
@@ -14562,7 +14581,7 @@ void TestR2MaterialPipelineVariant()
     // through PipelineVariantKey; shaderFilePath is a legacy override only
     // for PipelineVariant::Custom.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-material provider unavailable"
     );
@@ -14769,7 +14788,7 @@ void TestR2MaterialProgramRealization()
     // wrong-share-group creation rejection, and transactional attach.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-material-program providers unavailable"
     );
@@ -14903,7 +14922,7 @@ void TestR2ConstructionAndProvenanceClosure()
     //  3) unified SetRenderCache(nullptr) detach + A->nullptr->A rebind
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-closure providers unavailable"
     );
@@ -15098,7 +15117,7 @@ void TestR2InstanceLocalMeshOwnership()
     // and the realization remains intact.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-instance providers unavailable"
     );
@@ -15185,7 +15204,7 @@ void TestR2MaterialSubordinateTextureDetach()
     // textures, and cache.Clear() is not the final owner.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-material-detach providers unavailable"
     );
@@ -15243,7 +15262,7 @@ void TestR2MaterialSharedTextureIsolation()
     // GPU realization still dedups per device.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-texture-alias providers unavailable"
     );
@@ -16681,7 +16700,7 @@ void TestR2RenderPacketGraphExecution()
     };
 
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-graph-execution provider unavailable"
     );

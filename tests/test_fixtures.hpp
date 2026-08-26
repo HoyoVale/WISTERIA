@@ -88,9 +88,13 @@ void RequireFullAsset(std::string_view id)
     const std::filesystem::path path = FixturePath(id);
     if (std::filesystem::is_regular_file(path))
         return;
+    const std::u8string display = path.u8string();
     throw std::runtime_error(
-        "FULL_ASSETS fixture missing: " + std::string(id) +
-        " at " + path.string()
+        "FULL_ASSETS fixture missing: " + std::string(id) + " at " +
+        std::string(
+            reinterpret_cast<const char*>(display.data()),
+            display.size()
+        )
     );
 }
 
@@ -100,9 +104,13 @@ void RequireFullAssetDirectory(std::string_view id)
     const std::filesystem::path path = FixturePath(id);
     if (std::filesystem::is_directory(path))
         return;
+    const std::u8string display = path.u8string();
     throw std::runtime_error(
-        "FULL_ASSETS directory missing: " + std::string(id) +
-        " at " + path.string()
+        "FULL_ASSETS directory missing: " + std::string(id) + " at " +
+        std::string(
+            reinterpret_cast<const char*>(display.data()),
+            display.size()
+        )
     );
 }
 
@@ -111,10 +119,16 @@ void RequireFullAssetDirectory(std::string_view id)
 void RequireCoreAsset(std::string_view id)
 {
     const std::filesystem::path path = FixturePath(id);
+    if (std::filesystem::is_regular_file(path))
+        return;
+    const std::u8string display = path.u8string();
     Require(
-        std::filesystem::is_regular_file(path),
-        "core fixture missing: " + std::string(id) +
-            " at " + path.string()
+        false,
+        "core fixture missing: " + std::string(id) + " at " +
+            std::string(
+                reinterpret_cast<const char*>(display.data()),
+                display.size()
+            )
     );
 }
 }  // namespace
