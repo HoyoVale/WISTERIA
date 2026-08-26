@@ -96,7 +96,9 @@ C3  glTF 基础 Demo：
       ✅ 真实 GLB 验证：今汐.glb（30 meshes / 784 bones /
          30 skinned meshes / 96 morphs）导入并成功渲染
       ✅ 包围盒自动取景已实现
-      ⏳ 多资产 PBR 表现、真实动画 clip
+      ✅ 两骨骼动画 glTF fixture（tests/data/animated_bone_chain.gltf）
+         验证双骨骼蒙皮 + 双通道旋转动画导入与 Pose 驱动
+      ⏳ 多资产 PBR 表现（本地 GLB 目前仅含 baseColor 贴图）
 C4  PBR 渲染质量：
       IBL / tone mapping / alpha 排序（现有基础）
 C5  VRM 调研与选型：

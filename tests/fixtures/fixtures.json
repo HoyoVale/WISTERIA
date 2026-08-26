@@ -91,6 +91,11 @@
       "usedBy": ["TestGlbMorphTargetImporter"]
     },
     {
+      "id": "animated-bone-chain-gltf",
+      "path": "tests/data/animated_bone_chain.gltf",
+      "usedBy": ["TestAnimatedBoneChainGltfImporter"]
+    },
+    {
       "id": "pbr-quad-gltf",
       "path": "tests/data/pbr_quad.gltf",
       "usedBy": [],

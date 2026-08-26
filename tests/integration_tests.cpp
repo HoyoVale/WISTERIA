@@ -302,6 +302,60 @@ void TestGlbMorphTargetImporter()
     );
 }
 
+void TestAnimatedBoneChainGltfImporter()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("animated-bone-chain-gltf");
+    RequireCoreAsset("animated-bone-chain-gltf");
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value() &&
+        imported.skeleton->FindBone("rootBone").has_value() &&
+        imported.skeleton->FindBone("childBone").has_value(),
+        "Animated bone-chain fixture lost its imported Skeleton"
+    );
+    Require(
+        imported.meshes.size() == 1U &&
+        imported.meshes[0].requiredBoneCount >= 2U,
+        "Animated bone-chain mesh did not import two-bone skinning"
+    );
+    Require(
+        imported.parts.size() == 1U,
+        "Animated bone-chain mesh produced duplicate render parts"
+    );
+    Require(
+        imported.animations.size() == 1U &&
+        imported.animations[0].TrackCount() == 2U,
+        "Animated bone-chain animation channels were not imported"
+    );
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "animatedBoneChain",
+        modelPath
+    );
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric &&
+        model.HasSkeleton(),
+        "Animated bone-chain fixture was not routed to Generic runtime"
+    );
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    const Skeleton& skeleton = entity.GetPose().GetSkeleton();
+    const std::optional<BoneIndex> childBone =
+        skeleton.FindBone("childBone");
+    Require(childBone.has_value(), "Entity Pose lost childBone");
+
+    scene.Update(0.25f);
+    const glm::mat4 childLocal =
+        entity.GetPose().LocalMatrix(*childBone);
+    Require(
+        NearlyEqual(childLocal[0].x, std::cos(0.25f)) &&
+        NearlyEqual(childLocal[0].y, std::sin(0.25f)),
+        "Two-bone glTF animation did not drive the child Pose"
+    );
+}
+
 void TestExtendedPmxMorphImporter()
 {
     const std::filesystem::path modelPath =
@@ -16875,6 +16929,7 @@ int main()
     failures += !RunTest("GLM multiply sanity", TestGlmMultiplySanity);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
     failures += !RunTest("glTF morph target importer", TestGlbMorphTargetImporter);
+    failures += !RunTest("Animated bone-chain glTF importer", TestAnimatedBoneChainGltfImporter);
     failures += !RunTest(
         "Extended PMX morph importer",
         TestExtendedPmxMorphImporter
