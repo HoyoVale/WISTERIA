@@ -15,6 +15,7 @@
 #include "wisteria/rendering/render_graph.hpp"
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/platform/application.hpp"
+#include "assets/glb_json.hpp"
 #include "rendering/backend/opengl/render_resource_cache.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_stable_render.h"
@@ -5216,6 +5217,37 @@ void TestImportResourceCollisionIsTransactional()
     Require(resources.MeshCount() == 0, "Failed import left mesh resources behind");
     Require(resources.MaterialCount() == 0, "Failed import left material resources behind");
     Require(resources.TextureCount() == 1, "Failed import changed existing textures");
+}
+
+void TestGlbJsonChunkExtraction()
+{
+    const std::filesystem::path modelPath = FixturePath("box-glb");
+    RequireCoreAsset("box-glb");
+
+    std::ifstream stream(modelPath, std::ios::binary | std::ios::ate);
+    Require(stream.good(), "Box.glb could not be opened");
+    const std::streampos end = stream.tellg();
+    stream.seekg(0, std::ios::beg);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(end));
+    stream.read(
+        reinterpret_cast<char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size())
+    );
+    Require(stream.good(), "Box.glb could not be read");
+
+    std::string error;
+    const std::optional<nlohmann::json> json =
+        wisteria::assets::ParseGlbJson(bytes, error);
+    Require(
+        json.has_value() && error.empty(),
+        "GLB JSON chunk extraction failed"
+    );
+    Require(
+        json->contains("asset") &&
+        (*json)["asset"].contains("version") &&
+        (*json)["asset"]["version"] == "2.0",
+        "GLB JSON chunk has invalid glTF asset metadata"
+    );
 }
 
 void TestConvertedMmdGlbWhenAvailable()
@@ -16929,6 +16961,7 @@ int main()
     failures += !RunTest("GLM multiply sanity", TestGlmMultiplySanity);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
     failures += !RunTest("glTF morph target importer", TestGlbMorphTargetImporter);
+    failures += !RunTest("GLB JSON chunk extraction", TestGlbJsonChunkExtraction);
     failures += !RunTest("Animated bone-chain glTF importer", TestAnimatedBoneChainGltfImporter);
     failures += !RunTest(
         "Extended PMX morph importer",

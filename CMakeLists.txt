@@ -255,6 +255,7 @@ set(WISTERIA_ANIMATION_SOURCES
 set(WISTERIA_ASSET_SOURCES
     src/assets/importer.cpp
     src/assets/manager.cpp
+    src/assets/glb_json.cpp
     src/assets/model_asset.cpp
     src/assets/model_asset_bundle.cpp
     src/assets/pmx_parser.cpp
