@@ -67,6 +67,64 @@ std::string ToNarrowUtf8(const std::filesystem::path& path)
     );
 }
 
+bool ComputeModelWorldBounds(
+    const ModelAsset& model,
+    glm::vec3& minimum,
+    glm::vec3& maximum
+)
+{
+    bool hasGeometry = false;
+    for (const RenderPart& part : model.Parts())
+    {
+        const DefaultModelData& data = part.GetMesh().Data();
+        std::size_t stride = 0U;
+        std::size_t positionOffset = 0U;
+        bool hasPosition = false;
+        for (const VertexAttribute& attribute : data.layout)
+        {
+            if (attribute.name == "position" &&
+                attribute.format == VertexFormat::Float32)
+            {
+                positionOffset = stride;
+                hasPosition = true;
+            }
+            stride += static_cast<std::size_t>(attribute.size);
+        }
+        if (!hasPosition || stride == 0U ||
+            data.vertices.size() < stride)
+        {
+            continue;
+        }
+
+        const glm::mat4 localTransform = part.LocalTransform();
+        const std::size_t vertexCount = data.vertices.size() / stride;
+        for (std::size_t vertexIndex = 0U;
+             vertexIndex < vertexCount;
+             ++vertexIndex)
+        {
+            const std::size_t offset = vertexIndex * stride + positionOffset;
+            const glm::vec3 localPosition(
+                data.vertices[offset],
+                data.vertices[offset + 1U],
+                data.vertices[offset + 2U]
+            );
+            const glm::vec4 worldPosition =
+                localTransform * glm::vec4(localPosition, 1.0f);
+            if (!hasGeometry)
+            {
+                minimum = maximum = glm::vec3(worldPosition);
+                hasGeometry = true;
+            }
+            else
+            {
+                minimum = glm::min(minimum, glm::vec3(worldPosition));
+                maximum = glm::max(maximum, glm::vec3(worldPosition));
+            }
+        }
+    }
+    return hasGeometry;
+}
+
 void ValidateDemoModelFile(
     const std::filesystem::path& path,
     bool usedDefaultPath
@@ -476,11 +534,30 @@ void SetupGenericGltfDemoScene(
     );
     MarkModelAsGroundShadowReceiver(model);
 
-    scene.ActiveCamera().SetParam(CameraParam{
-        .Position = {3.0f, 2.0f, 5.0f},
-        .Target = {0.0f, 1.0f, 0.0f},
-        .Up = {0.0f, 1.0f, 0.0f}
-    });
+    glm::vec3 boundsMinimum{0.0f};
+    glm::vec3 boundsMaximum{0.0f};
+    if (ComputeModelWorldBounds(model, boundsMinimum, boundsMaximum))
+    {
+        const glm::vec3 boundsCenter =
+            (boundsMinimum + boundsMaximum) * 0.5f;
+        const float boundsRadius =
+            glm::length(boundsMaximum - boundsMinimum) * 0.5f;
+        const float cameraDistance = std::max(1.0f, boundsRadius * 2.6f);
+        scene.ActiveCamera().SetParam(CameraParam{
+            .Position = boundsCenter +
+                glm::vec3(0.0f, boundsRadius * 0.25f, cameraDistance),
+            .Target = boundsCenter,
+            .Up = {0.0f, 1.0f, 0.0f}
+        });
+    }
+    else
+    {
+        scene.ActiveCamera().SetParam(CameraParam{
+            .Position = {3.0f, 2.0f, 5.0f},
+            .Target = {0.0f, 1.0f, 0.0f},
+            .Up = {0.0f, 1.0f, 0.0f}
+        });
+    }
 
     std::size_t skinnedMeshCount = 0U;
     std::size_t maximumRequiredBones = 0U;

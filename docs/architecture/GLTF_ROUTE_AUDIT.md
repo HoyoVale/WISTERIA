@@ -95,7 +95,8 @@ C3  glTF 基础 Demo：
       ✅ 新增 `--gltf <glb>` 通用查看模式，Generic runtime 驱动
       ✅ 真实 GLB 验证：今汐.glb（30 meshes / 784 bones /
          30 skinned meshes / 96 morphs）导入并成功渲染
-      ⏳ 多资产 PBR 表现、包围盒自动取景、真实动画 clip
+      ✅ 包围盒自动取景已实现
+      ⏳ 多资产 PBR 表现、真实动画 clip
 C4  PBR 渲染质量：
       IBL / tone mapping / alpha 排序（现有基础）
 C5  VRM 调研与选型：
