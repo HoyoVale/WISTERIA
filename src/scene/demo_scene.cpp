@@ -482,12 +482,38 @@ void SetupGenericGltfDemoScene(
         .Up = {0.0f, 1.0f, 0.0f}
     });
 
+    std::size_t skinnedMeshCount = 0U;
+    std::size_t maximumRequiredBones = 0U;
+    for (const RenderPart& part : model.Parts())
+    {
+        const Mesh& mesh = part.GetMesh();
+        if (mesh.IsSkinned())
+        {
+            ++skinnedMeshCount;
+            maximumRequiredBones = std::max(
+                maximumRequiredBones,
+                mesh.RequiredBoneCount()
+            );
+        }
+    }
+
     const ModelInstance* instance = entity.TryGetModelInstance();
     const IModelRuntimeDriver* runtime =
         instance != nullptr ? instance->TryGetRuntime() : nullptr;
     std::cout << "[INFO] GLTF demo: meshes=" << model.Parts().size()
               << " backend="
               << (runtime != nullptr ? runtime->BackendName() : "static")
+              << " bones="
+              << (model.HasSkeleton()
+                    ? model.GetSkeleton().BoneCount()
+                    : 0U)
+              << " skinnedMeshes=" << skinnedMeshCount
+              << " maxBonesPerMesh=" << maximumRequiredBones
+              << " morphs="
+              << (model.HasMorphs()
+                    ? model.GetMorphSet().MorphCount()
+                    : 0U)
+              << " clips=" << model.AnimationClipCount()
               << " model=" << ToNarrowUtf8(modelPath) << std::endl;
 }
 
