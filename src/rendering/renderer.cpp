@@ -84,6 +84,7 @@ void Renderer::RenderPacket(
     OpenGlGraphExecutor& executor = this->ResolveExecutor();
     executor.SetConfig(this->config);
     executor.SetFxaaSettings(this->fxaaSettings);
+    executor.SetToneMappingSettings(this->toneMappingSettings);
 
     // Build the explicit frame DAG from the packet and the real runtime
     // capability options; the builder prunes passes that do not execute
@@ -145,6 +146,25 @@ void Renderer::SetFxaaSettings(const FxaaSettings& settings)
 const FxaaSettings& Renderer::GetFxaaSettings() const noexcept
 {
     return this->fxaaSettings;
+}
+
+void Renderer::SetToneMappingSettings(
+    const ToneMappingSettings& settings
+)
+{
+    if (!std::isfinite(settings.exposure) || settings.exposure <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "Tone mapping exposure must be finite and positive"
+        );
+    }
+    this->toneMappingSettings = settings;
+}
+
+const ToneMappingSettings& Renderer::GetToneMappingSettings()
+    const noexcept
+{
+    return this->toneMappingSettings;
 }
 
 void Renderer::Release() noexcept

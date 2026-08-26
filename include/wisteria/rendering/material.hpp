@@ -86,6 +86,8 @@ struct ShaderInterface
     std::string hasOcclusionTexture = "hasOcclusionTexture";
     std::string occlusionTexture = "occlusionTexture";
     std::string ambientStrength = "ambientStrength";
+    std::string toneMappingMode = "toneMappingMode";
+    std::string exposure = "exposure";
     bool imageBasedLightingEnabled = true;
     std::string hasEnvironment = "hasEnvironment";
     std::string irradianceMap = "irradianceMap";

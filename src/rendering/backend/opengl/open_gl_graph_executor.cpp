@@ -244,6 +244,25 @@ const FxaaSettings& OpenGlGraphExecutor::GetFxaaSettings() const noexcept
     return this->fxaaSettings;
 }
 
+void OpenGlGraphExecutor::SetToneMappingSettings(
+    const ToneMappingSettings& settings
+)
+{
+    if (!std::isfinite(settings.exposure) || settings.exposure <= 0.0f)
+    {
+        throw std::invalid_argument(
+            "Tone mapping exposure must be finite and positive"
+        );
+    }
+    this->toneMappingSettings = settings;
+}
+
+const ToneMappingSettings&
+OpenGlGraphExecutor::GetToneMappingSettings() const noexcept
+{
+    return this->toneMappingSettings;
+}
+
 void OpenGlGraphExecutor::Release() noexcept
 {
     this->skyboxVertexArrays.clear();

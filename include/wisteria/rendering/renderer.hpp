@@ -3,6 +3,7 @@
 
 
 #include "wisteria/rendering/framebuffer.hpp"
+#include "wisteria/rendering/tone_mapping.hpp"
 #include "wisteria/animation/morph.hpp"
 #include "wisteria/scene/scene.hpp"
 #include "wisteria/physics/physics_types.hpp"
@@ -74,6 +75,8 @@ public:
     );
     void SetFxaaSettings(const FxaaSettings& settings);
     const FxaaSettings& GetFxaaSettings() const noexcept;
+    void SetToneMappingSettings(const ToneMappingSettings& settings);
+    const ToneMappingSettings& GetToneMappingSettings() const noexcept;
     void Release() noexcept;
 
 private:
@@ -86,5 +89,6 @@ private:
     std::unique_ptr<OpenGlGraphExecutor> legacyExecutor;
     Config config;
     FxaaSettings fxaaSettings;
+    ToneMappingSettings toneMappingSettings;
 };
 }  // namespace wisteria

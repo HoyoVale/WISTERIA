@@ -49,6 +49,8 @@ public:
     const Renderer::Config& GetConfig() const noexcept;
     void SetFxaaSettings(const FxaaSettings& settings);
     const FxaaSettings& GetFxaaSettings() const noexcept;
+    void SetToneMappingSettings(const ToneMappingSettings& settings);
+    const ToneMappingSettings& GetToneMappingSettings() const noexcept;
     void Release() noexcept;
 
 private:
@@ -240,6 +242,7 @@ private:
     GLuint physicsDebugBuffer = 0;
     std::size_t physicsDebugCapacityBytes = 0U;
     FxaaSettings fxaaSettings;
+    ToneMappingSettings toneMappingSettings;
     bool shadowStateEnabled = false;
     std::array<glm::mat4, 4> shadowLightViewProjections;
     std::array<float, 5> shadowSplitPositions;

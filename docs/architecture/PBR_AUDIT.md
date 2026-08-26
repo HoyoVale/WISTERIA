@@ -25,13 +25,40 @@
 
 | 能力 | 状态 |
 | --- | --- |
-| exposure / tone mapping 参数化 | 未暴露 RenderSettings，当前 shader 内固定 ACES |
+| exposure / tone mapping 参数化 | ✅ 已通过 Renderer / OpenGlGraphExecutor API 暴露 |
 | 多散射 BRDF 或 Kulla-Conty 近似 | 未实现，标准单散射 BRDF |
 | 平行光阴影在 PBR 路径的软阴影/级联优化 | 已有基础，未专项调优 |
 | 金属/粗糙度的 mipmap 细节 | 依赖环境 prefilter，未做材质 mip bias |
 | 真实资产级视觉验收语料 | 本地 GLB 只有 baseColor 贴图，需要补充带全贴图的 PBR 测试资产 |
 
-## 2. C4 第一项：ACES tone mapping
+## 2. Tone mapping 参数化
+
+新增 `include/wisteria/rendering/tone_mapping.hpp`：
+
+```cpp
+enum class ToneMappingMode : std::uint8_t
+{
+    Reinhard = 0,
+    Aces = 1
+};
+
+struct ToneMappingSettings
+{
+    ToneMappingMode mode = ToneMappingMode::Aces;
+    float exposure = 1.0f;
+};
+```
+
+`Renderer` 与 `OpenGlGraphExecutor` 提供 Set/Get；shader 新增：
+
+```glsl
+uniform int toneMappingMode;
+uniform float exposure;
+```
+
+默认保持 ACES + exposure 1.0，与之前行为一致。
+
+## 3. C4 第一项：ACES tone mapping
 
 原先：
 

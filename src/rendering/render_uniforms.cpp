@@ -24,6 +24,14 @@ void OpenGlGraphExecutor::UploadSceneUniforms(
 )
 {
     program.Uniform1f(shaderInterface.ambientStrength, 0.15f);
+    program.Uniform1i(
+        shaderInterface.toneMappingMode,
+        static_cast<int>(this->toneMappingSettings.mode)
+    );
+    program.Uniform1f(
+        shaderInterface.exposure,
+        this->toneMappingSettings.exposure
+    );
     this->UploadEnvironment(program, packet, shaderInterface);
     this->UploadPointLights(program, packet, shaderInterface);
     this->UploadDirectionalLights(program, packet, shaderInterface);

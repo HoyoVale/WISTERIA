@@ -56,6 +56,8 @@ uniform SpotLight spotLights[MAX_SPOT_LIGHTS];
 uniform int spotLightCount;
 
 uniform float ambientStrength;
+uniform int toneMappingMode;
+uniform float exposure;
 uniform vec3 cameraPosition;
 uniform vec4 materialBaseColorFactor;
 uniform float materialMetallicFactor;
@@ -467,7 +469,10 @@ void main()
         ambient = ambientStrength * baseColor.rgb * occlusion;
     }
     vec3 color = ambient + directLighting + emissive;
-    color = AcesTonemap(color);
+    color *= exposure;
+    color = toneMappingMode == 0
+        ? color / (color + vec3(1.0))
+        : AcesTonemap(color);
     color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     WriteOutput(vec4(color, baseColor.a));
 }

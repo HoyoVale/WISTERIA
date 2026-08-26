@@ -54,6 +54,8 @@ uniform int spotLightCount;
 
 uniform vec3 cameraPosition;
 uniform float ambientStrength;
+uniform int toneMappingMode;
+uniform float exposure;
 uniform vec4 materialBaseColorFactor;
 uniform vec3 materialSpecularColor;
 uniform float materialShininess;
@@ -377,7 +379,10 @@ void main()
     }
 
     color += sphereAddition;
-    color = AcesTonemap(color);
+    color *= exposure;
+    color = toneMappingMode == 0
+        ? color / (color + vec3(1.0))
+        : AcesTonemap(color);
     color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     WriteOutput(vec4(color, baseColor.a));
 }
