@@ -571,6 +571,23 @@ if(BUILD_TESTING)
             )
         endif()
     endforeach()
+
+    # C5A: vendored VRM.h header must compile with the project nlohmann/json.
+    add_executable(wisteria_vrm_header_compile
+        tests/vrm_header_compile.cpp
+    )
+    target_include_directories(wisteria_vrm_header_compile PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/nlohmann
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/VRM.h
+    )
+    target_compile_features(wisteria_vrm_header_compile PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(wisteria_vrm_header_compile PRIVATE /utf-8)
+    endif()
+    add_test(NAME wisteria.vrm-header-compile
+        COMMAND wisteria_vrm_header_compile
+    )
+
     # The linked-body A/B semantic test drives Bullet directly (the engine
     # wrappers intentionally hide bt* from public headers).
     target_include_directories(wisteria_unit_tests PRIVATE

@@ -102,6 +102,8 @@ C3  glTF 基础 Demo：
 C4  PBR 渲染质量：
       IBL / tone mapping / alpha 排序（现有基础）
 C5  VRM 调研与选型：
+      ✅ 已完成，选定 infosia/VRM.h（MIT）作为扩展解析层
+      ⏳ Vendor 与运行时适配待实施（见 VRM_BACKEND_SELECTION.md）
       成熟后端 → vendor；否则自研 VRM0.x 静态链路
 C6  Vulkan / 物理等后续路线
 ```
