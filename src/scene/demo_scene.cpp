@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -561,6 +562,16 @@ void SetupGenericGltfDemoScene(
 
     std::size_t skinnedMeshCount = 0U;
     std::size_t maximumRequiredBones = 0U;
+    std::set<const Material*> uniqueMaterials;
+    std::size_t opaqueMaterials = 0U;
+    std::size_t maskMaterials = 0U;
+    std::size_t blendMaterials = 0U;
+    std::size_t baseColorTexturedMaterials = 0U;
+    std::size_t normalTexturedMaterials = 0U;
+    std::size_t metallicRoughnessTexturedMaterials = 0U;
+    std::size_t emissiveTexturedMaterials = 0U;
+    std::size_t occlusionTexturedMaterials = 0U;
+    std::size_t doubleSidedMaterials = 0U;
     for (const RenderPart& part : model.Parts())
     {
         const Mesh& mesh = part.GetMesh();
@@ -571,6 +582,33 @@ void SetupGenericGltfDemoScene(
                 maximumRequiredBones,
                 mesh.RequiredBoneCount()
             );
+        }
+        const Material& material = part.GetMaterial();
+        if (uniqueMaterials.emplace(&material).second)
+        {
+            switch (material.AlphaMode())
+            {
+            case MaterialAlphaMode::Opaque:
+                ++opaqueMaterials;
+                break;
+            case MaterialAlphaMode::Mask:
+                ++maskMaterials;
+                break;
+            case MaterialAlphaMode::Blend:
+                ++blendMaterials;
+                break;
+            }
+            baseColorTexturedMaterials += material.HasTexture(
+                "baseColorTexture") ? 1U : 0U;
+            normalTexturedMaterials += material.HasTexture(
+                "normalTexture") ? 1U : 0U;
+            metallicRoughnessTexturedMaterials += material.HasTexture(
+                "metallicRoughnessTexture") ? 1U : 0U;
+            emissiveTexturedMaterials += material.HasTexture(
+                "emissiveTexture") ? 1U : 0U;
+            occlusionTexturedMaterials += material.HasTexture(
+                "occlusionTexture") ? 1U : 0U;
+            doubleSidedMaterials += material.IsDoubleSided() ? 1U : 0U;
         }
     }
 
@@ -591,6 +629,16 @@ void SetupGenericGltfDemoScene(
                     ? model.GetMorphSet().MorphCount()
                     : 0U)
               << " clips=" << model.AnimationClipCount()
+              << " materials=" << uniqueMaterials.size()
+              << " alpha=[opaque=" << opaqueMaterials
+              << ",mask=" << maskMaterials
+              << ",blend=" << blendMaterials << "]"
+              << " textures=[base=" << baseColorTexturedMaterials
+              << ",normal=" << normalTexturedMaterials
+              << ",metalRough=" << metallicRoughnessTexturedMaterials
+              << ",emissive=" << emissiveTexturedMaterials
+              << ",occlusion=" << occlusionTexturedMaterials << "]"
+              << " doubleSided=" << doubleSidedMaterials
               << " model=" << ToNarrowUtf8(modelPath) << std::endl;
 }
 
