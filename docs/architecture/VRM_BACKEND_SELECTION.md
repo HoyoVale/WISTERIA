@@ -59,8 +59,8 @@ C5C  VRM 0.x / 1.0 元数据 + humanoid 映射
       ⏳ Generic runtime 消费 humanoid 语义、表情/lookAt 驱动待后续
 
 C5D  Expression / lookAt
-      expression 映射到现有 MorphState
-      lookAt 作为 Pose 后处理
+      ✅ Expression morph bind 数据层已导入（0.x/1.0）
+      ⏳ expression → MorphState 运行时驱动、lookAt Pose 后处理
 
 C5E  Spring bone（物理）
       先接 Bullet 通用链路，再做 spring bone 专用适配

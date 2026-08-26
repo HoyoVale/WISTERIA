@@ -248,6 +248,21 @@ VrmMetadata ParseVrm10(
                     definition.name = name;
                     definition.preset = enginePreset;
                     definition.isBinary = expression.isBinary;
+                    definition.morphBinds.reserve(
+                        expression.morphTargetBinds.size()
+                    );
+                    for (const auto& sourceBind :
+                         expression.morphTargetBinds)
+                    {
+                        definition.morphBinds.push_back(
+                            VrmExpressionMorphBind{
+                                0U,
+                                sourceBind.node,
+                                sourceBind.index,
+                                sourceBind.weight
+                            }
+                        );
+                    }
                     result.expressions.push_back(std::move(definition));
                 };
 
@@ -400,6 +415,16 @@ std::optional<VrmMetadata> ParseVrmMetadata(
                 sourceExpression.presetName
             );
             expression.isBinary = sourceExpression.isBinary;
+            expression.morphBinds.reserve(sourceExpression.binds.size());
+            for (const auto& sourceBind : sourceExpression.binds)
+            {
+                expression.morphBinds.push_back(VrmExpressionMorphBind{
+                    sourceBind.mesh,
+                    0U,
+                    sourceBind.index,
+                    sourceBind.weight
+                });
+            }
             result.expressions.push_back(std::move(expression));
         }
 

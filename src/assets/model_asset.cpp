@@ -321,7 +321,7 @@ RenderPart& ModelAsset::AddPart(
 std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
 {
     FingerprintBuilder fp;
-    fp.String("wisteria-model-asset/deterministic/v3");
+    fp.String("wisteria-model-asset/deterministic/v4");
     fp.U32(static_cast<std::uint32_t>(this->BackendKind()));
 
     // Parts: ordering, local transforms, mesh topology and mesh morph data.
@@ -511,6 +511,17 @@ std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
             fp.String(expression.name);
             fp.U32(static_cast<std::uint32_t>(expression.preset));
             fp.Bool(expression.isBinary);
+            fp.U32(static_cast<std::uint32_t>(
+                expression.morphBinds.size()
+            ));
+            for (const VrmExpressionMorphBind& bind :
+                 expression.morphBinds)
+            {
+                fp.U32(bind.sourceMesh);
+                fp.U32(bind.sourceNode);
+                fp.U32(bind.morphIndex);
+                fp.F32(bind.weight);
+            }
         }
 
         fp.Bool(vrm->firstPerson.has_value());

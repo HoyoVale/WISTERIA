@@ -148,11 +148,23 @@ struct VrmHumanoidBoneBinding
     float axisLength = 0.0f;
 };
 
+struct VrmExpressionMorphBind
+{
+    // VRM 0.x bind references source mesh index; VRM 1.0 references
+    // source node index. Resolution to WISTERIA MorphIndex happens
+    // after mesh morph targets have been imported.
+    std::uint32_t sourceMesh = 0U;
+    std::uint32_t sourceNode = 0U;
+    std::uint32_t morphIndex = 0U;
+    float weight = 1.0f;
+};
+
 struct VrmExpressionDefinition
 {
     std::string name;
     VrmExpressionPreset preset = VrmExpressionPreset::Unknown;
     bool isBinary = false;
+    std::vector<VrmExpressionMorphBind> morphBinds;
 };
 
 struct VrmFirstPerson

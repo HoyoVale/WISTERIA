@@ -5286,7 +5286,14 @@ void TestVrmMetadataParsing()
                         {
                             {"name", "Joy"},
                             {"presetName", "joy"},
-                            {"isBinary", false}
+                            {"isBinary", false},
+                            {"binds", nlohmann::json::array({
+                                {
+                                    {"mesh", 0},
+                                    {"index", 0},
+                                    {"weight", 0.8}
+                                }
+                            })}
                         }
                     })}
                 }},
@@ -5353,6 +5360,16 @@ void TestVrmMetadataParsing()
         metadata->expressions[0].name == "Joy" &&
             metadata->expressions[0].preset == VrmExpressionPreset::Joy,
         "VRM expression preset was not parsed"
+    );
+    Require(
+        metadata->expressions[0].morphBinds.size() == 1U &&
+            metadata->expressions[0].morphBinds[0].sourceMesh == 0U &&
+            metadata->expressions[0].morphBinds[0].morphIndex == 0U &&
+            NearlyEqual(
+                metadata->expressions[0].morphBinds[0].weight,
+                0.8f
+            ),
+        "VRM expression morph bind was not parsed"
     );
     Require(
         metadata->firstPerson.has_value() &&
@@ -5474,6 +5491,20 @@ void TestVrm10ModelImporter()
         vrm.humanoidBones[11].kind == VrmHumanoidBoneKind::LeftHand &&
         vrm.humanoidBones[11].sourceNodeName == "leftHand",
         "VRM 1.0 left hand binding mismatch"
+    );
+    Require(
+        vrm.expressions.size() == 1U &&
+            vrm.expressions[0].name == "blink" &&
+            vrm.expressions[0].preset == VrmExpressionPreset::Blink &&
+            vrm.expressions[0].isBinary,
+        "VRM 1.0 expression was not parsed"
+    );
+    Require(
+        vrm.expressions[0].morphBinds.size() == 1U &&
+            vrm.expressions[0].morphBinds[0].sourceNode == 15U &&
+            vrm.expressions[0].morphBinds[0].morphIndex == 0U &&
+            NearlyEqual(vrm.expressions[0].morphBinds[0].weight, 1.0f),
+        "VRM 1.0 expression morph bind was not parsed"
     );
 }
 
