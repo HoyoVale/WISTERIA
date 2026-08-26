@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 
 #include "wisteria/animation/pose.hpp"
 #include <cstddef>

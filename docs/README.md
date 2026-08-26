@@ -25,6 +25,7 @@
 | `architecture/R1_3_MMD_COMPAT_CONTRACT.md` | 当前 MMD 兼容策略的 Phase 0A 冻结契约 |
 | `architecture/R2_0_RENDER_ARCHITECTURE_CONTRACT.md` | 后端中立渲染架构契约 |
 | `architecture/R1_TO_R2_BOUNDARY_AUDIT.md` | R1 → R2 边界审计 |
+| `architecture/GLTF_ROUTE_AUDIT.md` | glTF / GLB / VRM 第二内容线审计与路线 |
 
 ---
 

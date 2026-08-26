@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 
 #include "wisteria/animation/pose_buffer.hpp"
 #include <cstdint>

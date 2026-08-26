@@ -1,4 +1,7 @@
 #pragma once
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 
 #include "wisteria/physics/physics_types.hpp"
 #include <cstddef>

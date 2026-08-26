@@ -1,4 +1,6 @@
 #pragma once
+#include <glm/glm.hpp>
+
 #include "wisteria/rendering/model.hpp"
 #include "wisteria/animation/morph.hpp"
 #include "wisteria/rendering/vertex_layout.hpp"

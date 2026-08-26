@@ -36,6 +36,47 @@
 namespace
 {
 
+#if defined(WISTERIA_TEST_NATIVE_ABI)
+bool RenderSessionUnavailable(
+    std::uint32_t status,
+    WisteriaStableContext context
+)
+{
+    if (std::getenv("WISTERIA_ALLOW_RENDER_SKIP") == nullptr)
+        return false;
+    if (status != WISTERIA_STATUS_INITIALIZATION)
+        return false;
+    const char* detail = wisteria_stable_last_error(context);
+    return detail != nullptr &&
+        std::strstr(detail, "no headless context provider") != nullptr;
+}
+
+void RequireStableRenderSession(
+    std::uint32_t status,
+    WisteriaStableContext context,
+    WisteriaRenderSession session,
+    const char* message
+)
+{
+    if (RenderSessionUnavailable(status, context))
+        SkipTest("headless render provider unavailable in this environment");
+    Require(
+        status == WISTERIA_STATUS_OK && session != 0U,
+        message
+    );
+}
+#endif
+
+void RequireHeadlessProvider(bool available, const char* message)
+{
+    if (!available &&
+        std::getenv("WISTERIA_ALLOW_RENDER_SKIP") != nullptr)
+    {
+        SkipTest("headless render provider unavailable in this environment");
+    }
+    Require(available, message);
+}
+
 bool HasRenderedRgb(const wisteria::Rgba8Frame& frame)
 {
     // Offline clear color is {0, 0, 0, 1}, so the alpha byte alone can
@@ -194,6 +235,70 @@ void TestAnimatedModelImporter()
     Require(
         NearlyEqual(entity.GetPose().LocalMatrix(*rootBone)[3].x, 0.5f),
         "Imported animation did not drive the instantiated Pose"
+    );
+}
+
+void TestGlbMorphTargetImporter()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("morph-triangle-gltf");
+    RequireCoreAsset("morph-triangle-gltf");
+    const ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value() &&
+        imported.skeleton->FindBone("rootBone").has_value(),
+        "Morph glTF fixture lost its imported Skeleton"
+    );
+    Require(
+        imported.meshes.size() == 1U &&
+        imported.meshes[0].morphTargets.size() == 1U &&
+        imported.morphs.size() == 1U,
+        "glTF morph target was not imported"
+    );
+    Require(
+        imported.morphs[0].name == "lift" &&
+        imported.morphs[0].kind == MorphKind::Vertex,
+        "glTF morph target name/kind mismatch"
+    );
+    Require(
+        imported.animations.size() == 1U,
+        "glTF morph animation was not imported"
+    );
+    const AnimationClip& clip = imported.animations[0];
+    Require(
+        clip.MorphWeightTrackCount() == 1U &&
+        clip.FindMorphWeightTrack(0U) != nullptr,
+        "glTF morph weight track was not imported"
+    );
+    const MorphWeightTrack* morphTrack = clip.FindMorphWeightTrack(0U);
+    Require(
+        NearlyEqual(morphTrack->Sample(0.5f), 0.5f),
+        "glTF morph weight track sampled incorrectly"
+    );
+
+    ResourceManager resources;
+    ModelAsset& model = resources.LoadModel(
+        "morphTriangle",
+        modelPath
+    );
+    Require(
+        model.BackendKind() == ModelBackendKind::WisteriaGeneric &&
+        model.HasMorphs() &&
+        model.GetMorphSet().MorphCount() == 1U,
+        "Imported morph glTF was not routed to the Generic runtime"
+    );
+    Scene scene;
+    Entity& entity = scene.InstantiateModel(model);
+    Require(
+        entity.HasModelInstance() &&
+            entity.TryGetModelInstance()->HasRuntime(),
+        "Morph glTF entity has no Generic runtime"
+    );
+    scene.Update(0.25f);
+    const float weight = entity.TryGetMorphState()->Weight(0U);
+    Require(
+        NearlyEqual(weight, 0.25f),
+        "Imported glTF morph animation did not drive the MorphState"
     );
 }
 
@@ -12218,12 +12323,16 @@ void TestStableRenderAbiGeneric()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK && renderSession != 0U,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "stable render session create failed"
     );
 
@@ -12482,12 +12591,16 @@ void TestR19StableRenderOwnershipLifecycle()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession firstSession = 0U;
-    Require(
+    const std::uint32_t firstSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &firstSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        firstSessionStatus,
+        context,
+        firstSession,
         "ownership first session create failed"
     );
 
@@ -12536,12 +12649,16 @@ void TestR19StableRenderOwnershipLifecycle()
         ) == WISTERIA_STATUS_OK,
         "ownership size-query session destroy failed"
     );
-    Require(
+    const std::uint32_t firstSessionRecreateStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &firstSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        firstSessionRecreateStatus,
+        context,
+        firstSession,
         "ownership session recreate failed"
     );
     const std::uint64_t fillBytes = 32U * 32U * 4U;
@@ -12712,12 +12829,16 @@ void TestR19StableStaticCapabilitiesAndUnicodePath()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "static render session create failed"
     );
     WisteriaRenderCameraV1 camera;
@@ -12947,12 +13068,16 @@ void TestR19StableStatusSemantics()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "status session create failed"
     );
     WisteriaRenderCameraV1 camera;
@@ -13053,12 +13178,16 @@ void TestR19StableRenderSequenceFailureState()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "failure session create failed"
     );
     WisteriaRenderCameraV1 camera;
@@ -13139,12 +13268,16 @@ void TestR19GlfwLifetimeSharedWithApplication()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "glfw-lifetime session create failed"
     );
 
@@ -13245,12 +13378,16 @@ void TestR19StableRenderPixelsMatchEngine()
     sessionOptions.struct_size = sizeof(sessionOptions);
     sessionOptions.struct_version = 1U;
     WisteriaRenderSession renderSession = 0U;
-    Require(
+    const std::uint32_t renderSessionStatus =
         wisteria_stable_render_session_create(
             context,
             &sessionOptions,
             &renderSession
-        ) == WISTERIA_STATUS_OK,
+        );
+    RequireStableRenderSession(
+        renderSessionStatus,
+        context,
+        renderSession,
         "pixels stable session create failed"
     );
     std::vector<std::uint8_t> stableBytes(
@@ -13274,7 +13411,7 @@ void TestR19StableRenderPixelsMatchEngine()
 
     // Engine path: ResourceManager + Scene::InstantiateModel + exact replay.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "pixels engine provider unavailable"
     );
@@ -13354,7 +13491,7 @@ void TestR2RenderDeviceFoundation()
     // wrong-device detection, invalid-shader rejection, and that the R1
     // engine path still renders through the new composition root.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2 provider unavailable"
     );
@@ -13470,7 +13607,7 @@ void TestR2RenderDeviceFoundation()
 
     // Wrong-device handle use is an engine contract violation (detected).
     auto secondProvider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         secondProvider != nullptr,
         "r2 second provider unavailable"
     );
@@ -13673,7 +13810,16 @@ void TestR2WindowedCapabilities()
     config.width = 64;
     config.height = 64;
     config.visible = false;
-    application.CreateWindow(config);
+    try
+    {
+        application.CreateWindow(config);
+    }
+    catch (const std::exception&)
+    {
+        if (std::getenv("WISTERIA_ALLOW_RENDER_SKIP") != nullptr)
+            SkipTest("headless render provider unavailable in this environment");
+        throw;
+    }
     const wisteria::RenderDeviceCapabilities& capabilities =
         application.GetRenderDevice().Capabilities();
     Require(
@@ -13693,7 +13839,7 @@ void TestR2MeshGpuRealizationSplit()
     // realization, so runtime-deformed geometry can never be shared between
     // ModelInstances referencing the same asset.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-mesh provider unavailable"
     );
@@ -13786,7 +13932,7 @@ void TestR2RenderResourceCache()
     // assets share one realization per device; instance clones never enter
     // the cache (runtime-deformed geometry stays instance-local).
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-cache provider unavailable"
     );
@@ -13934,7 +14080,7 @@ void TestR2RenderResourceCache()
     // through a second RenderDevice gets a distinct realization, even after
     // device A already attached its own.
     auto secondProvider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         secondProvider != nullptr,
         "r2-cache second provider unavailable"
     );
@@ -13996,7 +14142,7 @@ void TestR2EnvironmentGpuLifetime()
     // (separate share groups), not sibling contexts of one share group.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-env providers unavailable"
     );
@@ -14285,7 +14431,7 @@ void TestR2EnvironmentCacheIdentity()
     // drawSkybox must NOT affect identity; different devices never share.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-env-id providers unavailable"
     );
@@ -14435,7 +14581,7 @@ void TestR2MaterialPipelineVariant()
     // through PipelineVariantKey; shaderFilePath is a legacy override only
     // for PipelineVariant::Custom.
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-material provider unavailable"
     );
@@ -14642,7 +14788,7 @@ void TestR2MaterialProgramRealization()
     // wrong-share-group creation rejection, and transactional attach.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-material-program providers unavailable"
     );
@@ -14776,7 +14922,7 @@ void TestR2ConstructionAndProvenanceClosure()
     //  3) unified SetRenderCache(nullptr) detach + A->nullptr->A rebind
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-closure providers unavailable"
     );
@@ -14971,7 +15117,7 @@ void TestR2InstanceLocalMeshOwnership()
     // and the realization remains intact.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-instance providers unavailable"
     );
@@ -15058,7 +15204,7 @@ void TestR2MaterialSubordinateTextureDetach()
     // textures, and cache.Clear() is not the final owner.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-material-detach providers unavailable"
     );
@@ -15116,7 +15262,7 @@ void TestR2MaterialSharedTextureIsolation()
     // GPU realization still dedups per device.
     auto providerA = wisteria::CreateHeadlessContext({});
     auto providerB = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         providerA != nullptr && providerB != nullptr,
         "r2-texture-alias providers unavailable"
     );
@@ -16554,7 +16700,7 @@ void TestR2RenderPacketGraphExecution()
     };
 
     auto provider = wisteria::CreateHeadlessContext({});
-    Require(
+    RequireHeadlessProvider(
         provider != nullptr,
         "r2-graph-execution provider unavailable"
     );
@@ -16728,6 +16874,7 @@ int main()
     int failures = 0;
     failures += !RunTest("GLM multiply sanity", TestGlmMultiplySanity);
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
+    failures += !RunTest("glTF morph target importer", TestGlbMorphTargetImporter);
     failures += !RunTest(
         "Extended PMX morph importer",
         TestExtendedPmxMorphImporter
