@@ -6,6 +6,7 @@
 #include "wisteria/mmd/physics/mmd_physics_trace.hpp"
 #include "wisteria/runtime/checkpoint_serialization.hpp"
 #include "wisteria/runtime/model_backend.hpp"
+#include "wisteria/runtime/wisteria_generic_runtime_driver.hpp"
 #include "wisteria/mmd/mmd_presentation.hpp"
 #include "wisteria/rendering/graphics_device.hpp"
 #include "wisteria/platform/headless_context.hpp"
@@ -11545,6 +11546,78 @@ void TestWisteriaGenericMorphRuntime()
     delete morphOnlyRuntime;
 }
 
+void TestVrmExpressionRuntime()
+{
+    ModelAsset asset("vrm::expression");
+    asset.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+
+    MorphDefinition blink;
+    blink.name = "blink";
+    blink.kind = MorphKind::Vertex;
+    std::vector<MorphDefinition> morphs;
+    morphs.push_back(blink);
+    asset.SetMorphs(std::move(morphs));
+
+    VrmMetadata vrm;
+    vrm.specVersion = "1.0";
+    VrmExpressionDefinition expression;
+    expression.name = "blink";
+    expression.preset = VrmExpressionPreset::Blink;
+    expression.isBinary = true;
+    VrmExpressionMorphBind bind;
+    bind.sourceNode = 0U;
+    bind.morphIndex = 0U;
+    bind.weight = 1.0f;
+    bind.resolvedMorph = 0U;
+    expression.morphBinds.push_back(bind);
+    vrm.expressions.push_back(std::move(expression));
+    asset.SetVrmMetadata(std::move(vrm));
+
+    ModelBackendRegistry registry;
+    RegisterDefaultModelBackends(registry);
+    Entity entity;
+    entity.SetModelInstance(
+        std::make_unique<ModelInstance>(
+            asset,
+            registry.CreateRuntime(asset)
+        )
+    );
+    IModelRuntimeDriver* runtime =
+        entity.TryGetModelInstance()->TryGetRuntime();
+    auto* vrmRuntime =
+        dynamic_cast<WisteriaGenericRuntimeDriver*>(runtime);
+    Require(runtime != nullptr, "VRM expression runtime was not created");
+    Require(vrmRuntime != nullptr, "Runtime is not the Generic driver");
+    Require(
+        runtime->MorphWeight("blink").has_value() &&
+            NearlyEqual(*runtime->MorphWeight("blink"), 0.0f),
+        "VRM expression initial weight mismatch"
+    );
+
+    Require(
+        runtime->SetMorphWeight("blink", 0.25f) &&
+            NearlyEqual(*runtime->MorphWeight("blink"), 0.25f),
+        "VRM expression morph channel did not accept a base weight"
+    );
+    Require(
+        vrmRuntime->SetVrmExpressionWeight("blink", 0.75f) &&
+            NearlyEqual(*runtime->MorphWeight("blink"), 0.75f),
+        "VRM expression weight did not drive MorphState"
+    );
+    Require(
+        !vrmRuntime->SetVrmExpressionWeight("missing", 1.0f) &&
+            !vrmRuntime->VrmExpressionWeight("missing").has_value(),
+        "Unknown VRM expression leaked into the runtime"
+    );
+
+    vrmRuntime->ClearVrmExpressionWeights();
+    Require(
+        !vrmRuntime->VrmExpressionWeight("blink").has_value() &&
+            NearlyEqual(*runtime->MorphWeight("blink"), 0.0f),
+        "Clearing VRM expressions did not reset bound morphs"
+    );
+}
+
 void TestWisteriaGenericRootMotionEquivalence()
 {
     ModelAsset rootModel("phase0c::rootMotion");
@@ -17695,6 +17768,10 @@ int main()
     failures += !RunTest(
         "R1.5 generic morph runtime",
         TestWisteriaGenericMorphRuntime
+    );
+    failures += !RunTest(
+        "VRM expression runtime",
+        TestVrmExpressionRuntime
     );
     failures += !RunTest(
         "R1.5 generic root motion equivalence",

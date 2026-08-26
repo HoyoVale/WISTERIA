@@ -100,12 +100,21 @@ public:
     void ClearMorphOverride(std::string_view name) override;
     void ClearAllMorphOverrides() override;
 
+    // C5D: VRM expression weights. Binds must already be resolved to
+    // MorphIndex by the importer (VrmExpressionMorphBind::resolvedMorph).
+    bool SetVrmExpressionWeight(std::string_view name, float weight);
+    std::optional<float> VrmExpressionWeight(
+        std::string_view name
+    ) const;
+    void ClearVrmExpressionWeights();
+
 private:
     static bool ValidateDeterministicConfig(
         const ReplayConfig& config
     ) noexcept;
     std::uint64_t ComputeAssetFingerprint() const noexcept;
     void ApplyPersistentMorphOverrides();
+    void ApplyVrmExpressionWeights();
 
     const ModelAsset* asset = nullptr;
     std::unique_ptr<Pose> pose;
@@ -113,6 +122,7 @@ private:
     std::unique_ptr<Animator> animator;
     RootMotionDelta pendingRootMotion;
     std::unordered_map<std::string, float> morphOverrides;
+    std::unordered_map<std::string, float> vrmExpressionWeights;
     ReplayConfig frozenConfig;
     bool deterministicPrepared = false;
     MotionFrameIndex expectedNextFrame = 0U;

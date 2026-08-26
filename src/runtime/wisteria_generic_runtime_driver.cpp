@@ -74,6 +74,7 @@ void WisteriaGenericRuntimeDriver::Update(float deltaTime)
         this->animator->Update(deltaTime);
         this->pendingRootMotion = this->animator->ConsumeRootMotion();
         this->ApplyPersistentMorphOverrides();
+        this->ApplyVrmExpressionWeights();
     }
 }
 
@@ -266,6 +267,100 @@ void WisteriaGenericRuntimeDriver::ApplyPersistentMorphOverrides()
         if (index.has_value())
             this->morphState->SetWeight(*index, weight);
     }
+}
+
+void WisteriaGenericRuntimeDriver::ApplyVrmExpressionWeights()
+{
+    if (this->morphState == nullptr || this->asset == nullptr)
+        return;
+    const VrmMetadata* vrm = this->asset->TryGetVrmMetadata();
+    if (vrm == nullptr || this->vrmExpressionWeights.empty())
+        return;
+
+    std::unordered_map<MorphIndex, float> contributions;
+    for (const VrmExpressionDefinition& expression : vrm->expressions)
+    {
+        const auto weight = this->vrmExpressionWeights.find(
+            expression.name
+        );
+        if (weight == this->vrmExpressionWeights.end())
+            continue;
+        for (const VrmExpressionMorphBind& bind : expression.morphBinds)
+        {
+            if (bind.resolvedMorph == InvalidMorphIndex)
+                continue;
+            contributions[bind.resolvedMorph] +=
+                weight->second * bind.weight;
+        }
+    }
+
+    for (const auto& [morphIndex, weight] : contributions)
+        this->morphState->SetWeight(morphIndex, weight);
+}
+
+bool WisteriaGenericRuntimeDriver::SetVrmExpressionWeight(
+    std::string_view name,
+    float weight
+)
+{
+    if (!std::isfinite(weight) || weight < 0.0f || weight > 1.0f)
+    {
+        throw std::invalid_argument(
+            "VRM expression weight must be finite and in [0, 1]"
+        );
+    }
+    if (this->asset == nullptr)
+        return false;
+    const VrmMetadata* vrm = this->asset->TryGetVrmMetadata();
+    if (vrm == nullptr)
+        return false;
+    for (const VrmExpressionDefinition& expression : vrm->expressions)
+    {
+        if (expression.name == name)
+        {
+            this->vrmExpressionWeights[std::string(name)] = weight;
+            this->ApplyVrmExpressionWeights();
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<float> WisteriaGenericRuntimeDriver::VrmExpressionWeight(
+    std::string_view name
+) const
+{
+    const auto entry = this->vrmExpressionWeights.find(std::string(name));
+    if (entry == this->vrmExpressionWeights.end())
+        return std::nullopt;
+    return entry->second;
+}
+
+void WisteriaGenericRuntimeDriver::ClearVrmExpressionWeights()
+{
+    if (this->morphState != nullptr && this->asset != nullptr)
+    {
+        const VrmMetadata* vrm = this->asset->TryGetVrmMetadata();
+        if (vrm != nullptr)
+        {
+            for (const VrmExpressionDefinition& expression :
+                 vrm->expressions)
+            {
+                for (const VrmExpressionMorphBind& bind :
+                     expression.morphBinds)
+                {
+                    if (bind.resolvedMorph != InvalidMorphIndex)
+                    {
+                        this->morphState->SetWeight(
+                            bind.resolvedMorph,
+                            0.0f
+                        );
+                    }
+                }
+            }
+        }
+    }
+    this->vrmExpressionWeights.clear();
 }
 
 bool WisteriaGenericRuntimeDriver::SetMorphOverride(

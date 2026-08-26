@@ -44,6 +44,24 @@ VRM 的难点有两层：
   MToon 材质                           ← WISTERIA Shader（后续）
 ```
 
+## 3.5 后续格式接入决策原则（冻结）
+
+```text
+1. 自研：
+   格式解析胶水、中性语义层、渲染、确定性编排、非物理动画
+2. 移植：
+   有成熟 MIT/BSD/Zlib 参考实现的复杂算法，移植并保留 notice；
+   禁止从零发明物理/动画核心算法
+3. Vendor：
+   存在 Saba 级别的成熟完整后端时，按 Saba 模式 vendor；
+   渲染和场景编排仍由 WISTERIA 拥有
+4. 暂缓：
+   没有成熟参考、且自研质量风险高的能力（如 spring bone）
+   先隔离为独立阶段，不阻塞主内容线
+```
+
+该原则同时写入后续 VRM spring bone（C5E）与任何新模型格式接入。
+
 ## 4. 实施计划
 
 ```text
@@ -60,7 +78,8 @@ C5C  VRM 0.x / 1.0 元数据 + humanoid 映射
 
 C5D  Expression / lookAt
       ✅ Expression morph bind 数据层已导入（0.x/1.0）
-      ⏳ expression → MorphState 运行时驱动、lookAt Pose 后处理
+      ✅ Generic runtime expression → MorphState 驱动已实现
+      ⏳ lookAt Pose 后处理
 
 C5E  Spring bone（物理）
       先接 Bullet 通用链路，再做 spring bone 专用适配

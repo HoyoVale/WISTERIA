@@ -984,6 +984,85 @@ void ImportGenericMorphTargets(
     }
 }
 
+void ResolveVrmExpressionMorphs(
+    VrmMetadata& metadata,
+    const aiScene& scene,
+    const nlohmann::json& gltfJson,
+    const GenericMorphTargetMap& genericMorphTargets,
+    const NodeMeshNameMap& nodeMeshNames
+)
+{
+    const bool vrm10 = metadata.specVersion.starts_with("1.");
+
+    const auto meshNameForSource =
+        [&](std::uint32_t sourceMesh,
+            std::uint32_t sourceNode) -> std::string
+        {
+            if (!vrm10)
+            {
+                if (sourceMesh < scene.mNumMeshes &&
+                    scene.mMeshes[sourceMesh] != nullptr)
+                {
+                    return ToString(scene.mMeshes[sourceMesh]->mName);
+                }
+                return {};
+            }
+
+            const auto nodes = gltfJson.find("nodes");
+            if (nodes != gltfJson.end() && nodes->is_array() &&
+                sourceNode < nodes->size())
+            {
+                const nlohmann::json& node = (*nodes)[sourceNode];
+                if (node.is_object())
+                {
+                    const auto name = node.find("name");
+                    if (name != node.end() && name->is_string())
+                    {
+                        const auto nodeMesh =
+                            nodeMeshNames.find(name->get<std::string>());
+                        if (nodeMesh != nodeMeshNames.end())
+                            return nodeMesh->second;
+                    }
+                    const auto mesh = node.find("mesh");
+                    if (mesh != node.end() && mesh->is_number_unsigned())
+                    {
+                        const std::uint32_t meshIndex =
+                            mesh->get<std::uint32_t>();
+                        if (meshIndex < scene.mNumMeshes &&
+                            scene.mMeshes[meshIndex] != nullptr)
+                        {
+                            return ToString(
+                                scene.mMeshes[meshIndex]->mName
+                            );
+                        }
+                    }
+                }
+            }
+            return {};
+        };
+
+    for (VrmExpressionDefinition& expression : metadata.expressions)
+    {
+        for (VrmExpressionMorphBind& bind : expression.morphBinds)
+        {
+            const std::string meshName = meshNameForSource(
+                bind.sourceMesh,
+                bind.sourceNode
+            );
+            if (meshName.empty())
+                continue;
+            const auto entry = genericMorphTargets.find(
+                GenericMorphTargetKey{
+                    meshName,
+                    bind.morphIndex
+                }
+            );
+            if (entry != genericMorphTargets.end())
+                bind.resolvedMorph = entry->second;
+        }
+    }
+}
+
 std::vector<FloatKeyframe> DeduplicateFloatKeys(
     std::vector<FloatKeyframe> keys
 )
@@ -2293,6 +2372,16 @@ ImportedModelData ModelImporter::Import(
         result.meshes.push_back(std::move(mesh));
     }
 
+    if (result.vrmMetadata.has_value() && gltfJson.has_value())
+    {
+        ResolveVrmExpressionMorphs(
+            *result.vrmMetadata,
+            *scene,
+            *gltfJson,
+            genericMorphTargets,
+            nodeMeshNames
+        );
+    }
     result.animations = ImportAnimations(
         *scene,
         result.skeleton,

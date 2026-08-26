@@ -321,7 +321,7 @@ RenderPart& ModelAsset::AddPart(
 std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
 {
     FingerprintBuilder fp;
-    fp.String("wisteria-model-asset/deterministic/v4");
+    fp.String("wisteria-model-asset/deterministic/v5");
     fp.U32(static_cast<std::uint32_t>(this->BackendKind()));
 
     // Parts: ordering, local transforms, mesh topology and mesh morph data.
@@ -521,6 +521,9 @@ std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
                 fp.U32(bind.sourceNode);
                 fp.U32(bind.morphIndex);
                 fp.F32(bind.weight);
+                fp.U32(static_cast<std::uint32_t>(
+                    bind.resolvedMorph
+                ));
             }
         }
 

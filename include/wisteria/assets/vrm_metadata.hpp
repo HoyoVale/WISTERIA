@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 
 #include "wisteria/animation/bone.hpp"
+#include "wisteria/animation/morph.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -157,6 +158,9 @@ struct VrmExpressionMorphBind
     std::uint32_t sourceNode = 0U;
     std::uint32_t morphIndex = 0U;
     float weight = 1.0f;
+    // Resolved after mesh morph import. InvalidMorphIndex means the
+    // referenced mesh/target does not exist in this asset.
+    MorphIndex resolvedMorph = InvalidMorphIndex;
 };
 
 struct VrmExpressionDefinition
