@@ -291,6 +291,8 @@ ModelAsset& ResourceManager::CreateModel(
         model->SetSkeleton(std::move(*imported.skeleton));
     if (imported.mmdPhysics.has_value())
         model->SetMmdPhysics(std::move(*imported.mmdPhysics));
+    if (imported.vrmMetadata.has_value())
+        model->SetVrmMetadata(std::move(*imported.vrmMetadata));
     if (!imported.morphs.empty())
         model->SetMorphs(std::move(imported.morphs));
     for (AnimationClip& clip : imported.animations)

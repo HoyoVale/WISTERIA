@@ -49,7 +49,7 @@ ModelImporter (Assimp 5.2.5)
 | glTF 相机 / 灯光 | ❌ | 未接入 Camera/Light（demo 可程序化处理） |
 | Draco / KHR 扩展 | 部分 | 依赖 Assimp；未单独验证 |
 | 通用角色物理 | ❌ | Generic runtime 明确无物理；glTF 角色先走无物理线路 |
-| VRM 0.x / 1.0 | ❌ | 元数据、表情、lookAt、spring bone 均未支持 |
+| VRM 0.x / 1.0 | 部分 | VRM 0.x 元数据 + humanoid 映射已导入；表情、lookAt、spring bone、VRM 1.0 未支持 |
 
 ## 3. 结论：自研 vs 后端
 
@@ -103,7 +103,11 @@ C4  PBR 渲染质量：
       IBL / tone mapping / alpha 排序（现有基础）
 C5  VRM 调研与选型：
       ✅ 已完成，选定 infosia/VRM.h（MIT）作为扩展解析层
-      ⏳ Vendor 与运行时适配待实施（见 VRM_BACKEND_SELECTION.md）
+      ✅ C5A/C5B 完成：VRM.h vendor + GLB JSON chunk 提取
+      ✅ C5C VRM 0.x Phase 0 完成：元数据解析 + humanoid 骨骼映射
+        （`minimal_humanoid.vrm` fixture，见 VRM_BACKEND_SELECTION.md）
+      ⏳ 运行时读取、VRM 1.0、demo `--vrm` 待后续
+
       成熟后端 → vendor；否则自研 VRM0.x 静态链路
 C6  Vulkan / 物理等后续路线
 ```

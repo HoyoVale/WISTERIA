@@ -8,6 +8,7 @@
 #include "wisteria/rendering/model.hpp"
 #include "wisteria/animation/morph.hpp"
 #include "wisteria/animation/skeleton.hpp"
+#include "wisteria/assets/vrm_metadata.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -86,6 +87,7 @@ struct ImportedModelData
     std::optional<MmdPhysicsAsset> mmdPhysics;
     std::vector<MorphDefinition> morphs;
     std::vector<AnimationClip> animations;
+    std::optional<VrmMetadata> vrmMetadata;
 };
 
 // CPU-only model import. It never creates OpenGL objects and is safe to use

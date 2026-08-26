@@ -178,6 +178,51 @@ std::size_t ModelAsset::MmdRigidBodyCount() const noexcept
         : 0U;
 }
 
+bool ModelAsset::HasVrmMetadata() const noexcept
+{
+    return this->vrmMetadata.has_value();
+}
+
+const VrmMetadata* ModelAsset::TryGetVrmMetadata() const noexcept
+{
+    return this->vrmMetadata.has_value()
+        ? &*this->vrmMetadata
+        : nullptr;
+}
+
+const VrmMetadata& ModelAsset::GetVrmMetadata() const
+{
+    if (!this->vrmMetadata.has_value())
+        throw std::logic_error("ModelAsset has no VRM metadata");
+    return *this->vrmMetadata;
+}
+
+void ModelAsset::SetVrmMetadata(VrmMetadata metadata)
+{
+    if (this->vrmMetadata.has_value())
+        throw std::logic_error("ModelAsset VRM metadata is already set");
+
+    const auto validateBone = [this](BoneIndex bone)
+    {
+        if (bone == InvalidBoneIndex)
+            return;
+        if (!this->skeleton.has_value() ||
+            static_cast<std::size_t>(bone) >= this->skeleton->BoneCount())
+        {
+            throw std::invalid_argument(
+                "ModelAsset VRM metadata references an invalid bone"
+            );
+        }
+    };
+
+    for (const VrmHumanoidBoneBinding& binding : metadata.humanoidBones)
+        validateBone(binding.bone);
+    if (metadata.firstPerson.has_value())
+        validateBone(metadata.firstPerson->bone);
+
+    this->vrmMetadata.emplace(std::move(metadata));
+}
+
 std::size_t ModelAsset::AnimationClipCount() const noexcept
 {
     return this->animationClips.size();
@@ -276,7 +321,7 @@ RenderPart& ModelAsset::AddPart(
 std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
 {
     FingerprintBuilder fp;
-    fp.String("wisteria-model-asset/deterministic/v1");
+    fp.String("wisteria-model-asset/deterministic/v2");
     fp.U32(static_cast<std::uint32_t>(this->BackendKind()));
 
     // Parts: ordering, local transforms, mesh topology and mesh morph data.
@@ -423,6 +468,55 @@ std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
     else
     {
         fp.U32(0U);
+    }
+
+    // VRM semantic layer: model info, humanoid bindings, expressions
+    // and first-person look-at configuration.
+    const VrmMetadata* vrm = this->TryGetVrmMetadata();
+    fp.Bool(vrm != nullptr);
+    if (vrm != nullptr)
+    {
+        fp.String(vrm->specVersion);
+        fp.String(vrm->model.title);
+        fp.String(vrm->model.version);
+        fp.String(vrm->model.author);
+        fp.String(vrm->model.contactInformation);
+        fp.String(vrm->model.reference);
+        fp.U32(static_cast<std::uint32_t>(vrm->model.licenseName));
+        fp.String(vrm->model.otherLicenseUrl);
+
+        fp.U32(static_cast<std::uint32_t>(vrm->humanoidBones.size()));
+        for (const VrmHumanoidBoneBinding& binding : vrm->humanoidBones)
+        {
+            fp.U32(static_cast<std::uint32_t>(binding.kind));
+            fp.U32(binding.bone);
+            fp.U32(binding.sourceNode);
+            fp.String(binding.sourceNodeName);
+            fp.Bool(binding.useDefaultValues);
+            fp.Vec3(binding.minimum);
+            fp.Vec3(binding.maximum);
+            fp.Vec3(binding.center);
+            fp.F32(binding.axisLength);
+        }
+
+        fp.U32(static_cast<std::uint32_t>(vrm->expressions.size()));
+        for (const VrmExpressionDefinition& expression : vrm->expressions)
+        {
+            fp.String(expression.name);
+            fp.U32(static_cast<std::uint32_t>(expression.preset));
+            fp.Bool(expression.isBinary);
+        }
+
+        fp.Bool(vrm->firstPerson.has_value());
+        if (vrm->firstPerson.has_value())
+        {
+            fp.U32(vrm->firstPerson->bone);
+            fp.U32(vrm->firstPerson->sourceNode);
+            fp.String(vrm->firstPerson->sourceNodeName);
+            fp.U32(static_cast<std::uint32_t>(
+                vrm->firstPerson->lookAtType
+            ));
+        }
     }
 
     // Animation clips: names, duration, tracks, keys and interpolation.

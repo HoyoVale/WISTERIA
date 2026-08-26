@@ -7,6 +7,7 @@
 #include "wisteria/mmd/physics/mmd_physics_asset.hpp"
 #include "wisteria/rendering/render_part.hpp"
 #include "wisteria/animation/skeleton.hpp"
+#include "wisteria/assets/vrm_metadata.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <cstdint>
@@ -76,6 +77,11 @@ public:
     void SetMmdPhysics(MmdPhysicsAsset physics);
     std::size_t MmdRigidBodyCount() const noexcept;
 
+    bool HasVrmMetadata() const noexcept;
+    const VrmMetadata* TryGetVrmMetadata() const noexcept;
+    const VrmMetadata& GetVrmMetadata() const;
+    void SetVrmMetadata(VrmMetadata metadata);
+
     std::size_t AnimationClipCount() const noexcept;
     const AnimationClip& AnimationClipAt(std::size_t index) const;
     const AnimationClip* FindAnimationClip(std::string_view name) const noexcept;
@@ -103,6 +109,7 @@ private:
     std::optional<Skeleton> skeleton;
     std::optional<MorphSet> morphSet;
     std::optional<MmdPhysicsAsset> mmdPhysics;
+    std::optional<VrmMetadata> vrmMetadata;
     // Stable clip addresses are required because Animator stores a pointer to
     // its current shared clip while more clips may still be added.
     std::vector<std::unique_ptr<AnimationClip>> animationClips;

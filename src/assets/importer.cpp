@@ -1,8 +1,10 @@
 #include "wisteria/common/pch.hpp"
 #include "wisteria/assets/importer.hpp"
 
-#include "texture_path_utils.hpp"
+#include "assets/glb_json.hpp"
+#include "assets/vrm_parser.hpp"
 #include "pmx_parser.hpp"
+#include "texture_path_utils.hpp"
 
 #include <assimp/GltfMaterial.h>
 #include <assimp/Importer.hpp>
@@ -2088,6 +2090,7 @@ ImportedModelData ModelImporter::Import(
     Assimp::Importer importer;
     const aiScene* scene = nullptr;
     std::vector<std::uint8_t> fileBytes;
+    std::optional<nlohmann::json> gltfJson;
     std::optional<PmxMetadata> pmxMetadata;
     if (extensionHint == "pmx")
     {
@@ -2114,16 +2117,27 @@ ImportedModelData ModelImporter::Import(
             extensionHint.c_str()
         );
     }
-    else if (extensionHint == "glb")
+    else if (extensionHint == "glb" || extensionHint == "vrm")
     {
-        // A GLB is self-contained. Reading it through std::filesystem keeps
-        // Chinese Windows paths independent of the active system code page.
+        // A GLB / VRM is self-contained. Reading it through std::filesystem
+        // keeps Chinese Windows paths independent of the active system code
+        // page. VRM files use the GLB container; Assimp is told "glb" so the
+        // glTF2 importer is selected even when the file extension is .vrm.
         fileBytes = ReadBinaryFile(absolutePath);
+        std::string glbJsonError;
+        gltfJson = assets::ParseGlbJson(fileBytes, glbJsonError);
+        if (!gltfJson.has_value())
+        {
+            throw std::runtime_error(
+                "Cannot parse GLB JSON chunk for " + filePath.string() +
+                ": " + glbJsonError
+            );
+        }
         scene = importer.ReadFileFromMemory(
             fileBytes.data(),
             fileBytes.size(),
             ImportFlags,
-            extensionHint.c_str()
+            "glb"
         );
     }
     else
@@ -2180,6 +2194,22 @@ ImportedModelData ModelImporter::Import(
                 result.morphs,
                 *pmxMetadata,
                 *result.skeleton
+            );
+        }
+    }
+    if (gltfJson.has_value() && assets::HasVrmExtension(*gltfJson))
+    {
+        std::string vrmError;
+        result.vrmMetadata = assets::ParseVrmMetadata(
+            *gltfJson,
+            result.skeleton.has_value() ? &*result.skeleton : nullptr,
+            vrmError
+        );
+        if (!result.vrmMetadata.has_value())
+        {
+            throw std::runtime_error(
+                "Cannot parse VRM metadata for " + filePath.string() +
+                ": " + vrmError
             );
         }
     }

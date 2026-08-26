@@ -96,6 +96,11 @@
       "usedBy": ["TestAnimatedBoneChainGltfImporter"]
     },
     {
+      "id": "minimal-humanoid-vrm",
+      "path": "tests/data/minimal_humanoid.vrm",
+      "usedBy": ["TestVrmModelImporter"]
+    },
+    {
       "id": "pbr-quad-gltf",
       "path": "tests/data/pbr_quad.gltf",
       "usedBy": [],

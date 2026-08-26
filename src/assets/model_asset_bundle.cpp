@@ -185,6 +185,8 @@ ModelAssetBundle BuildModelAssetBundle(
         bundle.asset->SetSkeleton(std::move(*imported.skeleton));
     if (imported.mmdPhysics.has_value())
         bundle.asset->SetMmdPhysics(std::move(*imported.mmdPhysics));
+    if (imported.vrmMetadata.has_value())
+        bundle.asset->SetVrmMetadata(std::move(*imported.vrmMetadata));
     if (!imported.morphs.empty())
         bundle.asset->SetMorphs(std::move(imported.morphs));
     for (AnimationClip& clip : imported.animations)

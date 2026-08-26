@@ -16,6 +16,7 @@
 #include "wisteria/rendering/renderer.hpp"
 #include "wisteria/platform/application.hpp"
 #include "assets/glb_json.hpp"
+#include "assets/vrm_parser.hpp"
 #include "rendering/backend/opengl/render_resource_cache.hpp"
 #if defined(WISTERIA_TEST_NATIVE_ABI)
 #include "wisteria/native/wisteria_stable_render.h"
@@ -5247,6 +5248,206 @@ void TestGlbJsonChunkExtraction()
         (*json)["asset"].contains("version") &&
         (*json)["asset"]["version"] == "2.0",
         "GLB JSON chunk has invalid glTF asset metadata"
+    );
+}
+
+void TestVrmMetadataParsing()
+{
+    nlohmann::json gltfJson = {
+        {"nodes", nlohmann::json::array({
+            {{"name", "Hips"}},
+            {{"name", "Head"}}
+        })},
+        {"extensions", {
+            {"VRMC_vrm", {
+                {"specVersion", "0.0"},
+                {"meta", {
+                    {"title", "Fixture Avatar"},
+                    {"version", "0.1"},
+                    {"author", "WISTERIA Test"},
+                    {"licenseName", "CC_BY"}
+                }},
+                {"humanoid", {
+                    {"humanBones", nlohmann::json::array({
+                        {
+                            {"bone", "hips"},
+                            {"node", 0},
+                            {"useDefaultValues", false}
+                        },
+                        {
+                            {"bone", "head"},
+                            {"node", 1},
+                            {"useDefaultValues", false}
+                        }
+                    })}
+                }},
+                {"blendShapeMaster", {
+                    {"blendShapeGroups", nlohmann::json::array({
+                        {
+                            {"name", "Joy"},
+                            {"presetName", "joy"},
+                            {"isBinary", false}
+                        }
+                    })}
+                }},
+                {"firstPerson", {
+                    {"firstPersonBone", 1},
+                    {"lookAtTypeName", "Bone"}
+                }}
+            }}
+        }}
+    };
+
+    std::vector<Bone> bones;
+    bones.push_back(Bone{"Hips"});
+    bones.push_back(Bone{"Head", 0});
+    Skeleton skeleton(std::move(bones));
+
+    std::string error;
+    const std::optional<VrmMetadata> metadata =
+        wisteria::assets::ParseVrmMetadata(
+            gltfJson,
+            &skeleton,
+            error
+        );
+
+    Require(metadata.has_value(), "VRM metadata parse failed");
+    Require(error.empty(), "VRM metadata parse reported an error");
+    Require(
+        metadata->specVersion == "0.0",
+        "VRM specVersion was not parsed"
+    );
+    Require(
+        metadata->model.title == "Fixture Avatar",
+        "VRM model title was not parsed"
+    );
+    Require(
+        metadata->model.licenseName == VrmLicenseName::CcBy,
+        "VRM license name was not parsed"
+    );
+    Require(
+        metadata->humanoidBones.size() == 2,
+        "VRM humanoid bone count mismatch"
+    );
+    Require(
+        metadata->humanoidBones[0].kind == VrmHumanoidBoneKind::Hips,
+        "VRM hips semantic was not parsed"
+    );
+    Require(
+        metadata->humanoidBones[0].bone == 0,
+        "VRM hips node was not mapped to the skeleton"
+    );
+    Require(
+        metadata->humanoidBones[1].kind == VrmHumanoidBoneKind::Head,
+        "VRM head semantic was not parsed"
+    );
+    Require(
+        metadata->humanoidBones[1].bone == 1,
+        "VRM head node was not mapped to the skeleton"
+    );
+    Require(
+        metadata->expressions.size() == 1,
+        "VRM expression count mismatch"
+    );
+    Require(
+        metadata->expressions[0].name == "Joy" &&
+            metadata->expressions[0].preset == VrmExpressionPreset::Joy,
+        "VRM expression preset was not parsed"
+    );
+    Require(
+        metadata->firstPerson.has_value() &&
+            metadata->firstPerson->bone == 1 &&
+            metadata->firstPerson->lookAtType == VrmLookAtType::Bone,
+        "VRM first-person data was not parsed"
+    );
+
+    nlohmann::json vrm10Json = gltfJson;
+    vrm10Json["extensions"]["VRMC_vrm"]["specVersion"] = "1.0";
+    std::string vrm10Error;
+    const std::optional<VrmMetadata> vrm10 =
+        wisteria::assets::ParseVrmMetadata(
+            vrm10Json,
+            &skeleton,
+            vrm10Error
+        );
+    Require(
+        !vrm10.has_value() &&
+            vrm10Error.find("VRM 1.0") != std::string::npos,
+        "VRM 1.0 should be rejected until C5 VRM 1.0 support lands"
+    );
+}
+
+void TestVrmModelImporter()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("minimal-humanoid-vrm");
+    RequireCoreAsset("minimal-humanoid-vrm");
+
+    ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.skeleton.has_value(),
+        "VRM fixture did not import a skeleton"
+    );
+    Require(
+        imported.vrmMetadata.has_value(),
+        "VRM fixture did not produce VRM metadata"
+    );
+
+    const Skeleton& skeleton = *imported.skeleton;
+    const VrmMetadata& vrm = *imported.vrmMetadata;
+    Require(
+        vrm.specVersion == "0.0",
+        "VRM importer lost the spec version"
+    );
+    Require(
+        vrm.model.title == "Minimal VRM Fixture",
+        "VRM importer lost model metadata"
+    );
+    Require(
+        vrm.humanoidBones.size() == 2,
+        "VRM importer lost humanoid bindings"
+    );
+
+    const std::optional<BoneIndex> rootBone =
+        skeleton.FindBone("rootBone");
+    const std::optional<BoneIndex> childBone =
+        skeleton.FindBone("childBone");
+    Require(
+        rootBone.has_value() && childBone.has_value(),
+        "VRM fixture skeleton bones are missing"
+    );
+
+    Require(
+        vrm.humanoidBones[0].kind == VrmHumanoidBoneKind::Hips &&
+            vrm.humanoidBones[0].bone == *rootBone,
+        "VRM hips binding was not mapped to rootBone"
+    );
+    Require(
+        vrm.humanoidBones[1].kind == VrmHumanoidBoneKind::Head &&
+            vrm.humanoidBones[1].bone == *childBone,
+        "VRM head binding was not mapped to childBone"
+    );
+    Require(
+        vrm.firstPerson.has_value() &&
+            vrm.firstPerson->bone == *childBone &&
+            vrm.firstPerson->lookAtType == VrmLookAtType::Bone,
+        "VRM first-person binding was not mapped"
+    );
+
+    // ModelAsset must own the same semantic layer and include it in the
+    // deterministic fingerprint used by Generic runtime checkpoints.
+    ModelAsset asset("vrm-semantic-asset");
+    asset.SetBackendKind(ModelBackendKind::WisteriaGeneric);
+    asset.SetSkeleton(*imported.skeleton);
+    asset.SetVrmMetadata(*imported.vrmMetadata);
+    Require(
+        asset.HasVrmMetadata() &&
+            asset.GetVrmMetadata().humanoidBones.size() == 2,
+        "ModelAsset did not retain VRM metadata"
+    );
+    Require(
+        asset.DeterministicFingerprint() != 0U,
+        "ModelAsset VRM fingerprint is invalid"
     );
 }
 
@@ -16962,6 +17163,8 @@ int main()
     failures += !RunTest("Animated model importer", TestAnimatedModelImporter);
     failures += !RunTest("glTF morph target importer", TestGlbMorphTargetImporter);
     failures += !RunTest("GLB JSON chunk extraction", TestGlbJsonChunkExtraction);
+    failures += !RunTest("VRM metadata parsing", TestVrmMetadataParsing);
+    failures += !RunTest("VRM model importer", TestVrmModelImporter);
     failures += !RunTest("Animated bone-chain glTF importer", TestAnimatedBoneChainGltfImporter);
     failures += !RunTest(
         "Extended PMX morph importer",
