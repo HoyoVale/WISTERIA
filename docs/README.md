@@ -26,6 +26,7 @@
 | `architecture/R2_0_RENDER_ARCHITECTURE_CONTRACT.md` | 后端中立渲染架构契约 |
 | `architecture/R1_TO_R2_BOUNDARY_AUDIT.md` | R1 → R2 边界审计 |
 | `architecture/GLTF_ROUTE_AUDIT.md` | glTF / GLB / VRM 第二内容线审计与路线 |
+| `architecture/PBR_AUDIT.md` | 通用 PBR 材质渲染审计与改进记录 |
 
 ---
 

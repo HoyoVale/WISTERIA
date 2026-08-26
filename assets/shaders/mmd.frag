@@ -283,6 +283,21 @@ vec3 SpotContribution(
     );
 }
 
+
+vec3 AcesTonemap(vec3 color)
+{
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return clamp(
+        color * (a * color + b) / (color * (c * color + d) + e),
+        0.0,
+        1.0
+    );
+}
+
 void main()
 {
     if (outlinePass != 0)
@@ -362,7 +377,7 @@ void main()
     }
 
     color += sphereAddition;
-    color = color / (color + vec3(1.0));
+    color = AcesTonemap(color);
     color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     WriteOutput(vec4(color, baseColor.a));
 }
