@@ -12,7 +12,7 @@
 namespace wisteria
 {
 
-// Engine-owned VRM semantic layer. VRM 0.x parsing is performed by the
+// Engine-owned VRM semantic layer. VRM 0.x/1.0 parsing is performed by the
 // vendored VRM.h header inside the assets module; runtime and rendering code
 // only sees these backend-neutral structures.
 
