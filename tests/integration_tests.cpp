@@ -5361,20 +5361,6 @@ void TestVrmMetadataParsing()
         "VRM first-person data was not parsed"
     );
 
-    nlohmann::json vrm10Json = gltfJson;
-    vrm10Json["extensions"]["VRMC_vrm"]["specVersion"] = "1.0";
-    std::string vrm10Error;
-    const std::optional<VrmMetadata> vrm10 =
-        wisteria::assets::ParseVrmMetadata(
-            vrm10Json,
-            &skeleton,
-            vrm10Error
-        );
-    Require(
-        !vrm10.has_value() &&
-            vrm10Error.find("VRM 1.0") != std::string::npos,
-        "VRM 1.0 should be rejected until C5 VRM 1.0 support lands"
-    );
 }
 
 void TestVrmModelImporter()
@@ -5448,6 +5434,46 @@ void TestVrmModelImporter()
     Require(
         asset.DeterministicFingerprint() != 0U,
         "ModelAsset VRM fingerprint is invalid"
+    );
+}
+
+void TestVrm10ModelImporter()
+{
+    const std::filesystem::path modelPath =
+        FixturePath("minimal-vrm-1-0");
+    RequireCoreAsset("minimal-vrm-1-0");
+
+    ImportedModelData imported = ModelImporter().Import(modelPath);
+    Require(
+        imported.vrmMetadata.has_value(),
+        "VRM 1.0 fixture did not produce VRM metadata"
+    );
+    const VrmMetadata& vrm = *imported.vrmMetadata;
+    Require(
+        vrm.specVersion == "1.0" &&
+        vrm.model.name == "WISTERIA Fixture" &&
+        vrm.model.authors.size() == 1U &&
+        vrm.model.authors[0] == "WISTERIA",
+        "VRM 1.0 meta was not parsed"
+    );
+    Require(
+        vrm.humanoidBones.size() == 15U,
+        "VRM 1.0 required humanoid bones were not parsed"
+    );
+    Require(
+        vrm.humanoidBones[0].kind == VrmHumanoidBoneKind::Hips &&
+        vrm.humanoidBones[0].sourceNodeName == "hips",
+        "VRM 1.0 hips binding mismatch"
+    );
+    Require(
+        vrm.humanoidBones[2].kind == VrmHumanoidBoneKind::Head &&
+        vrm.humanoidBones[2].sourceNodeName == "head",
+        "VRM 1.0 head binding mismatch"
+    );
+    Require(
+        vrm.humanoidBones[11].kind == VrmHumanoidBoneKind::LeftHand &&
+        vrm.humanoidBones[11].sourceNodeName == "leftHand",
+        "VRM 1.0 left hand binding mismatch"
     );
 }
 
@@ -17165,6 +17191,7 @@ int main()
     failures += !RunTest("GLB JSON chunk extraction", TestGlbJsonChunkExtraction);
     failures += !RunTest("VRM metadata parsing", TestVrmMetadataParsing);
     failures += !RunTest("VRM model importer", TestVrmModelImporter);
+    failures += !RunTest("VRM 1.0 model importer", TestVrm10ModelImporter);
     failures += !RunTest("Animated bone-chain glTF importer", TestAnimatedBoneChainGltfImporter);
     failures += !RunTest(
         "Extended PMX morph importer",

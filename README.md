@@ -87,7 +87,7 @@ assets/motions/梦的翅膀/梦的翅膀camera.vmd  （可选）
 --model <pmx>       指定角色 PMX 路径
 --motion <vmd>      指定角色 VMD 路径
 --scene <pmx>       场景模式，加载舞台 PMX
---gltf <glb>       通用 glTF/GLB 查看模式
+--gltf <glb|vrm>   通用 glTF/GLB/VRM 查看模式
 --ground-lab        固定相机地面 + 立方体阴影测试场景（无需外部资产）
 --alternate-model   使用备用内置模型 preset
 --frames <n>        精确运行 n 帧后退出（配合 --fixed-dt）

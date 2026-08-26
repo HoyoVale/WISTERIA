@@ -321,7 +321,7 @@ RenderPart& ModelAsset::AddPart(
 std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
 {
     FingerprintBuilder fp;
-    fp.String("wisteria-model-asset/deterministic/v2");
+    fp.String("wisteria-model-asset/deterministic/v3");
     fp.U32(static_cast<std::uint32_t>(this->BackendKind()));
 
     // Parts: ordering, local transforms, mesh topology and mesh morph data.
@@ -477,12 +477,18 @@ std::uint64_t ModelAsset::DeterministicFingerprint() const noexcept
     if (vrm != nullptr)
     {
         fp.String(vrm->specVersion);
+        fp.String(vrm->model.name);
         fp.String(vrm->model.title);
         fp.String(vrm->model.version);
         fp.String(vrm->model.author);
+        fp.U32(static_cast<std::uint32_t>(vrm->model.authors.size()));
+        for (const std::string& author : vrm->model.authors)
+            fp.String(author);
+        fp.String(vrm->model.copyrightInformation);
         fp.String(vrm->model.contactInformation);
         fp.String(vrm->model.reference);
         fp.U32(static_cast<std::uint32_t>(vrm->model.licenseName));
+        fp.String(vrm->model.licenseUrl);
         fp.String(vrm->model.otherLicenseUrl);
 
         fp.U32(static_cast<std::uint32_t>(vrm->humanoidBones.size()));

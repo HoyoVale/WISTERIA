@@ -101,6 +101,11 @@
       "usedBy": ["TestVrmModelImporter"]
     },
     {
+      "id": "minimal-vrm-1-0",
+      "path": "tests/data/minimal_vrm_1_0.glb",
+      "usedBy": ["TestVrm10ModelImporter"]
+    },
+    {
       "id": "pbr-quad-gltf",
       "path": "tests/data/pbr_quad.gltf",
       "usedBy": [],

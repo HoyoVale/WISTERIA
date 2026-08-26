@@ -54,9 +54,9 @@ C5B  glTF/GLB JSON 提取工具
       用现有 miniz + nlohmann/json 从 .vrm/.glb 中取 JSON chunk
 
 C5C  VRM 0.x / 1.0 元数据 + humanoid 映射
-      ✅ VRM 0.x 已实现：`vrm_metadata.hpp` / `vrm_parser.cpp` /
-        `.vrm` importer / `minimal_humanoid.vrm` fixture
-      ⏳ VRM 1.0、Generic runtime 读取 humanoid bones 待后续
+      ✅ VRM 0.x / 1.0 元数据与 humanoid 节点→骨骼映射已实现
+      ✅ `.vrm` 进入 GLB 容器导入路径，`--gltf <model.vrm>` 可加载
+      ⏳ Generic runtime 消费 humanoid 语义、表情/lookAt 驱动待后续
 
 C5D  Expression / lookAt
       expression 映射到现有 MorphState

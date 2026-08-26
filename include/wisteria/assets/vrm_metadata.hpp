@@ -94,7 +94,9 @@ enum class VrmExpressionPreset : std::uint8_t
     LookLeft,
     LookRight,
     BlinkLeft,
-    BlinkRight
+    BlinkRight,
+    Relaxed,
+    Surprised
 };
 
 enum class VrmLookAtType : std::uint8_t
@@ -118,7 +120,13 @@ enum class VrmLicenseName : std::uint8_t
 
 struct VrmModelInfo
 {
+    // VRM 1.0 uses `name` / `authors`; VRM 0.x uses `title` / `author`.
+    std::string name;
     std::string title;
+    std::vector<std::string> authors;
+    std::string copyrightInformation;
+    std::string licenseUrl;
+
     std::string version;
     std::string author;
     std::string contactInformation;

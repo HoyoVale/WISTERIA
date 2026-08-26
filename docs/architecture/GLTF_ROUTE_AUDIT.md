@@ -49,7 +49,7 @@ ModelImporter (Assimp 5.2.5)
 | glTF 相机 / 灯光 | ❌ | 未接入 Camera/Light（demo 可程序化处理） |
 | Draco / KHR 扩展 | 部分 | 依赖 Assimp；未单独验证 |
 | 通用角色物理 | ❌ | Generic runtime 明确无物理；glTF 角色先走无物理线路 |
-| VRM 0.x / 1.0 | 部分 | VRM 0.x 元数据 + humanoid 映射已导入；表情、lookAt、spring bone、VRM 1.0 未支持 |
+| VRM 0.x / 1.0 | 部分 | VRM 0.x/1.0 元数据 + humanoid 映射已导入；表情驱动、lookAt 运行时、spring bone 未支持 |
 
 ## 3. 结论：自研 vs 后端
 
